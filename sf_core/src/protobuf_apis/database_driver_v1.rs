@@ -588,13 +588,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
             }
         };
 
-        // Validate timeout_seconds (must be non-negative)
-        if let Some(timeout_secs) = input.timeout_seconds
+        // Validate logout_total_timeout_seconds (must be non-negative)
+        if let Some(timeout_secs) = input.logout_total_timeout_seconds
             && timeout_secs < 0
         {
             return Err(DriverException {
                 message: format!(
-                    "Invalid timeout_seconds: {}. Must be non-negative",
+                    "Invalid logout_total_timeout_seconds: {}. Must be non-negative",
                     timeout_secs
                 ),
                 status_code: StatusCode::InvalidArgument as i32,
@@ -608,10 +608,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
             server_session_keep_alive: input.server_session_keep_alive,
             enable_auto_detection: input.enable_auto_detection,
             error_strategy,
-            timeout: input
-                .timeout_seconds
+            logout_total_timeout: input
+                .logout_total_timeout_seconds
                 .map(|s| Duration::from_secs(s as u64)) // Safe: validated non-negative above
-                .unwrap_or(Duration::from_secs(5)),
+                .unwrap_or(Duration::from_secs(300)),
             max_retry_attempts: input.max_retry_attempts,
         };
 

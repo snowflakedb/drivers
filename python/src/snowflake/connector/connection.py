@@ -242,7 +242,7 @@ class Connection:
                 server_session_keep_alive=logout_config.server_session_keep_alive,
                 enable_auto_detection=logout_config.enable_auto_detection,
                 error_strategy=logout_config.error_strategy,
-                timeout_seconds=5,  # 5 second default
+                logout_total_timeout_seconds=logout_config.logout_total_timeout_seconds,
                 max_retry_attempts=max_retry_attempts,
             )
         )

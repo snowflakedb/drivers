@@ -25,8 +25,10 @@ pub struct LogoutConfig {
     /// Error handling strategy for logout failures
     pub error_strategy: ErrorStrategy,
 
-    /// Timeout for logout HTTP request
-    pub timeout: Duration,
+    /// Total timeout budget for logout operation (including all retry attempts)
+    /// This is the maximum wall-clock time that close() will spend attempting logout.
+    /// Individual HTTP request timeouts are derived from this total.
+    pub logout_total_timeout: Duration,
 
     /// Maximum number of retry attempts for failed logout requests
     /// - Some(0): No retries, single attempt only
@@ -41,7 +43,7 @@ impl Default for LogoutConfig {
             server_session_keep_alive: None,
             enable_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
-            timeout: Duration::from_secs(5),
+            logout_total_timeout: Duration::from_secs(300),
             max_retry_attempts: None,
         }
     }
@@ -229,7 +231,7 @@ mod tests {
         assert_eq!(config.server_session_keep_alive, None);
         assert_eq!(config.enable_auto_detection, None);
         assert_eq!(config.error_strategy, ErrorStrategy::Strict);
-        assert_eq!(config.timeout, Duration::from_secs(5));
+        assert_eq!(config.logout_total_timeout, Duration::from_secs(300));
     }
 
     #[test]

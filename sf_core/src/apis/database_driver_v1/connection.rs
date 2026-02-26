@@ -1,6 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -632,11 +633,19 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
                     if let Some(max_attempts) = config.max_retry_attempts {
                         logout_retry_policy.max_attempts = max_attempts;
                     }
-                    // Total budget = timeout × max_attempts
-                    logout_retry_policy.max_elapsed =
-                        config.timeout * logout_retry_policy.max_attempts;
 
-                    Some((token, client, url, info, logout_retry_policy))
+                    // Total budget for all retry attempts
+                    logout_retry_policy.max_elapsed = config.logout_total_timeout;
+
+                    // Calculate per-request timeout from total budget
+                    // Divide total by attempts, clamped to reasonable bounds (5s min, 120s max)
+                    let per_request_timeout = config.logout_total_timeout / logout_retry_policy.max_attempts;
+                    let per_request_timeout = per_request_timeout.clamp(
+                        Duration::from_secs(5),
+                        Duration::from_secs(120)
+                    );
+
+                    Some((token, client, url, info, logout_retry_policy, per_request_timeout))
                 }
                 _ => None,
             }
@@ -655,7 +664,7 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
     );
 
     // ======== Phase 2: HTTP logout without holding lock ========
-    let logout_result = if let Some((token, client, url, info, logout_retry_policy)) = logout_data {
+    let logout_result = if let Some((token, client, url, info, logout_retry_policy, per_request_timeout)) = logout_data {
         // Use shared runtime for async logout (same pattern as connection_init)
         let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
@@ -665,7 +674,7 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
                 &url,
                 &token,
                 &info,
-                config.timeout,
+                per_request_timeout,
                 &logout_retry_policy,
             )
             .await

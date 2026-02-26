@@ -22,11 +22,13 @@ class LogoutConfig:
         server_session_keep_alive: Final value for Core (already mapped)
         enable_auto_detection: Final value for Core (None = treat as False in Core)
         error_strategy: Error handling strategy (BEST_EFFORT or STRICT)
+        logout_total_timeout_seconds: Total timeout budget for logout operation (all retries)
     """
 
     server_session_keep_alive: Optional[bool]
     enable_auto_detection: Optional[bool]
     error_strategy: int
+    logout_total_timeout_seconds: int
 
 
 def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
@@ -63,4 +65,5 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
         server_session_keep_alive=server_session_keep_alive,
         enable_auto_detection=enable_auto_detection,
         error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,
+        logout_total_timeout_seconds=300,  # 5 minute total budget for logout (all retries)
     )
