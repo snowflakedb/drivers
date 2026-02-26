@@ -65,5 +65,7 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
         server_session_keep_alive=server_session_keep_alive,
         enable_auto_detection=enable_auto_detection,
         error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,
-        logout_total_timeout_seconds=300,  # 5 minute total budget for logout (all retries)
+        logout_total_timeout_seconds=300,  # 5 minute total budget for logout (all retries).
+        # Intentionally higher than Core default (5s) to match JDBC/ODBC/libsnowflakeclient
+        # behavior for backward compatibility. See commit 572bea06.
     )

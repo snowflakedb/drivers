@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from io import StringIO
 from typing import Any, Callable, Union
 
-from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionCloseRequest,
     ConnectionGetInfoRequest,
