@@ -560,8 +560,7 @@ pub fn get_connect_attr(
             }
             if !string_length_ptr.is_null() {
                 unsafe {
-                    *string_length_ptr =
-                        std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())
