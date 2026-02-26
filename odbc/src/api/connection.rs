@@ -64,6 +64,8 @@ pub fn driver_connect(
             .pre_connection_attrs
             .contains_key(&ConnectionAttribute::PrivKeyBase64);
 
+    let mut login_timeout_set = false;
+
     for (key, value) in connection_string_map {
         match key.as_str() {
             // TODO: Do it more generically
@@ -237,6 +239,25 @@ pub fn driver_connect(
                     },
                 )?;
             }
+            "DISABLE_SAML_URL_CHECK" => {
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "disable_saml_url_check".to_owned(),
+                        value,
+                    },
+                )?;
+            }
+            "LOGIN_TIMEOUT" => {
+                login_timeout_set = true;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "authentication_timeout".to_owned(),
+                        value,
+                    },
+                )?;
+            }
             "TLS_VERIFY_HOSTNAME" => {
                 DatabaseDriverClient::connection_set_option_string(
                     ConnectionSetOptionStringRequest {
@@ -281,7 +302,18 @@ pub fn driver_connect(
     }
 
     // Apply SQLSetConnectAttr values (override connection string parameters).
-    apply_pre_connection_attrs(connection, conn_handle)?;
+    let login_timeout_from_attr = apply_pre_connection_attrs(connection, conn_handle)?;
+
+    // Old driver defaults LOGIN_TIMEOUT to 300 s (S_DEFAULT_LOGIN_TIMEOUT).
+    // If neither the connection string nor SQLSetConnectAttr provided a value,
+    // apply the same default so sf_core's Okta SAML retry budget matches.
+    if !login_timeout_set && !login_timeout_from_attr {
+        DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
+            conn_handle: Some(conn_handle),
+            key: "authentication_timeout".to_owned(),
+            value: "300".to_owned(),
+        })?;
+    }
 
     DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
         conn_handle: Some(conn_handle),
@@ -304,10 +336,11 @@ pub fn driver_connect(
 
 /// Apply pre-connection attributes to sf_core. SQLSetConnectAttr values override
 /// connection string parameters. PrivKeyContent takes priority over PrivKeyBase64.
+/// Returns `true` if LoginTimeout was set via attributes.
 fn apply_pre_connection_attrs(
     connection: &mut crate::api::Connection,
     conn_handle: ConnectionHandle,
-) -> OdbcResult<()> {
+) -> OdbcResult<bool> {
     let attrs = &connection.pre_connection_attrs;
 
     if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
@@ -346,7 +379,17 @@ fn apply_pre_connection_attrs(
         })?;
     }
 
-    Ok(())
+    // LoginTimeout -> authentication_timeout (matches old driver: used as Okta SAML budget)
+    if let Some(timeout) = attrs.get(&ConnectionAttribute::LoginTimeout) {
+        DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
+            conn_handle: Some(conn_handle),
+            key: "authentication_timeout".to_owned(),
+            value: timeout.clone(),
+        })?;
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 /// Simple connect function (SQLConnect) - currently a placeholder
@@ -400,7 +443,20 @@ pub fn set_connect_attr(
     match attr {
         // Standard ODBC attributes
         ConnectionAttribute::LoginTimeout => {
-            tracing::debug!("set_connect_attr: LoginTimeout (ignored)");
+            // Matches old driver: LOGIN_TIMEOUT is reused as the Okta SAML retry budget.
+            // SQL_ATTR_LOGIN_TIMEOUT is an integer attribute: the value is passed as
+            // (SQLPOINTER)(uintptr_t)seconds, not as a string pointer.
+            if matches!(connection.state, ConnectionState::Connected { .. }) {
+                return AttributeCannotBeSetNowSnafu {
+                    attribute: attr.as_raw(),
+                }
+                .fail();
+            }
+            let seconds = value_ptr as usize;
+            tracing::debug!("set_connect_attr: LoginTimeout={}", seconds);
+            connection
+                .pre_connection_attrs
+                .insert(attr, seconds.to_string());
             Ok(())
         }
         ConnectionAttribute::ConnectionTimeout => {
@@ -491,8 +547,20 @@ pub fn get_connect_attr(
             }
             Ok(())
         }
-        ConnectionAttribute::LoginTimeout | ConnectionAttribute::ConnectionTimeout => {
-            // These are accepted but not stored; return 0
+        ConnectionAttribute::LoginTimeout => {
+            let timeout: sql::ULen = connection
+                .pre_connection_attrs
+                .get(&attr)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = timeout;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::ConnectionTimeout => {
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::ULen) = 0;
