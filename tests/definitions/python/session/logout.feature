@@ -94,9 +94,11 @@ Feature: Session Logout - Python-specific behavior
 
   Scenario: should use best-effort error handling strategy by default
     Given Snowflake Python client is created with default parameters
-    And Server will return 500 Internal Server Error on logout
+    And Server will return 500 Internal Server Error on logout on all attempts
     When Connection is closed
-    Then Error is logged as WARN
+    Then Logout attempts are bounded by the default retry limit
+    And No further requests are sent after retry limit is reached
+    And Error is logged as WARN
     And close() method does not raise exception
     And Connection cleanup succeeds
     And Error handling strategy is best-effort by default
@@ -152,13 +154,12 @@ Feature: Session Logout - Python-specific behavior
 
   Scenario: should emit deprecation warning on first auto-cleanup run per process
     # Phase 1 (doc for: SNOW-2314152) deprecation. Prepares users for explicit close() requirement.
-    Given Snowflake Python client is created with auto_cleanup enabled
+    Given Two Snowflake Python connections are created with auto_cleanup enabled
+    And Neither connection is explicitly closed
     And No auto-cleanup has run yet in this process
-    When Process exits without explicit close
-    Then atexit handler runs
-    And Deprecation warning is emitted once
-    When Another connection is created and process exits
-    Then No additional deprecation warning is emitted
+    When Process exits
+    Then atexit handler cleans up both connections
+    And Exactly one deprecation warning is emitted
 
   Scenario: should not register atexit handler when auto-cleanup explicitly disabled
     Given Snowflake Python client is created with auto_cleanup disabled
