@@ -28,7 +28,7 @@ pipeline {
                         python3.11 -m venv .venv
                         source .venv/bin/activate
                         python -m pip install --upgrade pip setuptools wheel
-                        python -m pip install hatch
+                        python -m pip install hatch "virtualenv<21.0.0"
                     '''
                 }
             }
