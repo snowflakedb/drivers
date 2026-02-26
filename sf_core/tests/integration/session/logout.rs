@@ -875,7 +875,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
                 }),
                 logout_total_timeout_seconds: Some(30),
                 logout_request_timeout_seconds: None,
-                max_retry_attempts: Some(1),  // 1 retry = allow token refresh and second logout attempt
+                max_retry_attempts: Some(1), // 1 retry = allow token refresh and second logout attempt
             })
         })
         .await
@@ -1076,7 +1076,7 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
         };
 
         let retry_policy = RetryPolicy {
-            max_attempts: expected_attempts as u32,  // Use the calculated value from loop
+            max_attempts: expected_attempts as u32, // Use the calculated value from loop
             ..Default::default()
         };
 
