@@ -21,6 +21,9 @@ use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseEr
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
+/// Skip reason constant for when connection is already closed
+const SKIP_REASON_ALREADY_CLOSED: &str = "already_closed";
+
 /// Load configuration from TOML files for a named connection.
 ///
 /// Takes a mutable reference to the connection to avoid double-locking.
@@ -595,7 +598,7 @@ fn prepare_logout(
         tracing::debug!("Connection already closed, skipping duplicate close");
         // Caller checks send_logout=false + logout_data=None to detect this case,
         // but we need a way to signal "already closed". Use send_logout=false + skip_reason.
-        return Ok((false, Some("already_closed".to_string()), None));
+        return Ok((false, Some(SKIP_REASON_ALREADY_CLOSED.to_string()), None));
     }
 
     tracing::info!("Closing connection");
@@ -709,7 +712,7 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
 
     let (send_logout, skip_reason, logout_data) = prepare_logout(&conn_ptr, &config)?;
 
-    if skip_reason.as_deref() == Some("already_closed") {
+    if skip_reason.as_deref() == Some(SKIP_REASON_ALREADY_CLOSED) {
         return Ok(());
     }
 
