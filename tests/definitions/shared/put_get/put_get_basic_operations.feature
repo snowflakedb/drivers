@@ -49,3 +49,10 @@ Feature: PUT/GET basic operations
     Given Snowflake client is logged in
     When File is uploaded to a subdirectory in stage
     Then File should be listed under the subdirectory
+
+  @python_e2e
+  Scenario: should get file from subdirectory in stage
+    Given File is uploaded to a subdirectory in stage
+    When All files are downloaded from stage using GET command
+    Then File should be downloaded preserving subdirectory structure
+    And Have correct content

@@ -224,6 +224,40 @@ def test_should_return_correct_column_metadata_for_get(connection):
                 )
 
 
+def test_should_get_file_from_subdirectory_in_stage(connection):
+    test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
+    filename = test_file_path.name
+
+    with connection.cursor() as cursor:
+        # Given File is uploaded to a subdirectory in stage
+        stage_name = create_temporary_stage(cursor, "TEST_SUBDIR_GET")
+        subdir = "nested/subdir"
+        file_uri = as_file_uri(test_file_path)
+        put_command = f"PUT 'file://{file_uri}' @{stage_name}/{subdir} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        cursor.execute(put_command)
+        upload_result = cursor.fetchone()
+        assert upload_result[6] == "UPLOADED"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # When All files are downloaded from stage using GET command
+            download_dir = Path(temp_dir)
+            download_uri = as_file_uri(download_dir)
+            get_command = f"GET @{stage_name}/ 'file://{download_uri}/'"
+            cursor.execute(get_command)
+            get_result = cursor.fetchone()
+
+            # Then File should be downloaded preserving subdirectory structure
+            assert get_result[2] == "DOWNLOADED"
+            downloaded_file = download_dir / subdir / filename
+            assert downloaded_file.exists(), (
+                f"Expected file at {downloaded_file}, but directory contents: {list(download_dir.rglob('*'))}"
+            )
+
+            # And Have correct content
+            content = downloaded_file.read_text().strip()
+            assert content == "1,2,3"
+
+
 def test_should_upload_file_to_subdirectory_in_stage(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name

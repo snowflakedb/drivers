@@ -183,7 +183,10 @@ pub async fn download_single_file(
     // Create the full output path: local_location/src_location
     let output_path = Path::new(&data.local_location).join(&data.src_location);
 
-    // Save the compressed data to the constructed path
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).context(IoSnafu)?;
+    }
+
     let mut output_file = File::create(&output_path).context(IoSnafu)?;
     output_file.write_all(&compressed_data).context(IoSnafu)?;
 
