@@ -80,12 +80,9 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
 
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
-            stmt.ird.desc_count = match stmt.state.as_ref() {
-                StatementState::Executed { reader, .. } => {
-                    reader.schema().fields().len() as sql::SmallInt
-                }
-                _ => 0,
-            };
+            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
+                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
+            }
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -205,12 +202,9 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
-            stmt.ird.desc_count = match stmt.state.as_ref() {
-                StatementState::Executed { reader, .. } => {
-                    reader.schema().fields().len() as sql::SmallInt
-                }
-                _ => 0,
-            };
+            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
+                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
+            }
             Ok(())
         }
         ConnectionState::Disconnected => {

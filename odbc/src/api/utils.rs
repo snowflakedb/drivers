@@ -144,19 +144,13 @@ pub fn describe_col(
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
-    if column_number == 0 {
+    if column_number < 1 || (column_number as usize - 1) >= schema.fields().len() {
         return InvalidDescriptorIndexSnafu {
             number: column_number as sql::SmallInt,
         }
         .fail();
     }
     let col_idx = (column_number - 1) as usize;
-    if col_idx >= schema.fields().len() {
-        return InvalidDescriptorIndexSnafu {
-            number: column_number as sql::SmallInt,
-        }
-        .fail();
-    }
 
     if buffer_length < 0 {
         return InvalidBufferLengthSnafu {

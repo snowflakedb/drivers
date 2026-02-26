@@ -116,8 +116,8 @@ fn create_column_array(
             let bool_values: Result<Vec<bool>, ArrowUtilsError> = values
                 .into_iter()
                 .map(|v| match v {
-                    "true" | "TRUE" | "1" => Ok(true),
-                    "false" | "FALSE" | "0" => Ok(false),
+                    "true" => Ok(true),
+                    "false" => Ok(false),
                     other => BooleanParsingSnafu {
                         value: other.to_string(),
                     }

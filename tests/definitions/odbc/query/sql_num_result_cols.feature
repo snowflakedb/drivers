@@ -34,6 +34,13 @@ Feature: ODBC SQLNumResultCols function behavior
     Then SQLNumResultCols should return 0 (DDL produces no result set columns)
 
   @odbc_e2e
+  Scenario: SQLNumResultCols returns correct count after calling a stored procedure.
+    Given Snowflake client is logged in
+    And a stored procedure exists that returns one column
+    When the stored procedure is called
+    Then SQLNumResultCols should return 1
+
+  @odbc_e2e
   Scenario: SQLNumResultCols returns HY010 when called on freshly allocated statement.
     Given Snowflake client is logged in
     When SQLNumResultCols is called without any prepare or execute

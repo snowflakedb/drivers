@@ -120,6 +120,26 @@ TEST_CASE("SQLNumResultCols returns 0 after DDL statement.", "[query]") {
   CHECK(num_cols == 0);
 }
 
+TEST_CASE("SQLNumResultCols returns correct count after calling a stored procedure.", "[query]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And a stored procedure exists that returns one column
+  conn.execute(
+      "CREATE PROCEDURE numcols_proc(p1 VARCHAR) "
+      "RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'");
+
+  // When the stored procedure is called
+  auto stmt = conn.execute("CALL numcols_proc('hello')");
+
+  // Then SQLNumResultCols should return 1
+  SQLSMALLINT num_cols = 0;
+  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
+  CHECK_ODBC(ret, stmt);
+  CHECK(num_cols == 1);
+}
+
 // =============================================================================
 // State Errors
 // =============================================================================
