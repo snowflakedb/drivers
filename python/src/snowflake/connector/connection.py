@@ -227,8 +227,8 @@ class Connection:
         # Old driver: retry=True → 3 attempts, retry=False → 1 attempt
         # UD: Pass max_retry_attempts to Core to control retry count
         if retry:
-            # Allow retries: Use Core default (typically 6 attempts)
-            max_retry_attempts = None
+            # Allow retries: Use logout_config value (3 attempts)
+            max_retry_attempts = logout_config.max_retry_attempts
         else:
             # No retries: Single attempt only (matches old driver retry=False)
             max_retry_attempts = 1

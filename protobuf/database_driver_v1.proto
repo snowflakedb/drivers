@@ -331,7 +331,7 @@ message ConnectionCloseRequest {
   optional bool server_session_keep_alive = 2;
   optional bool enable_auto_detection = 3;
   optional ErrorStrategy error_strategy = 4;
-  optional int64 logout_total_timeout_seconds = 5;  // Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers (Python/JDBC/ODBC) default to 300s for backward compatibility.
+  optional int64 logout_total_timeout_seconds = 5;  // Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
   optional uint32 max_retry_attempts = 6;  // Maximum number of retry attempts (0 = no retries, 1 attempt only)
 }
 
