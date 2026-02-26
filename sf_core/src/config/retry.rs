@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Global retry policy used by the driver. Keep it minimal at the HTTP layer;
 /// layers above (Snowflake query logic, etc.) can compose their own semantics.
@@ -39,6 +39,49 @@ pub struct HttpPolicy {
     pub retry_idempotent_writes: bool,
     /// Enable retries for POST/PATCH (generally off).
     pub retry_post_patch: bool,
+}
+
+/// A shared wall-clock deadline for an entire operation (retries + refresh included).
+///
+/// Created once at the top-level call site and threaded through every layer.
+/// Each layer calls [`remaining()`](Deadline::remaining) to learn how much time
+/// is left, so session refresh, Okta renewal, and HTTP retries all draw from
+/// the same budget.
+#[derive(Clone, Debug)]
+pub struct Deadline {
+    start: Instant,
+    budget: Duration,
+}
+
+impl Deadline {
+    /// Start a new deadline with the given total budget.
+    pub fn new(budget: Duration) -> Self {
+        Self {
+            start: Instant::now(),
+            budget,
+        }
+    }
+
+    /// How much time remains before the deadline expires.
+    /// Returns `Duration::ZERO` when expired.
+    pub fn remaining(&self) -> Duration {
+        self.budget.saturating_sub(self.start.elapsed())
+    }
+
+    /// Returns `true` when the budget has been fully consumed.
+    pub fn is_expired(&self) -> bool {
+        self.start.elapsed() >= self.budget
+    }
+
+    /// The original budget this deadline was created with.
+    pub fn budget(&self) -> Duration {
+        self.budget
+    }
+
+    /// How much time has elapsed since this deadline was created.
+    pub fn elapsed(&self) -> Duration {
+        self.start.elapsed()
+    }
 }
 
 impl Default for RetryPolicy {

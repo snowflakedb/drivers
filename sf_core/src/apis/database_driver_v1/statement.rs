@@ -3,6 +3,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use super::Handle;
 use super::connection::RefreshContext;
+use crate::config::retry::Deadline;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
@@ -334,17 +335,19 @@ pub fn statement_execute_query<'a>(
     };
 
     let response = rt.block_on(async {
-        let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
+        let deadline = Deadline::new(retry_policy.max_elapsed);
+        let mut ctx = RefreshContext::from_arc(&stmt.conn, deadline)?;
         let mut last_error = None;
         loop {
             let session_token = ctx.refresh_token(last_error).await?;
+            let scoped_policy = ctx.scoped_policy(&retry_policy);
             match snowflake_query_with_client(
                 &http_client,
                 query_parameters.clone(),
                 session_token,
                 query.clone(),
                 query_bindings,
-                &retry_policy,
+                &scoped_policy,
                 execution_mode,
             )
             .await

@@ -2,7 +2,7 @@
 
 use sf_core::apis::database_driver_v1::{Connection, with_valid_session};
 use sf_core::config::rest_parameters::ClientInfo;
-use sf_core::config::retry::RetryPolicy;
+use sf_core::config::retry::{Deadline, RetryPolicy};
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::tls::config::TlsConfig;
@@ -110,7 +110,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         let conn = conn.clone();
         let server_addr = addr;
         handles.push(tokio::spawn(async move {
-            with_valid_session(&conn, |token| {
+            let deadline = Deadline::new(std::time::Duration::from_secs(120));
+            with_valid_session(&conn, deadline, |token| {
                 let query_addr = server_addr;
                 async move {
                     // Make a query request

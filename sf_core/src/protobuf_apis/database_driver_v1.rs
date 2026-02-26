@@ -251,6 +251,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::InvalidRefreshState { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::OperationDeadlineExceeded { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
         ApiError::Configuration {
             source: ConfigError::ConfigFileRead { .. },
             ..
@@ -335,6 +338,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::Query { .. } => StatusCode::InternalError,
         ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
+        ApiError::OperationDeadlineExceeded { .. } => StatusCode::InternalError,
     };
 
     let message = error.to_string();

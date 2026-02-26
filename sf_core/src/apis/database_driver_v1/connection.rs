@@ -10,7 +10,7 @@ use super::global_state::CONN_HANDLE_MANAGER;
 use crate::config::config_manager;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
-use crate::config::retry::RetryPolicy;
+use crate::config::retry::{Deadline, RetryPolicy};
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
@@ -280,15 +280,20 @@ impl Connection {
 /// 1. Reads the session token (allows concurrent readers)
 /// 2. Runs the provided function with that token
 /// 3. On SessionExpired error, acquires write lock, refreshes, and retries
+///
+/// The `deadline` bounds the total wall-clock time across all attempts
+/// (including any session refresh). Pass `Deadline::new(policy.max_elapsed)`
+/// at the call site.
 pub async fn with_valid_session<F, Fut, T>(
     conn: &Arc<Mutex<Connection>>,
+    deadline: Deadline,
     f: F,
 ) -> Result<T, ApiError>
 where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
-    let mut ctx = RefreshContext::from_arc(conn)?;
+    let mut ctx = RefreshContext::from_arc(conn, deadline)?;
     let mut last_error: Option<RestError> = None;
     loop {
         let token = ctx.refresh_token(last_error).await?;
@@ -305,11 +310,13 @@ where
 /// a loop-based API:
 ///
 /// ```ignore
-/// let mut ctx = RefreshContext::new(&conn)?;
+/// let deadline = Deadline::new(retry_policy.max_elapsed);
+/// let mut ctx = RefreshContext::new(&conn, deadline)?;
 /// let mut last_error: Option<RestError> = None;
 /// loop {
 ///     let token = ctx.refresh_token(last_error).await?;
-///     match do_something(token).await {
+///     let scoped = ctx.scoped_policy(&retry_policy);
+///     match do_something(token, &scoped).await {
 ///         Ok(result) => return Ok(result),
 ///         Err(e) => last_error = Some(e),
 ///     }
@@ -320,7 +327,10 @@ where
 /// On subsequent calls with a `SessionExpired` error, acquires write lock and refreshes.
 /// On non-SessionExpired errors, propagates the error immediately.
 /// Only one refresh attempt is allowed; a second SessionExpired error is propagated.
-/// Tracks the state of the refresh lifecycle.
+///
+/// A shared [`Deadline`] bounds total wall-clock time across all attempts.
+/// Call [`scoped_policy`](RefreshContext::scoped_policy) to obtain a
+/// `RetryPolicy` whose `max_elapsed` is clamped to the remaining budget.
 enum RefreshState {
     /// No token has been issued yet (initial call).
     Initial,
@@ -337,15 +347,17 @@ pub struct RefreshContext {
     server_url: String,
     client_info: ClientInfo,
     state: RefreshState,
+    /// Shared wall-clock deadline for the entire operation (retries + refresh).
+    deadline: Deadline,
 }
 
 impl RefreshContext {
-    pub fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
+    pub fn from_arc(conn: &Arc<Mutex<Connection>>, deadline: Deadline) -> Result<Self, ApiError> {
         let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
-        Self::new(&guard)
+        Self::new(&guard, deadline)
     }
     /// Create a new `RefreshContext` by extracting connection info.
-    pub fn new(conn: &Connection) -> Result<Self, ApiError> {
+    pub fn new(conn: &Connection, deadline: Deadline) -> Result<Self, ApiError> {
         Ok(Self {
             tokens_lock: conn.tokens.clone(),
             http_client: conn
@@ -361,7 +373,17 @@ impl RefreshContext {
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
             state: RefreshState::Initial,
+            deadline,
         })
+    }
+
+    /// Return a clone of `base` with `max_elapsed` clamped to the remaining
+    /// deadline budget. Every inner retry loop should use this instead of the
+    /// original policy so that all layers share the same wall-clock budget.
+    pub fn scoped_policy(&self, base: &RetryPolicy) -> RetryPolicy {
+        let mut policy = base.clone();
+        policy.max_elapsed = self.deadline.remaining();
+        policy
     }
 
     /// Get a valid session token, optionally refreshing if the previous call failed.
@@ -376,6 +398,15 @@ impl RefreshContext {
         &mut self,
         last_error: Option<RestError>,
     ) -> Result<String, ApiError> {
+        // Check the shared wall-clock deadline before any work.
+        if self.deadline.is_expired() {
+            return OperationDeadlineExceededSnafu {
+                budget: self.deadline.budget(),
+                elapsed: self.deadline.elapsed(),
+            }
+            .fail();
+        }
+
         match &self.state {
             // No token issued yet - read the current session token
             RefreshState::Initial => {

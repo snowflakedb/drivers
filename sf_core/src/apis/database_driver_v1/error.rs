@@ -101,4 +101,13 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display(
+        "Operation deadline exceeded after {elapsed:?} (budget {budget:?})"
+    ))]
+    OperationDeadlineExceeded {
+        budget: std::time::Duration,
+        elapsed: std::time::Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
