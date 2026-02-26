@@ -3,7 +3,8 @@ use odbc_sys as sql;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{
-    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    IntervalFieldOverflowSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::warning::{Warning, Warnings};
@@ -353,6 +354,107 @@ impl WriteODBCType for SnowflakeNumber {
                 );
                 Ok(vec![])
             }
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute => {
+                let is_negative = snowflake_value < 0;
+                let abs_int = int_value.unsigned_abs();
+                if abs_int > u32::MAX as u128 {
+                    return IntervalFieldOverflowSnafu {
+                        reason: format!("Value {int_value} exceeds interval field capacity"),
+                    }
+                    .fail();
+                }
+                let field_val = abs_int as u32;
+                let mut interval = sql::IntervalStruct {
+                    interval_type: 0,
+                    interval_sign: if is_negative { 1 } else { 0 },
+                    interval_value: sql::IntervalUnion {
+                        day_second: sql::DaySecond::default(),
+                    },
+                };
+                match target_type {
+                    CDataType::IntervalYear => {
+                        interval.interval_type = sql::Interval::Year as i32;
+                        interval.interval_value = sql::IntervalUnion {
+                            year_month: sql::YearMonth {
+                                year: field_val,
+                                month: 0,
+                            },
+                        };
+                    }
+                    CDataType::IntervalMonth => {
+                        interval.interval_type = sql::Interval::Month as i32;
+                        interval.interval_value = sql::IntervalUnion {
+                            year_month: sql::YearMonth {
+                                year: 0,
+                                month: field_val,
+                            },
+                        };
+                    }
+                    CDataType::IntervalDay => {
+                        interval.interval_type = sql::Interval::Day as i32;
+                        interval.interval_value.day_second.day = field_val;
+                    }
+                    CDataType::IntervalHour => {
+                        interval.interval_type = sql::Interval::Hour as i32;
+                        interval.interval_value.day_second.hour = field_val;
+                    }
+                    CDataType::IntervalMinute => {
+                        interval.interval_type = sql::Interval::Minute as i32;
+                        interval.interval_value.day_second.minute = field_val;
+                    }
+                    _ => unreachable!(),
+                }
+                binding.write_fixed(interval);
+                Ok(Self::fractional_warning(has_fractional))
+            }
+            CDataType::IntervalSecond => {
+                let is_negative = snowflake_value < 0;
+                let abs_int = int_value.unsigned_abs();
+                if abs_int > u32::MAX as u128 {
+                    return IntervalFieldOverflowSnafu {
+                        reason: format!("Value {int_value} exceeds interval second field capacity"),
+                    }
+                    .fail();
+                }
+                let frac_value = if self.scale > 0 {
+                    let remainder = snowflake_value.unsigned_abs() % (scale_factor as u128);
+                    let microseconds = remainder * 1_000_000 / (scale_factor as u128);
+                    microseconds as u32
+                } else {
+                    0
+                };
+                let interval = sql::IntervalStruct {
+                    interval_type: sql::Interval::Second as i32,
+                    interval_sign: if is_negative { 1 } else { 0 },
+                    interval_value: sql::IntervalUnion {
+                        day_second: sql::DaySecond {
+                            day: 0,
+                            hour: 0,
+                            minute: 0,
+                            second: abs_int as u32,
+                            fraction: frac_value,
+                        },
+                    },
+                };
+                binding.write_fixed(interval);
+                Ok(vec![])
+            }
+            CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => IntervalFieldOverflowSnafu {
+                reason: format!(
+                    "Cannot convert numeric value to multi-field interval type {target_type:?}"
+                ),
+            }
+            .fail(),
             _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
         }
     }

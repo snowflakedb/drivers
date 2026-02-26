@@ -888,6 +888,235 @@ mod tests {
     }
 
     // ========================================================================
+    // Interval conversions — single-field (SQLSTATE 01S07 for fractional)
+    // ========================================================================
+
+    fn binding_for_interval(
+        target_type: CDataType,
+        value: &mut sql::IntervalStruct,
+        str_len: &mut sql::Len,
+    ) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
+            buffer_length: 0,
+            octet_length_ptr: str_len as *mut sql::Len,
+            indicator_ptr: str_len as *mut sql::Len,
+            ..Default::default()
+        }
+    }
+
+    fn zero_interval() -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0,
+            interval_sign: 0,
+            interval_value: sql::IntervalUnion {
+                day_second: sql::DaySecond::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn interval_year_positive_integer() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(5i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_type, sql::Interval::Year as i32);
+        assert_eq!(value.interval_sign, 0);
+        assert_eq!(unsafe { value.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn interval_year_negative() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-3i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_sign, 1);
+        assert_eq!(unsafe { value.interval_value.year_month.year }, 3);
+    }
+
+    #[test]
+    fn interval_year_zero() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(0i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.year_month.year }, 0);
+    }
+
+    #[test]
+    fn interval_year_fractional_truncates() {
+        use crate::conversion::warning::Warning;
+        let sn = make_decimal(1, 10); // scale=1, so 57 → 5.7
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(57i128, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        assert_eq!(unsafe { value.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn interval_month_positive() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalMonth, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(10i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_type, sql::Interval::Month as i32);
+        assert_eq!(unsafe { value.interval_value.year_month.month }, 10);
+    }
+
+    #[test]
+    fn interval_day_positive() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalDay, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(15i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_type, sql::Interval::Day as i32);
+        assert_eq!(unsafe { value.interval_value.day_second.day }, 15);
+    }
+
+    #[test]
+    fn interval_hour_positive() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalHour, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(8i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_type, sql::Interval::Hour as i32);
+        assert_eq!(unsafe { value.interval_value.day_second.hour }, 8);
+    }
+
+    #[test]
+    fn interval_minute_positive() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalMinute, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(30i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_type, sql::Interval::Minute as i32);
+        assert_eq!(unsafe { value.interval_value.day_second.minute }, 30);
+    }
+
+    #[test]
+    fn interval_second_integer() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(45i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_type, sql::Interval::Second as i32);
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn interval_second_with_fractional_part() {
+        let sn = make_decimal(3, 10); // scale=3, so 45500 → 45.500
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(45_500i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 500_000);
+    }
+
+    #[test]
+    fn interval_second_negative_with_fraction() {
+        let sn = make_decimal(2, 10); // scale=2, so -1025 → -10.25
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-1025i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_sign, 1);
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 10);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 250_000);
+    }
+
+    // ========================================================================
+    // Interval overflow — single-field (SQLSTATE 22015)
+    // ========================================================================
+
+    #[test]
+    fn interval_year_overflow() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 38);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let result = sn.write_odbc_type(5_000_000_000i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn interval_second_overflow() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 38);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let result = sn.write_odbc_type(5_000_000_000i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
+    // ========================================================================
+    // Multi-field intervals — always 22015
+    // ========================================================================
+
+    macro_rules! interval_multi_field_error_tests {
+        ($($name:ident: $c_type:expr;)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    use crate::conversion::error::WriteOdbcError;
+                    let sn = make_decimal(0, 10);
+                    let mut value = zero_interval();
+                    let mut str_len: sql::Len = 0;
+                    let binding = binding_for_interval($c_type, &mut value, &mut str_len);
+                    let result = sn.write_odbc_type(42i128, &binding, &mut None);
+                    assert!(matches!(
+                        result.unwrap_err(),
+                        WriteOdbcError::IntervalFieldOverflow { .. }
+                    ));
+                }
+            )*
+        };
+    }
+
+    interval_multi_field_error_tests! {
+        interval_year_to_month_errors:    CDataType::IntervalYearToMonth;
+        interval_day_to_hour_errors:      CDataType::IntervalDayToHour;
+        interval_day_to_minute_errors:    CDataType::IntervalDayToMinute;
+        interval_day_to_second_errors:    CDataType::IntervalDayToSecond;
+        interval_hour_to_minute_errors:   CDataType::IntervalHourToMinute;
+        interval_hour_to_second_errors:   CDataType::IntervalHourToSecond;
+        interval_minute_to_second_errors: CDataType::IntervalMinuteToSecond;
+    }
+
+    // ========================================================================
     // Nullable NULL handling (SQLSTATE 22002)
     // When the value is SQL NULL and no indicator pointer is provided,
     // the driver must return an IndicatorVariableRequired error.
