@@ -114,6 +114,13 @@ pub enum QueryExecutionMode {
     Async,
 }
 
+#[derive(Clone)]
+pub struct QueryInput<'a> {
+    pub sql: String,
+    pub bindings: Option<&'a RawValue>,
+    pub describe_only: Option<bool>,
+}
+
 pub fn user_agent(client_info: &ClientInfo) -> String {
     format!(
         "{}/{} ({}) CPython/3.11.6",
@@ -466,12 +473,11 @@ pub async fn refresh_session(
     })
 }
 
-#[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
-pub async fn snowflake_query(
+#[tracing::instrument(skip(query_parameters, session_token, query_input), fields(sql))]
+pub async fn snowflake_query<'a>(
     query_parameters: QueryParameters,
     session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: QueryInput<'a>,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info)?;
@@ -480,8 +486,7 @@ pub async fn snowflake_query(
         &client,
         query_parameters,
         session_token,
-        sql,
-        parameter_bindings,
+        query_input,
         &policy,
         execution_mode,
     )
@@ -489,15 +494,14 @@ pub async fn snowflake_query(
 }
 
 #[tracing::instrument(
-    skip(client, query_parameters, session_token, parameter_bindings),
+    skip(client, query_parameters, session_token, query_input),
     fields(sql)
 )]
-pub async fn snowflake_query_with_client(
+pub async fn snowflake_query_with_client<'a>(
     client: &reqwest::Client,
     query_parameters: QueryParameters,
     session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
@@ -507,8 +511,7 @@ pub async fn snowflake_query_with_client(
             client,
             &query_parameters,
             session_token,
-            sql,
-            parameter_bindings,
+            query_input,
             retry_policy,
         )
         .await;
@@ -519,28 +522,25 @@ pub async fn snowflake_query_with_client(
         client,
         &query_parameters,
         &session_token,
-        sql,
-        parameter_bindings,
+        &query_input,
         retry_policy,
     )
     .await
 }
 
 /// Execute query in async mode with fallback to sync for error 612.
-async fn execute_async_with_fallback(
+async fn execute_async_with_fallback<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     match snowflake_query_async_style(
         client,
         query_parameters,
         session_token.clone(),
-        sql.clone(),
-        parameter_bindings,
+        &query_input,
         retry_policy,
     )
     .await
@@ -567,7 +567,7 @@ async fn execute_async_with_fallback(
             },
         ) => {
             tracing::error!(
-                sql_prefix = sql.chars().take(50).collect::<String>(),
+                sql_prefix = query_input.sql.chars().take(50).collect::<String>(),
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -580,8 +580,7 @@ async fn execute_async_with_fallback(
         client,
         query_parameters,
         &session_token,
-        sql,
-        parameter_bindings,
+        &query_input,
         retry_policy,
     )
     .await?;
@@ -613,17 +612,16 @@ async fn execute_async_with_fallback(
 /// On connection errors (network timeout, connection reset), the query is retried
 /// with the same `requestId` and `retry=true`. Snowflake uses requestId for
 /// idempotency - if the original query completed, the retry returns the existing result.
-async fn execute_sync_with_retry(
+async fn execute_sync_with_retry<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
-    let sql_prefix = sql.chars().take(50).collect::<String>();
+    let sql_prefix = query_input.sql.chars().take(50).collect::<String>();
 
     tracing::debug!(
         request_id = %request_id,
@@ -636,8 +634,7 @@ async fn execute_sync_with_retry(
         client,
         query_parameters,
         session_token,
-        &sql,
-        parameter_bindings,
+        query_input,
         request_id,
         false, // not a retry
     )
@@ -683,8 +680,7 @@ async fn execute_sync_with_retry(
             client,
             query_parameters,
             session_token,
-            &sql,
-            parameter_bindings,
+            query_input,
             request_id,
             true, // is retry
         )
@@ -724,17 +720,16 @@ async fn execute_sync_with_retry(
 }
 
 /// Execute a single sync query request.
-async fn execute_sync_query(
+async fn execute_sync_query<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
-    sql: &str,
-    parameter_bindings: Option<&RawValue>,
+    query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     is_retry: bool,
 ) -> Result<query_response::Response, RestError> {
     let query_request = query_request::Request {
-        sql_text: sql.to_owned(),
+        sql_text: query_input.sql.clone(),
         async_exec: false,
         sequence_id: 1,
         query_submission_time: SystemTime::now()
@@ -742,9 +737,9 @@ async fn execute_sync_query(
             .unwrap()
             .as_millis() as i64,
         is_internal: false,
-        describe_only: None,
+        describe_only: query_input.describe_only,
         parameters: None,
-        bindings: parameter_bindings,
+        bindings: query_input.bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
     };
@@ -803,15 +798,14 @@ async fn execute_sync_query(
 
 /// New blocking facade that uses the async engine under the hood.
 #[tracing::instrument(
-    skip(client, query_parameters, session_token, parameter_bindings),
+    skip(client, query_parameters, session_token, query_input),
     fields(sql)
 )]
-pub async fn snowflake_query_async_style(
+pub async fn snowflake_query_async_style<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
@@ -819,8 +813,7 @@ pub async fn snowflake_query_async_style(
         client,
         query_parameters,
         &session_token,
-        sql,
-        parameter_bindings,
+        query_input,
         request_id,
         retry_policy,
     )

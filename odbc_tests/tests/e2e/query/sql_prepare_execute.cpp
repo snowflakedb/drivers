@@ -319,8 +319,6 @@ TEST_CASE("SQLExecute with bound parameters via SQLBindParameter.", "[query][pre
   //       SQLBindParameter to bind each parameter to an application variable."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#comments
 
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -349,8 +347,6 @@ TEST_CASE("SQLExecute with different parameter values on re-execution.", "[query
   // Doc: "The application can reuse the SQL statement by calling SQLExecute
   //       with new parameter values."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#comments
-
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
   Connection conn;
@@ -422,8 +418,6 @@ TEST_CASE("SQLExecute returns 24000 when cursor is not closed before re-execute 
 TEST_CASE("SQLExecDirectW basic flow.", "[query][prepare]") {
   // Doc: "SQLExecDirect submits an SQL statement for one-time execution."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function#summary
-
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
   Connection conn;

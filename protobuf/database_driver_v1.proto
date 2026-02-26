@@ -430,11 +430,17 @@ message StatementSetSubstraitPlanRequest {
 message StatementSetSubstraitPlanResponse {
 }
 
+message PrepareResult {
+  ArrowArrayStreamPtr stream = 1;
+  repeated ColumnMetadata columns = 4;
+}
+
 message StatementPrepareRequest {
   StatementHandle stmt_handle = 1;
 }
 
 message StatementPrepareResponse {
+  PrepareResult result = 1;
 }
 
 message StatementSetOptionStringRequest {

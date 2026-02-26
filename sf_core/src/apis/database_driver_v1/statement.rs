@@ -9,7 +9,7 @@ use crate::apis::database_driver_v1::query::process_query_response;
 use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
-    rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
+    rest::snowflake::{self, QueryExecutionMode, QueryInput, snowflake_query_with_client},
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -196,9 +196,17 @@ pub fn statement_set_sql_query(stmt_handle: Handle, query: String) -> Result<(),
     }
 }
 
-pub fn statement_prepare(_stmt_handle: Handle) -> Result<(), ApiError> {
-    // TODO: Implement statement preparation logic if required.
-    Ok(())
+pub struct PrepareResult {
+    pub stream: Box<FFI_ArrowArrayStream>,
+    pub columns: Vec<ColumnMetadata>,
+}
+
+pub fn statement_prepare(stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
+    let result = execute_query_internal(stmt_handle, None, Some(true))?;
+    Ok(PrepareResult {
+        stream: result.stream,
+        columns: result.columns,
+    })
 }
 
 fn with_statement<T>(
@@ -276,6 +284,14 @@ pub fn statement_execute_query<'a>(
     stmt_handle: Handle,
     bindings: Option<BindingType<'a>>,
 ) -> Result<ExecuteResult, ApiError> {
+    execute_query_internal(stmt_handle, bindings, None)
+}
+
+fn execute_query_internal<'a>(
+    stmt_handle: Handle,
+    bindings: Option<BindingType<'a>>,
+    describe_only: Option<bool>,
+) -> Result<ExecuteResult, ApiError> {
     let handle = stmt_handle;
     let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
         InvalidArgumentSnafu {
@@ -285,7 +301,7 @@ pub fn statement_execute_query<'a>(
     })?;
 
     let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-    let query_str = stmt.query.as_deref().ok_or_else(|| {
+    let query = stmt.query.as_deref().ok_or_else(|| {
         InvalidArgumentSnafu {
             argument: "Query not found".to_string(),
         }
@@ -308,8 +324,7 @@ pub fn statement_execute_query<'a>(
         )
     };
 
-    let execution_mode = stmt.execution_mode(Some(query_str));
-    let query = stmt.query.take().expect("query must be present");
+    let execution_mode = stmt.execution_mode(Some(query));
 
     // Get bindings from request or from statement's Arrow bindings.
     //
@@ -343,6 +358,12 @@ pub fn statement_execute_query<'a>(
         owned_bindings.as_deref()
     };
 
+    let query_input = QueryInput {
+        sql: query.to_string(),
+        bindings: query_bindings,
+        describe_only,
+    };
+
     let response = rt.block_on(async {
         let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
         let mut last_error = None;
@@ -352,8 +373,7 @@ pub fn statement_execute_query<'a>(
                 &http_client,
                 query_parameters.clone(),
                 session_token,
-                query.clone(),
-                query_bindings,
+                query_input.clone(),
                 &retry_policy,
                 execution_mode,
             )
@@ -370,7 +390,7 @@ pub fn statement_execute_query<'a>(
             .conn
             .lock()
             .map_err(|_| ConnectionLockingSnafu.build())?;
-        conn.update_session_params_cache(&query, response.data.parameters.as_ref());
+        conn.update_session_params_cache(query, response.data.parameters.as_ref());
     }
 
     let query_result = rt
@@ -409,15 +429,16 @@ pub fn statement_execute_query<'a>(
             .collect()
     });
 
-    stmt.state = StatementState::Executed;
-    Ok(ExecuteResult {
+    let result = ExecuteResult {
         stream: rowset_stream,
         rows_affected,
         query_id,
         columns,
         statement_type_id,
-        query,
-    })
+        query: query.to_string(),
+    };
+    stmt.state = StatementState::Executed;
+    Ok(result)
 }
 
 /// Convert Arrow RecordBatch parameter bindings to `Cow::Owned(Box<RawValue>)`.

@@ -493,7 +493,9 @@ pub struct ParameterBinding {
 
 pub enum StatementState {
     Created,
-    Prepared,
+    Prepared {
+        reader: ArrowArrayStreamReader,
+    },
     Executed {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
@@ -604,9 +606,6 @@ pub struct Statement<'a> {
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
     pub used_extended_fetch: bool,
-    /// Tracks whether a SQL statement has been prepared via `SQLPrepare`.
-    /// Used to guard `SQLExecute` (HY010) and preserved across cursor close.
-    pub is_prepared: bool,
 }
 
 // Helper functions for handle conversion

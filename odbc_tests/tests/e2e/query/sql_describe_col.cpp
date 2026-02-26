@@ -659,7 +659,6 @@ TEST_CASE("SQLDescribeCol succeeds when all output pointers are NULL.", "[query]
 // =============================================================================
 
 TEST_CASE("SQLDescribeCol returns metadata after SQLPrepare.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "An application typically calls SQLDescribeCol after a call to SQLPrepare
   //       and before or after the associated call to SQLExecute."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#comments

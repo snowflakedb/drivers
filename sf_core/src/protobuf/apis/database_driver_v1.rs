@@ -743,9 +743,14 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: StatementPrepareRequest,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-
-        statement_prepare(stmt_handle.into()).to_protobuf()?;
-        Ok(StatementPrepareResponse {})
+        let result = statement_prepare(stmt_handle.into()).to_protobuf()?;
+        let result_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
+        Ok(StatementPrepareResponse {
+            result: Some(PrepareResult {
+                stream: Some(result_ptr),
+                columns: result.columns,
+            }),
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_option_string", skip(input))]

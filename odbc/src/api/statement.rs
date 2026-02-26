@@ -1,9 +1,8 @@
 use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, NoMoreDataSnafu, NullPointerSnafu, Required,
-    StatementNotExecutedSnafu,
+    InvalidBufferLengthSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, NoMoreDataSnafu,
+    NullPointerSnafu, Required,
 };
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
@@ -15,9 +14,9 @@ use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, ConnectionGetParameterRequest, ConnectionHandle,
-    StatementBindRequest, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
-    StatementPrepareRequest, StatementSetSqlQueryRequest,
+    ArrowArrayPtr, ArrowArrayStreamPtr, ArrowSchemaPtr, ConnectionGetParameterRequest,
+    ConnectionHandle, StatementBindRequest, StatementExecuteQueryRequest,
+    StatementExecuteQueryResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
 };
 use snafu::ResultExt;
 use tracing;
@@ -194,17 +193,18 @@ pub fn prepare_w(
     prepare(statement_handle, &query)
 }
 
+fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowArrayStreamReader> {
+    let stream_ptr: *mut FFI_ArrowArrayStream = stream.into();
+    let stream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
+    let reader =
+        ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
+    Ok(reader)
+}
+
 /// Prepare a SQL statement
 pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
-
-    match stmt.state.as_ref() {
-        StatementState::Executed { .. } | StatementState::Fetching { .. } => {
-            return InvalidCursorStateSnafu.fail();
-        }
-        _ => {}
-    }
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
@@ -218,57 +218,16 @@ pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
                 query: query.to_string(),
             })?;
 
-            let prepare_result = DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
-                stmt_handle: Some(stmt.stmt_handle),
-            });
+            let prepare_result =
+                DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
+                    stmt_handle: Some(stmt.stmt_handle),
+                })?;
 
-            match prepare_result {
-                Ok(_) => {
-                    let execute_result = DatabaseDriverClient::statement_execute_query(
-                        StatementExecuteQueryRequest {
-                            stmt_handle: Some(stmt.stmt_handle),
-                            bindings: None,
-                        },
-                    );
-
-                    match execute_result {
-                        Ok(response) => {
-                            let execute_state = create_execute_state(response)?;
-                            let prepared_state = match execute_state {
-                                StatementState::Executed { reader, .. } => {
-                                    StatementState::Prepared { reader }
-                                }
-                                other => other,
-                            };
-
-                            stmt.state = prepared_state.into();
-                            stmt.ird.desc_count = match stmt.state.as_ref() {
-                                StatementState::Prepared { reader } => {
-                                    reader.schema().fields().len() as sql::SmallInt
-                                }
-                                _ => 0,
-                            };
-                        }
-                        Err(e) => {
-                            tracing::info!(
-                                "prepare: statement_execute_query failed (parameterized DML?), \
-                                 deferring execution: {e:?}"
-                            );
-                            stmt.state = StatementState::Created.into();
-                            stmt.ird.desc_count = 0;
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::info!(
-                        "prepare: statement_prepare failed (DDL?), deferring execution: {e:?}"
-                    );
-                    stmt.state = StatementState::Created.into();
-                    stmt.ird.desc_count = 0;
-                }
-            }
-
-            stmt.is_prepared = true;
+            let result = prepare_result.result.required("Result is required")?;
+            let stream_ptr = result.stream.required("Stream is required")?;
+            let reader = reader_from_protobuf_stream(stream_ptr)?;
+            stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
+            stmt.state.set(StatementState::Prepared { reader });
             tracing::info!("prepare: Successfully prepared statement");
             Ok(())
         }
@@ -283,17 +242,6 @@ pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
-
-    if !stmt.is_prepared {
-        return StatementNotExecutedSnafu.fail();
-    }
-
-    match stmt.state.as_ref() {
-        StatementState::Executed { .. } | StatementState::Fetching { .. } => {
-            return InvalidCursorStateSnafu.fail();
-        }
-        _ => {}
-    }
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
@@ -382,11 +330,8 @@ fn has_result_set(statement_type_id: i64) -> bool {
 fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {
     tracing::debug!("create_execute_state: response={:?}", response);
     let result = response.result.required("Execute result is required")?;
-    let stream_ptr: *mut FFI_ArrowArrayStream =
-        result.stream.required("Stream is required")?.into();
-    let stream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
-    let reader =
-        ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
+    let stream = result.stream.required("Stream is required")?;
+    let reader = reader_from_protobuf_stream(stream)?;
     let rows_affected = result.rows_affected;
     if let Some(statement_type_id) = result.statement_type_id
         && has_result_set(statement_type_id)
