@@ -19,6 +19,11 @@ use tracing;
 
 const SQL_AUTOCOMMIT_ON: sql::ULen = 1;
 
+/// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
+/// Used as the Okta SAML retry budget when neither the connection string nor
+/// SQLSetConnectAttr provides a value.
+const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
+
 /// Parse connection string into key-value pairs
 fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
@@ -311,7 +316,7 @@ pub fn driver_connect(
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "authentication_timeout".to_owned(),
-            value: "300".to_owned(),
+            value: DEFAULT_LOGIN_TIMEOUT_SECS.to_owned(),
         })?;
     }
 
@@ -548,11 +553,18 @@ pub fn get_connect_attr(
             Ok(())
         }
         ConnectionAttribute::LoginTimeout => {
-            let timeout: sql::ULen = connection
-                .pre_connection_attrs
-                .get(&attr)
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
+            let timeout: sql::ULen = match connection.pre_connection_attrs.get(&attr) {
+                Some(s) => s.parse().unwrap_or_else(|_| {
+                    tracing::warn!(
+                        "get_connect_attr: LoginTimeout value {:?} is not a valid integer, \
+                         returning default {}",
+                        s,
+                        DEFAULT_LOGIN_TIMEOUT_SECS,
+                    );
+                    DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap()
+                }),
+                None => 0,
+            };
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::ULen) = timeout;
