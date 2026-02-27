@@ -148,7 +148,10 @@ impl std::fmt::Debug for NativeOktaConfig {
             .field("password", &Redacted)
             .field("okta_url", &self.okta_url)
             .field("disable_saml_url_check", &self.disable_saml_url_check)
-            .field("authentication_timeout_secs", &self.authentication_timeout_secs)
+            .field(
+                "authentication_timeout_secs",
+                &self.authentication_timeout_secs,
+            )
             .finish()
     }
 }
@@ -179,10 +182,7 @@ impl std::fmt::Debug for LoginMethod {
                 .field("username", username)
                 .field("password", &Redacted)
                 .finish(),
-            LoginMethod::NativeOkta(config) => f
-                .debug_tuple("NativeOkta")
-                .field(config)
-                .finish(),
+            LoginMethod::NativeOkta(config) => f.debug_tuple("NativeOkta").field(config).finish(),
             LoginMethod::PrivateKey {
                 username,
                 passphrase,

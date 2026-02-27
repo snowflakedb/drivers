@@ -55,7 +55,10 @@ pub fn driver_connect(
                 let v = if REDACTED_KEYS.contains(&k.to_uppercase().as_str()) {
                     "****"
                 } else {
-                    connection_string_map.get(k).map(|s| s.as_str()).unwrap_or("")
+                    connection_string_map
+                        .get(k)
+                        .map(|s| s.as_str())
+                        .unwrap_or("")
                 };
                 (k, v)
             })
