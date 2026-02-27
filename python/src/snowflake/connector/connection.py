@@ -78,16 +78,18 @@ class Connection:
         # Extract session_parameters before processing other kwargs
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
+        # TODO: _session_parameters should be read from sf_core instead of being tracked locally
+        self._session_parameters: dict[str, Any] = {}
+
         # Pop autocommit before the type-dispatch loop (bool is a subclass of int)
-        self._autocommit: bool = False
         autocommit = kwargs.pop("autocommit", None)
         if autocommit is not None:
             if not isinstance(autocommit, bool):
                 raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
-            self._autocommit = autocommit
+            self._session_parameters["AUTOCOMMIT"] = autocommit
             if session_params is None:
                 session_params = {}
-            session_params["AUTOCOMMIT"] = str(self._autocommit).lower()
+            session_params["AUTOCOMMIT"] = str(autocommit).lower()
 
         # Pre-process private_key if present - normalize for Rust core
         if "private_key" in kwargs:
@@ -222,15 +224,27 @@ class Connection:
         """
         raise NotSupportedError("ping is not implemented")
 
+    @property
+    def _autocommit(self) -> bool:
+        return bool(self._session_parameters.get("AUTOCOMMIT", False))
+
+    @_autocommit.setter
+    def _autocommit(self, value: bool) -> None:
+        self._session_parameters["AUTOCOMMIT"] = value
+
     def set_autocommit(self, autocommit: bool) -> None:
         """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
         if not isinstance(autocommit, bool):
             raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
         self._autocommit = autocommit
+        cur = self.cursor()
         try:
-            self.cursor().execute(f"ALTER SESSION SET autocommit={str(autocommit).lower()}")
+            cur.execute(f"ALTER SESSION SET autocommit={str(autocommit).lower()}")
+        # TODO: Narrow exception handling once proper error propagation is implemented
         except Error as e:
             logger.warning("Autocommit feature is not enabled for this connection. Ignored: %s", e)
+        finally:
+            cur.close()
 
     def get_autocommit(self) -> bool:
         """

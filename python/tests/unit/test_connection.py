@@ -137,6 +137,16 @@ class TestSetAutocommit:
         connection.set_autocommit(True)
 
         assert connection._autocommit is True
+        mock_cursor.close.assert_called_once()
+
+    def test_set_autocommit_closes_cursor(self, connection):
+        """set_autocommit should always close the cursor, even on success."""
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.set_autocommit(True)
+
+        mock_cursor.close.assert_called_once()
 
 
 class TestGetAutocommit:
@@ -154,6 +164,12 @@ class TestGetAutocommit:
 
         connection.set_autocommit(False)
         assert connection.get_autocommit() is False
+
+    def test_get_autocommit_reads_from_session_parameters(self, connection):
+        """get_autocommit should read from _session_parameters."""
+        assert connection.get_autocommit() is False
+        connection._session_parameters["AUTOCOMMIT"] = True
+        assert connection.get_autocommit() is True
 
 
 class TestAutocommitKwargUnit:
