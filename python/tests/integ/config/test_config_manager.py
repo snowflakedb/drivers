@@ -98,7 +98,7 @@ my_option = "file_value"
         option = ConfigOption(
             name="my_option",
             _root_manager=root_manager,
-            _nest_path=["section"],
+            _nest_path=["test_root", "section"],
             default="default_value",
         )
 
@@ -126,8 +126,9 @@ mykey = "file_value"
         option = ConfigOption(
             name="mykey",
             _root_manager=root_manager,
-            _nest_path=["section"],
+            _nest_path=["test_root", "section"],
             default="default_value",
+            env_name=False,
         )
 
         # Then The file value should be returned (env overrides are not applied)

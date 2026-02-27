@@ -196,7 +196,7 @@ class ConfigOption:
                     "environmental variable?"
                 ) from err
 
-        return _dict_to_tomlkit_container(current)
+        return _dict_to_tomlkit_container(current) if isinstance(current, dict) else current
 
 
 class ConfigManager:
@@ -283,7 +283,7 @@ class ConfigManager:
         """Get cached config, loading from sf_core if cache is empty."""
         if self.conf_file_cache is None:
             if self.file_path is None:
-                raise ConfigManagerError(f"Root manager '{self.name}' is missing file_path")
+                return {}
             self.read_config()
         return self.conf_file_cache or {}
 

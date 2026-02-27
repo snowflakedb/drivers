@@ -466,8 +466,8 @@ class TestsBackwardCompatibilityForConfigManager:
         )
         tp.add_option(name="option")
         with pytest.raises(
-            ConfigManagerError,
-            match="Root manager 'test_parser' is missing file_path",
+            MissingConfigOptionError,
+            match="Configuration option 'option' is not defined anywhere",
         ):
             tp["option"]
 
