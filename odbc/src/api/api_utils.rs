@@ -2,7 +2,8 @@ use std::cmp::min;
 
 use crate::api::OdbcResult;
 use crate::api::error::{
-    TextConversionFromUtf8Snafu, TextConversionFromUtf16Snafu, TextConversionUtf8Snafu,
+    InvalidBufferLengthSnafu, NullPointerSnafu, TextConversionFromUtf8Snafu,
+    TextConversionFromUtf16Snafu, TextConversionUtf8Snafu,
 };
 use odbc_sys as sql;
 use snafu::ResultExt;
@@ -20,6 +21,15 @@ pub fn cstr_to_string(text: *const sql::Char, length: sql::Integer) -> OdbcResul
 }
 
 pub fn utf16_to_string(text: *const sql::WChar, length: sql::Integer) -> OdbcResult<String> {
+    if text.is_null() {
+        return NullPointerSnafu.fail();
+    }
+    if length != sql::NTS as i32 && length <= 0 {
+        return InvalidBufferLengthSnafu {
+            length: length as i64,
+        }
+        .fail();
+    }
     if length == sql::NTS as i32 {
         let result =
             unsafe { std::ffi::CStr::from_ptr(text as *const std::os::raw::c_char).to_str() };

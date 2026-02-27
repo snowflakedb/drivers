@@ -251,12 +251,8 @@ pub unsafe fn statement_bind(
     })?;
     let record_batch = RecordBatch::from(StructArray::from(array));
     with_statement(stmt_handle, |mut stmt| {
-        stmt.bind_parameters(record_batch).map_err(|_| {
-            InvalidArgumentSnafu {
-                argument: "Failed to bind parameters".to_string(),
-            }
-            .build()
-        })
+        stmt.bind_parameters(record_batch);
+        Ok(())
     })
 }
 
@@ -536,19 +532,8 @@ impl Statement {
         }
     }
 
-    pub fn bind_parameters(&mut self, record_batch: RecordBatch) -> Result<(), StatementError> {
-        match self.state {
-            StatementState::Initialized => {
-                self.parameter_bindings = Some(record_batch);
-            }
-            _ => {
-                InvalidStateTransitionSnafu {
-                    msg: format!("Cannot bind parameters in state={:?}", self.state),
-                }
-                .fail()?;
-            }
-        }
-        Ok(())
+    pub fn bind_parameters(&mut self, record_batch: RecordBatch) {
+        self.parameter_bindings = Some(record_batch);
     }
 
     pub fn get_query_parameter_bindings(&self) -> Result<Option<Box<RawValue>>, StatementError> {

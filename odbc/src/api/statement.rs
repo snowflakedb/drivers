@@ -1,8 +1,8 @@
 use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
-    InvalidBufferLengthSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, NoMoreDataSnafu,
-    NullPointerSnafu, Required,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
+    InvalidParameterNumberSnafu, NoMoreDataSnafu, Required,
 };
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
@@ -150,22 +150,7 @@ pub fn prepare_n(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
-    if statement_handle.is_null() {
-        return InvalidHandleSnafu.fail();
-    }
-    if statement_text.is_null() {
-        return NullPointerSnafu.fail();
-    }
-    if text_length != sql::NTS as i32 && text_length <= 0 {
-        return InvalidBufferLengthSnafu {
-            length: text_length as i64,
-        }
-        .fail();
-    }
     let query = cstr_to_string(statement_text, text_length)?;
-    if query.is_empty() {
-        return InvalidBufferLengthSnafu { length: 0i64 }.fail();
-    }
     prepare(statement_handle, &query)
 }
 
@@ -174,22 +159,7 @@ pub fn prepare_w(
     statement_text: *const sql::WChar,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
-    if statement_handle.is_null() {
-        return InvalidHandleSnafu.fail();
-    }
-    if statement_text.is_null() {
-        return NullPointerSnafu.fail();
-    }
-    if text_length != sql::NTS as i32 && text_length <= 0 {
-        return InvalidBufferLengthSnafu {
-            length: text_length as i64,
-        }
-        .fail();
-    }
     let query = utf16_to_string(statement_text, text_length)?;
-    if query.is_empty() {
-        return InvalidBufferLengthSnafu { length: 0i64 }.fail();
-    }
     prepare(statement_handle, &query)
 }
 
@@ -203,8 +173,22 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
 
 /// Prepare a SQL statement
 pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
+    if query.is_empty() {
+        return InvalidBufferLengthSnafu { length: 0i64 }.fail();
+    }
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
+
+    if matches!(
+        stmt.state.as_ref(),
+        StatementState::Executed { .. } | StatementState::Fetching { .. } | StatementState::Done
+    ) {
+        tracing::error!("prepare: cursor is already open");
+        return InvalidCursorStateSnafu.fail();
+    }
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
@@ -243,6 +227,14 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
 
+    if matches!(
+        stmt.state.as_ref(),
+        StatementState::Executed { .. } | StatementState::Fetching { .. } | StatementState::Done
+    ) {
+        tracing::error!("execute: cursor is already open");
+        return InvalidCursorStateSnafu.fail();
+    }
+
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -277,20 +269,14 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
+
+            let statement_type_id = response.result.as_ref().and_then(|r| r.statement_type_id);
+            let rows_affected = response.result.as_ref().and_then(|r| r.rows_affected);
+
             let execute_state = create_execute_state(response)?;
 
             // DML that affected 0 rows returns SQL_NO_DATA per ODBC spec.
-            // DML results have no result-set columns (empty schema), while
-            // SELECT results always have columns.
-            let is_dml_no_data = matches!(
-                &execute_state,
-                StatementState::Executed {
-                    rows_affected: Some(0),
-                    reader
-                } if reader.schema().fields().is_empty()
-            );
-
-            if is_dml_no_data {
+            if is_dml_statement_type(statement_type_id) && Some(0) == rows_affected {
                 stmt.state = StatementState::NoResultSet.into();
                 stmt.ird.desc_count = 0;
                 return NoMoreDataSnafu.fail();
@@ -321,6 +307,10 @@ fn is_ddl_statement(statement_type_id: i64) -> bool {
         return false;
     }
     (0x6000..0x7000).contains(&statement_type_id)
+}
+
+fn is_dml_statement_type(statement_type_id: Option<i64>) -> bool {
+    statement_type_id.is_some_and(|id| (0x3000..0x4000).contains(&id))
 }
 
 fn has_result_set(statement_type_id: i64) -> bool {
