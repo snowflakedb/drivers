@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs;
+use std::path::Path;
 
 use url::Url;
 
@@ -241,14 +241,20 @@ impl LoginMethod {
 
         // Otherwise, check for private_key_file
         if let Some(private_key_file) = settings.get_string("private_key_file") {
-            let private_key = fs::read_to_string(private_key_file.clone()).map_err(|e| {
-                InvalidParameterValueSnafu {
-                    parameter: "private_key_file",
-                    value: private_key_file,
-                    explanation: format!("Could not read private key file: {e}"),
-                }
-                .build()
-            })?;
+            use crate::secure_fs::{secure_read_to_string, ReadOptions, PermissionCheck};
+            let opts = ReadOptions {
+                max_size: 1_048_576,
+                check_permissions: PermissionCheck::Enforce,
+            };
+            let private_key =
+                secure_read_to_string(Path::new(&private_key_file), &opts).map_err(|e| {
+                    InvalidParameterValueSnafu {
+                        parameter: "private_key_file",
+                        value: private_key_file,
+                        explanation: format!("Could not read private key file: {e}"),
+                    }
+                    .build()
+                })?;
             return Ok(private_key);
         }
 

@@ -52,6 +52,14 @@ pub enum ConfigError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Secure filesystem error on {path}: {source}"))]
+    SecureFs {
+        path: String,
+        #[snafu(source(from(crate::secure_fs::SecureFsError, Box::new)))]
+        source: Box<crate::secure_fs::SecureFsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Connection '{name}' not found in config files"))]
     ConnectionNotFound {
         name: String,

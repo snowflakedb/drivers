@@ -266,6 +266,10 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         | ApiError::Configuration {
             source: ConfigError::ConfigDirNotFound { .. },
             ..
+        }
+        | ApiError::Configuration {
+            source: ConfigError::SecureFs { .. },
+            ..
         } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
@@ -312,6 +316,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         } => StatusCode::InternalError,
         ApiError::Configuration {
             source: ConfigError::ConfigDirNotFound { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::SecureFs { .. },
             ..
         } => StatusCode::InternalError,
         ApiError::Configuration {

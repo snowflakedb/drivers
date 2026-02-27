@@ -1,26 +1,52 @@
-use super::{ConfigError, ConfigFileReadSnafu, InsecurePermissionsSnafu, TomlParseSnafu};
+use super::{ConfigError, SecureFsSnafu, TomlParseSnafu};
+use crate::secure_fs::{
+    secure_check_permissions, secure_read_to_string, PermissionCheck, ReadOptions, SecureFsError,
+};
 use snafu::ResultExt;
 use std::env;
-use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
-/// Load a TOML file from disk and parse it
-pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
-    // Check if file exists
-    if !path.exists() {
-        // Return an empty table if file doesn't exist
-        return Ok(toml::Value::Table(toml::map::Map::new()));
+/// Resolve the permission check mode based on the environment variable.
+///
+/// When `SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE` is set, returns
+/// `Skip` (suppress all checks). Otherwise returns `Warn` to match the
+/// original behavior (writable-by-others is still a hard error inside
+/// `secure_fs`, but readable-by-others only emits a warning).
+fn config_permission_check() -> PermissionCheck {
+    if env::var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE").is_ok() {
+        PermissionCheck::Skip
+    } else {
+        PermissionCheck::Warn
     }
+}
 
-    // Check file permissions before reading
-    check_file_permissions(path)?;
+/// Load a TOML file from disk and parse it.
+///
+/// Returns an empty TOML table when the file does not exist (preserving
+/// backward-compatible behaviour for optional config/connections files).
+///
+/// Permission checks are delegated to `secure_fs`. Set the environment
+/// variable `SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE` to any
+/// value to suppress permission checks entirely.
+pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
+    let opts = ReadOptions {
+        max_size: 10 * 1024 * 1024, // 10 MiB
+        check_permissions: config_permission_check(),
+    };
 
-    // Read file contents
-    let contents = fs::read_to_string(path).context(ConfigFileReadSnafu {
-        path: path.display().to_string(),
-    })?;
+    let contents = match secure_read_to_string(path, &opts) {
+        Ok(c) => c,
+        Err(SecureFsError::Io { ref source, .. }) if source.kind() == ErrorKind::NotFound => {
+            return Ok(toml::Value::Table(toml::map::Map::new()));
+        }
+        Err(e) => {
+            return Err(e).context(SecureFsSnafu {
+                path: path.display().to_string(),
+            });
+        }
+    };
 
-    // Parse TOML
     let value = toml::from_str(&contents).context(TomlParseSnafu {
         path: path.display().to_string(),
     })?;
@@ -28,44 +54,20 @@ pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
     Ok(value)
 }
 
-/// Check file permissions for security (Unix only)
+/// Check file permissions for security (Unix only).
+///
+/// Opens the file and validates permission bits without reading content.
+/// Retained for backward compatibility with call sites outside this module.
 pub fn check_file_permissions(path: &Path) -> Result<(), ConfigError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let metadata = fs::metadata(path).context(ConfigFileReadSnafu {
-            path: path.display().to_string(),
-        })?;
-        let permissions = metadata.permissions();
-        let mode = permissions.mode();
-
-        // Error if writable by group or others (0o022)
-        if mode & 0o022 != 0 {
-            return InsecurePermissionsSnafu {
-                path: path.display().to_string(),
-                reason: "File is writable by group or others",
-            }
-            .fail();
-        }
-
-        // Warn if readable by group or others (0o044), unless skip env var is set
-        if mode & 0o044 != 0
-            && env::var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE").is_err()
-        {
-            eprintln!(
-                "Warning: Config file {} is readable by group or others",
-                path.display()
-            );
-        }
-    }
-
-    Ok(())
+    secure_check_permissions(path, config_permission_check()).context(SecureFsSnafu {
+        path: path.display().to_string(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]
@@ -148,7 +150,7 @@ number = 42
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Insecure file permissions")
+                .contains("Insecure permissions")
         );
     }
 
@@ -168,8 +170,7 @@ number = 42
         // SAFETY: Test-only, not run in parallel.
         unsafe { env::set_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE", "1") };
 
-        // Should not print warning (we can't easily test stderr output,
-        // but at least verify it doesn't error)
+        // Should not error because permission check is skipped
         let result = check_file_permissions(&file_path);
         assert!(result.is_ok());
 

@@ -33,3 +33,6 @@ python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.pyi
 python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_services.py
 
 .DS_Store
+
+# AI
+.claude/plans/

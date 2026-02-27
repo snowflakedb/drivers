@@ -20,5 +20,6 @@ pub mod protobuf_apis;
 pub mod protobuf_gen;
 pub mod query_types;
 pub mod rest;
+pub mod secure_fs;
 pub mod tls;
 pub mod token_cache;
