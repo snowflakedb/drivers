@@ -563,7 +563,9 @@ pub fn get_connect_attr(
                     );
                     DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap()
                 }),
-                None => 0,
+                None => DEFAULT_LOGIN_TIMEOUT_SECS
+                    .parse()
+                    .unwrap(),
             };
             if !value_ptr.is_null() {
                 unsafe {
