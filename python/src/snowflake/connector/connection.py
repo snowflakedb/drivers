@@ -82,7 +82,9 @@ class Connection:
         self._autocommit: bool = False
         autocommit = kwargs.pop("autocommit", None)
         if autocommit is not None:
-            self._autocommit = bool(autocommit)
+            if not isinstance(autocommit, bool):
+                raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
+            self._autocommit = autocommit
             if session_params is None:
                 session_params = {}
             session_params["AUTOCOMMIT"] = str(self._autocommit).lower()
