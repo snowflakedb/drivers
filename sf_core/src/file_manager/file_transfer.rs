@@ -35,8 +35,9 @@ pub async fn upload_to_s3_or_skip(
 }
 
 /// Returns true if the file exists in S3, false if it does not.
-/// When the check cannot be performed (e.g. 403 Forbidden due to limited
-/// temporary credentials), returns false so the caller proceeds with upload.
+/// When the check cannot be performed due to 403 Forbidden (limited
+/// temporary credentials that allow PUT but not HEAD), returns false
+/// so the caller proceeds with upload.
 async fn check_if_file_exists(
     s3_client: &S3Client,
     stage_info: &StageInfo,
@@ -51,13 +52,13 @@ async fn check_if_file_exists(
     {
         Ok(_) => Ok(true),
         Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(e) => {
+        Err(SdkError::ServiceError(ref err)) if err.raw().status().as_u16() == 403 => {
             tracing::warn!(
-                "Unable to check if file exists in S3 ({}), proceeding with upload",
-                e
+                "Access denied when checking if file exists in S3 ({s3_key}), proceeding with upload"
             );
             Ok(false)
         }
+        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(S3HeadSnafu),
     }
 }
 
@@ -179,7 +180,8 @@ async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -
 
     let mut s3_config = aws_sdk_s3::config::Builder::from(&config);
     if let Some(end_point) = &stage_info.end_point {
-        let endpoint_url = if end_point.starts_with("https://") {
+        let endpoint_url = if end_point.starts_with("https://") || end_point.starts_with("http://")
+        {
             end_point.clone()
         } else {
             format!("https://{end_point}")
@@ -195,6 +197,13 @@ async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -
 pub enum UploadFileError {
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
+        #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
+        source: Box<aws_sdk_s3::Error>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to check if file exists in S3"))]
+    S3Head {
         #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
         source: Box<aws_sdk_s3::Error>,
         #[snafu(implicit)]
