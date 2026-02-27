@@ -76,10 +76,10 @@ class TestSetAutocommitValidation:
 
     def test_set_autocommit_rejects_non_bool(self, connection):
         """set_autocommit should raise ProgrammingError for non-bool input."""
-        with pytest.raises(ProgrammingError, match="Invalid parameter"):
+        with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
             connection.set_autocommit("yes")
 
-        with pytest.raises(ProgrammingError, match="Invalid parameter"):
+        with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
             connection.set_autocommit(1)
 
     def test_init_autocommit_kwarg_rejects_non_bool(self, mock_db_api):
@@ -133,18 +133,16 @@ class TestAutocommitKwargUnit:
 class TestContextManagerUnit:
     """Unit tests for __exit__ behavior."""
 
-    def test_exit_skips_commit_when_autocommit_on(self, connection, mock_db_api):
+    def test_exit_skips_commit_when_autocommit_on(self, connection):
         """When autocommit is on, __exit__ should not execute COMMIT or ROLLBACK."""
         connection._autocommit = True
-        mock_db_api.reset_mock()
+        connection.commit = MagicMock()
+        connection.rollback = MagicMock()
 
         connection.__exit__(None, None, None)
 
-        # No statement_execute calls for COMMIT/ROLLBACK
-        for call in mock_db_api.method_calls:
-            if "statement_execute" in str(call):
-                assert "COMMIT" not in str(call)
-                assert "ROLLBACK" not in str(call)
+        connection.commit.assert_not_called()
+        connection.rollback.assert_not_called()
 
     def test_exit_always_closes(self, connection):
         """close() should be called even if commit raises an exception."""
@@ -159,3 +157,16 @@ class TestContextManagerUnit:
             connection.__exit__(None, None, None)
 
         assert connection._closed is True
+
+    def test_exit_rollback_failure_does_not_mask_original_exception(self, connection):
+        """If rollback fails during exception handling, the original exception should propagate."""
+        connection._autocommit = False
+
+        def failing_rollback():
+            raise RuntimeError("rollback failed")
+
+        connection.rollback = failing_rollback
+
+        exc = ValueError("original error")
+        with pytest.raises(ValueError, match="original error"):
+            connection.__exit__(type(exc), exc, exc.__traceback__)

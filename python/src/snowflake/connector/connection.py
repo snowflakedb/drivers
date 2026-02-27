@@ -145,12 +145,20 @@ class Connection:
     @pep249
     def commit(self) -> None:
         """Commit any pending transaction to the database."""
-        self.cursor().execute("COMMIT")
+        cur = self.cursor()
+        try:
+            cur.execute("COMMIT")
+        finally:
+            cur.close()
 
     @pep249
     def rollback(self) -> None:
         """Roll back to the start of any pending transaction."""
-        self.cursor().execute("ROLLBACK")
+        cur = self.cursor()
+        try:
+            cur.execute("ROLLBACK")
+        finally:
+            cur.close()
 
     @pep249
     def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
@@ -185,7 +193,10 @@ class Connection:
                 if exc_type is None:
                     self.commit()
                 else:
-                    self.rollback()
+                    try:
+                        self.rollback()
+                    except Exception:
+                        logger.warning("Rollback failed during exception handling", exc_info=True)
         finally:
             self.close()
 
@@ -214,12 +225,12 @@ class Connection:
     def set_autocommit(self, autocommit: bool) -> None:
         """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
         if not isinstance(autocommit, bool):
-            raise ProgrammingError(f"Invalid parameter: {autocommit}")
+            raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
         self._autocommit = autocommit
         try:
-            self.cursor().execute(f"ALTER SESSION SET autocommit={autocommit}")
+            self.cursor().execute(f"ALTER SESSION SET autocommit={str(autocommit).lower()}")
         except Error as e:
-            logger.debug("Autocommit feature is not enabled for this connection. Ignored: %s", e)
+            logger.warning("Autocommit feature is not enabled for this connection. Ignored: %s", e)
 
     def get_autocommit(self) -> bool:
         """
