@@ -502,7 +502,7 @@ mod tests {
         }
     }
 
-    fn okta_settings(extras: Vec<(&str, Setting)>) -> HashMap<String, Setting> {
+    fn okta_config(extras: Vec<(&str, Setting)>) -> NativeOktaConfig {
         let mut base = vec![
             ("user", Setting::String("okta_user".to_string())),
             ("password", Setting::String("okta_pass".to_string())),
@@ -514,82 +514,53 @@ mod tests {
             ),
         ];
         base.extend(extras);
-        create_test_settings(base)
+        let settings = create_test_settings(base);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::NativeOkta(cfg) => cfg,
+            other => panic!("Expected NativeOkta, got {other:?}"),
+        }
     }
 
     #[test]
     fn test_native_okta_uses_default_authentication_timeout() {
-        let settings = okta_settings(vec![]);
-        let method = LoginMethod::from_settings(&settings).unwrap();
-        match method {
-            LoginMethod::NativeOkta(cfg) => {
-                assert_eq!(
-                    cfg.authentication_timeout_secs,
-                    DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
-                );
-            }
-            _ => panic!("Expected NativeOkta login method"),
-        }
+        let cfg = okta_config(vec![]);
+        assert_eq!(cfg.authentication_timeout_secs, DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
     }
 
     #[test]
     fn test_native_okta_custom_authentication_timeout() {
-        let settings = okta_settings(vec![(
+        let cfg = okta_config(vec![(
             "authentication_timeout",
             Setting::String("60".to_string()),
         )]);
-        let method = LoginMethod::from_settings(&settings).unwrap();
-        match method {
-            LoginMethod::NativeOkta(cfg) => {
-                assert_eq!(cfg.authentication_timeout_secs, 60);
-            }
-            _ => panic!("Expected NativeOkta login method"),
-        }
+        assert_eq!(cfg.authentication_timeout_secs, 60);
     }
 
     #[test]
     fn test_native_okta_invalid_authentication_timeout_uses_default() {
-        let settings = okta_settings(vec![(
+        let cfg = okta_config(vec![(
             "authentication_timeout",
             Setting::String("not_a_number".to_string()),
         )]);
-        let method = LoginMethod::from_settings(&settings).unwrap();
-        match method {
-            LoginMethod::NativeOkta(cfg) => {
-                assert_eq!(
-                    cfg.authentication_timeout_secs,
-                    DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
-                    "Invalid timeout should fall back to the default"
-                );
-            }
-            _ => panic!("Expected NativeOkta login method"),
-        }
+        assert_eq!(
+            cfg.authentication_timeout_secs,
+            DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
+            "Invalid timeout should fall back to the default"
+        );
     }
 
     #[test]
     fn test_native_okta_disable_saml_url_check_defaults_to_false() {
-        let settings = okta_settings(vec![]);
-        let method = LoginMethod::from_settings(&settings).unwrap();
-        match method {
-            LoginMethod::NativeOkta(cfg) => {
-                assert!(!cfg.disable_saml_url_check);
-            }
-            _ => panic!("Expected NativeOkta login method"),
-        }
+        let cfg = okta_config(vec![]);
+        assert!(!cfg.disable_saml_url_check);
     }
 
     #[test]
     fn test_native_okta_disable_saml_url_check_true() {
-        let settings = okta_settings(vec![(
+        let cfg = okta_config(vec![(
             "disable_saml_url_check",
             Setting::String("true".to_string()),
         )]);
-        let method = LoginMethod::from_settings(&settings).unwrap();
-        match method {
-            LoginMethod::NativeOkta(cfg) => {
-                assert!(cfg.disable_saml_url_check);
-            }
-            _ => panic!("Expected NativeOkta login method"),
-        }
+        assert!(cfg.disable_saml_url_check);
     }
 }
