@@ -103,12 +103,7 @@ my_option = "file_value"
         )
 
         # Then The file value should be returned
-        if NEW_DRIVER_ONLY("BD#6"):
-            # New driver reads from SNOWFLAKE_HOME via sf_core
-            assert option.value() == "file_value"
-        else:
-            # Old driver has different section path handling, falls back to default
-            assert option.value() == "default_value"
+        assert option.value() == "file_value"
 
     def test_config_value_from_file_no_env_override(self, config_env):
         """Test that SNOWFLAKE_<SECTION>_<KEY> env vars do NOT override config values."""
@@ -132,11 +127,7 @@ mykey = "file_value"
         )
 
         # Then The file value should be returned (env overrides are not applied)
-        if NEW_DRIVER_ONLY("BD#7"):
-            assert option.value() == "file_value"
-        else:
-            # Old driver has different section path handling, falls back to default
-            assert option.value() == "default_value"
+        assert option.value() == "file_value"
 
     def test_custom_env_name(self, config_env):
         """Test that custom environment variable names work."""
@@ -543,10 +534,14 @@ account = "my_account"
         # When ConfigManager reads with a connections slice
         manager = _make_manager(config_file, connections_file)
 
-        # Then config.toml connections should be preserved
         connections = manager["connections"]
-        assert "myconn" in connections
-        assert connections["myconn"]["account"] == "my_account"
+        if NEW_DRIVER_ONLY("BD#13"):
+            # Then config.toml connections should be preserved (new driver)
+            assert "myconn" in connections
+            assert connections["myconn"]["account"] == "my_account"
+        else:
+            # Old driver replaces config.toml connections with empty connections.toml content
+            assert connections == {}
 
     def test_nonexistent_connections_toml_preserves_config_connections(self, tmp_path):
         """When connections.toml doesn't exist, config.toml connections are kept."""
@@ -776,6 +771,7 @@ database = "test_db"
         except ImportError:
             pytest.skip("tomlkit not available")
 
+    @pytest.mark.skip_reference(reason="Old driver ConfigManager has no clear_cache method")
     def test_reread_consistency(self, tmp_path):
         """Re-reading config after clear_cache returns the same result."""
         # Given A config.toml with connections

@@ -17,23 +17,6 @@ behavior_differences:
       NEW driver: `private_key_password`
       OLD driver: `private_key_file_pwd`
 
-  6:
-    name: "ConfigManager section path handling differs"
-    description: |
-      NEW driver: Reads config files via sf_core; correctly resolves nested section paths
-      like [section] my_option when _nest_path is used.
-      OLD driver: Has different section path resolution that may fall back to default values.
-      Note: This looks like a fix of behavior in old driver.
-
-  7:
-    name: "ConfigManager does not support SNOWFLAKE_<SECTION>_<KEY> environment variable overrides"
-    description: |
-      NEW driver: Does not apply SNOWFLAKE_<SECTION>_<KEY> env var overrides to config values.
-      The default env name is derived from _nest_path (excluding the root manager name),
-      e.g. SNOWFLAKE_MYKEY, not SNOWFLAKE_SECTION_MYKEY.
-      OLD driver: Does not support this pattern either; uses only custom env_name if specified.
-      Note: This looks like a fix of behavior in old driver.
-
   11:
     name: "CONFIG_PARSER deprecated alias removed"
     description: |
@@ -45,3 +28,15 @@ behavior_differences:
     description: |
       NEW driver: add_subparser() and _sub_parsers are removed; accessing them raises AttributeError.
       OLD driver: add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.
+
+  13:
+    name: "Empty connections.toml preserves config.toml connections"
+    description: |
+      NEW driver: When connections.toml exists but is empty, connections from config.toml are preserved.
+      OLD driver: When connections.toml exists but is empty, it replaces config.toml connections with an empty set.
+
+  14:
+    name: "ConfigManager without file_path returns MissingConfigOptionError on option retrieval"
+    description: |
+      NEW driver: Retrieving an option from a ConfigManager with no file_path returns an empty config and raises MissingConfigOptionError.
+      OLD driver: Retrieving an option from a ConfigManager with no file_path raises ConfigManagerError about missing file_path.

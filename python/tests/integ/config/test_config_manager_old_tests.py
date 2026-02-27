@@ -26,6 +26,7 @@ from snowflake.connector.errors import (
     ConfigSourceError,
     MissingConfigOptionError,
 )
+from tests.compatibility import NEW_DRIVER_ONLY
 
 
 @pytest.fixture
@@ -465,11 +466,18 @@ class TestsBackwardCompatibilityForConfigManager:
             name="test_parser",
         )
         tp.add_option(name="option")
-        with pytest.raises(
-            MissingConfigOptionError,
-            match="Configuration option 'option' is not defined anywhere",
-        ):
-            tp["option"]
+        if NEW_DRIVER_ONLY("BD#14"):
+            with pytest.raises(
+                MissingConfigOptionError,
+                match="Configuration option 'option' is not defined anywhere",
+            ):
+                tp["option"]
+        else:
+            with pytest.raises(
+                ConfigManagerError,
+                match="missing file_path",
+            ):
+                tp["option"]
 
     def test_configoption_missing_root_manager(self):
         with pytest.raises(
