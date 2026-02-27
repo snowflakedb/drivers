@@ -19,6 +19,7 @@ pub mod logging;
 pub mod protobuf_apis;
 pub mod protobuf_gen;
 pub mod query_types;
+pub(crate) mod redact;
 pub mod rest;
 pub mod tls;
 pub mod token_cache;

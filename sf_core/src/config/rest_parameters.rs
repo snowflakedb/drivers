@@ -122,7 +122,6 @@ impl LoginParameters {
 
 pub const DEFAULT_AUTHENTICATION_TIMEOUT_SECS: u64 = 120;
 
-#[derive(Debug)]
 pub struct NativeOktaConfig {
     /// Snowflake user name (used in authenticator-request to Snowflake).
     pub username: String,
@@ -140,7 +139,20 @@ pub struct NativeOktaConfig {
     pub authentication_timeout_secs: u64,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for NativeOktaConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::redact::Redacted;
+        f.debug_struct("NativeOktaConfig")
+            .field("username", &self.username)
+            .field("okta_username", &self.okta_username)
+            .field("password", &Redacted)
+            .field("okta_url", &self.okta_url)
+            .field("disable_saml_url_check", &self.disable_saml_url_check)
+            .field("authentication_timeout_secs", &self.authentication_timeout_secs)
+            .finish()
+    }
+}
+
 pub enum LoginMethod {
     Password {
         username: String,
@@ -156,6 +168,38 @@ pub enum LoginMethod {
         username: String,
         token: String,
     },
+}
+
+impl std::fmt::Debug for LoginMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::redact::{Redacted, redact};
+        match self {
+            LoginMethod::Password { username, .. } => f
+                .debug_struct("Password")
+                .field("username", username)
+                .field("password", &Redacted)
+                .finish(),
+            LoginMethod::NativeOkta(config) => f
+                .debug_tuple("NativeOkta")
+                .field(config)
+                .finish(),
+            LoginMethod::PrivateKey {
+                username,
+                passphrase,
+                ..
+            } => f
+                .debug_struct("PrivateKey")
+                .field("username", username)
+                .field("private_key", &Redacted)
+                .field("passphrase", &redact(passphrase))
+                .finish(),
+            LoginMethod::Pat { username, .. } => f
+                .debug_struct("Pat")
+                .field("username", username)
+                .field("token", &Redacted)
+                .finish(),
+        }
+    }
 }
 
 impl LoginMethod {

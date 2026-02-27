@@ -34,7 +34,7 @@ pub struct AuthRequestClientEnvironment {
     pub python_compiler: Option<String>,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Serialize, Default)]
 pub struct AuthRequestData {
     #[serde(rename = "CLIENT_APP_ID")]
     pub client_app_id: String,
@@ -76,6 +76,23 @@ pub struct AuthRequestData {
     pub oauth_type: Option<String>,
     #[serde(rename = "PROVIDER", skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+}
+
+impl std::fmt::Debug for AuthRequestData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::redact::redact;
+        f.debug_struct("AuthRequestData")
+            .field("client_app_id", &self.client_app_id)
+            .field("account_name", &self.account_name)
+            .field("login_name", &self.login_name)
+            .field("password", &redact(&self.password))
+            .field("raw_saml_response", &redact(&self.raw_saml_response))
+            .field("passcode", &redact(&self.passcode))
+            .field("authenticator", &self.authenticator)
+            .field("token", &redact(&self.token))
+            .field("proof_key", &redact(&self.proof_key))
+            .finish()
+    }
 }
 
 #[derive(Debug, Serialize)]

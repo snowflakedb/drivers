@@ -233,8 +233,9 @@ pub async fn snowflake_login_with_client(
     };
 
     tracing::debug!(
-        "Login request: {}",
-        serde_json::to_string_pretty(&login_request).unwrap()
+        authenticator = ?login_request.data.authenticator,
+        login_name = ?login_request.data.login_name,
+        "Login request prepared (secrets redacted)"
     );
 
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
