@@ -2,8 +2,8 @@
 
 type Result<T> = std::result::Result<T, String>;
 use arrow_array::StringArray;
-use sf_core::protobuf_apis::RustTransport;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::apis::RustTransport;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 use std::fs;
 

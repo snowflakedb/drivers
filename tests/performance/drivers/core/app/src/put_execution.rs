@@ -2,7 +2,7 @@
 
 type Result<T> = std::result::Result<T, String>;
 use regex::Regex;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -13,7 +13,6 @@ use crate::results::{
     write_metadata_if_not_replay,
 };
 use crate::types::PutGetResult;
-use sf_core::protobuf_gen::database_driver_v1::ConnectionHandle;
 
 pub fn execute_put_get_test(
     conn_handle: ConnectionHandle,

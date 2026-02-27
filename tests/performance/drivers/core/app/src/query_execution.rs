@@ -1,7 +1,7 @@
 //! Query execution and performance measurement helpers
 
 type Result<T> = std::result::Result<T, String>;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use std::time::Instant;
 
 use crate::arrow::fetch_result_rows;
@@ -10,7 +10,6 @@ use crate::results::{
     current_unix_timestamp, print_statistics, write_csv_results, write_metadata_if_not_replay,
 };
 use crate::types::IterationResult;
-use sf_core::protobuf_gen::database_driver_v1::ConnectionHandle;
 
 pub fn execute_fetch_test(
     conn_handle: ConnectionHandle,

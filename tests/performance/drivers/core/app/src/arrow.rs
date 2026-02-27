@@ -2,7 +2,7 @@
 
 type Result<T> = std::result::Result<T, String>;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
-use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 
 /// Creates an Arrow reader from a protobuf ExecuteResult
 pub fn create_arrow_reader(result: ExecuteResult) -> Result<ArrowArrayStreamReader> {

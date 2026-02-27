@@ -2,7 +2,7 @@
 
 use crate::connection::get_server_version as get_server_version_internal;
 use crate::types::{IterationResult, PutGetResult};
-use sf_core::protobuf_gen::database_driver_v1::ConnectionHandle;
+use sf_core::protobuf::generated::database_driver_v1::ConnectionHandle;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
