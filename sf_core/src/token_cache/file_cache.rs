@@ -666,11 +666,9 @@ mod tests {
         }
 
         // Scenario: Should set and get secret
-        //   Given a file-based credential store
-        //   When we set a secret for a key
-        //   Then we should be able to retrieve the same secret
         #[test]
         fn set_and_get_secret() {
+            // Given a file-based credential store
             let (_dir, cache) = create_temp_cache();
 
             // When we set a secret for a key
@@ -684,11 +682,9 @@ mod tests {
         }
 
         // Scenario: Should return none for missing key
-        //   Given a file-based credential store with no entries
-        //   When we get a secret for a nonexistent key
-        //   Then None should be returned
         #[test]
         fn get_missing_key_returns_none() {
+            // Given a file-based credential store with no entries
             let (_dir, cache) = create_temp_cache();
 
             // When we get a secret for a nonexistent key
@@ -701,11 +697,9 @@ mod tests {
         }
 
         // Scenario: Should delete existing credential
-        //   Given a file-based credential store with a stored secret
-        //   When we delete the credential
-        //   Then the key should no longer exist
         #[test]
         fn delete_existing_credential() {
+            // Given a file-based credential store with a stored secret
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("to_delete", b"val")
@@ -723,11 +717,9 @@ mod tests {
         }
 
         // Scenario: Should return false when deleting nonexistent key
-        //   Given a file-based credential store with no entries
-        //   When we delete a nonexistent key
-        //   Then the result should indicate the key did not exist
         #[test]
         fn delete_nonexistent_returns_false() {
+            // Given a file-based credential store with no entries
             let (_dir, cache) = create_temp_cache();
 
             // When we delete a nonexistent key
@@ -740,11 +732,9 @@ mod tests {
         }
 
         // Scenario: Should overwrite secret
-        //   Given a file-based credential store with a stored secret
-        //   When we set a new secret for the same key
-        //   Then the new secret should replace the old one
         #[test]
         fn overwrite_secret() {
+            // Given a file-based credential store with a stored secret
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"old")
@@ -761,11 +751,9 @@ mod tests {
         }
 
         // Scenario: Should store different keys separately
-        //   Given a file-based credential store
-        //   When we set secrets for two different keys
-        //   Then each key should return its own secret independently
         #[test]
         fn different_keys_stored_separately() {
+            // Given a file-based credential store
             let (_dir, cache) = create_temp_cache();
 
             // When we set secrets for two different keys
@@ -778,11 +766,9 @@ mod tests {
         }
 
         // Scenario: Should use correct cache file name
-        //   Given a file-based credential store
-        //   When a secret is stored
-        //   Then the backing file should be named credential_cache_v2.json
         #[test]
         fn cache_file_uses_correct_name() {
+            // Given a file-based credential store
             let (_dir, cache) = create_temp_cache();
 
             // When a secret is stored
@@ -796,11 +782,9 @@ mod tests {
         }
 
         // Scenario: Should contain valid JSON in cache file
-        //   Given a file-based credential store with a stored secret
-        //   When we read the backing file
-        //   Then it should contain valid JSON with a "tokens" key
         #[test]
         fn cache_file_contains_valid_json() {
+            // Given a file-based credential store with a stored secret
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
@@ -816,11 +800,9 @@ mod tests {
         }
 
         // Scenario: Should SHA256 hash keys in file
-        //   Given a file-based credential store with a stored secret
-        //   When we inspect the backing JSON file
-        //   Then the key should be the SHA-256 hash of the original key
         #[test]
         fn keys_are_sha256_hashed_in_file() {
+            // Given a file-based credential store with a stored secret
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("my_raw_key", b"val")
@@ -858,7 +840,7 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
 
-        // Scenario: Should reject file with wrong permissions
+        // Scenario: Should remediate file with wrong permissions
         #[cfg(unix)]
         #[test]
         fn remediates_file_with_wrong_permissions() {
@@ -872,11 +854,13 @@ mod tests {
             fs::set_permissions(&cache.cache_file_path, fs::Permissions::from_mode(0o644))
                 .expect("Failed to change permissions");
 
+            // When we read a secret
             let result = cache
                 .get_secret("key")
                 .expect("Should succeed after remediating permissions");
-            assert_eq!(result, Some(b"val".to_vec()));
 
+            // Then permissions should be fixed to 0600 and the correct secret returned
+            assert_eq!(result, Some(b"val".to_vec()));
             let metadata =
                 fs::metadata(&cache.cache_file_path).expect("Failed to read file metadata");
             let mode = metadata.permissions().mode() & 0o777;
@@ -927,12 +911,10 @@ mod tests {
             );
         }
 
-        // Scenario: Should remove lock file after operation
-        //   Given a file-based credential store
-        //   When an operation completes
-        //   Then the .lck file should not exist
+        // Scenario: Should remove lock directory after operation
         #[test]
         fn lock_file_removed_after_operation() {
+            // Given a file-based credential store
             let (_dir, cache) = create_temp_cache();
 
             // When an operation completes
@@ -940,20 +922,18 @@ mod tests {
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
-            // Then the .lck file should not exist
+            // Then the .lck directory should not exist
             let lock_path = cache.cache_file_path.with_extension("json.lck");
             assert!(
                 !lock_path.exists(),
-                "Lock file should be removed after operation"
+                "Lock directory should be removed after operation"
             );
         }
 
         // Scenario: Should break stale lock
-        //   Given a stale lock file older than the configured timeout
-        //   When we perform an operation on the cache
-        //   Then the stale lock should be broken and the operation should succeed
         #[test]
         fn stale_lock_is_broken() {
+            // Given a stale lock directory older than the configured timeout
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = FileTokenCache::with_directory(dir.path().to_path_buf())
                 .stale_lock_timeout(Duration::from_millis(50));
@@ -972,10 +952,6 @@ mod tests {
         }
 
         // Scenario: Should support configurable retry parameters
-        //   Given a file-based credential store with custom retry settings
-        //   Then the retry count, delay, and stale lock timeout should match
-        #[test]
-        fn configurable_retry_parameters() {
         #[test]
         fn configurable_retry_parameters() {
             // Given a file-based credential store with custom retry settings
@@ -1001,11 +977,9 @@ mod tests {
         }
 
         // Scenario: Should set and get password via credential adapter
-        //   Given a FileCredentialBuilder and a credential
-        //   When we set a password and then get it
-        //   Then the retrieved password should match
         #[test]
         fn set_and_get_password() {
+            // Given a FileCredentialBuilder and a credential
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -1021,11 +995,9 @@ mod tests {
         }
 
         // Scenario: Should return no entry for missing credential adapter password
-        //   Given a FileCredentialBuilder and a credential with no stored value
-        //   When we get the password
-        //   Then a NoEntry error should be returned
         #[test]
         fn get_missing_entry_returns_no_entry() {
+            // Given a FileCredentialBuilder and a credential with no stored value
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -1040,11 +1012,9 @@ mod tests {
         }
 
         // Scenario: Should delete existing credential via adapter
-        //   Given a credential with a stored password
-        //   When we delete the credential
-        //   Then getting the password should return NoEntry
         #[test]
         fn delete_existing_credential() {
+            // Given a credential with a stored password
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -1061,11 +1031,9 @@ mod tests {
         }
 
         // Scenario: Should return no entry when deleting missing credential via adapter
-        //   Given a credential with no stored value
-        //   When we delete the credential
-        //   Then a NoEntry error should be returned
         #[test]
         fn delete_missing_credential_returns_no_entry() {
+            // Given a credential with no stored value
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -1080,11 +1048,9 @@ mod tests {
         }
 
         // Scenario: Should overwrite password via credential adapter
-        //   Given a credential with a stored password
-        //   When we set a new password
-        //   Then the new password should replace the old one
         #[test]
         fn overwrite_password() {
+            // Given a credential with a stored password
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -1100,11 +1066,9 @@ mod tests {
         }
 
         // Scenario: Should keep separate credentials independent via adapter
-        //   Given two credentials with different keys from the same builder
-        //   When we set different passwords on each
-        //   Then each credential should return its own password
         #[test]
         fn separate_credentials_are_independent() {
+            // Given two credentials with different keys from the same builder
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred1 = builder
@@ -1138,11 +1102,9 @@ mod tests {
         }
 
         // Scenario: Should share same backing file across credentials
-        //   Given two credential instances for the same key
-        //   When one sets a password
-        //   Then the other should be able to read it
         #[test]
         fn credentials_share_same_backing_file() {
+            // Given two credential instances for the same key
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
 
@@ -1176,11 +1138,14 @@ mod tests {
             (dir, cache)
         }
 
+        // Scenario: Should not corrupt data under concurrent writes
         #[test]
         fn concurrent_writes_do_not_corrupt() {
+            // Given a shared file-based credential store
             let (_dir, cache) = create_shared_cache();
             let barrier = Arc::new(Barrier::new(THREAD_COUNT));
 
+            // When multiple tasks write different keys simultaneously
             let handles: Vec<_> = (0..THREAD_COUNT)
                 .map(|i| {
                     let cache = Arc::clone(&cache);
@@ -1200,6 +1165,7 @@ mod tests {
                 handle.join().expect("Thread panicked");
             }
 
+            // Then every key should hold the correct value
             for i in 0..THREAD_COUNT {
                 let key = format!("key_{i}");
                 let expected = format!("value_{i}");
@@ -1214,8 +1180,10 @@ mod tests {
             }
         }
 
+        // Scenario: Should return consistent data during concurrent reads and writes
         #[test]
         fn concurrent_reads_during_writes() {
+            // Given a shared file-based credential store with pre-seeded keys
             let (_dir, cache) = create_shared_cache();
 
             for i in 0..THREAD_COUNT {
@@ -1224,6 +1192,7 @@ mod tests {
                 cache.set_secret(&key, value.as_bytes()).unwrap();
             }
 
+            // When readers and writers operate simultaneously on the same keys
             let total_threads = THREAD_COUNT * 2;
             let barrier = Arc::new(Barrier::new(total_threads));
 
@@ -1268,6 +1237,7 @@ mod tests {
                 handle.join().expect("Thread panicked");
             }
 
+            // Then every read should return either the old or new value, never corrupt data
             for i in 0..THREAD_COUNT {
                 let key = format!("key_{i}");
                 let old_value = format!("old_{i}").into_bytes();
@@ -1284,8 +1254,10 @@ mod tests {
             }
         }
 
+        // Scenario: Should remain consistent under concurrent deletes
         #[test]
         fn concurrent_deletes_are_consistent() {
+            // Given a shared file-based credential store with multiple keys
             let (_dir, cache) = create_shared_cache();
 
             let total_keys = THREAD_COUNT * 2;
@@ -1295,6 +1267,7 @@ mod tests {
                 cache.set_secret(&key, value.as_bytes()).unwrap();
             }
 
+            // When half the keys are deleted concurrently
             let delete_count = total_keys / 2;
             let barrier = Arc::new(Barrier::new(delete_count));
 
@@ -1318,6 +1291,7 @@ mod tests {
                 handle.join().expect("Thread panicked");
             }
 
+            // Then deleted keys should be gone and untouched keys should remain
             for i in 0..total_keys {
                 let key = format!("key_{i}");
                 let result = cache

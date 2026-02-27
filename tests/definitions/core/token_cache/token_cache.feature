@@ -137,10 +137,10 @@ Feature: SSO/MFA Token caching
     Then the cache file permissions should be 0600
 
   @core_unit
-  Scenario: Should reject file with wrong permissions
+  Scenario: Should remediate file with wrong permissions
     Given a cache file with permissions other than 0600
-    When we attempt to read a secret
-    Then an InsufficientPermissions error should be returned
+    When we read a secret
+    Then permissions should be fixed to 0600 and the correct secret returned
 
   @core_unit
   Scenario: Should accept file owned by current user
@@ -155,14 +155,14 @@ Feature: SSO/MFA Token caching
     Then a FileNotOwnedByCurrentUser error should be returned
 
   @core_unit
-  Scenario: Should remove lock file after operation
+  Scenario: Should remove lock directory after operation
     Given a file-based credential store
     When an operation completes
-    Then the .lck file should not exist
+    Then the .lck directory should not exist
 
   @core_unit
   Scenario: Should break stale lock
-    Given a stale lock file older than the configured timeout
+    Given a stale lock directory older than the configured timeout
     When we perform an operation on the cache
     Then the stale lock should be broken and the operation should succeed
 
@@ -170,6 +170,26 @@ Feature: SSO/MFA Token caching
   Scenario: Should support configurable retry parameters
     Given a file-based credential store with custom retry settings
     Then the retry count, delay, and stale lock timeout should match
+
+  # --- file_cache.rs: concurrency_tests ---
+
+  @core_unit
+  Scenario: Should not corrupt data under concurrent writes
+    Given a shared file-based credential store
+    When multiple tasks write different keys simultaneously
+    Then every key should hold the correct value
+
+  @core_unit
+  Scenario: Should return consistent data during concurrent reads and writes
+    Given a shared file-based credential store with pre-seeded keys
+    When readers and writers operate simultaneously on the same keys
+    Then every read should return either the old or new value, never corrupt data
+
+  @core_unit
+  Scenario: Should remain consistent under concurrent deletes
+    Given a shared file-based credential store with multiple keys
+    When half the keys are deleted concurrently
+    Then deleted keys should be gone and untouched keys should remain
 
   # --- file_cache.rs: file_credential_adapter_tests ---
 
