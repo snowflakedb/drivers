@@ -246,9 +246,9 @@ def test_should_get_file_from_subdirectory_in_stage(connection):
             cursor.execute(get_command)
             get_result = cursor.fetchone()
 
-            # Then File should be downloaded preserving subdirectory structure
+            # Then File should be downloaded flat into the local directory
             assert get_result[2] == "DOWNLOADED"
-            downloaded_file = download_dir / subdir / filename
+            downloaded_file = download_dir / filename
             assert downloaded_file.exists(), (
                 f"Expected file at {downloaded_file}, but directory contents: {list(download_dir.rglob('*'))}"
             )

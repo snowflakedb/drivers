@@ -180,12 +180,13 @@ pub async fn download_single_file(
         decrypt_file_data(&encrypted_data, &file_metadata, &data.encryption_material)
             .context(DecryptionSnafu)?;
 
-    // Create the full output path: local_location/src_location
-    let output_path = Path::new(&data.local_location).join(&data.src_location);
-
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent).context(IoSnafu)?;
-    }
+    // Use only the filename (basename) from src_location to match the old connector
+    // behavior, which downloads files flat into the local directory regardless of
+    // any subdirectory structure in the stage.
+    let filename = Path::new(&data.src_location)
+        .file_name()
+        .unwrap_or(std::ffi::OsStr::new(&data.src_location));
+    let output_path = Path::new(&data.local_location).join(filename);
 
     let mut output_file = File::create(&output_path).context(IoSnafu)?;
     output_file.write_all(&compressed_data).context(IoSnafu)?;

@@ -54,5 +54,5 @@ Feature: PUT/GET basic operations
   Scenario: should get file from subdirectory in stage
     Given File is uploaded to a subdirectory in stage
     When All files are downloaded from stage using GET command
-    Then File should be downloaded preserving subdirectory structure
+    Then File should be downloaded flat into the local directory
     And Have correct content
