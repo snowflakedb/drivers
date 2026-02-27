@@ -195,6 +195,7 @@ pub enum TokenCacheError {
     #[snafu(display("Insufficient permissions on cache file: {}", path.display()))]
     InsufficientPermissions {
         path: PathBuf,
+        source: Box<dyn std::error::Error + Send + Sync>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -207,6 +208,13 @@ pub enum TokenCacheError {
         path: PathBuf,
         file_uid: u32,
         current_uid: u32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Cache file is not a regular file: {}", path.display()))]
+    IrregularFileType {
+        path: PathBuf,
         #[snafu(implicit)]
         location: Location,
     },
