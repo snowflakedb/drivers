@@ -37,6 +37,7 @@ from .types import (
     Timestamp,
     TimestampFromTicks,
 )
+from . import auth  # noqa: F401 - needed for attribute access (e.g. snowflake.connector.auth.by_plugin)
 from .version import __version__
 
 

@@ -566,3 +566,4 @@ class Connection:
 
 # Backward compatibility alias
 SnowflakeConnection = Connection
+StoredProcConnection = Connection
