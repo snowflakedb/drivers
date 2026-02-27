@@ -1,5 +1,5 @@
-use crate::protobuf_apis::database_driver_v1::DatabaseDriverImpl;
-use crate::protobuf_gen::database_driver_v1::DatabaseDriverServer;
+use crate::protobuf::apis::database_driver_v1::DatabaseDriverImpl;
+use crate::protobuf::generated::database_driver_v1::DatabaseDriverServer;
 use proto_utils::*;
 
 pub mod database_driver_v1;

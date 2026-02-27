@@ -5,8 +5,8 @@ use crate::api::{
     error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
 };
 use odbc_sys as sql;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::StatementNewRequest;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::StatementNewRequest;
 use tracing;
 
 /// Allocate a new environment handle

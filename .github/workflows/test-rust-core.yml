@@ -45,6 +45,17 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+  build-without-protobuf:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build sf_core without protobuf feature
+        run: cargo build --package sf_core --no-default-features --features fips
+
   test:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
@@ -100,7 +111,7 @@ jobs:
           mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
   rust-core-status:
-    needs: [detect-changes, format, clippy, test]
+    needs: [detect-changes, format, clippy, build-without-protobuf, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -118,10 +129,12 @@ jobs:
           # Check if any job failed or was cancelled
           if [[ "${{ needs.format.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.clippy.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.build-without-protobuf.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.test.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Rust Core tests were RUN and FAILED or CANCELLED"
             echo "  - format: ${{ needs.format.result }}"
             echo "  - clippy: ${{ needs.clippy.result }}"
+            echo "  - build-without-protobuf: ${{ needs.build-without-protobuf.result }}"
             echo "  - test: ${{ needs.test.result }}"
             exit 1
           fi

@@ -3,7 +3,7 @@ use crate::common::file_utils::shared_test_data_dir;
 use crate::common::put_get_common::PutResult;
 use crate::common::put_get_common::upload_to_stage_with_options;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 use std::path::PathBuf;
 use test_case::test_case;
 

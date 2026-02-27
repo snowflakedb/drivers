@@ -10,6 +10,7 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
 
+pub mod c_api;
 mod callback_layer;
 mod error;
 mod opentelemetry;

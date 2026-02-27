@@ -1,3 +1,4 @@
+use super::ColumnMetadata;
 use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{
     boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
@@ -5,7 +6,6 @@ use crate::arrow_utils::{
 use crate::chunks::{ChunkError, ChunkReader};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
-use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
 use crate::query_types::RowType;
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};

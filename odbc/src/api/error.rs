@@ -13,13 +13,13 @@ use crate::{
 use arrow::error::ArrowError;
 use odbc_sys as sql;
 use proto_utils::ProtoError;
-use sf_core::protobuf_gen::database_driver_v1::{
+use sf_core::protobuf::generated::database_driver_v1::{
     ErrorTraceEntry, GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
     MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
 };
 
 use error_trace::{ErrorTrace, format_error_trace};
-use sf_core::protobuf_gen::database_driver_v1::DriverException as ProtoDriverException;
+use sf_core::protobuf::generated::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
 
 #[derive(Snafu, Debug, ErrorTrace)]

@@ -11,8 +11,8 @@ use crate::api::{
 };
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;

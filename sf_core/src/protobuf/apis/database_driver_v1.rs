@@ -1,4 +1,5 @@
 use crate::apis::database_driver_v1::ApiError;
+use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
@@ -18,7 +19,7 @@ use crate::apis::database_driver_v1::{
     statement_set_option, statement_set_sql_query,
 };
 use crate::config::config_manager;
-use crate::protobuf_gen::database_driver_v1::*;
+use crate::protobuf::generated::database_driver_v1::*;
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -130,6 +131,20 @@ impl From<Handle> for StatementHandle {
         StatementHandle {
             id: handle.id as i64,
             magic: handle.magic as i64,
+        }
+    }
+}
+
+impl From<NativeColumnMetadata> for ColumnMetadata {
+    fn from(meta: NativeColumnMetadata) -> Self {
+        ColumnMetadata {
+            name: meta.name,
+            r#type: meta.r#type,
+            precision: meta.precision,
+            scale: meta.scale,
+            length: meta.length,
+            byte_length: meta.byte_length,
+            nullable: meta.nullable,
         }
     }
 }
@@ -775,7 +790,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 stream: Some(stream_ptr),
                 rows_affected: result.rows_affected,
                 query_id: result.query_id,
-                columns: result.columns,
+                columns: result
+                    .columns
+                    .into_iter()
+                    .map(ColumnMetadata::from)
+                    .collect(),
                 statement_type_id: result.statement_type_id,
                 query: result.query,
             }),
@@ -861,6 +880,7 @@ impl ErrorTrace for DriverException {
     }
 }
 
-pub type DatabaseDriverClient = crate::protobuf_gen::database_driver_v1::DatabaseDriverClient<
-    crate::protobuf_apis::RustTransport,
->;
+pub type DatabaseDriverClient =
+    crate::protobuf::generated::database_driver_v1::DatabaseDriverClient<
+        crate::protobuf::apis::RustTransport,
+    >;

@@ -1,6 +1,6 @@
 pub use super::arrow_deserialize::ArrowDeserialize;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 
 // Structured types for Snowflake command results using our arrow_deserialize macro
 #[derive(ArrowDeserialize, Debug, PartialEq)]

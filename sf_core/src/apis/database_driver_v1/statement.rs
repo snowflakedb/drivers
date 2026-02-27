@@ -6,7 +6,6 @@ use super::connection::RefreshContext;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
-use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
 use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
@@ -251,6 +250,17 @@ pub unsafe fn statement_bind(
             .build()
         })
     })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ColumnMetadata {
+    pub name: String,
+    pub r#type: String,
+    pub precision: Option<i64>,
+    pub scale: Option<i64>,
+    pub length: Option<i64>,
+    pub byte_length: Option<i64>,
+    pub nullable: bool,
 }
 
 pub struct ExecuteResult {

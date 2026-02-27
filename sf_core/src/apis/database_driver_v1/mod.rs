@@ -33,4 +33,4 @@ pub use statement::statement_prepare;
 pub use statement::statement_release;
 pub use statement::statement_set_option;
 pub use statement::statement_set_sql_query;
-pub use statement::{BindingType, DataPtr};
+pub use statement::{BindingType, ColumnMetadata, DataPtr};

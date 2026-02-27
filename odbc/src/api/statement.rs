@@ -11,8 +11,8 @@ use arrow::array::RecordBatchReader;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::{
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayPtr, ArrowSchemaPtr, ConnectionGetParameterRequest, ConnectionHandle,
     StatementBindRequest, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
     StatementPrepareRequest, StatementSetSqlQueryRequest,

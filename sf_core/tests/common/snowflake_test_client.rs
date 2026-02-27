@@ -2,8 +2,8 @@ use arrow::array::{Array, ArrayRef, ArrowPrimitiveType, PrimitiveArray, StructAr
 use arrow::datatypes::{Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use proto_utils::ProtoError;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 use std::mem::size_of;
 use std::sync::Arc;
