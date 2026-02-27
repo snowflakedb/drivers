@@ -255,7 +255,7 @@ class TestCommitRollback:
     def test_commit_persists_inserted_rows(self, connection, connection_factory, tmp_schema):
         """Test that commit() persists data inserted in a transaction."""
         table = f"{tmp_schema}.test_commit"
-        connection.set_autocommit(False)
+        connection.autocommit(False)
         cur = connection.cursor()
         cur.execute(f"CREATE TABLE {table} (id INTEGER, name VARCHAR)")
         connection.commit()
@@ -276,7 +276,7 @@ class TestCommitRollback:
     def test_rollback_discards_inserted_rows(self, connection, tmp_schema):
         """Test that rollback() discards uncommitted inserts."""
         table = f"{tmp_schema}.test_rollback"
-        connection.set_autocommit(False)
+        connection.autocommit(False)
         cur = connection.cursor()
         cur.execute(f"CREATE TABLE {table} (id INTEGER)")
         cur.execute(f"INSERT INTO {table} VALUES (1)")
@@ -291,7 +291,7 @@ class TestCommitRollback:
     def test_rollback_discards_update(self, connection, tmp_schema):
         """Test that rollback() reverts an UPDATE to previously committed data."""
         table = f"{tmp_schema}.test_rb_upd"
-        connection.set_autocommit(False)
+        connection.autocommit(False)
         cur = connection.cursor()
         cur.execute(f"CREATE TABLE {table} (id INTEGER, val VARCHAR)")
         cur.execute(f"INSERT INTO {table} VALUES (1, 'original')")
@@ -322,7 +322,7 @@ class TestAutocommitAlterSession:
     def test_autocommit_on_persists_without_explicit_commit(self, connection, tmp_schema):
         """Test that with autocommit ON, each statement is committed automatically."""
         table = f"{tmp_schema}.test_ac_on"
-        connection.set_autocommit(True)
+        connection.autocommit(True)
         cur = connection.cursor()
         cur.execute(f"CREATE TABLE {table} (id INTEGER)")
         cur.execute(f"INSERT INTO {table} VALUES (1)")
@@ -339,7 +339,7 @@ class TestContextManagerAutocommit:
         """Test that the context manager commits DML on clean exit when autocommit is off."""
         table = f"{tmp_schema}.test_cm_commit"
         with connection_factory() as conn:
-            conn.set_autocommit(False)
+            conn.autocommit(False)
             cur = conn.cursor()
             cur.execute(f"CREATE TABLE {table} (id INTEGER)")
             conn.commit()
@@ -356,7 +356,7 @@ class TestContextManagerAutocommit:
         """Test that the context manager rolls back on exception when autocommit is off."""
         table = f"{tmp_schema}.test_cm_rb"
         with connection_factory() as setup_conn:
-            setup_conn.set_autocommit(False)
+            setup_conn.autocommit(False)
             cur = setup_conn.cursor()
             cur.execute(f"CREATE TABLE {table} (id INTEGER)")
             cur.execute(f"INSERT INTO {table} VALUES (1)")
@@ -364,7 +364,7 @@ class TestContextManagerAutocommit:
 
         try:
             with connection_factory() as conn:
-                conn.set_autocommit(False)
+                conn.autocommit(False)
                 cur = conn.cursor()
                 cur.execute(f"INSERT INTO {table} VALUES (99)")
                 raise ValueError("simulated error")
@@ -380,7 +380,7 @@ class TestContextManagerAutocommit:
         """Test that with autocommit ON, __exit__ skips explicit commit/rollback."""
         table = f"{tmp_schema}.test_cm_ac"
         with connection_factory() as conn:
-            conn.set_autocommit(True)
+            conn.autocommit(True)
             cur = conn.cursor()
             cur.execute(f"CREATE TABLE {table} (id INTEGER)")
             cur.execute(f"INSERT INTO {table} VALUES (1)")

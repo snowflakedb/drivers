@@ -91,6 +91,71 @@ class TestSetAutocommitValidation:
                 Connection(user="test_user", account="test_account", autocommit=1)
 
 
+class TestSetAutocommit:
+    """Unit tests for set_autocommit behavior."""
+
+    def test_set_autocommit_true_updates_flag(self, connection):
+        """set_autocommit(True) should update the internal _autocommit flag."""
+        connection.cursor = MagicMock(return_value=MagicMock())
+        assert connection._autocommit is False
+        connection.set_autocommit(True)
+        assert connection._autocommit is True
+
+    def test_set_autocommit_false_updates_flag(self, connection):
+        """set_autocommit(False) should update the internal _autocommit flag."""
+        connection.cursor = MagicMock(return_value=MagicMock())
+        connection._autocommit = True
+        connection.set_autocommit(False)
+        assert connection._autocommit is False
+
+    def test_set_autocommit_executes_alter_session(self, connection):
+        """set_autocommit should execute ALTER SESSION via a cursor."""
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.set_autocommit(True)
+
+        mock_cursor.execute.assert_called_once_with("ALTER SESSION SET autocommit=true")
+
+    def test_set_autocommit_false_executes_alter_session(self, connection):
+        """set_autocommit(False) should execute ALTER SESSION with 'false'."""
+        mock_cursor = MagicMock()
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.set_autocommit(False)
+
+        mock_cursor.execute.assert_called_once_with("ALTER SESSION SET autocommit=false")
+
+    def test_set_autocommit_updates_flag_even_when_alter_session_fails(self, connection):
+        """The _autocommit flag should be updated even if ALTER SESSION raises."""
+        from snowflake.connector.errors import Error
+
+        mock_cursor = MagicMock()
+        mock_cursor.execute.side_effect = Error("Autocommit not supported")
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        connection.set_autocommit(True)
+
+        assert connection._autocommit is True
+
+
+class TestGetAutocommit:
+    """Unit tests for get_autocommit behavior."""
+
+    def test_get_autocommit_default_is_false(self, connection):
+        """get_autocommit should return False by default."""
+        assert connection.get_autocommit() is False
+
+    def test_get_autocommit_reflects_set_autocommit(self, connection):
+        """get_autocommit should return the value last set by set_autocommit."""
+        connection.cursor = MagicMock(return_value=MagicMock())
+        connection.set_autocommit(True)
+        assert connection.get_autocommit() is True
+
+        connection.set_autocommit(False)
+        assert connection.get_autocommit() is False
+
+
 class TestAutocommitKwargUnit:
     """Unit tests for the autocommit keyword argument at connection time."""
 
@@ -167,6 +232,6 @@ class TestContextManagerUnit:
 
         connection.rollback = failing_rollback
 
-        exc = ValueError("original error")
         with pytest.raises(ValueError, match="original error"):
-            connection.__exit__(type(exc), exc, exc.__traceback__)
+            with connection:
+                raise ValueError("original error")
