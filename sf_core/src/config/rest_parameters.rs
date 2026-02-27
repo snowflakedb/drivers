@@ -506,7 +506,10 @@ mod tests {
         let mut base = vec![
             ("user", Setting::String("okta_user".to_string())),
             ("password", Setting::String("okta_pass".to_string())),
-            ("host", Setting::String("account.snowflakecomputing.com".to_string())),
+            (
+                "host",
+                Setting::String("account.snowflakecomputing.com".to_string()),
+            ),
             ("account", Setting::String("account".to_string())),
             (
                 "authenticator",
@@ -524,7 +527,10 @@ mod tests {
     #[test]
     fn test_native_okta_uses_default_authentication_timeout() {
         let cfg = okta_config(vec![]);
-        assert_eq!(cfg.authentication_timeout_secs, DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+        assert_eq!(
+            cfg.authentication_timeout_secs,
+            DEFAULT_AUTHENTICATION_TIMEOUT_SECS
+        );
     }
 
     #[test]
@@ -543,8 +549,7 @@ mod tests {
             Setting::String("not_a_number".to_string()),
         )]);
         assert_eq!(
-            cfg.authentication_timeout_secs,
-            DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
+            cfg.authentication_timeout_secs, DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
             "Invalid timeout should fall back to the default"
         );
     }
