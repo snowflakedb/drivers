@@ -1198,13 +1198,10 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 #[tokio::test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy_2_attempts() {
     // Gherkin: core/session/logout.feature:316-329 (max_attempts=2)
-    //Given Core logout function called with strict strategy
-    //And Retry policy configured with 2 max attempts
-    //And Mock HTTP server returns 503 on all attempts
+    //Given Mock HTTP server returns 503 on all attempts
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return 503 for all attempts
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/session"))
@@ -1227,7 +1224,8 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy_2_attempts() 
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with strict strategy
+        //And Retry policy configured with 2 max attempts
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
@@ -1282,13 +1280,10 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy_2_attempts() 
 #[tokio::test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy_3_attempts() {
     // Gherkin: core/session/logout.feature:316-329 (max_attempts=3)
-    //Given Core logout function called with strict strategy
-    //And Retry policy configured with 3 max attempts
-    //And Mock HTTP server returns 503 on all attempts
+    //Given Mock HTTP server returns 503 on all attempts
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return 503 for all attempts
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/session"))
@@ -1311,7 +1306,8 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy_3_attempts() 
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with strict strategy
+        //And Retry policy configured with 3 max attempts
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
@@ -1367,13 +1363,10 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy_3_attempts() 
 async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy_2_attempts()
 {
     // Gherkin: core/session/logout.feature:331-344 (max_attempts=2)
-    //Given Core logout function called with best-effort strategy
-    //And Retry policy configured with 2 max attempts
-    //And Mock HTTP server returns 503 on all attempts
+    //Given Mock HTTP server returns 503 on all attempts
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return 503 for all attempts
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/session"))
@@ -1396,7 +1389,8 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with best-effort strategy
+        //And Retry policy configured with 2 max attempts
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
@@ -1454,13 +1448,10 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
 async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy_3_attempts()
 {
     // Gherkin: core/session/logout.feature:331-344 (max_attempts=3)
-    //Given Core logout function called with best-effort strategy
-    //And Retry policy configured with 3 max attempts
-    //And Mock HTTP server returns 503 on all attempts
+    //Given Mock HTTP server returns 503 on all attempts
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return 503 for all attempts
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/session"))
@@ -1483,7 +1474,8 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with best-effort strategy
+        //And Retry policy configured with 3 max attempts
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
@@ -1564,12 +1556,10 @@ async fn should_throw_on_non_retryable_404_in_strict_strategy() {
 #[tokio::test]
 async fn should_throw_on_non_retryable_390114_in_strict_strategy() {
     // Gherkin: core/session/logout.feature:378-391 (error_code=390114 MASTER_TOKEN_EXPIRED)
-    //Given Core logout function called with strict strategy
-    //And Mock HTTP server returns 390114 error
+    //Given Mock HTTP server returns 390114 error
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return 390114 (MASTER_TOKEN_EXPIRED)
     use serde_json::json;
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
@@ -1601,7 +1591,7 @@ async fn should_throw_on_non_retryable_390114_in_strict_strategy() {
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with strict strategy
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
@@ -1680,12 +1670,10 @@ async fn should_log_and_suppress_non_retryable_404_in_best_effort_strategy() {
 #[tokio::test]
 async fn should_log_and_suppress_non_retryable_390114_in_best_effort_strategy() {
     // Gherkin: core/session/logout.feature:394-407 (error_code=390114 MASTER_TOKEN_EXPIRED)
-    //Given Core logout function called with best-effort strategy
-    //And Mock HTTP server returns 390114 error
+    //Given Mock HTTP server returns 390114 error
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return 390114 (MASTER_TOKEN_EXPIRED)
     use serde_json::json;
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
@@ -1717,7 +1705,7 @@ async fn should_log_and_suppress_non_retryable_390114_in_best_effort_strategy() 
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with best-effort strategy
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
@@ -1773,12 +1761,10 @@ async fn should_log_and_suppress_non_retryable_390114_in_best_effort_strategy() 
 // Helper functions for non-retryable error tests
 
 async fn test_non_retryable_error_strict(status_code: u16, status_text: &str) {
-    //Given Core logout function called with strict strategy
-    //And Mock HTTP server returns error
+    //Given Mock HTTP server returns error
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return non-retryable error
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/session"))
@@ -1801,7 +1787,7 @@ async fn test_non_retryable_error_strict(status_code: u16, status_text: &str) {
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with strict strategy
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
@@ -1857,12 +1843,10 @@ async fn test_non_retryable_error_strict(status_code: u16, status_text: &str) {
 }
 
 async fn test_non_retryable_error_best_effort(status_code: u16, status_text: &str) {
-    //Given Core logout function called with best-effort strategy
-    //And Mock HTTP server returns error
+    //Given Mock HTTP server returns error
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    // Mock logout to return non-retryable error
     use wiremock::{Mock, ResponseTemplate};
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/session"))
@@ -1885,7 +1869,7 @@ async fn test_non_retryable_error_best_effort(status_code: u16, status_text: &st
             .expect("Failed to create test private key file");
         client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Configure logout behavior BEFORE connection_init
+        //And Core logout function called with best-effort strategy
         client.set_connection_option_bool("server_session_keep_alive", false);
         client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
         client.set_connection_option_int("logout_total_timeout_seconds", 30);
