@@ -56,4 +56,10 @@ inline typename MetaOfSqlCType<SQL_C_TYPE>::type get_data(const StatementHandleW
   return optional_value.value();
 }
 
+template <typename T>
+inline SQLRETURN get_data_raw(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type, T* value,
+                              SQLLEN* indicator) {
+  return SQLGetData(stmt.getHandle(), col, target_type, value, sizeof(*value), indicator);
+}
+
 #endif  // GET_DATA_HPP

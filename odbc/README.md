@@ -10,6 +10,7 @@ Before running tests, ensure you have:
 - Set up credentials (see main [README.md](../README.md) for setup instructions)
 - CMake 3.10 or later
 - C++17 compatible compiler
+- coreutils (for `nproc`), unixodbc (for `odbc_config`) from `brew`
 
 ### Local Testing (macOS/Linux)
 

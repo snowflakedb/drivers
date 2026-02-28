@@ -49,15 +49,21 @@ RUN ARCH=$(uname -m) && \
 
 # Install Snowflake ODBC driver (detect architecture automatically)
 # Note: Snowflake repo uses "linux" for x86_64 and "linuxaarch64" for aarch64
+ARG REFERENCE_ODBC_VERSION
+ARG REFERENCE_ODBC_SHA256
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
         URL_PATH="linux"; \
     else \
         URL_PATH="linux${ARCH}"; \
     fi && \
+    RPM="snowflake-odbc-${REFERENCE_ODBC_VERSION}.${ARCH}.rpm" && \
     cd /tmp && \
-    curl -O "https://sfc-repo.snowflakecomputing.com/odbc/${URL_PATH}/3.13.0/snowflake-odbc-3.13.0.${ARCH}.rpm" && \
-    rpm -i --nosignature snowflake-odbc-3.13.0.${ARCH}.rpm && \
+    curl -O "https://sfc-repo.snowflakecomputing.com/odbc/${URL_PATH}/${REFERENCE_ODBC_VERSION}/${RPM}" && \
+    echo "${REFERENCE_ODBC_SHA256}  ${RPM}" | sha256sum -c - && \
+    # --nosignature: Snowflake RPMs are not GPG-signed; integrity is verified
+    # by the pinned SHA256 checksum above (see ci/reference-odbc-checksums).
+    rpm -i --nosignature "${RPM}" && \
     rm -f snowflake-odbc-*.rpm
 
 RUN git config --global --add safe.directory '*'

@@ -16,6 +16,9 @@ on:
       python:
         description: "True if Python wrapper code changed"
         value: ${{ jobs.detect.outputs.python }}
+      python_packaging:
+        description: "True if Python packaging files changed"
+        value: ${{ jobs.detect.outputs.python_packaging }}
       shared:
         description: "True if shared config/build files changed"
         value: ${{ jobs.detect.outputs.shared }}
@@ -32,6 +35,9 @@ on:
       run_python:
         description: "True if Python tests should run (python OR core OR shared changed)"
         value: ${{ jobs.detect.outputs.run_python }}
+      run_python_packaging:
+        description: "True if Python packaging tests should run (pyproject.toml OR hatch_build.py changed)"
+        value: ${{ jobs.detect.outputs.run_python_packaging }}
       run_rust_core:
         description: "True if Rust Core tests should run (core OR shared changed)"
         value: ${{ jobs.detect.outputs.run_rust_core }}
@@ -45,12 +51,14 @@ jobs:
       jdbc: ${{ steps.filter.outputs.jdbc }}
       odbc: ${{ steps.filter.outputs.odbc }}
       python: ${{ steps.filter.outputs.python }}
+      python_packaging: ${{ steps.filter.outputs.python_packaging }}
       shared: ${{ steps.filter.outputs.shared }}
       docs_only: ${{ steps.computed.outputs.docs_only }}
       # Pre-computed "should run" outputs
       run_jdbc: ${{ steps.computed.outputs.run_jdbc }}
       run_odbc: ${{ steps.computed.outputs.run_odbc }}
       run_python: ${{ steps.computed.outputs.run_python }}
+      run_python_packaging: ${{ steps.computed.outputs.run_python_packaging }}
       run_rust_core: ${{ steps.computed.outputs.run_rust_core }}
     steps:
       - name: Checkout repository
@@ -80,6 +88,9 @@ jobs:
             python:
               - 'python/**'
               - 'pep249_dbapi/**'
+            python_packaging:
+              - 'python/pyproject.toml'
+              - 'python/hatch_build.py'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -140,6 +151,13 @@ jobs:
             echo "run_python=false" >> $GITHUB_OUTPUT
           fi
 
+          # Packaging should run if: packaging files changed
+          if [[ "${{ steps.filter.outputs.python_packaging }}" == "true" ]]; then
+            echo "run_python_packaging=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_python_packaging=false" >> $GITHUB_OUTPUT
+          fi
+
           # Rust Core should run if: core OR shared changed
           if [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
              [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
@@ -159,6 +177,7 @@ jobs:
           echo "| JDBC | ${{ steps.filter.outputs.jdbc }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ODBC | ${{ steps.filter.outputs.odbc }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python | ${{ steps.filter.outputs.python }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Packaging | ${{ steps.filter.outputs.python_packaging }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docs Only | ${{ steps.computed.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -169,3 +188,4 @@ jobs:
           echo "| JDBC | ${{ steps.computed.outputs.run_jdbc }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ODBC | ${{ steps.computed.outputs.run_odbc }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python | ${{ steps.computed.outputs.run_python }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Packaging | ${{ steps.computed.outputs.run_python_packaging }} |" >> $GITHUB_STEP_SUMMARY

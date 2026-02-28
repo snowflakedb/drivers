@@ -23,7 +23,6 @@ TEST_CASE("should execute simple SELECT returning single value", "[query]") {
 }
 
 TEST_CASE("should execute SELECT returning multiple columns", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -66,7 +65,6 @@ TEST_CASE("should execute SELECT returning multiple rows", "[query]") {
 }
 
 TEST_CASE("should execute SELECT returning empty result set", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -154,7 +152,6 @@ TEST_CASE("should execute INSERT and retrieve inserted data", "[query]") {
 // =============================================================================
 
 TEST_CASE("should return error for invalid SQL syntax", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

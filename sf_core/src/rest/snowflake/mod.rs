@@ -2,17 +2,21 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+mod native_okta;
 pub mod query_request;
 pub mod query_response;
 
+use std::collections::HashMap;
+
 use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
-use crate::config::rest_parameters::{LoginParameters, QueryParameters};
+use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
@@ -40,6 +44,15 @@ pub struct SessionTokens {
     pub session_expires_at: Option<std::time::Instant>,
     /// When the master token expires (after this, full re-auth is needed)
     pub master_expires_at: Option<std::time::Instant>,
+}
+
+/// Result of a successful login to Snowflake
+#[derive(Debug)]
+pub struct LoginResult {
+    /// Session tokens for authentication and refresh
+    pub tokens: SessionTokens,
+    /// Session parameters returned by the server
+    pub session_parameters: Option<HashMap<String, String>>,
 }
 
 impl SessionTokens {
@@ -110,8 +123,8 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
     )
 }
 
-pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthRequestData, RestError> {
-    let mut data = AuthRequestData {
+fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
+    AuthRequestData {
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.application.clone(),
         client_app_version: login_parameters.client_info.version.clone(),
@@ -125,41 +138,78 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
         },
         ..Default::default()
-    };
+    }
+}
 
-    match create_credentials(login_parameters).context(AuthenticationSnafu)? {
-        Credentials::Password { username, password } => {
-            data.login_name = Some(username);
-            data.password = Some(password);
-            data.authenticator = Some("SNOWFLAKE".to_string());
+pub async fn auth_request_data(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<AuthRequestData, RestError> {
+    let mut data = base_auth_request_data(login_parameters);
+
+    if let Some(params) = session_parameters {
+        let json_params = params
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
+        data.session_parameters = Some(json_params);
+    }
+
+    match &login_parameters.login_method {
+        LoginMethod::NativeOkta(okta_config) => {
+            let retry_policy = RetryPolicy::default();
+            let saml_html =
+                fetch_native_okta_saml(client, login_parameters, &retry_policy, okta_config)
+                    .await
+                    .context(NativeOktaSnafu)?;
+
+            data.login_name = Some(okta_config.username.clone());
+            data.authenticator = Some(okta_config.okta_url.to_string());
+            data.raw_saml_response = Some(saml_html);
         }
-        Credentials::Jwt { username, token } => {
-            data.login_name = Some(username);
-            data.token = Some(token);
-            data.authenticator = Some("SNOWFLAKE_JWT".to_string());
-        }
-        Credentials::Pat { username, token } => {
-            data.login_name = Some(username);
-            data.token = Some(token);
-            data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
-        }
+        _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
+            Credentials::Password { username, password } => {
+                data.login_name = Some(username);
+                data.password = Some(password);
+                data.authenticator = Some("SNOWFLAKE".to_string());
+            }
+            Credentials::Jwt { username, token } => {
+                data.login_name = Some(username);
+                data.token = Some(token);
+                data.authenticator = Some("SNOWFLAKE_JWT".to_string());
+            }
+            Credentials::Pat { username, token } => {
+                data.login_name = Some(username);
+                data.token = Some(token);
+                data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+            }
+        },
     }
     Ok(data)
 }
 
-#[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
+#[tracing::instrument(
+    skip(login_parameters, session_parameters),
+    fields(account_name, login_name)
+)]
 pub async fn snowflake_login(
     login_parameters: &LoginParameters,
-) -> Result<SessionTokens, RestError> {
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters).await
 }
 
-#[tracing::instrument(skip(client, login_parameters), fields(account_name, login_name))]
+#[tracing::instrument(
+    skip(client, login_parameters, session_parameters),
+    fields(account_name, login_name)
+)]
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
-) -> Result<SessionTokens, RestError> {
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
@@ -175,8 +225,8 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
-    // Build the login request
-    let auth_request_data = auth_request_data(login_parameters)?;
+    // Build the login request data (handles all auth methods including Okta SAML exchange)
+    let auth_request_data = auth_request_data(client, login_parameters, session_parameters).await?;
     tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
         data: auth_request_data,
@@ -272,18 +322,48 @@ pub async fn snowflake_login_with_client(
     let session_expires_at = auth_response.data.validity.map(|d| now + d);
     let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
 
+    // Extract session parameters from auth response
+    let session_params = auth_response.data._parameters.map(|params| {
+        params
+            .iter()
+            .filter_map(|param| {
+                // Convert JSON value to string
+                let value_str = match &param._value {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Number(n) => Some(n.to_string()),
+                    serde_json::Value::Bool(b) => Some(b.to_string()),
+                    serde_json::Value::Null => None,
+                    other => {
+                        tracing::debug!(
+                            param_name = %param._name,
+                            param_value = ?other,
+                            "Unexpected JSON type for session parameter, skipping"
+                        );
+                        None
+                    }
+                };
+
+                value_str.map(|v| (param._name.to_uppercase(), v))
+            })
+            .collect::<HashMap<String, String>>()
+    });
+
     tracing::info!(
         session_id,
         session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
         master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
+        session_params_count = session_params.as_ref().map(|p| p.len()),
         "Snowflake login completed successfully"
     );
-    Ok(SessionTokens {
-        session_token,
-        master_token,
-        session_id,
-        session_expires_at,
-        master_expires_at,
+    Ok(LoginResult {
+        tokens: SessionTokens {
+            session_token,
+            master_token,
+            session_id,
+            session_expires_at,
+            master_expires_at,
+        },
+        session_parameters: session_params,
     })
 }
 
@@ -804,11 +884,17 @@ pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwe
     builder.header(header::CONTENT_TYPE, json_header_value())
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum RestError {
     #[snafu(display("Authentication failed"))]
     Authentication {
         source: AuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Native Okta SSO failed"))]
+    NativeOkta {
+        source: native_okta::NativeOktaError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -884,7 +970,7 @@ pub enum RestError {
         location: Location,
     },
 }
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
     #[snafu(display("Failed to parse Snowflake response"))]
     ResponseFormat {

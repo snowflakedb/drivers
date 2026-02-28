@@ -1361,7 +1361,7 @@ impl TestWorkspace {
     fn create_java_test(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
         let test_path = self
             .workspace_root
-            .join("jdbc/src/test/java/com/snowflake/jdbc/integration")
+            .join("jdbc/src/test/java/net/snowflake/jdbc/integration")
             .join(subdir)
             .join(format!("{}Test.java", name));
         fs::create_dir_all(test_path.parent().unwrap())?;

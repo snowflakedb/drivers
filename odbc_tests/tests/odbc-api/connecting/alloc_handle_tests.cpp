@@ -9,6 +9,7 @@
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -208,8 +209,7 @@ TEST_CASE("SQLAllocHandle STMT: Basic allocation succeeds", "[odbc-api][alloc_ha
 
   // Connect
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
-                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   // Allocate statement
@@ -218,7 +218,7 @@ TEST_CASE("SQLAllocHandle STMT: Basic allocation succeeds", "[odbc-api][alloc_ha
   REQUIRE(stmt != SQL_NULL_HSTMT);
 
   // Verify statement is usable
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
@@ -248,8 +248,7 @@ TEST_CASE("SQLAllocHandle STMT: Multiple allocations from same connection",
   // Verify all statements are usable
   for (int i = 0; i < NUM_STATEMENTS; i++) {
     const std::string query = "SELECT " + std::to_string(i);
-    SQLRETURN ret =
-        SQLExecDirect(statements[i].getHandle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(query.c_str())), SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(statements[i].getHandle(), sqlchar(query.c_str()), SQL_NTS);
     CHECK_ODBC(ret, statements[i]);
   }
 }
@@ -344,8 +343,7 @@ TEST_CASE("SQLAllocHandle DESC: Basic allocation succeeds", "[odbc-api][alloc_ha
   REQUIRE(ret == SQL_SUCCESS);
 
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
-                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   // Allocate descriptor handle - should succeed on ODBC 3.x compliant drivers
@@ -377,8 +375,7 @@ TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection",
   REQUIRE(ret == SQL_SUCCESS);
 
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
-                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   for (auto& desc : descs) {
@@ -416,8 +413,7 @@ TEST_CASE("SQLAllocHandle DESC: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc
   REQUIRE(ret == SQL_SUCCESS);
 
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
-                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc, nullptr);
@@ -570,8 +566,7 @@ TEST_CASE("SQLAllocHandle: Complete ENV -> DBC -> STMT hierarchy", "[odbc-api][a
 
   // Connect
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
-                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   // Allocate statement
@@ -580,7 +575,7 @@ TEST_CASE("SQLAllocHandle: Complete ENV -> DBC -> STMT hierarchy", "[odbc-api][a
   REQUIRE(stmt != SQL_NULL_HSTMT);
 
   // Execute a query to verify the hierarchy works
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 42")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 42"), SQL_NTS);
   CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
 
   ret = SQLFetch(stmt);

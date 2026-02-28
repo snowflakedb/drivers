@@ -1,6 +1,8 @@
 #ifndef COMPATIBILITY_HPP
 #define COMPATIBILITY_HPP
 
+#include <cstdlib>
+
 #include <catch2/catch_test_macros.hpp>
 
 // Cross-platform process ID
@@ -38,6 +40,13 @@ extern DRIVER_TYPE get_driver_type();
     if (get_driver_type() == DRIVER_TYPE::NEW) { \
       SKIP("Not implemented for new driver");    \
     }                                            \
+  } while (0)
+
+#define REQUIRE_VPN(message)                              \
+  do {                                                    \
+    if (std::getenv("JENKINS_URL") == nullptr) {          \
+      SKIP("Requires VPN (run on Jenkins): " << message); \
+    }                                                     \
   } while (0)
 
 #endif  // COMPATIBILITY_HPP

@@ -70,8 +70,8 @@
 // }
 
 use sf_core::{
-    protobuf_apis::database_driver_v1::DatabaseDriverClient,
-    protobuf_gen::database_driver_v1::{
+    protobuf::apis::database_driver_v1::DatabaseDriverClient,
+    protobuf::generated::database_driver_v1::{
         ConnectionNewRequest, ConnectionSetOptionIntRequest, ConnectionSetOptionStringRequest,
         DatabaseInitRequest, DatabaseNewRequest,
     },

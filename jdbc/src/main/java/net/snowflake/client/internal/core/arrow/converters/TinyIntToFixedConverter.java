@@ -39,6 +39,9 @@ public class TinyIntToFixedConverter extends AbstractArrowVectorConverter {
 
   @Override
   public byte toByte(int index) {
+    if (isNull(index)) {
+      return 0;
+    }
     return getByte(index);
   }
 

@@ -13,6 +13,7 @@
 #include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "compatibility.hpp"
+#include "odbc_cast.hpp"
 
 // ============================================================================
 // Base Fixtures (Parameterized via Constructor)
@@ -109,8 +110,7 @@ class StmtFixture : public DbcFixture {
     SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
     const std::string dsn = dsn_name();
-    SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
-                               nullptr, 0, nullptr, 0);
+    SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
     REQUIRE(ret == SQL_SUCCESS);
 
     ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
@@ -136,6 +136,40 @@ class StmtFixture : public DbcFixture {
 class StmtDefaultDSNFixture : public StmtFixture {
  public:
   StmtDefaultDSNFixture() : StmtFixture(DataSourceConfig::Snowflake()) {}
+};
+
+// ============================================================================
+// Two-Statement Fixture (same connection, two independent statement handles)
+// ============================================================================
+
+class TwoStmtFixture : public StmtFixture {
+  SQLHSTMT stmt2 = SQL_NULL_HSTMT;
+
+ public:
+  explicit TwoStmtFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt)
+      : StmtFixture(std::move(dsn_config)) {
+    const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt2);
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+
+  ~TwoStmtFixture() {
+    if (stmt2 != SQL_NULL_HSTMT) {
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt2);
+    }
+  }
+
+  // Disable copy and move (RAII resource management)
+  TwoStmtFixture(const TwoStmtFixture&) = delete;
+  TwoStmtFixture& operator=(const TwoStmtFixture&) = delete;
+  TwoStmtFixture(TwoStmtFixture&&) = delete;
+  TwoStmtFixture& operator=(TwoStmtFixture&&) = delete;
+
+  [[nodiscard]] SQLHSTMT stmt2_handle() const { return stmt2; }
+};
+
+class TwoStmtDefaultDSNFixture : public TwoStmtFixture {
+ public:
+  TwoStmtDefaultDSNFixture() : TwoStmtFixture(DataSourceConfig::Snowflake()) {}
 };
 
 #endif  // ODBCFIXTURES_HPP

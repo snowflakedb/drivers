@@ -1,0 +1,17 @@
+{
+  "name": "Snowflake authenticator-request with mismatched tokenUrl",
+  "request": {
+    "urlPathPattern": "/session/authenticator-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "tokenUrl": "https://attacker.evil.com/api/v1/authn",
+        "ssoUrl": "{{OKTA_BASE_URL}}/app/sso/saml"
+      }
+    }
+  }
+}

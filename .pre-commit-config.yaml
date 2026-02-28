@@ -41,7 +41,7 @@ repos:
         name: Python code checks (ruff + mypy)
         description: Run linting, formatting, and type checks on changed Python files
         entry: bash -c 'cd python && hatch run precommit:check'
-        pass_filenames: true
+        pass_filenames: false
         files: ^python/.*\.py$
         language: system
     -   id: uv-lock-update
@@ -57,3 +57,10 @@ repos:
         entry: '^\s*assert\s'
         language: pygrep
         files: ^python/src/.*\.py$
+    -   id: jdbc-spotless-check
+        name: JDBC Spotless check
+        description: Run Spotless checks for the JDBC module.
+        entry: bash -c 'cd jdbc && bash ./gradlew spotlessCheck'
+        pass_filenames: false
+        files: ^jdbc/
+        language: system

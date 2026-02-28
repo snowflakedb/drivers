@@ -159,6 +159,28 @@ public class TinyIntToFixedConverterTest extends BaseConverterTest {
   }
 
   @Test
+  public void testNullAfterNonNullDoesNotReturnStaleValue() {
+    Map<String, String> customFieldMeta = new HashMap<>();
+    customFieldMeta.put("logicalType", "FIXED");
+    customFieldMeta.put("precision", "10");
+    customFieldMeta.put("scale", "0");
+
+    FieldType fieldType =
+        new FieldType(true, Types.MinorType.TINYINT.getType(), null, customFieldMeta);
+    TinyIntVector vector = new TinyIntVector("col_one", fieldType, allocator);
+    vector.setSafe(0, 42);
+    vector.setNull(1);
+
+    ArrowVectorConverter converter = new TinyIntToFixedConverter(vector, 0, this);
+
+    assertEquals(42L, converter.toLong(0));
+    assertEquals(0L, converter.toLong(1));
+    assertNull(converter.toObject(1));
+
+    vector.clear();
+  }
+
+  @Test
   public void testGetSmallerIntegralType() {
     Map<String, String> customFieldMeta = new HashMap<>();
     customFieldMeta.put("logicalType", "FIXED");

@@ -11,6 +11,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -22,7 +23,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds integer input p
                  "[odbc-api][bindparameter][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ? AS val")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER param_value = 42;
@@ -48,7 +49,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds string input pa
                  "[odbc-api][bindparameter][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ? AS val")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   char param_value[] = "hello";
@@ -74,7 +75,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds NULL parameter 
                  "[odbc-api][bindparameter][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ? AS val")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLLEN indicator = SQL_NULL_DATA;
@@ -99,7 +100,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Re-execute with diffe
                  "[odbc-api][bindparameter][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ? AS val")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER param_value = 10;
@@ -135,7 +136,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Multiple parameters",
                  "[odbc-api][bindparameter][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ?, ?")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?, ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER param1 = 100;
@@ -193,7 +194,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Rebinding same parame
                  "[odbc-api][bindparameter][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ? AS val")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER param1 = 111;
@@ -272,7 +273,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQLFreeStmt SQL_RESET
                  "[odbc-api][bindparameter][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ? AS val")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Bind and execute successfully

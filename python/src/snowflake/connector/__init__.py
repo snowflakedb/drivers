@@ -8,7 +8,8 @@ as defined in PEP 249.
 from typing import Any
 
 from ._internal.api_client.c_api import register_default_logger_callback
-from .connection import Connection
+from ._internal.decorators import pep249
+from .connection import Connection, SnowflakeConnection
 from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
     DatabaseError,
@@ -39,14 +40,15 @@ from .types import (
 from .version import __version__
 
 
-# Module Interface Constants
+# PEP 249 Module Interface Constants
 apilevel = "2.0"
 threadsafety = 1  # Threads may share the module, but not connections
-paramstyle = "format"  # Python extended format codes, e.g. ...WHERE name=%s
+paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
 
 register_default_logger_callback()
 
 
+@pep249
 def connect(**kwargs: Any) -> Connection:
     """
     Create a connection to the database.
@@ -77,6 +79,7 @@ __all__ = [
     "connect",
     # Classes
     "Connection",
+    "SnowflakeConnection",
     "DictCursor",
     "SnowflakeCursor",
     # Exceptions

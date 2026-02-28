@@ -11,6 +11,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -26,8 +27,8 @@ TEST_CASE("SQLBrowseConnect: SQL_INVALID_HANDLE with NULL connection",
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(SQL_NULL_HDBC, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  const SQLRETURN ret =
+      SQLBrowseConnect(SQL_NULL_HDBC, sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
@@ -40,8 +41,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: IM002 - Non-existent DSN",
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  const SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
@@ -53,8 +54,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: NULL OutConnectionString returns
   const std::string connStr = "DSN=Test";
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, nullptr, 1024, &outLen);
+  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, nullptr, 1024, &outLen);
 
   // Note: Snowflake driver returns ERROR when OutConnectionString is NULL
   // DM may return IM002 (DSN not found) before checking output buffer, or HY009
@@ -86,8 +86,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: Empty InConnectionString returns
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  const SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   // IM002: Data source not found (empty string has no DSN/DRIVER)
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
@@ -101,7 +101,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: HY090 - Negative StringLength",
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
+  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()),
                                          -5,  // Invalid negative length
                                          outConnStr, sizeof(outConnStr), &outLen);
 
@@ -121,8 +121,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLBrowseConnect: HY090 - Negative BufferLength",
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr,
+  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr,
                                          -1,  // Invalid negative buffer length
                                          &outLen);
 
@@ -142,8 +141,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Zero BufferLength retu
   SQLCHAR outConnStr[1024] = {};
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr,
+  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr,
                                          0,  // Zero buffer length
                                          &outLen);
 
@@ -162,9 +160,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: 08002 - Connection alr
 
   // First connect using SQLDriverConnect
   const std::string connStr1 = get_connection_string();
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr1.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr1.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Try to connect again using SQLBrowseConnect
@@ -172,8 +169,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: 08002 - Connection alr
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
-  ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr2.c_str())), SQL_NTS,
-                         outConnStr, sizeof(outConnStr), &outLen);
+  ret = SQLBrowseConnect(dbc_handle(), sqlchar(connStr2.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   // 08002: Connection name in use
   REQUIRE_EXPECTED_ERROR(ret, "08002", dbc_handle(), SQL_HANDLE_DBC);
@@ -194,8 +190,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Initial call with DSN"
   SQLCHAR outConnStr[1024] = {};
   SQLSMALLINT outLen = 0;
 
-  SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                   SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   // Note: Snowflake driver supports SQLBrowseConnect and completes connection if DSN has all info
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
@@ -209,7 +205,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Initial call with DSN"
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
@@ -225,8 +221,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Reconnect after discon
   SQLSMALLINT outLen = 0;
 
   // First connection
-  SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                   SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Disconnect
@@ -237,8 +233,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Reconnect after discon
   outLen = 0;
   std::memset(outConnStr, 0, sizeof(outConnStr));
 
-  ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                         outConnStr, sizeof(outConnStr), &outLen);
+  ret = SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify second connection works
@@ -246,7 +241,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Reconnect after discon
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
@@ -266,8 +261,8 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLBrowseConnect: 28000 - Invalid credent
   SQLCHAR outConnStr[1024] = {};
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  const SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   // Note: Snowflake driver returns 28000 for authentication failures.
   REQUIRE_EXPECTED_ERROR(ret, "28000", dbc_handle(), SQL_HANDLE_DBC);
@@ -285,8 +280,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: 01004 - OutConnectionS
   SQLCHAR outConnStr[10];  // Very small buffer to force truncation
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  const SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   // Per ODBC spec, buffer truncation in SQLBrowseConnect should return SQL_NEED_DATA (99)
   // not SQL_SUCCESS_WITH_INFO. This is different from other ODBC functions.
@@ -307,8 +302,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: NULL StringLength2Ptr 
   SQLCHAR outConnStr[1024] = {};
 
   // NULL StringLength2Ptr is allowed per ODBC spec - caller doesn't need length
-  SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                   SQL_NTS, outConnStr, sizeof(outConnStr),
+  SQLRETURN ret = SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr),
                                    nullptr);  // NULL length pointer
 
   // Should succeed - NULL length pointer is valid
@@ -335,8 +329,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Disconnecting after su
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
-  SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                   SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
@@ -357,8 +351,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Driver support with co
   SQLCHAR outConnStr[2048] = {};
   SQLSMALLINT outLen = 0;
 
-  SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                   SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   // Note: Snowflake driver SUPPORTS SQLBrowseConnect
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
@@ -376,7 +370,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Driver support with co
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
@@ -398,8 +392,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Iterative browse with 
   SQLCHAR outConnStr[2048] = {};
   SQLSMALLINT outLen = 0;
 
-  const SQLRETURN ret = SQLBrowseConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                                         SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
+  const SQLRETURN ret =
+      SQLBrowseConnect(dbc_handle(), sqlchar(connStr.c_str()), SQL_NTS, outConnStr, sizeof(outConnStr), &outLen);
 
   // Note: Snowflake driver does NOT support iterative browsing.
   // It requires a complete connection string and returns SQL_ERROR when given incomplete info.

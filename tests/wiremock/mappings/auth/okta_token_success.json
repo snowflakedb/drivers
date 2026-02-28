@@ -1,0 +1,15 @@
+{
+  "name": "Okta token success",
+  "request": {
+    "urlPathPattern": "/api/v1/authn.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "sessionToken": "okta-session-token",
+      "relayState": "relay-state"
+    }
+  }
+}
+

@@ -82,8 +82,19 @@ pipeline {
                         stage('ODBC: Build Docker Images') {
                             steps {
                                 sh '''
+                                    REFERENCE_ODBC_VERSION=$(cat ci/reference-odbc-version | tr -d '[:space:]')
+                                    . ci/reference-odbc-checksums
+                                    ARCH=$(uname -m)
+                                    if [ "$ARCH" = "x86_64" ]; then
+                                        REFERENCE_ODBC_SHA256="$RPM_X86_64_SHA256"
+                                    else
+                                        REFERENCE_ODBC_SHA256="$RPM_AARCH64_SHA256"
+                                    fi
                                     docker build -f ci/Dockerfile.rocky-old-odbc-build -t rocky-old-odbc-build .
-                                    docker build -f ci/Dockerfile.rocky-old-odbc-test -t rocky-old-odbc-test .
+                                    docker build -f ci/Dockerfile.rocky-old-odbc-test \
+                                        --build-arg REFERENCE_ODBC_VERSION="$REFERENCE_ODBC_VERSION" \
+                                        --build-arg REFERENCE_ODBC_SHA256="$REFERENCE_ODBC_SHA256" \
+                                        -t rocky-old-odbc-test .
                                 '''
                             }
                         }

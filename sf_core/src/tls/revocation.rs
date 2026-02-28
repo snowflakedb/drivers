@@ -10,7 +10,7 @@ pub enum RevocationOutcome {
 
 use snafu::{Location, Snafu};
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum RevocationError {
     #[snafu(display("CRL error: {message}"))]

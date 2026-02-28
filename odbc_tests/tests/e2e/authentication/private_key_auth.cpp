@@ -22,6 +22,13 @@
 using pg_utils::TempTestDir;
 
 std::string get_private_key_path_for_auth(picojson::object& params, const TempTestDir& tmp) {
+  // First check if a private key file path is provided
+  auto private_key_file_path = get_private_key_file_path(params);
+  if (!private_key_file_path.empty()) {
+    return private_key_file_path;
+  }
+
+  // Otherwise, create a temporary file from contents
   auto private_key = read_private_key(params);
   auto path = tmp.path() / "rsa_key_auth.p8";
   std::ofstream file(path, std::ios::out | std::ios::trunc);

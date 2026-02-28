@@ -1,18 +1,36 @@
 behavior_differences:
   1:
     name: "Header of a gzip-compressed file does not contain filename"
-  
+
   2:
     name: "DEFLATE compression type option is now correctly auto-detected"
-  
+
   3:
     name: "BROTLI compression type option is now supported"
-  
+
   4:
     name: "Error structure changed"
-  
+
   5:
     name: "Private key password parameter name changed"
     description: |
       NEW driver: `private_key_password`
       OLD driver: `private_key_file_pwd`
+
+  6:
+    name: "ConfigManager reads config from SNOWFLAKE_HOME via sf_core"
+    description: |
+      NEW driver: Reads config files from SNOWFLAKE_HOME directory using Rust sf_core.
+      OLD driver: Reads config from file_path specified in ConfigManager constructor.
+
+  7:
+    name: "ConfigManager does not support SNOWFLAKE_<SECTION>_<KEY> environment variable overrides"
+    description: |
+      NEW driver: Does not apply SNOWFLAKE_<SECTION>_<KEY> env var overrides to config values.
+      OLD driver: Does not support this pattern; uses only custom env_name if specified.
+
+  8:
+    name: "ConfigManager has clear_cache method and cache attributes"
+    description: |
+      NEW driver: Has clear_cache() and conf_file_cache attributes.
+      OLD driver: Uses different caching mechanism.

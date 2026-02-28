@@ -160,7 +160,7 @@ fn calculate_digest(data: &[u8]) -> Result<String, OpenSslErrorStack> {
     Ok(BASE64_ENGINE.encode(digest))
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum EncryptionError {
     #[snafu(display("OpenSSL cryptographic operation failed during {operation}"))]
     OpenSSL {
