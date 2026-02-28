@@ -727,6 +727,7 @@ fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError>
 /// Behavior depends on `config.error_strategy`:
 /// - `Strict`: surface errors to the caller (close() may fail)
 /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
+///
 /// Close the connection using logout configuration set during initialization.
 ///
 /// Logout behavior is determined by connection fields set via ConnectionSetOption*:

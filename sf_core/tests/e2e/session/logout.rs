@@ -18,17 +18,20 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
     //And <server_session_keep_alive> is set to any value
 
     for keep_alive in [Some(true), Some(false), None] {
-        let client = SnowflakeTestClient::connect_with_default_auth();
+        // Create client with specific keep_alive configuration
+        let client = SnowflakeTestClient::with_default_jwt_auth_params();
+
+        // Configure logout behavior BEFORE connection_init
+        if let Some(value) = keep_alive {
+            client.set_connection_option_bool("server_session_keep_alive", value);
+        }
+
+        // Connect
+        client.connect().expect("Connection should succeed");
 
         //When Connection is closed
         let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
             conn_handle: Some(client.conn_handle),
-            server_session_keep_alive: keep_alive,
-            enable_auto_detection: None,
-            error_strategy: None,
-            logout_total_timeout_seconds: None,
-            logout_request_timeout_seconds: None,
-            max_retry_attempts: None,
         });
 
         //Then Session token in Connection.tokens is null
@@ -49,34 +52,16 @@ fn should_be_idempotent_when_close_called_multiple_times() {
     //When Connection is closed
     let result1 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
         conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: None,
-        enable_auto_detection: None,
-        error_strategy: None,
-        logout_total_timeout_seconds: None,
-        logout_request_timeout_seconds: None,
-        max_retry_attempts: None,
     });
 
     //And Connection is closed again
     let result2 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
         conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: None,
-        enable_auto_detection: None,
-        error_strategy: None,
-        logout_total_timeout_seconds: None,
-        logout_request_timeout_seconds: None,
-        max_retry_attempts: None,
     });
 
     //And Connection is closed a third time
     let result3 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
         conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: None,
-        enable_auto_detection: None,
-        error_strategy: None,
-        logout_total_timeout_seconds: None,
-        logout_request_timeout_seconds: None,
-        max_retry_attempts: None,
     });
 
     //Then Only one logout request is sent
@@ -105,12 +90,6 @@ fn should_handle_concurrent_close_calls_safely() {
             thread::spawn(move || {
                 DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                     conn_handle: Some(client_clone.conn_handle),
-                    server_session_keep_alive: None,
-                    enable_auto_detection: None,
-                    error_strategy: None,
-                    logout_total_timeout_seconds: None,
-                    logout_request_timeout_seconds: None,
-                    max_retry_attempts: None,
                 })
             })
         })
@@ -143,12 +122,6 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
     //When Connection is closed
     let close_result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
         conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: None,
-        enable_auto_detection: None,
-        error_strategy: None,
-        logout_total_timeout_seconds: None,
-        logout_request_timeout_seconds: None,
-        max_retry_attempts: None,
     });
     assert!(close_result.is_ok(), "Close should succeed");
 

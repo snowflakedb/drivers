@@ -853,7 +853,8 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
             client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
             let temp_key_file = private_key_helper::get_test_private_key_file()
                 .expect("Failed to create test private key file");
-            client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+            client
+                .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             // Configure logout behavior BEFORE connection_init
             client.set_connection_option_bool("server_session_keep_alive", false);
@@ -997,7 +998,8 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
             client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
             let temp_key_file = private_key_helper::get_test_private_key_file()
                 .expect("Failed to create test private key file");
-            client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+            client
+                .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             // Configure logout behavior BEFORE connection_init
             client.set_connection_option_bool("server_session_keep_alive", false);
