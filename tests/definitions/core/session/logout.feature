@@ -108,7 +108,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   # From the moment close is entered, the connection is in closing state and
   # absolutely no new queries can be scheduled.
 
-  @core_int
+  # TODO: SNOW-2923705 - Requires query execution implementation
   Scenario: should reject new query with connection closed error when submitted after close started
     Given Mock HTTP server delays logout response by 5 seconds then returns 200
     And UD Core connection is logged in
@@ -118,7 +118,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Mock HTTP server did not receive any query request
     And Close completes successfully after logout response arrives
 
-  @core_int
+  # TODO: SNOW-2923705 - Requires query execution implementation
   Scenario: should fail in-flight query when server response arrives after closing process started
     # The server completes the query — the HTTP connection is not cancelled.
     # The query fails because post-response processing cannot operate on
@@ -143,7 +143,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   # close and renewal both try to modify tokens simultaneously.
   # This contention is expected to be rare in practice.
 
-  @core_int
+  # TODO: SNOW-2923705 - Requires token refresh during close (complex scenario requiring concurrent refresh + close)
   Scenario: should wait for in-flight token renewal to complete then logout with refreshed token
     Given Mock HTTP server delays token refresh response by 3 seconds then returns new token
     And Mock HTTP server accepts logout requests with 200
@@ -154,7 +154,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Logout request Authorization header contains the refreshed session token
     And Close completes successfully
 
-  @core_int
+  # TODO: SNOW-2923705 - Requires query execution and token refresh coordination
   Scenario: should not start token renewal when query receives 390112 after closing process started
     # After closing process starts, a query receiving 390112 cannot initiate
     # renewal — the internal services required for renewal are no longer available.
@@ -249,7 +249,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict        |
       | best-effort   |
 
-  @core_int
+  # TODO: SNOW-2923705 - Requires token refresh during logout (complex timing scenario)
   Scenario: should include token refresh time in total logout timeout budget
     # Token refresh is a network call that must be accounted for in total timeout
     Given Core logout function called
@@ -312,7 +312,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Failure path: exhausted retries (outcome differs per strategy) --
 
-  @core_int
+  # TODO: Requires connection layer error strategy implementation (not HTTP layer)
   Scenario Outline: should throw after exhausted retries with strict strategy
     Given Core logout function called with strict strategy
     And Retry policy configured with <max_attempts> max attempts
@@ -374,7 +374,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Non-retryable errors: outcome differs per strategy --
 
-  @core_int
+  # TODO: Requires connection layer error strategy implementation (not HTTP layer)
   Scenario Outline: should throw on non-retryable <error_code> in strict strategy
     Given Core logout function called with strict strategy
     And Mock HTTP server returns <error_code> error
@@ -390,7 +390,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 404 Not Found               |
       | MASTER_TOKEN_EXPIRED 390114 |
 
-  @core_int
+  # TODO: Requires connection layer error strategy implementation (not HTTP layer)
   Scenario Outline: should log and suppress non-retryable <error_code> in best-effort strategy
     Given Core logout function called with best-effort strategy
     And Mock HTTP server returns <error_code> error
@@ -410,7 +410,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   #                      Telemetry Integration
   # ===========================================================================
 
-  @core_int
+  # TODO: SNOW-2912513 - Requires telemetry implementation
   Scenario: should record connection close decision metrics before logout
     # Requires: SNOW-2912513 (Telemetry)
     Given Telemetry client is configured
