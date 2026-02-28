@@ -13,7 +13,7 @@ import warnings
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass
 from io import StringIO
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, cast
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionCloseRequest,
@@ -23,6 +23,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
+    ConnectionSetOptionBoolRequest,
     ConnectionSetOptionBytesRequest,
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
@@ -135,11 +136,11 @@ class Connection:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
 
         # Extract logout configuration parameters before passing to Core
-        self.server_session_keep_alive: bool | None = kwargs.pop("server_session_keep_alive", None)
-        self.enable_server_session_keep_alive_auto_detection: bool | None = kwargs.pop(
-            "enable_server_session_keep_alive_auto_detection", None
+        self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
+        self.enable_server_session_keep_alive_auto_detection: bool | None = cast(
+            "bool | None", kwargs.pop("enable_server_session_keep_alive_auto_detection", None)
         )
-        self.auto_cleanup: bool = kwargs.pop("auto_cleanup", True)
+        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
 
         for key, value in kwargs.items():
             if isinstance(value, int):
@@ -166,6 +167,66 @@ class Connection:
         if session_params:
             self.db_api.connection_set_session_parameters(
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
+            )
+
+        # Configure logout behavior BEFORE connection_init (init-time configuration)
+        # Map logout parameters using Phase 2 semantics for backward compatibility
+        logout_config = map_logout_config_phase2(self)
+
+        # Set logout configuration via ConnectionSetOption* calls
+        if logout_config.server_session_keep_alive is not None:
+            self.db_api.connection_set_option_bool(
+                ConnectionSetOptionBoolRequest(
+                    conn_handle=self.conn_handle,
+                    key="server_session_keep_alive",
+                    value=logout_config.server_session_keep_alive,
+                )
+            )
+
+        if logout_config.enable_auto_detection is not None:
+            self.db_api.connection_set_option_bool(
+                ConnectionSetOptionBoolRequest(
+                    conn_handle=self.conn_handle,
+                    key="enable_logout_auto_detection",
+                    value=logout_config.enable_auto_detection,
+                )
+            )
+
+        # Set error strategy (always set, has default)
+        error_strategy_str = "best_effort" if logout_config.error_strategy == 1 else "strict"
+        self.db_api.connection_set_option_string(
+            ConnectionSetOptionStringRequest(
+                conn_handle=self.conn_handle,
+                key="logout_error_strategy",
+                value=error_strategy_str,
+            )
+        )
+
+        # Set timeout and retry configuration
+        self.db_api.connection_set_option_int(
+            ConnectionSetOptionIntRequest(
+                conn_handle=self.conn_handle,
+                key="logout_total_timeout_seconds",
+                value=logout_config.logout_total_timeout_seconds,
+            )
+        )
+
+        if logout_config.max_retry_attempts is not None:
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key="logout_max_retry_attempts",
+                    value=logout_config.max_retry_attempts,
+                )
+            )
+
+        if logout_config.logout_request_timeout_seconds is not None:
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key="logout_request_timeout_seconds",
+                    value=logout_config.logout_request_timeout_seconds,
+                )
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
@@ -195,22 +256,25 @@ class Connection:
         """
         Close the connection now.
 
-        Sends logout request to server based on configuration, then cleans up resources.
+        Sends logout request to server based on configuration set at connection initialization,
+        then cleans up resources.
 
         Args:
-            retry: Whether to retry failed logout requests (backward compatible with old driver).
-                   - True (default): Allow retries (Core default: up to 6 attempts with exponential backoff)
-                   - False: No retries, single attempt only (matches old driver behavior)
+            retry: DEPRECATED - Logout retry behavior is now configured at connection initialization
+                   via the max_retry_attempts parameter. This parameter is kept for backward
+                   compatibility but has no effect.
 
         Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
             - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
             - server_session_keep_alive=False still respects auto-detection
             - server_session_keep_alive=True never sends logout (Fire & Forget)
             - server_session_keep_alive=None delegates to auto-detection setting
+            - Logout configuration (timeouts, retries, error strategy) is set at connection
+              initialization time and cannot be changed at close time
 
-        Note: Phase 2 behavior is achieved by mapping Python parameters to Core's Phase 3
-        semantics. In Phase 3, Python will pass parameters directly to Core without mapping.
-        See .ai/docs/UD_Design_Doc_Fire_Forget.md and SNOW-2314152 for Phase 2/3 migration plan.
+        Note: Logout configuration is now set at connection initialization (init-time) rather
+        than at close time. This matches the architecture of all existing Snowflake drivers
+        (Go, JDBC, .NET, Node.js).
         """
         # Unregister atexit handler to prevent it from running at process exit
         # after explicit close(). This prevents double cleanup and false warnings.
@@ -219,31 +283,21 @@ class Connection:
 
         # Note: Idempotence is handled atomically in Core (connection_close)
 
-        # Map Python parameters to Core parameters (SNOW-2314152)
-        # All logic (defaults, mapping) handled in _map_logout_config()
-        logout_config = self._map_logout_config()
+        # Emit deprecation warning if retry parameter is used with non-default value
+        if not retry:
+            warnings.warn(
+                "The 'retry' parameter is deprecated. Logout retry behavior should be "
+                "configured at connection initialization time via the max_retry_attempts parameter. "
+                "This parameter will be removed in a future version.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
-        # Handle retry parameter (backward compatibility with old driver)
-        # Old driver: retry=True → 3 attempts, retry=False → 1 attempt
-        # UD: Pass max_retry_attempts to Core to control retry count
-        if retry:
-            # Allow retries: Use logout_config value (3 attempts)
-            max_retry_attempts = logout_config.max_retry_attempts
-        else:
-            # No retries: Single attempt only (matches old driver retry=False)
-            max_retry_attempts = 1
-
-        # Call Core connection_close with fully resolved configuration
-        # Core will set is_closed flag atomically
+        # Call Core connection_close with no configuration (uses connection state)
+        # Configuration was set at init time via ConnectionSetOption* calls
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
-                server_session_keep_alive=logout_config.server_session_keep_alive,
-                enable_auto_detection=logout_config.enable_auto_detection,
-                error_strategy=logout_config.error_strategy,
-                logout_total_timeout_seconds=logout_config.logout_total_timeout_seconds,
-                max_retry_attempts=max_retry_attempts,
-                logout_request_timeout_seconds=logout_config.logout_request_timeout_seconds,
             )
         )
 

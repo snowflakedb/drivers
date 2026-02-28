@@ -166,7 +166,7 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
 
-    //And UD Core connection is configured with server_session_keep_alive set to true
+    //And UD Core connection is logged in with server_session_keep_alive set to true
     let server_uri = server.uri();
     let client = tokio::task::spawn_blocking(move || {
         use crate::common::private_key_helper;
@@ -253,7 +253,7 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
         .mount(&server)
         .await;
 
-    //And UD Core connection is configured with server_session_keep_alive set to false
+    //And UD Core connection is logged in with server_session_keep_alive set to false
     let server_uri = server.uri();
     let client = tokio::task::spawn_blocking(move || {
         use crate::common::private_key_helper;
