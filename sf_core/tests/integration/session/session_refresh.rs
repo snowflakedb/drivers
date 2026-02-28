@@ -104,6 +104,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         session_parameters: Arc::new(std::sync::RwLock::new(HashMap::new())),
         async_query_registry: sf_core::apis::database_driver_v1::AsyncQueryRegistry::new(),
         is_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        logout_config: sf_core::config::logout::LogoutConfig::default(),
     }));
 
     // When multiple concurrent requests receive 401 errors

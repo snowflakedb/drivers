@@ -2,8 +2,6 @@ use sf_core::apis::database_driver_v1::{
     connection_close, connection_is_closed, connection_new, connection_release, database_init,
     database_new, database_release,
 };
-use sf_core::config::logout::LogoutConfig;
-use std::time::Duration;
 
 #[test]
 fn test_connection_is_closed_initially_false() {
@@ -32,15 +30,7 @@ fn test_connection_is_closed_after_close() {
     assert!(!connection_is_closed(conn_handle).unwrap());
 
     // Close the connection
-    let config = LogoutConfig {
-        server_session_keep_alive: Some(true), // Skip logout for test
-        enable_auto_detection: None,
-        error_strategy: sf_core::config::logout::ErrorStrategy::BestEffort,
-        logout_total_timeout: Duration::from_secs(5),
-        logout_request_timeout: None,
-        max_retry_attempts: None,
-    };
-    connection_close(conn_handle, config).unwrap();
+    connection_close(conn_handle).unwrap();
 
     // Connection should now be closed
     let is_closed = connection_is_closed(conn_handle).unwrap();
@@ -63,21 +53,13 @@ fn test_connection_is_closed_idempotent() {
     let conn_handle = connection_new();
 
     // Close the connection
-    let config = LogoutConfig {
-        server_session_keep_alive: Some(true),
-        enable_auto_detection: None,
-        error_strategy: sf_core::config::logout::ErrorStrategy::BestEffort,
-        logout_total_timeout: Duration::from_secs(5),
-        logout_request_timeout: None,
-        max_retry_attempts: None,
-    };
-    connection_close(conn_handle, config.clone()).unwrap();
+    connection_close(conn_handle).unwrap();
 
     // Verify closed
     assert!(connection_is_closed(conn_handle).unwrap());
 
     // Close again (should be idempotent)
-    connection_close(conn_handle, config).unwrap();
+    connection_close(conn_handle).unwrap();
 
     // Should still be closed
     assert!(connection_is_closed(conn_handle).unwrap());
