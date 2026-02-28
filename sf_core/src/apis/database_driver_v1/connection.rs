@@ -251,7 +251,13 @@ impl Connection {
     ) {
         let mut cache = match self.session_parameters.write() {
             Ok(cache) => cache,
-            Err(_) => return,
+            Err(e) => {
+                tracing::debug!(
+                    "Failed to acquire session params lock during update: {:?}",
+                    e
+                );
+                return;
+            }
         };
 
         // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.

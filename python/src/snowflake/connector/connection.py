@@ -57,6 +57,10 @@ ConnectionParameters = dict[str, ConnectionParamValue]
 # Module-level logger
 logger = logging.getLogger(__name__)
 
+# Error strategy constants
+ERROR_STRATEGY_BEST_EFFORT = "best_effort"
+ERROR_STRATEGY_STRICT = "strict"
+
 
 @dataclass
 class ConnectionClassConfig:
@@ -221,7 +225,7 @@ class Connection:
             )
 
         # Set error strategy (always set, has default)
-        error_strategy_str = "best_effort" if logout_config.error_strategy == 1 else "strict"
+        error_strategy_str = ERROR_STRATEGY_BEST_EFFORT if logout_config.error_strategy == 1 else ERROR_STRATEGY_STRICT
         self.db_api.connection_set_option_string(
             ConnectionSetOptionStringRequest(
                 conn_handle=self.conn_handle,
@@ -363,8 +367,9 @@ class Connection:
             self.auto_cleanup = False
             self.close(retry=False)
             self.auto_cleanup = saved_auto_cleanup
-        except Exception:
-            pass  # Suppress errors during exit cleanup
+        except Exception as e:
+            logger.warning(f"Failed to cleanup connection at exit: {e}")
+            # Suppress error - can't propagate from atexit handler
 
     @property
     @pep249
