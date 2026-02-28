@@ -31176,101 +31176,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
      * <code>.database_driver_v1.ConnectionHandle conn_handle = 1;</code>
      */
     net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandleOrBuilder getConnHandleOrBuilder();
-
-    /**
-     * <code>optional bool server_session_keep_alive = 2;</code>
-     * @return Whether the serverSessionKeepAlive field is set.
-     */
-    boolean hasServerSessionKeepAlive();
-    /**
-     * <code>optional bool server_session_keep_alive = 2;</code>
-     * @return The serverSessionKeepAlive.
-     */
-    boolean getServerSessionKeepAlive();
-
-    /**
-     * <code>optional bool enable_auto_detection = 3;</code>
-     * @return Whether the enableAutoDetection field is set.
-     */
-    boolean hasEnableAutoDetection();
-    /**
-     * <code>optional bool enable_auto_detection = 3;</code>
-     * @return The enableAutoDetection.
-     */
-    boolean getEnableAutoDetection();
-
-    /**
-     * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-     * @return Whether the errorStrategy field is set.
-     */
-    boolean hasErrorStrategy();
-    /**
-     * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-     * @return The enum numeric value on the wire for errorStrategy.
-     */
-    int getErrorStrategyValue();
-    /**
-     * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-     * @return The errorStrategy.
-     */
-    net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy getErrorStrategy();
-
-    /**
-     * <pre>
-     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-     * </pre>
-     *
-     * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-     * @return Whether the logoutTotalTimeoutSeconds field is set.
-     */
-    boolean hasLogoutTotalTimeoutSeconds();
-    /**
-     * <pre>
-     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-     * </pre>
-     *
-     * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-     * @return The logoutTotalTimeoutSeconds.
-     */
-    long getLogoutTotalTimeoutSeconds();
-
-    /**
-     * <pre>
-     * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-     * </pre>
-     *
-     * <code>optional uint32 max_retry_attempts = 6;</code>
-     * @return Whether the maxRetryAttempts field is set.
-     */
-    boolean hasMaxRetryAttempts();
-    /**
-     * <pre>
-     * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-     * </pre>
-     *
-     * <code>optional uint32 max_retry_attempts = 6;</code>
-     * @return The maxRetryAttempts.
-     */
-    int getMaxRetryAttempts();
-
-    /**
-     * <pre>
-     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-     * </pre>
-     *
-     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-     * @return Whether the logoutRequestTimeoutSeconds field is set.
-     */
-    boolean hasLogoutRequestTimeoutSeconds();
-    /**
-     * <pre>
-     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-     * </pre>
-     *
-     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-     * @return The logoutRequestTimeoutSeconds.
-     */
-    long getLogoutRequestTimeoutSeconds();
   }
   /**
    * Protobuf type {@code database_driver_v1.ConnectionCloseRequest}
@@ -31294,7 +31199,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       super(builder);
     }
     private ConnectionCloseRequest() {
-      errorStrategy_ = 0;
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -31337,150 +31241,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       return connHandle_ == null ? net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle.getDefaultInstance() : connHandle_;
     }
 
-    public static final int SERVER_SESSION_KEEP_ALIVE_FIELD_NUMBER = 2;
-    private boolean serverSessionKeepAlive_ = false;
-    /**
-     * <code>optional bool server_session_keep_alive = 2;</code>
-     * @return Whether the serverSessionKeepAlive field is set.
-     */
-    @java.lang.Override
-    public boolean hasServerSessionKeepAlive() {
-      return ((bitField0_ & 0x00000002) != 0);
-    }
-    /**
-     * <code>optional bool server_session_keep_alive = 2;</code>
-     * @return The serverSessionKeepAlive.
-     */
-    @java.lang.Override
-    public boolean getServerSessionKeepAlive() {
-      return serverSessionKeepAlive_;
-    }
-
-    public static final int ENABLE_AUTO_DETECTION_FIELD_NUMBER = 3;
-    private boolean enableAutoDetection_ = false;
-    /**
-     * <code>optional bool enable_auto_detection = 3;</code>
-     * @return Whether the enableAutoDetection field is set.
-     */
-    @java.lang.Override
-    public boolean hasEnableAutoDetection() {
-      return ((bitField0_ & 0x00000004) != 0);
-    }
-    /**
-     * <code>optional bool enable_auto_detection = 3;</code>
-     * @return The enableAutoDetection.
-     */
-    @java.lang.Override
-    public boolean getEnableAutoDetection() {
-      return enableAutoDetection_;
-    }
-
-    public static final int ERROR_STRATEGY_FIELD_NUMBER = 4;
-    private int errorStrategy_ = 0;
-    /**
-     * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-     * @return Whether the errorStrategy field is set.
-     */
-    @java.lang.Override public boolean hasErrorStrategy() {
-      return ((bitField0_ & 0x00000008) != 0);
-    }
-    /**
-     * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-     * @return The enum numeric value on the wire for errorStrategy.
-     */
-    @java.lang.Override public int getErrorStrategyValue() {
-      return errorStrategy_;
-    }
-    /**
-     * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-     * @return The errorStrategy.
-     */
-    @java.lang.Override public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy getErrorStrategy() {
-      net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy result = net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy.forNumber(errorStrategy_);
-      return result == null ? net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy.UNRECOGNIZED : result;
-    }
-
-    public static final int LOGOUT_TOTAL_TIMEOUT_SECONDS_FIELD_NUMBER = 5;
-    private long logoutTotalTimeoutSeconds_ = 0L;
-    /**
-     * <pre>
-     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-     * </pre>
-     *
-     * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-     * @return Whether the logoutTotalTimeoutSeconds field is set.
-     */
-    @java.lang.Override
-    public boolean hasLogoutTotalTimeoutSeconds() {
-      return ((bitField0_ & 0x00000010) != 0);
-    }
-    /**
-     * <pre>
-     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-     * </pre>
-     *
-     * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-     * @return The logoutTotalTimeoutSeconds.
-     */
-    @java.lang.Override
-    public long getLogoutTotalTimeoutSeconds() {
-      return logoutTotalTimeoutSeconds_;
-    }
-
-    public static final int MAX_RETRY_ATTEMPTS_FIELD_NUMBER = 6;
-    private int maxRetryAttempts_ = 0;
-    /**
-     * <pre>
-     * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-     * </pre>
-     *
-     * <code>optional uint32 max_retry_attempts = 6;</code>
-     * @return Whether the maxRetryAttempts field is set.
-     */
-    @java.lang.Override
-    public boolean hasMaxRetryAttempts() {
-      return ((bitField0_ & 0x00000020) != 0);
-    }
-    /**
-     * <pre>
-     * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-     * </pre>
-     *
-     * <code>optional uint32 max_retry_attempts = 6;</code>
-     * @return The maxRetryAttempts.
-     */
-    @java.lang.Override
-    public int getMaxRetryAttempts() {
-      return maxRetryAttempts_;
-    }
-
-    public static final int LOGOUT_REQUEST_TIMEOUT_SECONDS_FIELD_NUMBER = 7;
-    private long logoutRequestTimeoutSeconds_ = 0L;
-    /**
-     * <pre>
-     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-     * </pre>
-     *
-     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-     * @return Whether the logoutRequestTimeoutSeconds field is set.
-     */
-    @java.lang.Override
-    public boolean hasLogoutRequestTimeoutSeconds() {
-      return ((bitField0_ & 0x00000040) != 0);
-    }
-    /**
-     * <pre>
-     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-     * </pre>
-     *
-     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-     * @return The logoutRequestTimeoutSeconds.
-     */
-    @java.lang.Override
-    public long getLogoutRequestTimeoutSeconds() {
-      return logoutRequestTimeoutSeconds_;
-    }
-
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -31498,24 +31258,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (((bitField0_ & 0x00000001) != 0)) {
         output.writeMessage(1, getConnHandle());
       }
-      if (((bitField0_ & 0x00000002) != 0)) {
-        output.writeBool(2, serverSessionKeepAlive_);
-      }
-      if (((bitField0_ & 0x00000004) != 0)) {
-        output.writeBool(3, enableAutoDetection_);
-      }
-      if (((bitField0_ & 0x00000008) != 0)) {
-        output.writeEnum(4, errorStrategy_);
-      }
-      if (((bitField0_ & 0x00000010) != 0)) {
-        output.writeInt64(5, logoutTotalTimeoutSeconds_);
-      }
-      if (((bitField0_ & 0x00000020) != 0)) {
-        output.writeUInt32(6, maxRetryAttempts_);
-      }
-      if (((bitField0_ & 0x00000040) != 0)) {
-        output.writeInt64(7, logoutRequestTimeoutSeconds_);
-      }
       getUnknownFields().writeTo(output);
     }
 
@@ -31528,30 +31270,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (((bitField0_ & 0x00000001) != 0)) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(1, getConnHandle());
-      }
-      if (((bitField0_ & 0x00000002) != 0)) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeBoolSize(2, serverSessionKeepAlive_);
-      }
-      if (((bitField0_ & 0x00000004) != 0)) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeBoolSize(3, enableAutoDetection_);
-      }
-      if (((bitField0_ & 0x00000008) != 0)) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeEnumSize(4, errorStrategy_);
-      }
-      if (((bitField0_ & 0x00000010) != 0)) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeInt64Size(5, logoutTotalTimeoutSeconds_);
-      }
-      if (((bitField0_ & 0x00000020) != 0)) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeUInt32Size(6, maxRetryAttempts_);
-      }
-      if (((bitField0_ & 0x00000040) != 0)) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeInt64Size(7, logoutRequestTimeoutSeconds_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -31573,35 +31291,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         if (!getConnHandle()
             .equals(other.getConnHandle())) return false;
       }
-      if (hasServerSessionKeepAlive() != other.hasServerSessionKeepAlive()) return false;
-      if (hasServerSessionKeepAlive()) {
-        if (getServerSessionKeepAlive()
-            != other.getServerSessionKeepAlive()) return false;
-      }
-      if (hasEnableAutoDetection() != other.hasEnableAutoDetection()) return false;
-      if (hasEnableAutoDetection()) {
-        if (getEnableAutoDetection()
-            != other.getEnableAutoDetection()) return false;
-      }
-      if (hasErrorStrategy() != other.hasErrorStrategy()) return false;
-      if (hasErrorStrategy()) {
-        if (errorStrategy_ != other.errorStrategy_) return false;
-      }
-      if (hasLogoutTotalTimeoutSeconds() != other.hasLogoutTotalTimeoutSeconds()) return false;
-      if (hasLogoutTotalTimeoutSeconds()) {
-        if (getLogoutTotalTimeoutSeconds()
-            != other.getLogoutTotalTimeoutSeconds()) return false;
-      }
-      if (hasMaxRetryAttempts() != other.hasMaxRetryAttempts()) return false;
-      if (hasMaxRetryAttempts()) {
-        if (getMaxRetryAttempts()
-            != other.getMaxRetryAttempts()) return false;
-      }
-      if (hasLogoutRequestTimeoutSeconds() != other.hasLogoutRequestTimeoutSeconds()) return false;
-      if (hasLogoutRequestTimeoutSeconds()) {
-        if (getLogoutRequestTimeoutSeconds()
-            != other.getLogoutRequestTimeoutSeconds()) return false;
-      }
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -31616,34 +31305,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (hasConnHandle()) {
         hash = (37 * hash) + CONN_HANDLE_FIELD_NUMBER;
         hash = (53 * hash) + getConnHandle().hashCode();
-      }
-      if (hasServerSessionKeepAlive()) {
-        hash = (37 * hash) + SERVER_SESSION_KEEP_ALIVE_FIELD_NUMBER;
-        hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
-            getServerSessionKeepAlive());
-      }
-      if (hasEnableAutoDetection()) {
-        hash = (37 * hash) + ENABLE_AUTO_DETECTION_FIELD_NUMBER;
-        hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
-            getEnableAutoDetection());
-      }
-      if (hasErrorStrategy()) {
-        hash = (37 * hash) + ERROR_STRATEGY_FIELD_NUMBER;
-        hash = (53 * hash) + errorStrategy_;
-      }
-      if (hasLogoutTotalTimeoutSeconds()) {
-        hash = (37 * hash) + LOGOUT_TOTAL_TIMEOUT_SECONDS_FIELD_NUMBER;
-        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-            getLogoutTotalTimeoutSeconds());
-      }
-      if (hasMaxRetryAttempts()) {
-        hash = (37 * hash) + MAX_RETRY_ATTEMPTS_FIELD_NUMBER;
-        hash = (53 * hash) + getMaxRetryAttempts();
-      }
-      if (hasLogoutRequestTimeoutSeconds()) {
-        hash = (37 * hash) + LOGOUT_REQUEST_TIMEOUT_SECONDS_FIELD_NUMBER;
-        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
-            getLogoutRequestTimeoutSeconds());
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
@@ -31787,12 +31448,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
           connHandleBuilder_.dispose();
           connHandleBuilder_ = null;
         }
-        serverSessionKeepAlive_ = false;
-        enableAutoDetection_ = false;
-        errorStrategy_ = 0;
-        logoutTotalTimeoutSeconds_ = 0L;
-        maxRetryAttempts_ = 0;
-        logoutRequestTimeoutSeconds_ = 0L;
         return this;
       }
 
@@ -31833,30 +31488,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
               : connHandleBuilder_.build();
           to_bitField0_ |= 0x00000001;
         }
-        if (((from_bitField0_ & 0x00000002) != 0)) {
-          result.serverSessionKeepAlive_ = serverSessionKeepAlive_;
-          to_bitField0_ |= 0x00000002;
-        }
-        if (((from_bitField0_ & 0x00000004) != 0)) {
-          result.enableAutoDetection_ = enableAutoDetection_;
-          to_bitField0_ |= 0x00000004;
-        }
-        if (((from_bitField0_ & 0x00000008) != 0)) {
-          result.errorStrategy_ = errorStrategy_;
-          to_bitField0_ |= 0x00000008;
-        }
-        if (((from_bitField0_ & 0x00000010) != 0)) {
-          result.logoutTotalTimeoutSeconds_ = logoutTotalTimeoutSeconds_;
-          to_bitField0_ |= 0x00000010;
-        }
-        if (((from_bitField0_ & 0x00000020) != 0)) {
-          result.maxRetryAttempts_ = maxRetryAttempts_;
-          to_bitField0_ |= 0x00000020;
-        }
-        if (((from_bitField0_ & 0x00000040) != 0)) {
-          result.logoutRequestTimeoutSeconds_ = logoutRequestTimeoutSeconds_;
-          to_bitField0_ |= 0x00000040;
-        }
         result.bitField0_ |= to_bitField0_;
       }
 
@@ -31874,24 +31505,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         if (other == net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionCloseRequest.getDefaultInstance()) return this;
         if (other.hasConnHandle()) {
           mergeConnHandle(other.getConnHandle());
-        }
-        if (other.hasServerSessionKeepAlive()) {
-          setServerSessionKeepAlive(other.getServerSessionKeepAlive());
-        }
-        if (other.hasEnableAutoDetection()) {
-          setEnableAutoDetection(other.getEnableAutoDetection());
-        }
-        if (other.hasErrorStrategy()) {
-          setErrorStrategyValue(other.getErrorStrategyValue());
-        }
-        if (other.hasLogoutTotalTimeoutSeconds()) {
-          setLogoutTotalTimeoutSeconds(other.getLogoutTotalTimeoutSeconds());
-        }
-        if (other.hasMaxRetryAttempts()) {
-          setMaxRetryAttempts(other.getMaxRetryAttempts());
-        }
-        if (other.hasLogoutRequestTimeoutSeconds()) {
-          setLogoutRequestTimeoutSeconds(other.getLogoutRequestTimeoutSeconds());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -31926,36 +31539,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
                 bitField0_ |= 0x00000001;
                 break;
               } // case 10
-              case 16: {
-                serverSessionKeepAlive_ = input.readBool();
-                bitField0_ |= 0x00000002;
-                break;
-              } // case 16
-              case 24: {
-                enableAutoDetection_ = input.readBool();
-                bitField0_ |= 0x00000004;
-                break;
-              } // case 24
-              case 32: {
-                errorStrategy_ = input.readEnum();
-                bitField0_ |= 0x00000008;
-                break;
-              } // case 32
-              case 40: {
-                logoutTotalTimeoutSeconds_ = input.readInt64();
-                bitField0_ |= 0x00000010;
-                break;
-              } // case 40
-              case 48: {
-                maxRetryAttempts_ = input.readUInt32();
-                bitField0_ |= 0x00000020;
-                break;
-              } // case 48
-              case 56: {
-                logoutRequestTimeoutSeconds_ = input.readInt64();
-                bitField0_ |= 0x00000040;
-                break;
-              } // case 56
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -32092,312 +31675,6 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
           connHandle_ = null;
         }
         return connHandleBuilder_;
-      }
-
-      private boolean serverSessionKeepAlive_ ;
-      /**
-       * <code>optional bool server_session_keep_alive = 2;</code>
-       * @return Whether the serverSessionKeepAlive field is set.
-       */
-      @java.lang.Override
-      public boolean hasServerSessionKeepAlive() {
-        return ((bitField0_ & 0x00000002) != 0);
-      }
-      /**
-       * <code>optional bool server_session_keep_alive = 2;</code>
-       * @return The serverSessionKeepAlive.
-       */
-      @java.lang.Override
-      public boolean getServerSessionKeepAlive() {
-        return serverSessionKeepAlive_;
-      }
-      /**
-       * <code>optional bool server_session_keep_alive = 2;</code>
-       * @param value The serverSessionKeepAlive to set.
-       * @return This builder for chaining.
-       */
-      public Builder setServerSessionKeepAlive(boolean value) {
-
-        serverSessionKeepAlive_ = value;
-        bitField0_ |= 0x00000002;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>optional bool server_session_keep_alive = 2;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearServerSessionKeepAlive() {
-        bitField0_ = (bitField0_ & ~0x00000002);
-        serverSessionKeepAlive_ = false;
-        onChanged();
-        return this;
-      }
-
-      private boolean enableAutoDetection_ ;
-      /**
-       * <code>optional bool enable_auto_detection = 3;</code>
-       * @return Whether the enableAutoDetection field is set.
-       */
-      @java.lang.Override
-      public boolean hasEnableAutoDetection() {
-        return ((bitField0_ & 0x00000004) != 0);
-      }
-      /**
-       * <code>optional bool enable_auto_detection = 3;</code>
-       * @return The enableAutoDetection.
-       */
-      @java.lang.Override
-      public boolean getEnableAutoDetection() {
-        return enableAutoDetection_;
-      }
-      /**
-       * <code>optional bool enable_auto_detection = 3;</code>
-       * @param value The enableAutoDetection to set.
-       * @return This builder for chaining.
-       */
-      public Builder setEnableAutoDetection(boolean value) {
-
-        enableAutoDetection_ = value;
-        bitField0_ |= 0x00000004;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>optional bool enable_auto_detection = 3;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearEnableAutoDetection() {
-        bitField0_ = (bitField0_ & ~0x00000004);
-        enableAutoDetection_ = false;
-        onChanged();
-        return this;
-      }
-
-      private int errorStrategy_ = 0;
-      /**
-       * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-       * @return Whether the errorStrategy field is set.
-       */
-      @java.lang.Override public boolean hasErrorStrategy() {
-        return ((bitField0_ & 0x00000008) != 0);
-      }
-      /**
-       * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-       * @return The enum numeric value on the wire for errorStrategy.
-       */
-      @java.lang.Override public int getErrorStrategyValue() {
-        return errorStrategy_;
-      }
-      /**
-       * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-       * @param value The enum numeric value on the wire for errorStrategy to set.
-       * @return This builder for chaining.
-       */
-      public Builder setErrorStrategyValue(int value) {
-        errorStrategy_ = value;
-        bitField0_ |= 0x00000008;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-       * @return The errorStrategy.
-       */
-      @java.lang.Override
-      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy getErrorStrategy() {
-        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy result = net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy.forNumber(errorStrategy_);
-        return result == null ? net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy.UNRECOGNIZED : result;
-      }
-      /**
-       * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-       * @param value The errorStrategy to set.
-       * @return This builder for chaining.
-       */
-      public Builder setErrorStrategy(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorStrategy value) {
-        if (value == null) { throw new NullPointerException(); }
-        bitField0_ |= 0x00000008;
-        errorStrategy_ = value.getNumber();
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>optional .database_driver_v1.ErrorStrategy error_strategy = 4;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearErrorStrategy() {
-        bitField0_ = (bitField0_ & ~0x00000008);
-        errorStrategy_ = 0;
-        onChanged();
-        return this;
-      }
-
-      private long logoutTotalTimeoutSeconds_ ;
-      /**
-       * <pre>
-       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-       * </pre>
-       *
-       * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-       * @return Whether the logoutTotalTimeoutSeconds field is set.
-       */
-      @java.lang.Override
-      public boolean hasLogoutTotalTimeoutSeconds() {
-        return ((bitField0_ & 0x00000010) != 0);
-      }
-      /**
-       * <pre>
-       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-       * </pre>
-       *
-       * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-       * @return The logoutTotalTimeoutSeconds.
-       */
-      @java.lang.Override
-      public long getLogoutTotalTimeoutSeconds() {
-        return logoutTotalTimeoutSeconds_;
-      }
-      /**
-       * <pre>
-       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-       * </pre>
-       *
-       * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-       * @param value The logoutTotalTimeoutSeconds to set.
-       * @return This builder for chaining.
-       */
-      public Builder setLogoutTotalTimeoutSeconds(long value) {
-
-        logoutTotalTimeoutSeconds_ = value;
-        bitField0_ |= 0x00000010;
-        onChanged();
-        return this;
-      }
-      /**
-       * <pre>
-       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-       * </pre>
-       *
-       * <code>optional int64 logout_total_timeout_seconds = 5;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearLogoutTotalTimeoutSeconds() {
-        bitField0_ = (bitField0_ & ~0x00000010);
-        logoutTotalTimeoutSeconds_ = 0L;
-        onChanged();
-        return this;
-      }
-
-      private int maxRetryAttempts_ ;
-      /**
-       * <pre>
-       * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-       * </pre>
-       *
-       * <code>optional uint32 max_retry_attempts = 6;</code>
-       * @return Whether the maxRetryAttempts field is set.
-       */
-      @java.lang.Override
-      public boolean hasMaxRetryAttempts() {
-        return ((bitField0_ & 0x00000020) != 0);
-      }
-      /**
-       * <pre>
-       * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-       * </pre>
-       *
-       * <code>optional uint32 max_retry_attempts = 6;</code>
-       * @return The maxRetryAttempts.
-       */
-      @java.lang.Override
-      public int getMaxRetryAttempts() {
-        return maxRetryAttempts_;
-      }
-      /**
-       * <pre>
-       * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-       * </pre>
-       *
-       * <code>optional uint32 max_retry_attempts = 6;</code>
-       * @param value The maxRetryAttempts to set.
-       * @return This builder for chaining.
-       */
-      public Builder setMaxRetryAttempts(int value) {
-
-        maxRetryAttempts_ = value;
-        bitField0_ |= 0x00000020;
-        onChanged();
-        return this;
-      }
-      /**
-       * <pre>
-       * Maximum number of retry attempts (0 = no retries, 1 attempt only)
-       * </pre>
-       *
-       * <code>optional uint32 max_retry_attempts = 6;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearMaxRetryAttempts() {
-        bitField0_ = (bitField0_ & ~0x00000020);
-        maxRetryAttempts_ = 0;
-        onChanged();
-        return this;
-      }
-
-      private long logoutRequestTimeoutSeconds_ ;
-      /**
-       * <pre>
-       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-       * </pre>
-       *
-       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-       * @return Whether the logoutRequestTimeoutSeconds field is set.
-       */
-      @java.lang.Override
-      public boolean hasLogoutRequestTimeoutSeconds() {
-        return ((bitField0_ & 0x00000040) != 0);
-      }
-      /**
-       * <pre>
-       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-       * </pre>
-       *
-       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-       * @return The logoutRequestTimeoutSeconds.
-       */
-      @java.lang.Override
-      public long getLogoutRequestTimeoutSeconds() {
-        return logoutRequestTimeoutSeconds_;
-      }
-      /**
-       * <pre>
-       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-       * </pre>
-       *
-       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-       * @param value The logoutRequestTimeoutSeconds to set.
-       * @return This builder for chaining.
-       */
-      public Builder setLogoutRequestTimeoutSeconds(long value) {
-
-        logoutRequestTimeoutSeconds_ = value;
-        bitField0_ |= 0x00000040;
-        onChanged();
-        return this;
-      }
-      /**
-       * <pre>
-       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
-       * </pre>
-       *
-       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
-       * @return This builder for chaining.
-       */
-      public Builder clearLogoutRequestTimeoutSeconds() {
-        bitField0_ = (bitField0_ & ~0x00000040);
-        logoutRequestTimeoutSeconds_ = 0L;
-        onChanged();
-        return this;
       }
 
       // @@protoc_insertion_point(builder_scope:database_driver_v1.ConnectionCloseRequest)
@@ -61452,6 +60729,17 @@ java.lang.String defaultValue) {
      */
     com.google.protobuf.ByteString getBytesValue();
 
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return Whether the boolValue field is set.
+     */
+    boolean hasBoolValue();
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return The boolValue.
+     */
+    boolean getBoolValue();
+
     net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting.ValueCase getValueCase();
   }
   /**
@@ -61505,6 +60793,7 @@ java.lang.String defaultValue) {
       INT_VALUE(2),
       DOUBLE_VALUE(3),
       BYTES_VALUE(4),
+      BOOL_VALUE(5),
       VALUE_NOT_SET(0);
       private final int value;
       private ValueCase(int value) {
@@ -61526,6 +60815,7 @@ java.lang.String defaultValue) {
           case 2: return INT_VALUE;
           case 3: return DOUBLE_VALUE;
           case 4: return BYTES_VALUE;
+          case 5: return BOOL_VALUE;
           case 0: return VALUE_NOT_SET;
           default: return null;
         }
@@ -61656,6 +60946,27 @@ java.lang.String defaultValue) {
       return com.google.protobuf.ByteString.EMPTY;
     }
 
+    public static final int BOOL_VALUE_FIELD_NUMBER = 5;
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return Whether the boolValue field is set.
+     */
+    @java.lang.Override
+    public boolean hasBoolValue() {
+      return valueCase_ == 5;
+    }
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return The boolValue.
+     */
+    @java.lang.Override
+    public boolean getBoolValue() {
+      if (valueCase_ == 5) {
+        return (java.lang.Boolean) value_;
+      }
+      return false;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -61685,6 +60996,10 @@ java.lang.String defaultValue) {
         output.writeBytes(
             4, (com.google.protobuf.ByteString) value_);
       }
+      if (valueCase_ == 5) {
+        output.writeBool(
+            5, (boolean)((java.lang.Boolean) value_));
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -61711,6 +61026,11 @@ java.lang.String defaultValue) {
         size += com.google.protobuf.CodedOutputStream
           .computeBytesSize(
               4, (com.google.protobuf.ByteString) value_);
+      }
+      if (valueCase_ == 5) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBoolSize(
+              5, (boolean)((java.lang.Boolean) value_));
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -61746,6 +61066,10 @@ java.lang.String defaultValue) {
           if (!getBytesValue()
               .equals(other.getBytesValue())) return false;
           break;
+        case 5:
+          if (getBoolValue()
+              != other.getBoolValue()) return false;
+          break;
         case 0:
         default:
       }
@@ -61778,6 +61102,11 @@ java.lang.String defaultValue) {
         case 4:
           hash = (37 * hash) + BYTES_VALUE_FIELD_NUMBER;
           hash = (53 * hash) + getBytesValue().hashCode();
+          break;
+        case 5:
+          hash = (37 * hash) + BOOL_VALUE_FIELD_NUMBER;
+          hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+              getBoolValue());
           break;
         case 0:
         default:
@@ -61991,6 +61320,10 @@ java.lang.String defaultValue) {
             setBytesValue(other.getBytesValue());
             break;
           }
+          case BOOL_VALUE: {
+            setBoolValue(other.getBoolValue());
+            break;
+          }
           case VALUE_NOT_SET: {
             break;
           }
@@ -62042,6 +61375,11 @@ java.lang.String defaultValue) {
                 valueCase_ = 4;
                 break;
               } // case 34
+              case 40: {
+                value_ = input.readBool();
+                valueCase_ = 5;
+                break;
+              } // case 40
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -62286,6 +61624,48 @@ java.lang.String defaultValue) {
        */
       public Builder clearBytesValue() {
         if (valueCase_ == 4) {
+          valueCase_ = 0;
+          value_ = null;
+          onChanged();
+        }
+        return this;
+      }
+
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @return Whether the boolValue field is set.
+       */
+      public boolean hasBoolValue() {
+        return valueCase_ == 5;
+      }
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @return The boolValue.
+       */
+      public boolean getBoolValue() {
+        if (valueCase_ == 5) {
+          return (java.lang.Boolean) value_;
+        }
+        return false;
+      }
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @param value The boolValue to set.
+       * @return This builder for chaining.
+       */
+      public Builder setBoolValue(boolean value) {
+
+        valueCase_ = 5;
+        value_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearBoolValue() {
+        if (valueCase_ == 5) {
           valueCase_ = 0;
           value_ = null;
           onChanged();
@@ -64771,299 +64151,288 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       "DatabaseHandle\"\030\n\026ConnectionInitResponse" +
       "\"U\n\030ConnectionReleaseRequest\0229\n\013conn_han" +
       "dle\030\001 \001(\0132$.database_driver_v1.Connectio" +
-      "nHandle\"\033\n\031ConnectionReleaseResponse\"\376\003\n" +
-      "\026ConnectionCloseRequest\0229\n\013conn_handle\030\001" +
-      " \001(\0132$.database_driver_v1.ConnectionHand" +
-      "le\022&\n\031server_session_keep_alive\030\002 \001(\010H\000\210" +
-      "\001\001\022\"\n\025enable_auto_detection\030\003 \001(\010H\001\210\001\001\022>" +
-      "\n\016error_strategy\030\004 \001(\0162!.database_driver" +
-      "_v1.ErrorStrategyH\002\210\001\001\022)\n\034logout_total_t" +
-      "imeout_seconds\030\005 \001(\003H\003\210\001\001\022\037\n\022max_retry_a" +
-      "ttempts\030\006 \001(\rH\004\210\001\001\022+\n\036logout_request_tim" +
-      "eout_seconds\030\007 \001(\003H\005\210\001\001B\034\n\032_server_sessi" +
-      "on_keep_aliveB\030\n\026_enable_auto_detectionB" +
-      "\021\n\017_error_strategyB\037\n\035_logout_total_time" +
-      "out_secondsB\025\n\023_max_retry_attemptsB!\n\037_l" +
-      "ogout_request_timeout_seconds\"\031\n\027Connect" +
-      "ionCloseResponse\"V\n\031ConnectionIsClosedRe" +
+      "nHandle\"\033\n\031ConnectionReleaseResponse\"S\n\026" +
+      "ConnectionCloseRequest\0229\n\013conn_handle\030\001 " +
+      "\001(\0132$.database_driver_v1.ConnectionHandl" +
+      "e\"\031\n\027ConnectionCloseResponse\"V\n\031Connecti" +
+      "onIsClosedRequest\0229\n\013conn_handle\030\001 \001(\0132$" +
+      ".database_driver_v1.ConnectionHandle\"/\n\032" +
+      "ConnectionIsClosedResponse\022\021\n\tis_closed\030" +
+      "\001 \001(\010\"\207\001\n\030ConnectionGetInfoRequest\0229\n\013co" +
+      "nn_handle\030\001 \001(\0132$.database_driver_v1.Con" +
+      "nectionHandle\0220\n\ninfo_codes\030\002 \003(\0162\034.data" +
+      "base_driver_v1.InfoCode\"\321\001\n\031ConnectionGe" +
+      "tInfoResponse\022\021\n\004host\030\001 \001(\tH\000\210\001\001\022\021\n\004port" +
+      "\030\002 \001(\003H\001\210\001\001\022\027\n\nserver_url\030\003 \001(\tH\002\210\001\001\022\032\n\r" +
+      "session_token\030\004 \001(\tH\003\210\001\001\022\027\n\nsession_id\030\005" +
+      " \001(\003H\004\210\001\001B\007\n\005_hostB\007\n\005_portB\r\n\013_server_u" +
+      "rlB\020\n\016_session_tokenB\r\n\013_session_id\"\225\002\n\033" +
+      "ConnectionGetObjectsRequest\0229\n\013conn_hand" +
+      "le\030\001 \001(\0132$.database_driver_v1.Connection" +
+      "Handle\022\r\n\005depth\030\002 \001(\005\022\024\n\007catalog\030\003 \001(\tH\000" +
+      "\210\001\001\022\026\n\tdb_schema\030\004 \001(\tH\001\210\001\001\022\027\n\ntable_nam" +
+      "e\030\005 \001(\tH\002\210\001\001\022\022\n\ntable_type\030\006 \003(\t\022\030\n\013colu" +
+      "mn_name\030\007 \001(\tH\003\210\001\001B\n\n\010_catalogB\014\n\n_db_sc" +
+      "hemaB\r\n\013_table_nameB\016\n\014_column_name\"4\n\034C" +
+      "onnectionGetObjectsResponse\022\024\n\014objects_d" +
+      "ata\030\001 \001(\014\"\270\001\n\037ConnectionGetTableSchemaRe" +
       "quest\0229\n\013conn_handle\030\001 \001(\0132$.database_dr" +
-      "iver_v1.ConnectionHandle\"/\n\032ConnectionIs" +
-      "ClosedResponse\022\021\n\tis_closed\030\001 \001(\010\"\207\001\n\030Co" +
-      "nnectionGetInfoRequest\0229\n\013conn_handle\030\001 " +
-      "\001(\0132$.database_driver_v1.ConnectionHandl" +
-      "e\0220\n\ninfo_codes\030\002 \003(\0162\034.database_driver_" +
-      "v1.InfoCode\"\321\001\n\031ConnectionGetInfoRespons" +
-      "e\022\021\n\004host\030\001 \001(\tH\000\210\001\001\022\021\n\004port\030\002 \001(\003H\001\210\001\001\022" +
-      "\027\n\nserver_url\030\003 \001(\tH\002\210\001\001\022\032\n\rsession_toke" +
-      "n\030\004 \001(\tH\003\210\001\001\022\027\n\nsession_id\030\005 \001(\003H\004\210\001\001B\007\n" +
-      "\005_hostB\007\n\005_portB\r\n\013_server_urlB\020\n\016_sessi" +
-      "on_tokenB\r\n\013_session_id\"\225\002\n\033ConnectionGe" +
-      "tObjectsRequest\0229\n\013conn_handle\030\001 \001(\0132$.d" +
-      "atabase_driver_v1.ConnectionHandle\022\r\n\005de" +
-      "pth\030\002 \001(\005\022\024\n\007catalog\030\003 \001(\tH\000\210\001\001\022\026\n\tdb_sc" +
-      "hema\030\004 \001(\tH\001\210\001\001\022\027\n\ntable_name\030\005 \001(\tH\002\210\001\001" +
-      "\022\022\n\ntable_type\030\006 \003(\t\022\030\n\013column_name\030\007 \001(" +
-      "\tH\003\210\001\001B\n\n\010_catalogB\014\n\n_db_schemaB\r\n\013_tab" +
-      "le_nameB\016\n\014_column_name\"4\n\034ConnectionGet" +
-      "ObjectsResponse\022\024\n\014objects_data\030\001 \001(\014\"\270\001" +
-      "\n\037ConnectionGetTableSchemaRequest\0229\n\013con" +
-      "n_handle\030\001 \001(\0132$.database_driver_v1.Conn" +
-      "ectionHandle\022\024\n\007catalog\030\002 \001(\tH\000\210\001\001\022\026\n\tdb" +
-      "_schema\030\003 \001(\tH\001\210\001\001\022\022\n\ntable_name\030\004 \001(\tB\n" +
-      "\n\010_catalogB\014\n\n_db_schema\"7\n ConnectionGe" +
-      "tTableSchemaResponse\022\023\n\013schema_data\030\001 \001(" +
-      "\014\"[\n\036ConnectionGetTableTypesRequest\0229\n\013c" +
-      "onn_handle\030\001 \001(\0132$.database_driver_v1.Co" +
-      "nnectionHandle\";\n\037ConnectionGetTableType" +
-      "sResponse\022\030\n\020table_types_data\030\001 \001(\014\"T\n\027C" +
-      "onnectionCommitRequest\0229\n\013conn_handle\030\001 " +
-      "\001(\0132$.database_driver_v1.ConnectionHandl" +
-      "e\"\032\n\030ConnectionCommitResponse\"V\n\031Connect" +
-      "ionRollbackRequest\0229\n\013conn_handle\030\001 \001(\0132" +
-      "$.database_driver_v1.ConnectionHandle\"\034\n" +
-      "\032ConnectionRollbackResponse\"\364\001\n%Connecti" +
-      "onSetSessionParametersRequest\0229\n\013conn_ha" +
-      "ndle\030\001 \001(\0132$.database_driver_v1.Connecti" +
-      "onHandle\022]\n\nparameters\030\002 \003(\0132I.database_" +
-      "driver_v1.ConnectionSetSessionParameters" +
-      "Request.ParametersEntry\0321\n\017ParametersEnt" +
-      "ry\022\013\n\003key\030\001 \001(\t\022\r\n\005value\030\002 \001(\t:\0028\001\"(\n&Co" +
-      "nnectionSetSessionParametersResponse\"g\n\035" +
-      "ConnectionGetParameterRequest\0229\n\013conn_ha" +
-      "ndle\030\001 \001(\0132$.database_driver_v1.Connecti" +
-      "onHandle\022\013\n\003key\030\002 \001(\t\">\n\036ConnectionGetPa" +
-      "rameterResponse\022\022\n\005value\030\001 \001(\tH\000\210\001\001B\010\n\006_" +
-      "value\"P\n\023StatementNewRequest\0229\n\013conn_han" +
-      "dle\030\001 \001(\0132$.database_driver_v1.Connectio" +
-      "nHandle\"P\n\024StatementNewResponse\0228\n\013stmt_" +
-      "handle\030\001 \001(\0132#.database_driver_v1.Statem" +
-      "entHandle\"S\n\027StatementReleaseRequest\0228\n\013" +
-      "stmt_handle\030\001 \001(\0132#.database_driver_v1.S" +
-      "tatementHandle\"\032\n\030StatementReleaseRespon" +
-      "se\"f\n\033StatementSetSqlQueryRequest\0228\n\013stm" +
-      "t_handle\030\001 \001(\0132#.database_driver_v1.Stat" +
-      "ementHandle\022\r\n\005query\030\002 \001(\t\"\036\n\034StatementS" +
-      "etSqlQueryResponse\"j\n StatementSetSubstr" +
-      "aitPlanRequest\0228\n\013stmt_handle\030\001 \001(\0132#.da" +
-      "tabase_driver_v1.StatementHandle\022\014\n\004plan" +
-      "\030\002 \001(\014\"#\n!StatementSetSubstraitPlanRespo" +
-      "nse\"S\n\027StatementPrepareRequest\0228\n\013stmt_h" +
-      "andle\030\001 \001(\0132#.database_driver_v1.Stateme" +
-      "ntHandle\"\032\n\030StatementPrepareResponse\"w\n\037" +
-      "StatementSetOptionStringRequest\0228\n\013stmt_" +
-      "handle\030\001 \001(\0132#.database_driver_v1.Statem" +
-      "entHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\t\"\"\n" +
-      " StatementSetOptionStringResponse\"v\n\036Sta" +
-      "tementSetOptionBytesRequest\0228\n\013stmt_hand" +
-      "le\030\001 \001(\0132#.database_driver_v1.StatementH" +
-      "andle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\014\"!\n\037Sta" +
-      "tementSetOptionBytesResponse\"t\n\034Statemen" +
-      "tSetOptionIntRequest\0228\n\013stmt_handle\030\001 \001(" +
-      "\0132#.database_driver_v1.StatementHandle\022\013" +
-      "\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\003\"\037\n\035StatementS" +
-      "etOptionIntResponse\"w\n\037StatementSetOptio" +
-      "nDoubleRequest\0228\n\013stmt_handle\030\001 \001(\0132#.da" +
-      "tabase_driver_v1.StatementHandle\022\013\n\003key\030" +
-      "\002 \001(\t\022\r\n\005value\030\003 \001(\001\"\"\n StatementSetOpti" +
-      "onDoubleResponse\"^\n\"StatementGetParamete" +
-      "rSchemaRequest\0228\n\013stmt_handle\030\001 \001(\0132#.da" +
-      "tabase_driver_v1.StatementHandle\"Y\n#Stat" +
-      "ementGetParameterSchemaResponse\0222\n\006schem" +
-      "a\030\001 \001(\0132\".database_driver_v1.ArrowSchema" +
-      "Ptr\"\266\001\n\024StatementBindRequest\0228\n\013stmt_han" +
-      "dle\030\001 \001(\0132#.database_driver_v1.Statement" +
-      "Handle\0222\n\006schema\030\002 \001(\0132\".database_driver" +
-      "_v1.ArrowSchemaPtr\0220\n\005array\030\003 \001(\0132!.data" +
-      "base_driver_v1.ArrowArrayPtr\"\027\n\025Statemen" +
-      "tBindResponse\"f\n\032StatementBindStreamRequ" +
+      "iver_v1.ConnectionHandle\022\024\n\007catalog\030\002 \001(" +
+      "\tH\000\210\001\001\022\026\n\tdb_schema\030\003 \001(\tH\001\210\001\001\022\022\n\ntable_" +
+      "name\030\004 \001(\tB\n\n\010_catalogB\014\n\n_db_schema\"7\n " +
+      "ConnectionGetTableSchemaResponse\022\023\n\013sche" +
+      "ma_data\030\001 \001(\014\"[\n\036ConnectionGetTableTypes" +
+      "Request\0229\n\013conn_handle\030\001 \001(\0132$.database_" +
+      "driver_v1.ConnectionHandle\";\n\037Connection" +
+      "GetTableTypesResponse\022\030\n\020table_types_dat" +
+      "a\030\001 \001(\014\"T\n\027ConnectionCommitRequest\0229\n\013co" +
+      "nn_handle\030\001 \001(\0132$.database_driver_v1.Con" +
+      "nectionHandle\"\032\n\030ConnectionCommitRespons" +
+      "e\"V\n\031ConnectionRollbackRequest\0229\n\013conn_h" +
+      "andle\030\001 \001(\0132$.database_driver_v1.Connect" +
+      "ionHandle\"\034\n\032ConnectionRollbackResponse\"" +
+      "\364\001\n%ConnectionSetSessionParametersReques" +
+      "t\0229\n\013conn_handle\030\001 \001(\0132$.database_driver" +
+      "_v1.ConnectionHandle\022]\n\nparameters\030\002 \003(\013" +
+      "2I.database_driver_v1.ConnectionSetSessi" +
+      "onParametersRequest.ParametersEntry\0321\n\017P" +
+      "arametersEntry\022\013\n\003key\030\001 \001(\t\022\r\n\005value\030\002 \001" +
+      "(\t:\0028\001\"(\n&ConnectionSetSessionParameters" +
+      "Response\"g\n\035ConnectionGetParameterReques" +
+      "t\0229\n\013conn_handle\030\001 \001(\0132$.database_driver" +
+      "_v1.ConnectionHandle\022\013\n\003key\030\002 \001(\t\">\n\036Con" +
+      "nectionGetParameterResponse\022\022\n\005value\030\001 \001" +
+      "(\tH\000\210\001\001B\010\n\006_value\"P\n\023StatementNewRequest" +
+      "\0229\n\013conn_handle\030\001 \001(\0132$.database_driver_" +
+      "v1.ConnectionHandle\"P\n\024StatementNewRespo" +
+      "nse\0228\n\013stmt_handle\030\001 \001(\0132#.database_driv" +
+      "er_v1.StatementHandle\"S\n\027StatementReleas" +
+      "eRequest\0228\n\013stmt_handle\030\001 \001(\0132#.database" +
+      "_driver_v1.StatementHandle\"\032\n\030StatementR" +
+      "eleaseResponse\"f\n\033StatementSetSqlQueryRe" +
+      "quest\0228\n\013stmt_handle\030\001 \001(\0132#.database_dr" +
+      "iver_v1.StatementHandle\022\r\n\005query\030\002 \001(\t\"\036" +
+      "\n\034StatementSetSqlQueryResponse\"j\n Statem" +
+      "entSetSubstraitPlanRequest\0228\n\013stmt_handl" +
+      "e\030\001 \001(\0132#.database_driver_v1.StatementHa" +
+      "ndle\022\014\n\004plan\030\002 \001(\014\"#\n!StatementSetSubstr" +
+      "aitPlanResponse\"S\n\027StatementPrepareReque" +
+      "st\0228\n\013stmt_handle\030\001 \001(\0132#.database_drive" +
+      "r_v1.StatementHandle\"\032\n\030StatementPrepare" +
+      "Response\"w\n\037StatementSetOptionStringRequ" +
       "est\0228\n\013stmt_handle\030\001 \001(\0132#.database_driv" +
-      "er_v1.StatementHandle\022\016\n\006stream\030\002 \001(\014\"\035\n" +
-      "\033StatementBindStreamResponse\"\237\001\n\034Stateme" +
-      "ntExecuteQueryRequest\0228\n\013stmt_handle\030\001 \001" +
-      "(\0132#.database_driver_v1.StatementHandle\022" +
-      "8\n\010bindings\030\002 \001(\0132!.database_driver_v1.Q" +
-      "ueryBindingsH\000\210\001\001B\013\n\t_bindings\"R\n\035Statem" +
-      "entExecuteQueryResponse\0221\n\006result\030\001 \001(\0132" +
-      "!.database_driver_v1.ExecuteResult\"]\n!St" +
-      "atementExecutePartitionsRequest\0228\n\013stmt_" +
-      "handle\030\001 \001(\0132#.database_driver_v1.Statem" +
-      "entHandle\"[\n\"StatementExecutePartitionsR" +
-      "esponse\0225\n\006result\030\001 \001(\0132%.database_drive" +
-      "r_v1.PartitionedResult\"w\n\035StatementReadP" +
-      "artitionRequest\0228\n\013stmt_handle\030\001 \001(\0132#.d" +
-      "atabase_driver_v1.StatementHandle\022\034\n\024par" +
-      "tition_descriptor\030\002 \001(\014\":\n\036StatementRead" +
-      "PartitionResponse\022\030\n\020partition_stream\030\001 " +
-      "\001(\003\"t\n\rConfigSetting\022\026\n\014string_value\030\001 \001" +
-      "(\tH\000\022\023\n\tint_value\030\002 \001(\003H\000\022\026\n\014double_valu" +
-      "e\030\003 \001(\001H\000\022\025\n\013bytes_value\030\004 \001(\014H\000B\007\n\005valu" +
-      "e\"\246\001\n\rConfigSection\022A\n\010settings\030\001 \003(\0132/." +
-      "database_driver_v1.ConfigSection.Setting" +
-      "sEntry\032R\n\rSettingsEntry\022\013\n\003key\030\001 \001(\t\0220\n\005" +
-      "value\030\002 \001(\0132!.database_driver_v1.ConfigS" +
-      "etting:\0028\001\"\036\n\034ConfigLoadAllSectionsReque" +
-      "st\"\306\001\n\035ConfigLoadAllSectionsResponse\022Q\n\010" +
-      "sections\030\001 \003(\0132?.database_driver_v1.Conf" +
-      "igLoadAllSectionsResponse.SectionsEntry\032" +
-      "R\n\rSectionsEntry\022\013\n\003key\030\001 \001(\t\0220\n\005value\030\002" +
-      " \001(\0132!.database_driver_v1.ConfigSection:" +
-      "\0028\001*\264\004\n\nStatusCode\022\033\n\027STATUS_CODE_UNSPEC" +
-      "IFIED\020\000\022\022\n\016STATUS_CODE_OK\020\001\022$\n STATUS_CO" +
-      "DE_AUTHENTICATION_ERROR\020\002\022\037\n\033STATUS_CODE" +
-      "_NOT_IMPLEMENTED\020\003\022\031\n\025STATUS_CODE_NOT_FO" +
-      "UND\020\004\022\036\n\032STATUS_CODE_ALREADY_EXISTS\020\005\022 \n" +
-      "\034STATUS_CODE_INVALID_ARGUMENT\020\006\022\035\n\031STATU" +
-      "S_CODE_INVALID_STATE\020\007\022\034\n\030STATUS_CODE_IN" +
-      "VALID_DATA\020\010\022\022\n\016STATUS_CODE_IO\020\t\022\031\n\025STAT" +
-      "US_CODE_CANCELLED\020\n\022\037\n\033STATUS_CODE_UNAUT" +
-      "HENTICATED\020\013\022\034\n\030STATUS_CODE_UNAUTHORIZED" +
-      "\020\014\022\035\n\031STATUS_CODE_GENERIC_ERROR\020\r\022\036\n\032STA" +
-      "TUS_CODE_INTERNAL_ERROR\020\016\022!\n\035STATUS_CODE" +
-      "_MISSING_PARAMETER\020\017\022\'\n#STATUS_CODE_INVA" +
-      "LID_PARAMETER_VALUE\020\020\022\033\n\027STATUS_CODE_LOG" +
-      "IN_ERROR\020\021*\230\003\n\010InfoCode\022\031\n\025INFO_CODE_UNS" +
-      "PECIFIED\020\000\022\031\n\025INFO_CODE_VENDOR_NAME\020\001\022\034\n" +
-      "\030INFO_CODE_VENDOR_VERSION\020\002\022\"\n\036INFO_CODE" +
-      "_VENDOR_ARROW_VERSION\020\003\022\030\n\024INFO_CODE_VEN" +
-      "DOR_SQL\020e\022\036\n\032INFO_CODE_VENDOR_SUBSTRAIT\020" +
-      "f\022*\n&INFO_CODE_VENDOR_SUBSTRAIT_MIN_VERS" +
-      "ION\020g\022*\n&INFO_CODE_VENDOR_SUBSTRAIT_MAX_" +
-      "VERSION\020h\022\032\n\025INFO_CODE_DRIVER_NAME\020\311\001\022\035\n" +
-      "\030INFO_CODE_DRIVER_VERSION\020\312\001\022#\n\036INFO_COD" +
-      "E_DRIVER_ARROW_VERSION\020\313\001\022\"\n\035INFO_CODE_D" +
-      "RIVER_ADBC_VERSION\020\314\001*j\n\rErrorStrategy\022\036" +
-      "\n\032ERROR_STRATEGY_UNSPECIFIED\020\000\022\036\n\032ERROR_" +
-      "STRATEGY_BEST_EFFORT\020\001\022\031\n\025ERROR_STRATEGY" +
-      "_STRICT\020\0022\351&\n\016DatabaseDriver\022^\n\013Database" +
-      "New\022&.database_driver_v1.DatabaseNewRequ" +
-      "est\032\'.database_driver_v1.DatabaseNewResp" +
-      "onse\022\202\001\n\027DatabaseSetOptionString\0222.datab" +
-      "ase_driver_v1.DatabaseSetOptionStringReq" +
-      "uest\0323.database_driver_v1.DatabaseSetOpt" +
-      "ionStringResponse\022\177\n\026DatabaseSetOptionBy" +
-      "tes\0221.database_driver_v1.DatabaseSetOpti" +
-      "onBytesRequest\0322.database_driver_v1.Data" +
-      "baseSetOptionBytesResponse\022y\n\024DatabaseSe" +
-      "tOptionInt\022/.database_driver_v1.Database" +
-      "SetOptionIntRequest\0320.database_driver_v1" +
-      ".DatabaseSetOptionIntResponse\022\202\001\n\027Databa" +
-      "seSetOptionDouble\0222.database_driver_v1.D" +
-      "atabaseSetOptionDoubleRequest\0323.database" +
-      "_driver_v1.DatabaseSetOptionDoubleRespon" +
-      "se\022a\n\014DatabaseInit\022\'.database_driver_v1." +
-      "DatabaseInitRequest\032(.database_driver_v1" +
-      ".DatabaseInitResponse\022j\n\017DatabaseRelease" +
-      "\022*.database_driver_v1.DatabaseReleaseReq" +
-      "uest\032+.database_driver_v1.DatabaseReleas" +
-      "eResponse\022d\n\rConnectionNew\022(.database_dr" +
-      "iver_v1.ConnectionNewRequest\032).database_" +
-      "driver_v1.ConnectionNewResponse\022\210\001\n\031Conn" +
-      "ectionSetOptionString\0224.database_driver_" +
-      "v1.ConnectionSetOptionStringRequest\0325.da" +
-      "tabase_driver_v1.ConnectionSetOptionStri" +
-      "ngResponse\022\205\001\n\030ConnectionSetOptionBytes\022" +
-      "3.database_driver_v1.ConnectionSetOption" +
-      "BytesRequest\0324.database_driver_v1.Connec" +
-      "tionSetOptionBytesResponse\022\177\n\026Connection" +
-      "SetOptionInt\0221.database_driver_v1.Connec" +
-      "tionSetOptionIntRequest\0322.database_drive" +
-      "r_v1.ConnectionSetOptionIntResponse\022\210\001\n\031" +
-      "ConnectionSetOptionDouble\0224.database_dri" +
-      "ver_v1.ConnectionSetOptionDoubleRequest\032" +
-      "5.database_driver_v1.ConnectionSetOption" +
-      "DoubleResponse\022g\n\016ConnectionInit\022).datab" +
-      "ase_driver_v1.ConnectionInitRequest\032*.da" +
-      "tabase_driver_v1.ConnectionInitResponse\022" +
-      "p\n\021ConnectionRelease\022,.database_driver_v" +
-      "1.ConnectionReleaseRequest\032-.database_dr" +
-      "iver_v1.ConnectionReleaseResponse\022j\n\017Con" +
-      "nectionClose\022*.database_driver_v1.Connec" +
-      "tionCloseRequest\032+.database_driver_v1.Co" +
-      "nnectionCloseResponse\022s\n\022ConnectionIsClo" +
-      "sed\022-.database_driver_v1.ConnectionIsClo" +
-      "sedRequest\032..database_driver_v1.Connecti" +
-      "onIsClosedResponse\022p\n\021ConnectionGetInfo\022" +
-      ",.database_driver_v1.ConnectionGetInfoRe" +
-      "quest\032-.database_driver_v1.ConnectionGet" +
-      "InfoResponse\022y\n\024ConnectionGetObjects\022/.d" +
-      "atabase_driver_v1.ConnectionGetObjectsRe" +
-      "quest\0320.database_driver_v1.ConnectionGet" +
-      "ObjectsResponse\022\205\001\n\030ConnectionGetTableSc" +
-      "hema\0223.database_driver_v1.ConnectionGetT" +
-      "ableSchemaRequest\0324.database_driver_v1.C" +
-      "onnectionGetTableSchemaResponse\022\202\001\n\027Conn" +
-      "ectionGetTableTypes\0222.database_driver_v1" +
-      ".ConnectionGetTableTypesRequest\0323.databa" +
-      "se_driver_v1.ConnectionGetTableTypesResp" +
-      "onse\022m\n\020ConnectionCommit\022+.database_driv" +
-      "er_v1.ConnectionCommitRequest\032,.database" +
-      "_driver_v1.ConnectionCommitResponse\022s\n\022C" +
-      "onnectionRollback\022-.database_driver_v1.C" +
-      "onnectionRollbackRequest\032..database_driv" +
-      "er_v1.ConnectionRollbackResponse\022\227\001\n\036Con" +
-      "nectionSetSessionParameters\0229.database_d" +
-      "river_v1.ConnectionSetSessionParametersR" +
-      "equest\032:.database_driver_v1.ConnectionSe" +
-      "tSessionParametersResponse\022\177\n\026Connection" +
-      "GetParameter\0221.database_driver_v1.Connec" +
-      "tionGetParameterRequest\0322.database_drive" +
-      "r_v1.ConnectionGetParameterResponse\022a\n\014S" +
-      "tatementNew\022\'.database_driver_v1.Stateme" +
-      "ntNewRequest\032(.database_driver_v1.Statem" +
-      "entNewResponse\022m\n\020StatementRelease\022+.dat" +
-      "abase_driver_v1.StatementReleaseRequest\032" +
-      ",.database_driver_v1.StatementReleaseRes" +
-      "ponse\022y\n\024StatementSetSqlQuery\022/.database" +
-      "_driver_v1.StatementSetSqlQueryRequest\0320" +
-      ".database_driver_v1.StatementSetSqlQuery" +
-      "Response\022\210\001\n\031StatementSetSubstraitPlan\0224" +
-      ".database_driver_v1.StatementSetSubstrai" +
-      "tPlanRequest\0325.database_driver_v1.Statem" +
-      "entSetSubstraitPlanResponse\022m\n\020Statement" +
-      "Prepare\022+.database_driver_v1.StatementPr" +
-      "epareRequest\032,.database_driver_v1.Statem" +
-      "entPrepareResponse\022\205\001\n\030StatementSetOptio" +
-      "nString\0223.database_driver_v1.StatementSe" +
-      "tOptionStringRequest\0324.database_driver_v" +
-      "1.StatementSetOptionStringResponse\022\202\001\n\027S" +
-      "tatementSetOptionBytes\0222.database_driver" +
-      "_v1.StatementSetOptionBytesRequest\0323.dat" +
-      "abase_driver_v1.StatementSetOptionBytesR" +
-      "esponse\022|\n\025StatementSetOptionInt\0220.datab" +
-      "ase_driver_v1.StatementSetOptionIntReque" +
-      "st\0321.database_driver_v1.StatementSetOpti" +
-      "onIntResponse\022\205\001\n\030StatementSetOptionDoub" +
-      "le\0223.database_driver_v1.StatementSetOpti" +
-      "onDoubleRequest\0324.database_driver_v1.Sta" +
-      "tementSetOptionDoubleResponse\022\216\001\n\033Statem" +
-      "entGetParameterSchema\0226.database_driver_" +
-      "v1.StatementGetParameterSchemaRequest\0327." +
-      "database_driver_v1.StatementGetParameter" +
-      "SchemaResponse\022d\n\rStatementBind\022(.databa" +
-      "se_driver_v1.StatementBindRequest\032).data" +
-      "base_driver_v1.StatementBindResponse\022v\n\023" +
-      "StatementBindStream\022..database_driver_v1" +
-      ".StatementBindStreamRequest\032/.database_d" +
-      "river_v1.StatementBindStreamResponse\022|\n\025" +
-      "StatementExecuteQuery\0220.database_driver_" +
-      "v1.StatementExecuteQueryRequest\0321.databa" +
-      "se_driver_v1.StatementExecuteQueryRespon" +
-      "se\022\213\001\n\032StatementExecutePartitions\0225.data" +
-      "base_driver_v1.StatementExecutePartition" +
-      "sRequest\0326.database_driver_v1.StatementE" +
-      "xecutePartitionsResponse\022\177\n\026StatementRea" +
-      "dPartition\0221.database_driver_v1.Statemen" +
-      "tReadPartitionRequest\0322.database_driver_" +
-      "v1.StatementReadPartitionResponse\022|\n\025Con" +
-      "figLoadAllSections\0220.database_driver_v1." +
-      "ConfigLoadAllSectionsRequest\0321.database_" +
-      "driver_v1.ConfigLoadAllSectionsResponse\032" +
-      "\024\302\251\311\001\017DriverException:;\n\rservice_error\022\037" +
-      ".google.protobuf.ServiceOptions\030\230\225\031 \001(\t\210" +
-      "\001\001:9\n\014method_error\022\036.google.protobuf.Met" +
-      "hodOptions\030\230\225\031 \001(\t\210\001\001B4\n2net.snowflake.c" +
-      "lient.internal.unicore.protobuf_genb\006pro" +
-      "to3"
+      "er_v1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005va" +
+      "lue\030\003 \001(\t\"\"\n StatementSetOptionStringRes" +
+      "ponse\"v\n\036StatementSetOptionBytesRequest\022" +
+      "8\n\013stmt_handle\030\001 \001(\0132#.database_driver_v" +
+      "1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030" +
+      "\003 \001(\014\"!\n\037StatementSetOptionBytesResponse" +
+      "\"t\n\034StatementSetOptionIntRequest\0228\n\013stmt" +
+      "_handle\030\001 \001(\0132#.database_driver_v1.State" +
+      "mentHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\003\"\037" +
+      "\n\035StatementSetOptionIntResponse\"w\n\037State" +
+      "mentSetOptionDoubleRequest\0228\n\013stmt_handl" +
+      "e\030\001 \001(\0132#.database_driver_v1.StatementHa" +
+      "ndle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\001\"\"\n Stat" +
+      "ementSetOptionDoubleResponse\"^\n\"Statemen" +
+      "tGetParameterSchemaRequest\0228\n\013stmt_handl" +
+      "e\030\001 \001(\0132#.database_driver_v1.StatementHa" +
+      "ndle\"Y\n#StatementGetParameterSchemaRespo" +
+      "nse\0222\n\006schema\030\001 \001(\0132\".database_driver_v1" +
+      ".ArrowSchemaPtr\"\266\001\n\024StatementBindRequest" +
+      "\0228\n\013stmt_handle\030\001 \001(\0132#.database_driver_" +
+      "v1.StatementHandle\0222\n\006schema\030\002 \001(\0132\".dat" +
+      "abase_driver_v1.ArrowSchemaPtr\0220\n\005array\030" +
+      "\003 \001(\0132!.database_driver_v1.ArrowArrayPtr" +
+      "\"\027\n\025StatementBindResponse\"f\n\032StatementBi" +
+      "ndStreamRequest\0228\n\013stmt_handle\030\001 \001(\0132#.d" +
+      "atabase_driver_v1.StatementHandle\022\016\n\006str" +
+      "eam\030\002 \001(\014\"\035\n\033StatementBindStreamResponse" +
+      "\"\237\001\n\034StatementExecuteQueryRequest\0228\n\013stm" +
+      "t_handle\030\001 \001(\0132#.database_driver_v1.Stat" +
+      "ementHandle\0228\n\010bindings\030\002 \001(\0132!.database" +
+      "_driver_v1.QueryBindingsH\000\210\001\001B\013\n\t_bindin" +
+      "gs\"R\n\035StatementExecuteQueryResponse\0221\n\006r" +
+      "esult\030\001 \001(\0132!.database_driver_v1.Execute" +
+      "Result\"]\n!StatementExecutePartitionsRequ" +
+      "est\0228\n\013stmt_handle\030\001 \001(\0132#.database_driv" +
+      "er_v1.StatementHandle\"[\n\"StatementExecut" +
+      "ePartitionsResponse\0225\n\006result\030\001 \001(\0132%.da" +
+      "tabase_driver_v1.PartitionedResult\"w\n\035St" +
+      "atementReadPartitionRequest\0228\n\013stmt_hand" +
+      "le\030\001 \001(\0132#.database_driver_v1.StatementH" +
+      "andle\022\034\n\024partition_descriptor\030\002 \001(\014\":\n\036S" +
+      "tatementReadPartitionResponse\022\030\n\020partiti" +
+      "on_stream\030\001 \001(\003\"\212\001\n\rConfigSetting\022\026\n\014str" +
+      "ing_value\030\001 \001(\tH\000\022\023\n\tint_value\030\002 \001(\003H\000\022\026" +
+      "\n\014double_value\030\003 \001(\001H\000\022\025\n\013bytes_value\030\004 " +
+      "\001(\014H\000\022\024\n\nbool_value\030\005 \001(\010H\000B\007\n\005value\"\246\001\n" +
+      "\rConfigSection\022A\n\010settings\030\001 \003(\0132/.datab" +
+      "ase_driver_v1.ConfigSection.SettingsEntr" +
+      "y\032R\n\rSettingsEntry\022\013\n\003key\030\001 \001(\t\0220\n\005value" +
+      "\030\002 \001(\0132!.database_driver_v1.ConfigSettin" +
+      "g:\0028\001\"\036\n\034ConfigLoadAllSectionsRequest\"\306\001" +
+      "\n\035ConfigLoadAllSectionsResponse\022Q\n\010secti" +
+      "ons\030\001 \003(\0132?.database_driver_v1.ConfigLoa" +
+      "dAllSectionsResponse.SectionsEntry\032R\n\rSe" +
+      "ctionsEntry\022\013\n\003key\030\001 \001(\t\0220\n\005value\030\002 \001(\0132" +
+      "!.database_driver_v1.ConfigSection:\0028\001*\264" +
+      "\004\n\nStatusCode\022\033\n\027STATUS_CODE_UNSPECIFIED" +
+      "\020\000\022\022\n\016STATUS_CODE_OK\020\001\022$\n STATUS_CODE_AU" +
+      "THENTICATION_ERROR\020\002\022\037\n\033STATUS_CODE_NOT_" +
+      "IMPLEMENTED\020\003\022\031\n\025STATUS_CODE_NOT_FOUND\020\004" +
+      "\022\036\n\032STATUS_CODE_ALREADY_EXISTS\020\005\022 \n\034STAT" +
+      "US_CODE_INVALID_ARGUMENT\020\006\022\035\n\031STATUS_COD" +
+      "E_INVALID_STATE\020\007\022\034\n\030STATUS_CODE_INVALID" +
+      "_DATA\020\010\022\022\n\016STATUS_CODE_IO\020\t\022\031\n\025STATUS_CO" +
+      "DE_CANCELLED\020\n\022\037\n\033STATUS_CODE_UNAUTHENTI" +
+      "CATED\020\013\022\034\n\030STATUS_CODE_UNAUTHORIZED\020\014\022\035\n" +
+      "\031STATUS_CODE_GENERIC_ERROR\020\r\022\036\n\032STATUS_C" +
+      "ODE_INTERNAL_ERROR\020\016\022!\n\035STATUS_CODE_MISS" +
+      "ING_PARAMETER\020\017\022\'\n#STATUS_CODE_INVALID_P" +
+      "ARAMETER_VALUE\020\020\022\033\n\027STATUS_CODE_LOGIN_ER" +
+      "ROR\020\021*\230\003\n\010InfoCode\022\031\n\025INFO_CODE_UNSPECIF" +
+      "IED\020\000\022\031\n\025INFO_CODE_VENDOR_NAME\020\001\022\034\n\030INFO" +
+      "_CODE_VENDOR_VERSION\020\002\022\"\n\036INFO_CODE_VEND" +
+      "OR_ARROW_VERSION\020\003\022\030\n\024INFO_CODE_VENDOR_S" +
+      "QL\020e\022\036\n\032INFO_CODE_VENDOR_SUBSTRAIT\020f\022*\n&" +
+      "INFO_CODE_VENDOR_SUBSTRAIT_MIN_VERSION\020g" +
+      "\022*\n&INFO_CODE_VENDOR_SUBSTRAIT_MAX_VERSI" +
+      "ON\020h\022\032\n\025INFO_CODE_DRIVER_NAME\020\311\001\022\035\n\030INFO" +
+      "_CODE_DRIVER_VERSION\020\312\001\022#\n\036INFO_CODE_DRI" +
+      "VER_ARROW_VERSION\020\313\001\022\"\n\035INFO_CODE_DRIVER" +
+      "_ADBC_VERSION\020\314\001*j\n\rErrorStrategy\022\036\n\032ERR" +
+      "OR_STRATEGY_UNSPECIFIED\020\000\022\036\n\032ERROR_STRAT" +
+      "EGY_BEST_EFFORT\020\001\022\031\n\025ERROR_STRATEGY_STRI" +
+      "CT\020\0022\351&\n\016DatabaseDriver\022^\n\013DatabaseNew\022&" +
+      ".database_driver_v1.DatabaseNewRequest\032\'" +
+      ".database_driver_v1.DatabaseNewResponse\022" +
+      "\202\001\n\027DatabaseSetOptionString\0222.database_d" +
+      "river_v1.DatabaseSetOptionStringRequest\032" +
+      "3.database_driver_v1.DatabaseSetOptionSt" +
+      "ringResponse\022\177\n\026DatabaseSetOptionBytes\0221" +
+      ".database_driver_v1.DatabaseSetOptionByt" +
+      "esRequest\0322.database_driver_v1.DatabaseS" +
+      "etOptionBytesResponse\022y\n\024DatabaseSetOpti" +
+      "onInt\022/.database_driver_v1.DatabaseSetOp" +
+      "tionIntRequest\0320.database_driver_v1.Data" +
+      "baseSetOptionIntResponse\022\202\001\n\027DatabaseSet" +
+      "OptionDouble\0222.database_driver_v1.Databa" +
+      "seSetOptionDoubleRequest\0323.database_driv" +
+      "er_v1.DatabaseSetOptionDoubleResponse\022a\n" +
+      "\014DatabaseInit\022\'.database_driver_v1.Datab" +
+      "aseInitRequest\032(.database_driver_v1.Data" +
+      "baseInitResponse\022j\n\017DatabaseRelease\022*.da" +
+      "tabase_driver_v1.DatabaseReleaseRequest\032" +
+      "+.database_driver_v1.DatabaseReleaseResp" +
+      "onse\022d\n\rConnectionNew\022(.database_driver_" +
+      "v1.ConnectionNewRequest\032).database_drive" +
+      "r_v1.ConnectionNewResponse\022\210\001\n\031Connectio" +
+      "nSetOptionString\0224.database_driver_v1.Co" +
+      "nnectionSetOptionStringRequest\0325.databas" +
+      "e_driver_v1.ConnectionSetOptionStringRes" +
+      "ponse\022\205\001\n\030ConnectionSetOptionBytes\0223.dat" +
+      "abase_driver_v1.ConnectionSetOptionBytes" +
+      "Request\0324.database_driver_v1.ConnectionS" +
+      "etOptionBytesResponse\022\177\n\026ConnectionSetOp" +
+      "tionInt\0221.database_driver_v1.ConnectionS" +
+      "etOptionIntRequest\0322.database_driver_v1." +
+      "ConnectionSetOptionIntResponse\022\210\001\n\031Conne" +
+      "ctionSetOptionDouble\0224.database_driver_v" +
+      "1.ConnectionSetOptionDoubleRequest\0325.dat" +
+      "abase_driver_v1.ConnectionSetOptionDoubl" +
+      "eResponse\022g\n\016ConnectionInit\022).database_d" +
+      "river_v1.ConnectionInitRequest\032*.databas" +
+      "e_driver_v1.ConnectionInitResponse\022p\n\021Co" +
+      "nnectionRelease\022,.database_driver_v1.Con" +
+      "nectionReleaseRequest\032-.database_driver_" +
+      "v1.ConnectionReleaseResponse\022j\n\017Connecti" +
+      "onClose\022*.database_driver_v1.ConnectionC" +
+      "loseRequest\032+.database_driver_v1.Connect" +
+      "ionCloseResponse\022s\n\022ConnectionIsClosed\022-" +
+      ".database_driver_v1.ConnectionIsClosedRe" +
+      "quest\032..database_driver_v1.ConnectionIsC" +
+      "losedResponse\022p\n\021ConnectionGetInfo\022,.dat" +
+      "abase_driver_v1.ConnectionGetInfoRequest" +
+      "\032-.database_driver_v1.ConnectionGetInfoR" +
+      "esponse\022y\n\024ConnectionGetObjects\022/.databa" +
+      "se_driver_v1.ConnectionGetObjectsRequest" +
+      "\0320.database_driver_v1.ConnectionGetObjec" +
+      "tsResponse\022\205\001\n\030ConnectionGetTableSchema\022" +
+      "3.database_driver_v1.ConnectionGetTableS" +
+      "chemaRequest\0324.database_driver_v1.Connec" +
+      "tionGetTableSchemaResponse\022\202\001\n\027Connectio" +
+      "nGetTableTypes\0222.database_driver_v1.Conn" +
+      "ectionGetTableTypesRequest\0323.database_dr" +
+      "iver_v1.ConnectionGetTableTypesResponse\022" +
+      "m\n\020ConnectionCommit\022+.database_driver_v1" +
+      ".ConnectionCommitRequest\032,.database_driv" +
+      "er_v1.ConnectionCommitResponse\022s\n\022Connec" +
+      "tionRollback\022-.database_driver_v1.Connec" +
+      "tionRollbackRequest\032..database_driver_v1" +
+      ".ConnectionRollbackResponse\022\227\001\n\036Connecti" +
+      "onSetSessionParameters\0229.database_driver" +
+      "_v1.ConnectionSetSessionParametersReques" +
+      "t\032:.database_driver_v1.ConnectionSetSess" +
+      "ionParametersResponse\022\177\n\026ConnectionGetPa" +
+      "rameter\0221.database_driver_v1.ConnectionG" +
+      "etParameterRequest\0322.database_driver_v1." +
+      "ConnectionGetParameterResponse\022a\n\014Statem" +
+      "entNew\022\'.database_driver_v1.StatementNew" +
+      "Request\032(.database_driver_v1.StatementNe" +
+      "wResponse\022m\n\020StatementRelease\022+.database" +
+      "_driver_v1.StatementReleaseRequest\032,.dat" +
+      "abase_driver_v1.StatementReleaseResponse" +
+      "\022y\n\024StatementSetSqlQuery\022/.database_driv" +
+      "er_v1.StatementSetSqlQueryRequest\0320.data" +
+      "base_driver_v1.StatementSetSqlQueryRespo" +
+      "nse\022\210\001\n\031StatementSetSubstraitPlan\0224.data" +
+      "base_driver_v1.StatementSetSubstraitPlan" +
+      "Request\0325.database_driver_v1.StatementSe" +
+      "tSubstraitPlanResponse\022m\n\020StatementPrepa" +
+      "re\022+.database_driver_v1.StatementPrepare" +
+      "Request\032,.database_driver_v1.StatementPr" +
+      "epareResponse\022\205\001\n\030StatementSetOptionStri" +
+      "ng\0223.database_driver_v1.StatementSetOpti" +
+      "onStringRequest\0324.database_driver_v1.Sta" +
+      "tementSetOptionStringResponse\022\202\001\n\027Statem" +
+      "entSetOptionBytes\0222.database_driver_v1.S" +
+      "tatementSetOptionBytesRequest\0323.database" +
+      "_driver_v1.StatementSetOptionBytesRespon" +
+      "se\022|\n\025StatementSetOptionInt\0220.database_d" +
+      "river_v1.StatementSetOptionIntRequest\0321." +
+      "database_driver_v1.StatementSetOptionInt" +
+      "Response\022\205\001\n\030StatementSetOptionDouble\0223." +
+      "database_driver_v1.StatementSetOptionDou" +
+      "bleRequest\0324.database_driver_v1.Statemen" +
+      "tSetOptionDoubleResponse\022\216\001\n\033StatementGe" +
+      "tParameterSchema\0226.database_driver_v1.St" +
+      "atementGetParameterSchemaRequest\0327.datab" +
+      "ase_driver_v1.StatementGetParameterSchem" +
+      "aResponse\022d\n\rStatementBind\022(.database_dr" +
+      "iver_v1.StatementBindRequest\032).database_" +
+      "driver_v1.StatementBindResponse\022v\n\023State" +
+      "mentBindStream\022..database_driver_v1.Stat" +
+      "ementBindStreamRequest\032/.database_driver" +
+      "_v1.StatementBindStreamResponse\022|\n\025State" +
+      "mentExecuteQuery\0220.database_driver_v1.St" +
+      "atementExecuteQueryRequest\0321.database_dr" +
+      "iver_v1.StatementExecuteQueryResponse\022\213\001" +
+      "\n\032StatementExecutePartitions\0225.database_" +
+      "driver_v1.StatementExecutePartitionsRequ" +
+      "est\0326.database_driver_v1.StatementExecut" +
+      "ePartitionsResponse\022\177\n\026StatementReadPart" +
+      "ition\0221.database_driver_v1.StatementRead" +
+      "PartitionRequest\0322.database_driver_v1.St" +
+      "atementReadPartitionResponse\022|\n\025ConfigLo" +
+      "adAllSections\0220.database_driver_v1.Confi" +
+      "gLoadAllSectionsRequest\0321.database_drive" +
+      "r_v1.ConfigLoadAllSectionsResponse\032\024\302\251\311\001" +
+      "\017DriverException:;\n\rservice_error\022\037.goog" +
+      "le.protobuf.ServiceOptions\030\230\225\031 \001(\t\210\001\001:9\n" +
+      "\014method_error\022\036.google.protobuf.MethodOp" +
+      "tions\030\230\225\031 \001(\t\210\001\001B4\n2net.snowflake.client" +
+      ".internal.unicore.protobuf_genb\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -65369,7 +64738,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     internal_static_database_driver_v1_ConnectionCloseRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionCloseRequest_descriptor,
-        new java.lang.String[] { "ConnHandle", "ServerSessionKeepAlive", "EnableAutoDetection", "ErrorStrategy", "LogoutTotalTimeoutSeconds", "MaxRetryAttempts", "LogoutRequestTimeoutSeconds", });
+        new java.lang.String[] { "ConnHandle", });
     internal_static_database_driver_v1_ConnectionCloseResponse_descriptor =
       getDescriptor().getMessageTypes().get(50);
     internal_static_database_driver_v1_ConnectionCloseResponse_fieldAccessorTable = new
@@ -65675,7 +65044,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     internal_static_database_driver_v1_ConfigSetting_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConfigSetting_descriptor,
-        new java.lang.String[] { "StringValue", "IntValue", "DoubleValue", "BytesValue", "Value", });
+        new java.lang.String[] { "StringValue", "IntValue", "DoubleValue", "BytesValue", "BoolValue", "Value", });
     internal_static_database_driver_v1_ConfigSection_descriptor =
       getDescriptor().getMessageTypes().get(100);
     internal_static_database_driver_v1_ConfigSection_fieldAccessorTable = new

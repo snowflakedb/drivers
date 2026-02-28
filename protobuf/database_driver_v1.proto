@@ -328,12 +328,6 @@ message ConnectionReleaseResponse {
 
 message ConnectionCloseRequest {
   ConnectionHandle conn_handle = 1;
-  optional bool server_session_keep_alive = 2;
-  optional bool enable_auto_detection = 3;
-  optional ErrorStrategy error_strategy = 4;
-  optional int64 logout_total_timeout_seconds = 5;  // Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
-  optional uint32 max_retry_attempts = 6;  // Maximum number of retry attempts (0 = no retries, 1 attempt only)
-  optional int64 logout_request_timeout_seconds = 7;  // Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
 }
 
 message ConnectionCloseResponse {
@@ -559,6 +553,7 @@ message ConfigSetting {
     int64 int_value = 2;
     double double_value = 3;
     bytes bytes_value = 4;
+    bool bool_value = 5;
   }
 }
 

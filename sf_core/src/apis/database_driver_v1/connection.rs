@@ -79,6 +79,12 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
 
             let login_parameters =
                 LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+
+            // Parse and validate logout configuration from settings
+            // This follows the same pattern as LoginParameters::from_settings
+            conn.logout_config =
+                LogoutConfig::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+
             let init_params = conn.init_session_parameters.clone();
             drop(conn);
 
@@ -129,6 +135,8 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
             let mut conn = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+            // Store setting - validation happens in connection_init via LogoutConfig::from_settings
             conn.settings.insert(key, value);
             Ok(())
         }
@@ -190,6 +198,9 @@ pub struct Connection {
     pub async_query_registry: AsyncQueryRegistry,
     /// Flag indicating if connection has been closed
     pub is_closed: Arc<AtomicBool>,
+
+    /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
+    pub logout_config: LogoutConfig,
 }
 
 impl Default for Connection {
@@ -211,6 +222,7 @@ impl Connection {
             init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
             is_closed: Arc::new(AtomicBool::new(false)),
+            logout_config: LogoutConfig::default(),
         }
     }
 
@@ -715,12 +727,32 @@ fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError>
 /// Behavior depends on `config.error_strategy`:
 /// - `Strict`: surface errors to the caller (close() may fail)
 /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
-pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(), ApiError> {
+/// Close the connection using logout configuration set during initialization.
+///
+/// Logout behavior is determined by connection fields set via ConnectionSetOption*:
+/// - `server_session_keep_alive`: Control server session lifecycle
+/// - `enable_logout_auto_detection`: Enable async query detection
+/// - `logout_error_strategy`: Error handling (Strict or BestEffort)
+/// - `logout_total_timeout`: Total timeout budget
+/// - `logout_max_retry_attempts`: Max retry attempts
+/// - `logout_request_timeout`: Per-request timeout
+///
+/// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
+/// which configure logout behavior at connection initialization, not at close time.
+pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
     let conn_ptr = CONN_HANDLE_MANAGER
         .get_obj(conn_handle)
         .context(InvalidArgumentSnafu {
             argument: "Connection handle not found".to_string(),
         })?;
+
+    // Get logout config from connection (set during connection_init)
+    let config = {
+        let conn = conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu {}.build())?;
+        conn.logout_config.clone()
+    };
 
     let (send_logout, skip_reason, logout_data) = prepare_logout(&conn_ptr, &config)?;
 

@@ -1,9 +1,20 @@
 //! Configuration for session logout behavior
+//!
+//! NOTE: This is an INTERNAL configuration struct used by connection_close().
+//! Users do NOT pass this directly. Instead, users configure logout behavior
+//! via ConnectionSetOption* calls before ConnectionInit, matching the pattern
+//! used by all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js).
 
 use crate::apis::database_driver_v1::error::ApiError;
+use crate::config::settings::Settings;
 use std::time::Duration;
 
-/// Configuration for logout behavior during connection close
+use super::{ConfigError, InvalidParameterValueSnafu};
+
+/// INTERNAL configuration for logout behavior during connection close.
+///
+/// This struct is constructed from Connection fields, not passed by users.
+/// Users configure logout behavior via ConnectionSetOption* before ConnectionInit.
 #[derive(Debug, Clone)]
 pub struct LogoutConfig {
     /// Explicit control over server session lifecycle
@@ -48,6 +59,88 @@ impl Default for LogoutConfig {
             max_retry_attempts: None,
             logout_request_timeout: None,
         }
+    }
+}
+
+impl LogoutConfig {
+    /// Parse logout configuration from connection settings.
+    ///
+    /// All validation happens here, once, at connection_init time.
+    /// This follows the same pattern as LoginParameters::from_settings.
+    pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
+        // Parse and validate error_strategy
+        let error_strategy = match settings.get_string("logout_error_strategy") {
+            Some(s) => match s.as_str() {
+                "strict" => ErrorStrategy::Strict,
+                "best_effort" => ErrorStrategy::BestEffort,
+                _ => {
+                    return InvalidParameterValueSnafu {
+                        parameter: "logout_error_strategy",
+                        value: s,
+                        explanation: "Must be 'strict' or 'best_effort'",
+                    }
+                    .fail();
+                }
+            },
+            None => ErrorStrategy::Strict, // default
+        };
+
+        // Parse and validate logout_total_timeout_seconds
+        let logout_total_timeout = match settings.get_int("logout_total_timeout_seconds") {
+            Some(v) => {
+                if v < 0 {
+                    return InvalidParameterValueSnafu {
+                        parameter: "logout_total_timeout_seconds",
+                        value: v.to_string(),
+                        explanation: "Must be non-negative",
+                    }
+                    .fail();
+                }
+                Duration::from_secs(v as u64)
+            }
+            None => Duration::from_secs(5), // default
+        };
+
+        // Parse and validate logout_max_retry_attempts
+        let max_retry_attempts = match settings.get_int("logout_max_retry_attempts") {
+            Some(v) => {
+                if v < 0 {
+                    return InvalidParameterValueSnafu {
+                        parameter: "logout_max_retry_attempts",
+                        value: v.to_string(),
+                        explanation: "Must be non-negative",
+                    }
+                    .fail();
+                }
+                Some(v as u32)
+            }
+            None => None, // Use RetryPolicy default
+        };
+
+        // Parse and validate logout_request_timeout_seconds
+        let logout_request_timeout = match settings.get_int("logout_request_timeout_seconds") {
+            Some(v) => {
+                if v < 0 {
+                    return InvalidParameterValueSnafu {
+                        parameter: "logout_request_timeout_seconds",
+                        value: v.to_string(),
+                        explanation: "Must be non-negative",
+                    }
+                    .fail();
+                }
+                Some(Duration::from_secs(v as u64))
+            }
+            None => None, // No per-request timeout
+        };
+
+        Ok(Self {
+            server_session_keep_alive: settings.get_bool("server_session_keep_alive"),
+            enable_auto_detection: settings.get_bool("enable_logout_auto_detection"),
+            error_strategy,
+            logout_total_timeout,
+            max_retry_attempts,
+            logout_request_timeout,
+        })
     }
 }
 

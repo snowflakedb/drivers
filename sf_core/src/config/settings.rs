@@ -6,6 +6,7 @@ pub enum Setting {
     Bytes(Vec<u8>),
     Int(i64),
     Double(f64),
+    Bool(bool),
 }
 
 impl Setting {
@@ -37,6 +38,15 @@ impl Setting {
     #[allow(dead_code)]
     fn as_bytes(&self) -> Option<&Vec<u8>> {
         if let Setting::Bytes(value) = self {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    #[allow(dead_code)]
+    fn as_bool(&self) -> Option<&bool> {
+        if let Setting::Bool(value) = self {
             Some(value)
         } else {
             None
@@ -87,6 +97,15 @@ pub trait Settings {
     #[allow(dead_code)]
     fn set_bytes(&mut self, key: &str, value: Vec<u8>) {
         self.set(key, Setting::Bytes(value));
+    }
+    #[allow(dead_code)]
+    fn get_bool(&self, key: &str) -> Option<bool> {
+        let setting = self.get(key)?;
+        setting.as_bool().cloned()
+    }
+    #[allow(dead_code)]
+    fn set_bool(&mut self, key: &str, value: bool) {
+        self.set(key, Setting::Bool(value));
     }
 }
 

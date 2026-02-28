@@ -566,77 +566,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
     fn connection_close(
         input: ConnectionCloseRequest,
     ) -> Result<ConnectionCloseResponse, DriverException> {
-        use crate::config::logout::{ErrorStrategy, LogoutConfig};
-        use crate::protobuf_gen::database_driver_v1::ErrorStrategy as ProtoErrorStrategy;
-        use std::time::Duration;
-
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        // Parse error strategy from proto enum
-        let error_strategy = match input.error_strategy {
-            Some(v) if v == ProtoErrorStrategy::Strict as i32 => ErrorStrategy::Strict,
-            Some(v) if v == ProtoErrorStrategy::BestEffort as i32 => ErrorStrategy::BestEffort,
-            Some(v) if v == ProtoErrorStrategy::Unspecified as i32 => ErrorStrategy::Strict,
-            None => ErrorStrategy::Strict,
-            Some(v) => {
-                return Err(DriverException {
-                    message: format!("Invalid error_strategy value: {}", v),
-                    status_code: StatusCode::InvalidArgument as i32,
-                    error: None,
-                    error_trace: vec![],
-                });
-            }
-        };
-
-        // Validate logout_total_timeout_seconds (must be non-negative)
-        if let Some(timeout_secs) = input.logout_total_timeout_seconds
-            && timeout_secs < 0
-        {
-            return Err(DriverException {
-                message: format!(
-                    "Invalid logout_total_timeout_seconds: {}. Must be non-negative",
-                    timeout_secs
-                ),
-                status_code: StatusCode::InvalidArgument as i32,
-                error: None,
-                error_trace: vec![],
-            });
-        }
-
-        // Validate logout_request_timeout_seconds (must be non-negative)
-        // Follows same pattern as logout_total_timeout_seconds validation above
-        if let Some(timeout_secs) = input.logout_request_timeout_seconds
-            && timeout_secs < 0
-        {
-            return Err(DriverException {
-                message: format!(
-                    "Invalid logout_request_timeout_seconds: {}. Must be non-negative",
-                    timeout_secs
-                ),
-                status_code: StatusCode::InvalidArgument as i32,
-                error: None,
-                error_trace: vec![],
-            });
-        }
-
-        let logout_request_timeout = input
-            .logout_request_timeout_seconds
-            .map(|secs| Duration::from_secs(secs as u64)); // Safe: validated non-negative above
-
-        // Build logout config
-        let config = LogoutConfig {
-            server_session_keep_alive: input.server_session_keep_alive,
-            enable_auto_detection: input.enable_auto_detection,
-            error_strategy,
-            logout_total_timeout: input
-                .logout_total_timeout_seconds
-                .map(|s| Duration::from_secs(s as u64)) // Safe: validated non-negative above
-                .unwrap_or(Duration::from_secs(5)),
-            max_retry_attempts: input.max_retry_attempts,
-            logout_request_timeout,
-        };
-
-        connection_close(conn_handle.into(), config).to_protobuf()?;
+        // Call connection_close - it reads logout config from connection state
+        // Config must be set via ConnectionSetOption* before ConnectionInit
+        connection_close(conn_handle.into()).to_protobuf()?;
         Ok(ConnectionCloseResponse {})
     }
 
@@ -922,6 +856,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
                             },
                             Setting::Bytes(b) => ConfigSetting {
                                 value: Some(config_setting::Value::BytesValue(b)),
+                            },
+                            Setting::Bool(b) => ConfigSetting {
+                                value: Some(config_setting::Value::BoolValue(b)),
                             },
                         };
                         (key, proto_value)
