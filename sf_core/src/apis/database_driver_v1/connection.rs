@@ -23,6 +23,21 @@ use reqwest;
 /// Skip reason constant for when connection is already closed
 const SKIP_REASON_ALREADY_CLOSED: &str = "already_closed";
 
+/// Helper: Get connection Arc<Mutex<Connection>> from handle.
+///
+/// Centralizes the pattern of looking up a connection handle.
+/// Returns error if handle is not found.
+///
+/// Note: Lock acquisition must happen at call site, as returning a MutexGuard
+/// would create lifetime issues (the guard would outlive the Arc).
+fn get_connection_ptr(handle: Handle) -> Result<Arc<Mutex<Connection>>, ApiError> {
+    CONN_HANDLE_MANAGER
+        .get_obj(handle)
+        .context(InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        })
+}
+
 /// Load configuration from TOML files for a named connection.
 ///
 /// Takes a mutable reference to the connection to avoid double-locking.
@@ -56,114 +71,94 @@ pub fn connection_load_from_config_with_paths(
 }
 
 pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
-        Some(conn_ptr) => {
-            let mut conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    let conn_ptr = get_connection_ptr(conn_handle)?;
+    {
+        let mut conn = conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-            // Check if connection_name is set and load from config if present
-            let connection_name = conn.settings.get("connection_name").and_then(|s| {
-                if let Setting::String(name) = s {
-                    Some(name.clone())
-                } else {
-                    None
-                }
-            });
-
-            if let Some(name) = connection_name {
-                connection_load_from_config(&mut conn, &name)?;
+        // Check if connection_name is set and load from config if present
+        let connection_name = conn.settings.get("connection_name").and_then(|s| {
+            if let Setting::String(name) = s {
+                Some(name.clone())
+            } else {
+                None
             }
+        });
 
-            let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
-            let login_parameters =
-                LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
-
-            // Parse and validate logout configuration from settings
-            // This follows the same pattern as LoginParameters::from_settings
-            conn.logout_config =
-                LogoutConfig::from_settings(&conn.settings).context(ConfigurationSnafu)?;
-
-            let init_params = conn.init_session_parameters.clone();
-            drop(conn);
-
-            let http_client =
-                create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
-                    .context(TlsClientCreationSnafu)?;
-
-            let login_result = rt
-                .block_on(async {
-                    crate::rest::snowflake::snowflake_login_with_client(
-                        &http_client,
-                        &login_parameters,
-                        init_params.as_ref(),
-                    )
-                    .await
-                })
-                .context(LoginSnafu)?;
-
-            // Initialize connection with session parameters from login response.
-            // The server returns system-level parameters but may not echo back
-            // user-set parameters (e.g. QUERY_TAG), so we merge in the
-            // init_session_parameters the caller explicitly requested.
-            let mut merged_params = init_params.unwrap_or_default();
-            merged_params.extend(login_result.session_parameters.unwrap_or_default());
-
-            conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?
-                .initialize(
-                    login_result.tokens,
-                    http_client,
-                    login_parameters.server_url.clone(),
-                    login_parameters.client_info.clone(),
-                    merged_params,
-                );
-            Ok(())
+        if let Some(name) = connection_name {
+            connection_load_from_config(&mut conn, &name)?;
         }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
+
+        let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+
+        let login_parameters =
+            LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+
+        // Parse and validate logout configuration from settings
+        // This follows the same pattern as LoginParameters::from_settings
+        conn.logout_config =
+            LogoutConfig::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+
+        let init_params = conn.init_session_parameters.clone();
+        drop(conn);
+
+        let http_client =
+            create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
+                .context(TlsClientCreationSnafu)?;
+
+        let login_result = rt
+            .block_on(async {
+                crate::rest::snowflake::snowflake_login_with_client(
+                    &http_client,
+                    &login_parameters,
+                    init_params.as_ref(),
+                )
+                .await
+            })
+            .context(LoginSnafu)?;
+
+        // Initialize connection with session parameters from login response.
+        // The server returns system-level parameters but may not echo back
+        // user-set parameters (e.g. QUERY_TAG), so we merge in the
+        // init_session_parameters the caller explicitly requested.
+        let mut merged_params = init_params.unwrap_or_default();
+        merged_params.extend(login_result.session_parameters.unwrap_or_default());
+
+        conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu {}.build())?
+            .initialize(
+                login_result.tokens,
+                http_client,
+                login_parameters.server_url.clone(),
+                login_parameters.client_info.clone(),
+                merged_params,
+            );
+        Ok(())
     }
 }
 
 pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Result<(), ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(handle) {
-        Some(conn_ptr) => {
-            let mut conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
-
-            // Store setting - validation happens in connection_init via LogoutConfig::from_settings
-            conn.settings.insert(key, value);
-            Ok(())
-        }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
-    }
+    let conn_ptr = get_connection_ptr(handle)?;
+    let mut conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    // Store setting - validation happens in connection_init via LogoutConfig::from_settings
+    conn.settings.insert(key, value);
+    Ok(())
 }
 
 pub fn connection_set_session_parameters(
     handle: Handle,
     parameters: HashMap<String, String>,
 ) -> Result<(), ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(handle) {
-        Some(conn_ptr) => {
-            let mut conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
-            conn.init_session_parameters = Some(parameters);
-            Ok(())
-        }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
-    }
+    let conn_ptr = get_connection_ptr(handle)?;
+    let mut conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    conn.init_session_parameters = Some(parameters);
+    Ok(())
 }
 
 pub fn connection_new() -> Handle {
@@ -500,54 +495,47 @@ pub struct ConnectionInfo {
 
 /// Get connection information for the given connection handle
 pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
-        Some(conn_ptr) => {
-            let conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    let conn_ptr = get_connection_ptr(conn_handle)?;
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-            // Extract host and port from settings
-            let host = conn.settings.get("host").and_then(|s| {
-                if let Setting::String(v) = s {
-                    Some(v.clone())
-                } else {
-                    None
-                }
-            });
-
-            let port = conn.settings.get("port").and_then(|s| {
-                if let Setting::Int(v) = s {
-                    Some(*v)
-                } else {
-                    None
-                }
-            });
-
-            // Get server_url
-            let server_url = conn.server_url.clone();
-
-            // Get session token and session ID from tokens
-            let (session_token, session_id) = {
-                let tokens_guard = conn.tokens.blocking_read();
-                match tokens_guard.as_ref() {
-                    Some(tokens) => (Some(tokens.session_token.clone()), Some(tokens.session_id)),
-                    None => (None, None),
-                }
-            };
-
-            Ok(ConnectionInfo {
-                host,
-                port,
-                server_url,
-                session_token,
-                session_id,
-            })
+    // Extract host and port from settings
+    let host = conn.settings.get("host").and_then(|s| {
+        if let Setting::String(v) = s {
+            Some(v.clone())
+        } else {
+            None
         }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
+    });
+
+    let port = conn.settings.get("port").and_then(|s| {
+        if let Setting::Int(v) = s {
+            Some(*v)
+        } else {
+            None
         }
-        .fail(),
-    }
+    });
+
+    // Get server_url
+    let server_url = conn.server_url.clone();
+
+    // Get session token and session ID from tokens
+    let (session_token, session_id) = {
+        let tokens_guard = conn.tokens.blocking_read();
+        match tokens_guard.as_ref() {
+            Some(tokens) => (Some(tokens.session_token.clone()), Some(tokens.session_id)),
+            None => (None, None),
+        }
+    };
+
+    Ok(ConnectionInfo {
+        host,
+        port,
+        server_url,
+        session_token,
+        session_id,
+    })
 }
 
 /// Check if a connection has been closed
@@ -564,11 +552,7 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
 /// * `Ok(bool)` - true if connection is closed, false if still open
 /// * `Err(ApiError)` - Invalid connection handle
 pub fn connection_is_closed(conn_handle: Handle) -> Result<bool, ApiError> {
-    let conn_ptr = CONN_HANDLE_MANAGER
-        .get_obj(conn_handle)
-        .context(InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        })?;
+    let conn_ptr = get_connection_ptr(conn_handle)?;
 
     let conn = conn_ptr
         .lock()
@@ -756,11 +740,7 @@ pub fn connection_close(
     max_retry_attempts: Option<i32>,
     logout_request_timeout_seconds: Option<i32>,
 ) -> Result<(), ApiError> {
-    let conn_ptr = CONN_HANDLE_MANAGER
-        .get_obj(conn_handle)
-        .context(InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        })?;
+    let conn_ptr = get_connection_ptr(conn_handle)?;
 
     // Build effective config using merge method (hierarchy: override > connection-wide > defaults)
     let config = {
