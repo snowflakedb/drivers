@@ -529,6 +529,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionSetOptionDoubleResponse {})
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_bool", skip(input))]
+    fn connection_set_option_bool(
+        input: ConnectionSetOptionBoolRequest,
+    ) -> Result<ConnectionSetOptionBoolResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        connection_set_option(conn_handle.into(), input.key, Setting::Bool(input.value))
+            .to_protobuf()?;
+
+        Ok(ConnectionSetOptionBoolResponse {})
+    }
+
     #[instrument(name = "DatabaseDriverV1::connection_init", skip(input))]
     fn connection_init(
         input: ConnectionInitRequest,
