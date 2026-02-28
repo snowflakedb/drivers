@@ -171,7 +171,7 @@ class Connection:
 
         # Configure logout behavior BEFORE connection_init (init-time configuration)
         # Map logout parameters using Phase 2 semantics for backward compatibility
-        logout_config = map_logout_config_phase2(self)
+        logout_config = self._map_logout_config()
 
         # Set logout configuration via ConnectionSetOption* calls
         if logout_config.server_session_keep_alive is not None:
