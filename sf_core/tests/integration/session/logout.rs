@@ -1196,376 +1196,198 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 // testing connection_close() with different ErrorStrategy configurations.
 
 #[tokio::test]
-async fn should_throw_after_exhausted_retries_with_strict_strategy_2_attempts() {
-    // Gherkin: core/session/logout.feature:316-329 (max_attempts=2)
-    //Given Mock HTTP server returns 503 on all attempts
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
+async fn should_throw_after_exhausted_retries_with_strict_strategy() {
+    // Scenario Outline with Examples: max_attempts = 2, 3
     use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable"))
-        .expect(2) // Should make exactly 2 attempts
-        .mount(&server)
-        .await;
 
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
+    for max_attempts in [2u64, 3] {
+        //Given Core logout function called with strict strategy
+        //And Retry policy configured with <max_attempts> max attempts
+        //And Mock HTTP server returns 503 on all attempts
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
 
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+        Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session"))
+            .and(wiremock::matchers::query_param("delete", "true"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable"))
+            .expect(max_attempts)
+            .mount(&server)
+            .await;
 
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        //And UD Core connection is configured and logged in
+        let server_uri = server.uri();
+        let client = tokio::task::spawn_blocking(move || {
+            use crate::common::private_key_helper;
 
-        //And Core logout function called with strict strategy
-        //And Retry policy configured with 2 max attempts
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 2); // 2 attempts
+            let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+            client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+            let temp_key_file = private_key_helper::get_test_private_key_file()
+                .expect("Failed to create test private key file");
+            client
+                .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
+            client.set_connection_option_bool("server_session_keep_alive", false);
+            client.set_connection_option_int("logout_error_strategy", 2); // STRICT
+            client.set_connection_option_int("logout_total_timeout_seconds", 30);
+            client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
+
+            DatabaseDriverClient::connection_init(ConnectionInitRequest {
+                conn_handle: Some(client.conn_handle),
+                db_handle: Some(client.db_handle),
+            })
+            .unwrap();
+
+            client.set_temp_key_file(temp_key_file);
+            client
         })
+        .await
         .unwrap();
 
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
-
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
+        //When Logout is executed
+        let conn_handle = client.conn_handle;
+        let result = tokio::task::spawn_blocking(move || {
+            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                conn_handle: Some(conn_handle),
+            })
         })
-    })
-    .await
-    .unwrap();
-
-    //Then Exactly max_attempts attempts are made
-    //And No further retries after max reached
-    //And Close throws error
-    assert!(
-        result.is_err(),
-        "Close should fail with strict strategy after exhausted retries"
-    );
-
-    // Verify exactly 2 logout attempts were made
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 2,
-        "Should have made exactly 2 logout attempts"
-    );
-}
-
-#[tokio::test]
-async fn should_throw_after_exhausted_retries_with_strict_strategy_3_attempts() {
-    // Gherkin: core/session/logout.feature:316-329 (max_attempts=3)
-    //Given Mock HTTP server returns 503 on all attempts
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
-    use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable"))
-        .expect(3) // Should make exactly 3 attempts
-        .mount(&server)
-        .await;
-
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
-
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
-
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
-
-        //And Core logout function called with strict strategy
-        //And Retry policy configured with 3 max attempts
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 3); // 3 attempts
-
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
+        .await
         .unwrap();
 
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
+        //Then Exactly <max_attempts> attempts are made
+        //And No further retries after max reached
+        //And WARN log is emitted
+        //And Close throws error
+        assert!(
+            result.is_err(),
+            "Close should fail with strict strategy after exhausted retries (max_attempts={})",
+            max_attempts
+        );
 
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
-
-    //Then Exactly max_attempts attempts are made
-    //And No further retries after max reached
-    //And Close throws error
-    assert!(
-        result.is_err(),
-        "Close should fail with strict strategy after exhausted retries"
-    );
-
-    // Verify exactly 3 logout attempts were made
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 3,
-        "Should have made exactly 3 logout attempts"
-    );
+        let received_requests = server.received_requests().await.unwrap();
+        let logout_count = received_requests
+            .iter()
+            .filter(|r| {
+                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
+            })
+            .count();
+        assert_eq!(
+            logout_count, max_attempts as usize,
+            "Should have made exactly {} logout attempts",
+            max_attempts
+        );
+    }
 }
 
 #[tokio::test]
-async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy_2_attempts()
-{
-    // Gherkin: core/session/logout.feature:331-344 (max_attempts=2)
-    //Given Mock HTTP server returns 503 on all attempts
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
+async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy() {
+    // Scenario Outline with Examples: max_attempts = 2, 3
     use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable"))
-        .expect(2) // Should make exactly 2 attempts
-        .mount(&server)
-        .await;
 
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
+    for max_attempts in [2u64, 3] {
+        //Given Core logout function called with best-effort strategy
+        //And Retry policy configured with <max_attempts> max attempts
+        //And Mock HTTP server returns 503 on all attempts
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
 
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+        Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session"))
+            .and(wiremock::matchers::query_param("delete", "true"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable"))
+            .expect(max_attempts)
+            .mount(&server)
+            .await;
 
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        //And UD Core connection is configured and logged in
+        let server_uri = server.uri();
+        let client = tokio::task::spawn_blocking(move || {
+            use crate::common::private_key_helper;
 
-        //And Core logout function called with best-effort strategy
-        //And Retry policy configured with 2 max attempts
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 2); // 2 attempts
+            let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+            client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+            let temp_key_file = private_key_helper::get_test_private_key_file()
+                .expect("Failed to create test private key file");
+            client
+                .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
+            client.set_connection_option_bool("server_session_keep_alive", false);
+            client.set_connection_option_int("logout_error_strategy", 1); // BEST_EFFORT
+            client.set_connection_option_int("logout_total_timeout_seconds", 30);
+            client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
+
+            DatabaseDriverClient::connection_init(ConnectionInitRequest {
+                conn_handle: Some(client.conn_handle),
+                db_handle: Some(client.db_handle),
+            })
+            .unwrap();
+
+            client.set_temp_key_file(temp_key_file);
+            client
         })
+        .await
         .unwrap();
 
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
-
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
+        //When Logout is executed
+        let conn_handle = client.conn_handle;
+        let result = tokio::task::spawn_blocking(move || {
+            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                conn_handle: Some(conn_handle),
+            })
         })
-    })
-    .await
-    .unwrap();
-
-    //Then Exactly max_attempts attempts are made
-    //And No further retries after max reached
-    //And WARN log is emitted
-    //And Close succeeds
-    assert!(
-        result.is_ok(),
-        "Close should succeed with best-effort strategy despite failures: {:?}",
-        result.err()
-    );
-
-    // Verify exactly 2 logout attempts were made
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 2,
-        "Should have made exactly 2 logout attempts"
-    );
-}
-
-#[tokio::test]
-async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy_3_attempts()
-{
-    // Gherkin: core/session/logout.feature:331-344 (max_attempts=3)
-    //Given Mock HTTP server returns 503 on all attempts
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
-    use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable"))
-        .expect(3) // Should make exactly 3 attempts
-        .mount(&server)
-        .await;
-
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
-
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
-
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
-
-        //And Core logout function called with best-effort strategy
-        //And Retry policy configured with 3 max attempts
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 3); // 3 attempts
-
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
+        .await
         .unwrap();
 
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
+        //Then Exactly <max_attempts> attempts are made
+        //And No further retries after max reached
+        //And WARN log is emitted
+        //And Close succeeds
+        assert!(
+            result.is_ok(),
+            "Close should succeed with best-effort strategy despite failures (max_attempts={}): {:?}",
+            max_attempts,
+            result.err()
+        );
 
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
-
-    //Then Exactly max_attempts attempts are made
-    //And No further retries after max reached
-    //And WARN log is emitted
-    //And Close succeeds
-    assert!(
-        result.is_ok(),
-        "Close should succeed with best-effort strategy despite failures: {:?}",
-        result.err()
-    );
-
-    // Verify exactly 3 logout attempts were made
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 3,
-        "Should have made exactly 3 logout attempts"
-    );
+        let received_requests = server.received_requests().await.unwrap();
+        let logout_count = received_requests
+            .iter()
+            .filter(|r| {
+                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
+            })
+            .count();
+        assert_eq!(
+            logout_count, max_attempts as usize,
+            "Should have made exactly {} logout attempts",
+            max_attempts
+        );
+    }
 }
 
 #[tokio::test]
-async fn should_throw_on_non_retryable_400_in_strict_strategy() {
-    // Gherkin: core/session/logout.feature:378-391 (error_code=400)
-    //Given Core logout function called with strict strategy
-    //And Mock HTTP server returns 400 error
-    test_non_retryable_error_strict(400, "Bad Request").await;
-}
-
-#[tokio::test]
-async fn should_throw_on_non_retryable_403_in_strict_strategy() {
-    // Gherkin: core/session/logout.feature:378-391 (error_code=403)
-    //Given Core logout function called with strict strategy
-    //And Mock HTTP server returns 403 error
-    test_non_retryable_error_strict(403, "Forbidden").await;
-}
-
-#[tokio::test]
-async fn should_throw_on_non_retryable_404_in_strict_strategy() {
-    // Gherkin: core/session/logout.feature:378-391 (error_code=404)
-    //Given Core logout function called with strict strategy
-    //And Mock HTTP server returns 404 error
-    test_non_retryable_error_strict(404, "Not Found").await;
-}
-
-#[tokio::test]
-async fn should_throw_on_non_retryable_390114_in_strict_strategy() {
-    // Gherkin: core/session/logout.feature:378-391 (error_code=390114 MASTER_TOKEN_EXPIRED)
-    //Given Mock HTTP server returns 390114 error
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
+async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
+    // Scenario Outline with Examples: error_code = 400, 403, 404, 390114
     use serde_json::json;
     use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(
+
+    let error_cases: Vec<(&str, ResponseTemplate)> = vec![
+        //And Mock HTTP server returns <error_code> error
+        (
+            "400 Bad Request",
+            ResponseTemplate::new(400).set_body_string("Bad Request"),
+        ),
+        (
+            "403 Forbidden",
+            ResponseTemplate::new(403).set_body_string("Forbidden"),
+        ),
+        (
+            "404 Not Found",
+            ResponseTemplate::new(404).set_body_string("Not Found"),
+        ),
+        (
+            "390114 MASTER_TOKEN_EXPIRED",
             ResponseTemplate::new(401)
                 .set_body_json(json!({
                     "success": false,
@@ -1573,113 +1395,109 @@ async fn should_throw_on_non_retryable_390114_in_strict_strategy() {
                     "message": "Master token expired"
                 }))
                 .insert_header("Content-Type", "application/json"),
-        )
-        .expect(1) // Should make exactly 1 attempt (non-retryable)
-        .mount(&server)
-        .await;
+        ),
+    ];
 
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
+    for (error_code, response_template) in error_cases {
+        //Given Core logout function called with strict strategy
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
 
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+        Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session"))
+            .and(wiremock::matchers::query_param("delete", "true"))
+            .respond_with(response_template)
+            .expect(1)
+            .mount(&server)
+            .await;
 
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        //And UD Core connection is configured and logged in
+        let server_uri = server.uri();
+        let client = tokio::task::spawn_blocking(move || {
+            use crate::common::private_key_helper;
 
-        //And Core logout function called with strict strategy
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 3); // Max attempts, but should only try once
+            let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+            client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+            let temp_key_file = private_key_helper::get_test_private_key_file()
+                .expect("Failed to create test private key file");
+            client
+                .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
+            client.set_connection_option_bool("server_session_keep_alive", false);
+            client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
+            client.set_connection_option_int("logout_total_timeout_seconds", 30);
+            client.set_connection_option_int("logout_max_attempts", 3);
+
+            DatabaseDriverClient::connection_init(ConnectionInitRequest {
+                conn_handle: Some(client.conn_handle),
+                db_handle: Some(client.db_handle),
+            })
+            .unwrap();
+
+            client.set_temp_key_file(temp_key_file);
+            client
         })
+        .await
         .unwrap();
 
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
-
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
+        //When Logout is executed
+        let conn_handle = client.conn_handle;
+        let result = tokio::task::spawn_blocking(move || {
+            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                conn_handle: Some(conn_handle),
+            })
         })
-    })
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
-    //Then Close throws error immediately
-    //And Error is surfaced to caller
-    //And No retries are attempted
-    assert!(
-        result.is_err(),
-        "Close should fail with strict strategy for non-retryable error 390114"
-    );
+        //Then Close throws error immediately
+        //And Error is surfaced to caller
+        //And No retries are attempted
+        assert!(
+            result.is_err(),
+            "Close should fail with strict strategy for non-retryable error {}: {:?}",
+            error_code,
+            result.ok()
+        );
 
-    // Verify exactly 1 logout attempt was made (no retries)
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 1,
-        "Should have made exactly 1 logout attempt (no retries for non-retryable error)"
-    );
+        let received_requests = server.received_requests().await.unwrap();
+        let logout_count = received_requests
+            .iter()
+            .filter(|r| {
+                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
+            })
+            .count();
+        assert_eq!(
+            logout_count, 1,
+            "Should have made exactly 1 logout attempt (no retries for non-retryable error {})",
+            error_code
+        );
+    }
 }
 
 #[tokio::test]
-async fn should_log_and_suppress_non_retryable_400_in_best_effort_strategy() {
-    // Gherkin: core/session/logout.feature:394-407 (error_code=400)
-    //Given Core logout function called with best-effort strategy
-    //And Mock HTTP server returns 400 error
-    test_non_retryable_error_best_effort(400, "Bad Request").await;
-}
-
-#[tokio::test]
-async fn should_log_and_suppress_non_retryable_403_in_best_effort_strategy() {
-    // Gherkin: core/session/logout.feature:394-407 (error_code=403)
-    //Given Core logout function called with best-effort strategy
-    //And Mock HTTP server returns 403 error
-    test_non_retryable_error_best_effort(403, "Forbidden").await;
-}
-
-#[tokio::test]
-async fn should_log_and_suppress_non_retryable_404_in_best_effort_strategy() {
-    // Gherkin: core/session/logout.feature:394-407 (error_code=404)
-    //Given Core logout function called with best-effort strategy
-    //And Mock HTTP server returns 404 error
-    test_non_retryable_error_best_effort(404, "Not Found").await;
-}
-
-#[tokio::test]
-async fn should_log_and_suppress_non_retryable_390114_in_best_effort_strategy() {
-    // Gherkin: core/session/logout.feature:394-407 (error_code=390114 MASTER_TOKEN_EXPIRED)
-    //Given Mock HTTP server returns 390114 error
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
+async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strategy() {
+    // Scenario Outline with Examples: error_code = 400, 403, 404, 390114
     use serde_json::json;
     use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(
+
+    let error_cases: Vec<(&str, ResponseTemplate)> = vec![
+        //And Mock HTTP server returns <error_code> error
+        (
+            "400 Bad Request",
+            ResponseTemplate::new(400).set_body_string("Bad Request"),
+        ),
+        (
+            "403 Forbidden",
+            ResponseTemplate::new(403).set_body_string("Forbidden"),
+        ),
+        (
+            "404 Not Found",
+            ResponseTemplate::new(404).set_body_string("Not Found"),
+        ),
+        (
+            "390114 MASTER_TOKEN_EXPIRED",
             ResponseTemplate::new(401)
                 .set_body_json(json!({
                     "success": false,
@@ -1687,241 +1505,85 @@ async fn should_log_and_suppress_non_retryable_390114_in_best_effort_strategy() 
                     "message": "Master token expired"
                 }))
                 .insert_header("Content-Type", "application/json"),
-        )
-        .expect(1) // Should make exactly 1 attempt (non-retryable)
-        .mount(&server)
-        .await;
+        ),
+    ];
 
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
+    for (error_code, response_template) in error_cases {
+        //Given Core logout function called with best-effort strategy
+        let server = MockServer::start().await;
+        mount_jwt_login_success(&server).await;
 
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+        Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/session"))
+            .and(wiremock::matchers::query_param("delete", "true"))
+            .respond_with(response_template)
+            .expect(1)
+            .mount(&server)
+            .await;
 
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        //And UD Core connection is configured and logged in
+        let server_uri = server.uri();
+        let client = tokio::task::spawn_blocking(move || {
+            use crate::common::private_key_helper;
 
-        //And Core logout function called with best-effort strategy
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 3); // Max attempts, but should only try once
+            let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+            client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+            let temp_key_file = private_key_helper::get_test_private_key_file()
+                .expect("Failed to create test private key file");
+            client
+                .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
+            client.set_connection_option_bool("server_session_keep_alive", false);
+            client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
+            client.set_connection_option_int("logout_total_timeout_seconds", 30);
+            client.set_connection_option_int("logout_max_attempts", 3);
+
+            DatabaseDriverClient::connection_init(ConnectionInitRequest {
+                conn_handle: Some(client.conn_handle),
+                db_handle: Some(client.db_handle),
+            })
+            .unwrap();
+
+            client.set_temp_key_file(temp_key_file);
+            client
         })
+        .await
         .unwrap();
 
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
-
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
+        //When Logout is executed
+        let conn_handle = client.conn_handle;
+        let result = tokio::task::spawn_blocking(move || {
+            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                conn_handle: Some(conn_handle),
+            })
         })
-    })
-    .await
-    .unwrap();
-
-    //Then Error is logged as WARN
-    //And Close succeeds without throwing
-    //And No retries are attempted
-    assert!(
-        result.is_ok(),
-        "Close should succeed with best-effort strategy despite non-retryable error 390114: {:?}",
-        result.err()
-    );
-
-    // Verify exactly 1 logout attempt was made (no retries)
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 1,
-        "Should have made exactly 1 logout attempt (no retries for non-retryable error)"
-    );
-}
-
-// Helper functions for non-retryable error tests
-
-async fn test_non_retryable_error_strict(status_code: u16, status_text: &str) {
-    //Given Mock HTTP server returns error
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
-    use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(ResponseTemplate::new(status_code).set_body_string(status_text))
-        .expect(1) // Should make exactly 1 attempt (non-retryable)
-        .mount(&server)
-        .await;
-
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
-
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
-
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
-
-        //And Core logout function called with strict strategy
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 3); // Max attempts, but should only try once
-
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
+        .await
         .unwrap();
 
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
+        //Then Error is logged as WARN
+        //And Close succeeds without throwing
+        //And No retries are attempted
+        assert!(
+            result.is_ok(),
+            "Close should succeed with best-effort strategy despite non-retryable error {}: {:?}",
+            error_code,
+            result.err()
+        );
 
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
-
-    //Then Close throws error immediately
-    //And Error is surfaced to caller
-    //And No retries are attempted
-    assert!(
-        result.is_err(),
-        "Close should fail with strict strategy for non-retryable error {}: {:?}",
-        status_code,
-        result.ok()
-    );
-
-    // Verify exactly 1 logout attempt was made (no retries)
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 1,
-        "Should have made exactly 1 logout attempt (no retries for non-retryable error {})",
-        status_code
-    );
-}
-
-async fn test_non_retryable_error_best_effort(status_code: u16, status_text: &str) {
-    //Given Mock HTTP server returns error
-    let server = MockServer::start().await;
-    mount_jwt_login_success(&server).await;
-
-    use wiremock::{Mock, ResponseTemplate};
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/session"))
-        .and(wiremock::matchers::query_param("delete", "true"))
-        .respond_with(ResponseTemplate::new(status_code).set_body_string(status_text))
-        .expect(1) // Should make exactly 1 attempt (non-retryable)
-        .mount(&server)
-        .await;
-
-    //And UD Core connection is configured and logged in
-    let server_uri = server.uri();
-    let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
-
-        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
-
-        // Configure JWT authentication
-        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
-        let temp_key_file = private_key_helper::get_test_private_key_file()
-            .expect("Failed to create test private key file");
-        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
-
-        //And Core logout function called with best-effort strategy
-        client.set_connection_option_bool("server_session_keep_alive", false);
-        client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
-        client.set_connection_option_int("logout_total_timeout_seconds", 30);
-        client.set_connection_option_int("logout_max_attempts", 3); // Max attempts, but should only try once
-
-        // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
-        .unwrap();
-
-        client.set_temp_key_file(temp_key_file);
-        client
-    })
-    .await
-    .unwrap();
-
-    //When Logout is executed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
-
-    //Then Error is logged as WARN
-    //And Close succeeds without throwing
-    //And No retries are attempted
-    assert!(
-        result.is_ok(),
-        "Close should succeed with best-effort strategy despite non-retryable error {}: {:?}",
-        status_code,
-        result.err()
-    );
-
-    // Verify exactly 1 logout attempt was made (no retries)
-    let received_requests = server.received_requests().await.unwrap();
-    let logout_count = received_requests
-        .iter()
-        .filter(|r| {
-            r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-        })
-        .count();
-    assert_eq!(
-        logout_count, 1,
-        "Should have made exactly 1 logout attempt (no retries for non-retryable error {})",
-        status_code
-    );
+        let received_requests = server.received_requests().await.unwrap();
+        let logout_count = received_requests
+            .iter()
+            .filter(|r| {
+                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
+            })
+            .count();
+        assert_eq!(
+            logout_count, 1,
+            "Should have made exactly 1 logout attempt (no retries for non-retryable error {})",
+            error_code
+        );
+    }
 }
 
 // ===========================================================================
