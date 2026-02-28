@@ -37,11 +37,13 @@ pub struct LogoutConfig {
     /// Individual HTTP request timeouts are derived from this total.
     pub logout_total_timeout: Duration,
 
-    /// Maximum number of retry attempts for failed logout requests
-    /// - Some(0): No retries, single attempt only
-    /// - Some(n): Allow up to n retries
+    /// Maximum total attempts for logout requests (NOT number of retries)
+    /// - Some(1): 1 attempt, 0 retries
+    /// - Some(3): 3 attempts, 2 retries
     /// - None: Use default from RetryPolicy (typically 6)
-    pub max_retry_attempts: Option<u32>,
+    ///
+    /// Note: This is TOTAL ATTEMPTS, not retry count. To disable retries, set to 1.
+    pub max_attempts: Option<u32>,
 
     /// Per-request socket timeout for individual HTTP requests
     /// - Some(duration): Each request times out after this duration (dynamically adjusted to min(this, remaining_budget))
@@ -56,7 +58,7 @@ impl Default for LogoutConfig {
             enable_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
             logout_total_timeout: Duration::from_secs(5),
-            max_retry_attempts: None,
+            max_attempts: None,
             logout_request_timeout: None,
         }
     }
@@ -68,20 +70,9 @@ impl LogoutConfig {
     /// All validation happens here, once, at connection_init time.
     /// This follows the same pattern as LoginParameters::from_settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
-        // Parse and validate error_strategy
-        let error_strategy = match settings.get_string("logout_error_strategy") {
-            Some(s) => match s.as_str() {
-                "strict" => ErrorStrategy::Strict,
-                "best_effort" => ErrorStrategy::BestEffort,
-                _ => {
-                    return InvalidParameterValueSnafu {
-                        parameter: "logout_error_strategy",
-                        value: s,
-                        explanation: "Must be 'strict' or 'best_effort'",
-                    }
-                    .fail();
-                }
-            },
+        // Parse and validate error_strategy (sent as protobuf enum int value)
+        let error_strategy = match settings.get_int("logout_error_strategy") {
+            Some(v) => ErrorStrategy::from_protobuf_value(v)?,
             None => ErrorStrategy::Strict, // default
         };
 
@@ -101,12 +92,12 @@ impl LogoutConfig {
             None => Duration::from_secs(5), // default
         };
 
-        // Parse and validate logout_max_retry_attempts
-        let max_retry_attempts = match settings.get_int("logout_max_retry_attempts") {
+        // Parse and validate logout_max_attempts
+        let max_attempts = match settings.get_int("logout_max_attempts") {
             Some(v) => {
                 if v < 0 {
                     return InvalidParameterValueSnafu {
-                        parameter: "logout_max_retry_attempts",
+                        parameter: "logout_max_attempts",
                         value: v.to_string(),
                         explanation: "Must be non-negative",
                     }
@@ -138,7 +129,7 @@ impl LogoutConfig {
             enable_auto_detection: settings.get_bool("enable_logout_auto_detection"),
             error_strategy,
             logout_total_timeout,
-            max_retry_attempts,
+            max_attempts,
             logout_request_timeout,
         })
     }
@@ -158,6 +149,33 @@ pub enum ErrorStrategy {
 }
 
 impl ErrorStrategy {
+    /// Parse ErrorStrategy from protobuf enum value (int).
+    ///
+    /// Protobuf enum values:
+    /// - 0: UNSPECIFIED (uses default)
+    /// - 1: BEST_EFFORT
+    /// - 2: STRICT
+    ///
+    /// # Arguments
+    /// * `value` - Integer value from protobuf enum
+    ///
+    /// # Returns
+    /// * `Ok(ErrorStrategy)` - Parsed strategy
+    /// * `Err(ConfigError)` - Invalid enum value
+    pub fn from_protobuf_value(value: i64) -> Result<Self, ConfigError> {
+        match value {
+            0 => Ok(Self::default()), // UNSPECIFIED uses default (Strict)
+            1 => Ok(ErrorStrategy::BestEffort),
+            2 => Ok(ErrorStrategy::Strict),
+            _ => InvalidParameterValueSnafu {
+                parameter: "logout_error_strategy",
+                value: value.to_string(),
+                explanation: "Must be 0 (UNSPECIFIED), 1 (BestEffort), or 2 (Strict)",
+            }
+            .fail(),
+        }
+    }
+
     /// Handle a failed logout after all retry mechanisms have been exhausted.
     ///
     /// Called after both retry layers have given up:
@@ -239,5 +257,40 @@ mod tests {
     fn test_best_effort_passes_through_ok() {
         let result = ErrorStrategy::BestEffort.handle_failed_logout(Ok(()));
         assert!(result.is_ok(), "BestEffort should pass through Ok");
+    }
+
+    #[test]
+    fn test_error_strategy_from_protobuf_value() {
+        // Test protobuf enum parsing
+        assert_eq!(
+            ErrorStrategy::from_protobuf_value(0).unwrap(),
+            ErrorStrategy::Strict,
+            "UNSPECIFIED (0) should default to Strict"
+        );
+        assert_eq!(
+            ErrorStrategy::from_protobuf_value(1).unwrap(),
+            ErrorStrategy::BestEffort,
+            "BEST_EFFORT (1) should map to BestEffort"
+        );
+        assert_eq!(
+            ErrorStrategy::from_protobuf_value(2).unwrap(),
+            ErrorStrategy::Strict,
+            "STRICT (2) should map to Strict"
+        );
+    }
+
+    #[test]
+    fn test_error_strategy_from_protobuf_value_invalid() {
+        let result = ErrorStrategy::from_protobuf_value(999);
+        assert!(
+            result.is_err(),
+            "from_protobuf_value should reject invalid values"
+        );
+
+        let result = ErrorStrategy::from_protobuf_value(-1);
+        assert!(
+            result.is_err(),
+            "from_protobuf_value should reject negative values"
+        );
     }
 }

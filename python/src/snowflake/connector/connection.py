@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import threading
 import warnings
 
 from collections.abc import Generator, Iterable
@@ -76,11 +77,16 @@ class ConnectionClassState:
     """Mutable class-level state shared across all Connection instances in the process.
 
     This is static/class-level state, NOT instance state.
+    Thread-safety: The lock protects concurrent access to shared state during process exit.
     """
 
     # Track if first auto-cleanup warning has been emitted in this process
     # False = warning already emitted, True = warning not yet emitted
     first_auto_cleanup_warning_pending: bool = True
+
+    # Lock to protect concurrent access to class state during process exit
+    # This prevents race conditions when multiple connections close simultaneously
+    lock: threading.Lock = threading.Lock()
 
 
 class Connection:
@@ -192,13 +198,12 @@ class Connection:
                 )
             )
 
-        # Set error strategy (always set, has default)
-        error_strategy_str = "best_effort" if logout_config.error_strategy == 1 else "strict"
-        self.db_api.connection_set_option_string(
-            ConnectionSetOptionStringRequest(
+        # Set error strategy (always set, has default) - send protobuf enum value directly
+        self.db_api.connection_set_option_int(
+            ConnectionSetOptionIntRequest(
                 conn_handle=self.conn_handle,
                 key="logout_error_strategy",
-                value=error_strategy_str,
+                value=logout_config.error_strategy,  # Protobuf enum: 1=BEST_EFFORT, 2=STRICT
             )
         )
 
@@ -211,12 +216,12 @@ class Connection:
             )
         )
 
-        if logout_config.max_retry_attempts is not None:
+        if logout_config.max_attempts is not None:
             self.db_api.connection_set_option_int(
                 ConnectionSetOptionIntRequest(
                     conn_handle=self.conn_handle,
-                    key="logout_max_retry_attempts",
-                    value=logout_config.max_retry_attempts,
+                    key="logout_max_attempts",  # Renamed for semantic accuracy (total attempts, not retry count)
+                    value=logout_config.max_attempts,
                 )
             )
 
@@ -261,7 +266,7 @@ class Connection:
 
         Args:
             retry: DEPRECATED - Logout retry behavior is now configured at connection initialization
-                   via the max_retry_attempts parameter. This parameter is kept for backward
+                   via the max_attempts parameter. This parameter is kept for backward
                    compatibility but has no effect.
 
         Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
@@ -287,7 +292,7 @@ class Connection:
         if not retry:
             warnings.warn(
                 "The 'retry' parameter is deprecated. Logout retry behavior should be "
-                "configured at connection initialization time via the max_retry_attempts parameter. "
+                "configured at connection initialization time via the max_attempts parameter. "
                 "This parameter will be removed in a future version.",
                 DeprecationWarning,
                 stacklevel=2,
@@ -319,15 +324,17 @@ class Connection:
 
         # Connection is leaked (not explicitly closed) - emit deprecation warning
         # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
-        if self.__class__._class_state.first_auto_cleanup_warning_pending:
-            warnings.warn(
-                "Connection was not explicitly closed before process exit. "
-                "Auto-cleanup at exit will be disabled by default in a future version. "
-                "Please explicitly call connection.close() or use context manager.",
-                FutureWarning,
-                stacklevel=2,
-            )
-            self.__class__._class_state.first_auto_cleanup_warning_pending = False
+        # Use lock to prevent race conditions when multiple connections close concurrently
+        with self.__class__._class_state.lock:
+            if self.__class__._class_state.first_auto_cleanup_warning_pending:
+                warnings.warn(
+                    "Connection was not explicitly closed before process exit. "
+                    "Auto-cleanup at exit will be disabled by default in a future version. "
+                    "Please explicitly call connection.close() or use context manager.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+                self.__class__._class_state.first_auto_cleanup_warning_pending = False
 
         # Attempt cleanup for leaked connection
         try:

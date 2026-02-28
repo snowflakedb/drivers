@@ -636,7 +636,7 @@ fn prepare_logout(
         match (http_client, server_url, client_info) {
             (Some(client), Some(url), Some(info)) => {
                 let mut retry_policy = conn.retry_policy.clone();
-                if let Some(max_attempts) = config.max_retry_attempts {
+                if let Some(max_attempts) = config.max_attempts {
                     retry_policy.max_attempts = max_attempts;
                 }
                 retry_policy.max_elapsed = config.logout_total_timeout;
@@ -735,7 +735,7 @@ fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError>
 /// - `enable_logout_auto_detection`: Enable async query detection
 /// - `logout_error_strategy`: Error handling (Strict or BestEffort)
 /// - `logout_total_timeout`: Total timeout budget
-/// - `logout_max_retry_attempts`: Max retry attempts
+/// - `logout_max_attempts`: Maximum total attempts (1 = no retries, 3 = 2 retries)
 /// - `logout_request_timeout`: Per-request timeout
 ///
 /// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)

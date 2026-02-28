@@ -7,6 +7,8 @@ including phase-specific defaults and error handling strategies.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
+
 
 if TYPE_CHECKING:
     from snowflake.connector.connection import Connection
@@ -23,7 +25,7 @@ class LogoutConfig:
         enable_auto_detection: Final value for Core (None = treat as False in Core)
         error_strategy: Error handling strategy (BEST_EFFORT or STRICT)
         logout_total_timeout_seconds: Total timeout budget for logout operation (all retries)
-        max_retry_attempts: Maximum number of retry attempts for logout
+        max_attempts: Maximum total attempts (NOT retry count: 1 = no retries, 3 = 2 retries)
         logout_request_timeout_seconds: Per-request socket timeout (None = no per-request limit)
     """
 
@@ -31,7 +33,7 @@ class LogoutConfig:
     enable_auto_detection: Optional[bool]
     error_strategy: int
     logout_total_timeout_seconds: int
-    max_retry_attempts: Optional[int]
+    max_attempts: Optional[int]  # Total attempts (1 = no retries, 3 = 2 retries)
     logout_request_timeout_seconds: Optional[int]
 
 
@@ -55,8 +57,6 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
     Returns:
         LogoutConfig with all final values ready for Core
     """
-    from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
-
     server_session_keep_alive = connection.server_session_keep_alive
     enable_auto_detection = connection.enable_server_session_keep_alive_auto_detection
 
@@ -70,6 +70,6 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
         enable_auto_detection=enable_auto_detection,
         error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,
         logout_total_timeout_seconds=15,  # 15 second total budget with 3 max attempts = ~5s per attempt
-        max_retry_attempts=3,  # Limit retries for faster failure feedback
+        max_attempts=3,  # 3 total attempts (2 retries) for faster failure feedback
         logout_request_timeout_seconds=5,  # 5s per request (default), dynamically adjusted to min(5s, remaining)
     )
