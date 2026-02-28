@@ -69,6 +69,11 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.ConnectionSetOptionDoubleResponse connectionSetOptionDouble(DatabaseDriverV1.ConnectionSetOptionDoubleRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: connectionSetOptionBool
+     */
+    DatabaseDriverV1.ConnectionSetOptionBoolResponse connectionSetOptionBool(DatabaseDriverV1.ConnectionSetOptionBoolRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: connectionInit
      */
     DatabaseDriverV1.ConnectionInitResponse connectionInit(DatabaseDriverV1.ConnectionInitRequest request) throws ServiceException, TransportException;

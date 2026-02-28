@@ -337,6 +337,29 @@ message ConnectionReleaseResponse {
 
 message ConnectionCloseRequest {
   ConnectionHandle conn_handle = 1;
+
+  // Optional overrides for connection-wide logout config
+  // If provided, these override the values set during connection_init
+  //
+  // Why both places are needed:
+  // - Init-time (connection_init): Provides connection-wide defaults for most cases
+  // - Close-time (here): Allows per-request overrides for special cases (e.g., Python's retry parameter)
+  //
+  // Why we don't modify Connection.logout_config directly:
+  // - Modifying connection-wide state during close would affect ALL subsequent close calls
+  // - This would have "too wide implicit consequences" (unexpected side effects)
+  // - Per-request overrides are scoped to THIS close operation only
+  //
+  // Hierarchy: close-request override > connection-wide > default
+  // If both close-request AND connection-wide are None, fallback to defaults:
+  // - error_strategy: Strict (propagate errors)
+  // - Other fields have their own documented defaults
+  optional bool server_session_keep_alive = 2;
+  optional bool enable_auto_detection = 3;
+  optional ErrorStrategy error_strategy = 4;
+  optional int32 logout_total_timeout_seconds = 5;
+  optional int32 max_retry_attempts = 6;
+  optional int32 logout_request_timeout_seconds = 7;
 }
 
 message ConnectionCloseResponse {

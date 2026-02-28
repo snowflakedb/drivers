@@ -4,6 +4,7 @@
 //! logout behavior without connecting to real Snowflake.
 
 use crate::common::mocks::auth::mount_jwt_login_success;
+use crate::common::private_key_helper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::test_server::{
     json_error_response, json_response, service_unavailable_response, spawn_capture_server,
@@ -137,7 +138,7 @@ fn should_not_send_logout_when_connection_was_never_established() {
     // Note: connection_init() NOT called - connection remains uninitialized
 
     //When Connection close is attempted
-    let result = connection_close(conn_handle);
+    let result = connection_close(conn_handle, None, None, None, None, None, None);
 
     //Then Close succeeds without sending HTTP request
     assert!(
@@ -199,6 +200,12 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
     let conn_handle = client.conn_handle;
     let result = tokio::task::spawn_blocking(move || {
         DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            server_session_keep_alive: None,
+            enable_auto_detection: None,
+            error_strategy: None,
+            logout_total_timeout_seconds: None,
+            max_retry_attempts: None,
+            logout_request_timeout_seconds: None,
             conn_handle: Some(conn_handle),
         })
     })
@@ -286,6 +293,12 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
     let conn_handle = client.conn_handle;
     let result = tokio::task::spawn_blocking(move || {
         DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            server_session_keep_alive: None,
+            enable_auto_detection: None,
+            error_strategy: None,
+            logout_total_timeout_seconds: None,
+            max_retry_attempts: None,
+            logout_request_timeout_seconds: None,
             conn_handle: Some(conn_handle),
         })
     })
@@ -886,6 +899,12 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         let result = tokio::task::spawn_blocking(move || {
             use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                server_session_keep_alive: None,
+                enable_auto_detection: None,
+                error_strategy: None,
+                logout_total_timeout_seconds: None,
+                max_retry_attempts: None,
+                logout_request_timeout_seconds: None,
                 conn_handle: Some(conn_handle),
             })
         })
@@ -1031,6 +1050,12 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
         let result = tokio::task::spawn_blocking(move || {
             use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                server_session_keep_alive: None,
+                enable_auto_detection: None,
+                error_strategy: None,
+                logout_total_timeout_seconds: None,
+                max_retry_attempts: None,
+                logout_request_timeout_seconds: None,
                 conn_handle: Some(conn_handle),
             })
         })
@@ -1376,6 +1401,12 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
     let conn_handle = client.conn_handle;
     let close_result = tokio::task::spawn_blocking(move || {
         DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            server_session_keep_alive: None,
+            enable_auto_detection: None,
+            error_strategy: None,
+            logout_total_timeout_seconds: None,
+            max_retry_attempts: None,
+            logout_request_timeout_seconds: None,
             conn_handle: Some(conn_handle),
         })
     })
@@ -1405,6 +1436,219 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
             || error_msg.contains("not initialized"),
         "Error should indicate connection is closed: {}",
         error_msg
+    );
+}
+
+// ===========================================================================
+//          Configuration Hierarchy (Init-time + Close-time Override)
+// ===========================================================================
+
+#[tokio::test]
+async fn should_use_connection_wide_config_when_override_is_none() {
+    //Given Mock HTTP server is configured to track logout attempts
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    let attempt_count = Arc::new(AtomicUsize::new(0));
+    let attempt_count_clone = attempt_count.clone();
+
+    // Mount endpoint that fails 3 times (connection-wide config has 3 retries)
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/session"))
+        .respond_with(move |_: &wiremock::Request| {
+            let count = attempt_count_clone.fetch_add(1, Ordering::SeqCst);
+            if count < 3 {
+                wiremock::ResponseTemplate::new(503) // Force retries
+            } else {
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"success": true}))
+            }
+        })
+        .expect(4) // 1 initial + 3 retries
+        .mount(&server)
+        .await;
+
+    //And UD Core connection is logged in with init-time logout config (3 retries)
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        // Create client without connecting yet
+        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+
+        // Set logout config BEFORE connection_init
+        client.set_connection_option_int("logout_max_retry_attempts", 3);
+
+        // Now connect (this calls connection_init)
+        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+        let temp_key_file = private_key_helper::get_test_private_key_file()
+            .expect("Failed to create test private key file");
+        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+
+        DatabaseDriverClient::connection_init(ConnectionInitRequest {
+            conn_handle: Some(client.conn_handle),
+            db_handle: Some(client.db_handle),
+        })
+        .unwrap();
+
+        client.set_temp_key_file(temp_key_file);
+        client
+    })
+    .await
+    .unwrap();
+
+    //When Close is called with None override (Python's retry=True case)
+    let result = tokio::task::spawn_blocking(move || {
+        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            server_session_keep_alive: None,
+            enable_auto_detection: None,
+            error_strategy: None,
+            logout_total_timeout_seconds: None,
+            max_retry_attempts: None, // Explicit None: use connection-wide
+            logout_request_timeout_seconds: None,
+            conn_handle: Some(client.conn_handle),
+        })
+    })
+    .await
+    .unwrap();
+
+    //Then Connection-wide config is used (4 total attempts: 1 initial + 3 retries)
+    let attempts = attempt_count.load(Ordering::SeqCst);
+    assert!(
+        result.is_ok(),
+        "Should succeed after using connection-wide retries. Error: {:?}, Attempts: {}",
+        result.err(),
+        attempts
+    );
+    assert_eq!(
+        attempts, 4,
+        "Should have made 4 attempts (1 initial + 3 retries)"
+    );
+    // This verifies: Python passing None → Rust uses connection-wide value
+}
+
+#[tokio::test]
+async fn should_override_connection_wide_config_when_specified() {
+    //Given Mock HTTP server is configured to fail
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    let attempt_count = Arc::new(AtomicUsize::new(0));
+    let attempt_count_clone = attempt_count.clone();
+
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/session"))
+        .respond_with(move |_: &wiremock::Request| {
+            attempt_count_clone.fetch_add(1, Ordering::SeqCst);
+            wiremock::ResponseTemplate::new(503) // Service unavailable
+        })
+        .expect(1) // Only 1 attempt (override disables retries)
+        .mount(&server)
+        .await;
+
+    //And UD Core connection is logged in with init-time logout config (3 retries)
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+        client.set_connection_option_int("logout_max_retry_attempts", 3);
+        client.set_connection_option("logout_error_strategy", "best_effort");
+
+        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+        let temp_key_file = private_key_helper::get_test_private_key_file().unwrap();
+        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+
+        DatabaseDriverClient::connection_init(ConnectionInitRequest {
+            conn_handle: Some(client.conn_handle),
+            db_handle: Some(client.db_handle),
+        })
+        .unwrap();
+
+        client.set_temp_key_file(temp_key_file);
+        client
+    })
+    .await
+    .unwrap();
+
+    //When Close is called WITH override (retry=False: 0 retries)
+    let result = tokio::task::spawn_blocking(move || {
+        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            server_session_keep_alive: None,
+            enable_auto_detection: None,
+            error_strategy: None,
+            logout_total_timeout_seconds: None,
+            max_retry_attempts: Some(0), // Override: disable retries
+            logout_request_timeout_seconds: None,
+            conn_handle: Some(client.conn_handle),
+        })
+    })
+    .await
+    .unwrap();
+
+    //Then Close-time override is used (1 attempt, no retries)
+    assert!(result.is_ok(), "Should succeed with best_effort strategy");
+    assert_eq!(attempt_count.load(Ordering::SeqCst), 1);
+    // Verifies: Override wins over connection-wide config
+}
+
+#[tokio::test]
+async fn should_fallback_to_strict_strategy_when_both_none() {
+    //Given Mock HTTP server is configured to return error
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/session"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "success": false,
+                "message": "Internal Server Error",
+                "code": 500
+            })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    //And UD Core connection is logged in with NO error strategy configured
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
+        client.set_connection_option_int("logout_max_retry_attempts", 0);
+        // Note: NOT setting error_strategy (both init and close are None)
+
+        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+        let temp_key_file = private_key_helper::get_test_private_key_file().unwrap();
+        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+
+        DatabaseDriverClient::connection_init(ConnectionInitRequest {
+            conn_handle: Some(client.conn_handle),
+            db_handle: Some(client.db_handle),
+        })
+        .unwrap();
+
+        client.set_temp_key_file(temp_key_file);
+        client
+    })
+    .await
+    .unwrap();
+
+    //When Close is called with NO override
+    let result = tokio::task::spawn_blocking(move || {
+        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            server_session_keep_alive: None,
+            enable_auto_detection: None,
+            error_strategy: None, // No close-time override
+            logout_total_timeout_seconds: None,
+            max_retry_attempts: None,
+            logout_request_timeout_seconds: None,
+            conn_handle: Some(client.conn_handle),
+        })
+    })
+    .await
+    .unwrap();
+
+    //Then Fallback to Strict (propagate error)
+    assert!(
+        result.is_err(),
+        "Should fallback to Strict strategy and propagate error"
     );
 }
 

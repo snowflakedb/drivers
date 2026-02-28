@@ -31,6 +31,12 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
 
         //When Connection is closed
         let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            server_session_keep_alive: None,
+            enable_auto_detection: None,
+            error_strategy: None,
+            logout_total_timeout_seconds: None,
+            max_retry_attempts: None,
+            logout_request_timeout_seconds: None,
             conn_handle: Some(client.conn_handle),
         });
 
@@ -51,16 +57,34 @@ fn should_be_idempotent_when_close_called_multiple_times() {
 
     //When Connection is closed
     let result1 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+        server_session_keep_alive: None,
+        enable_auto_detection: None,
+        error_strategy: None,
+        logout_total_timeout_seconds: None,
+        max_retry_attempts: None,
+        logout_request_timeout_seconds: None,
         conn_handle: Some(client.conn_handle),
     });
 
     //And Connection is closed again
     let result2 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+        server_session_keep_alive: None,
+        enable_auto_detection: None,
+        error_strategy: None,
+        logout_total_timeout_seconds: None,
+        max_retry_attempts: None,
+        logout_request_timeout_seconds: None,
         conn_handle: Some(client.conn_handle),
     });
 
     //And Connection is closed a third time
     let result3 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+        server_session_keep_alive: None,
+        enable_auto_detection: None,
+        error_strategy: None,
+        logout_total_timeout_seconds: None,
+        max_retry_attempts: None,
+        logout_request_timeout_seconds: None,
         conn_handle: Some(client.conn_handle),
     });
 
@@ -89,6 +113,12 @@ fn should_handle_concurrent_close_calls_safely() {
             let client_clone = Arc::clone(&client);
             thread::spawn(move || {
                 DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                    server_session_keep_alive: None,
+                    enable_auto_detection: None,
+                    error_strategy: None,
+                    logout_total_timeout_seconds: None,
+                    max_retry_attempts: None,
+                    logout_request_timeout_seconds: None,
                     conn_handle: Some(client_clone.conn_handle),
                 })
             })
@@ -121,6 +151,12 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
 
     //When Connection is closed
     let close_result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+        server_session_keep_alive: None,
+        enable_auto_detection: None,
+        error_strategy: None,
+        logout_total_timeout_seconds: None,
+        max_retry_attempts: None,
+        logout_request_timeout_seconds: None,
         conn_handle: Some(client.conn_handle),
     });
     assert!(close_result.is_ok(), "Close should succeed");

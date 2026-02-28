@@ -636,8 +636,11 @@ fn prepare_logout(
         match (http_client, server_url, client_info) {
             (Some(client), Some(url), Some(info)) => {
                 let mut retry_policy = conn.retry_policy.clone();
-                if let Some(max_attempts) = config.max_retry_attempts {
-                    retry_policy.max_attempts = max_attempts;
+                if let Some(max_retries) = config.max_retry_attempts {
+                    // Convert from "number of retries" to "total attempts"
+                    // max_retry_attempts = 0 → 1 total attempt (no retries)
+                    // max_retry_attempts = 3 → 4 total attempts (1 initial + 3 retries)
+                    retry_policy.max_attempts = max_retries + 1;
                 }
                 retry_policy.max_elapsed = config.logout_total_timeout;
                 retry_policy.per_request_timeout = config.logout_request_timeout;
@@ -728,31 +731,50 @@ fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError>
 /// - `Strict`: surface errors to the caller (close() may fail)
 /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
 ///
-/// Close the connection using logout configuration set during initialization.
+/// Close the connection using logout configuration set during initialization,
+/// with optional per-request overrides.
 ///
-/// Logout behavior is determined by connection fields set via ConnectionSetOption*:
-/// - `server_session_keep_alive`: Control server session lifecycle
-/// - `enable_logout_auto_detection`: Enable async query detection
-/// - `logout_error_strategy`: Error handling (Strict or BestEffort)
-/// - `logout_total_timeout`: Total timeout budget
-/// - `logout_max_retry_attempts`: Max retry attempts
-/// - `logout_request_timeout`: Per-request timeout
+/// Logout behavior is determined by:
+/// 1. Connection-wide config (set via ConnectionSetOption* before ConnectionInit)
+/// 2. Per-request overrides (provided in this call)
 ///
-/// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
-/// which configure logout behavior at connection initialization, not at close time.
-pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
+/// Hierarchy: per-request override > connection-wide > defaults
+///
+/// This design supports both:
+/// - Init-time configuration (most cases)
+/// - Close-time overrides (special cases like Python's retry parameter)
+///
+/// Parameters:
+/// - `conn_handle`: The connection handle
+/// - Optional override fields (if None, uses connection-wide config)
+pub fn connection_close(
+    conn_handle: Handle,
+    server_session_keep_alive: Option<bool>,
+    enable_auto_detection: Option<bool>,
+    error_strategy: Option<crate::config::logout::ErrorStrategy>,
+    logout_total_timeout_seconds: Option<i32>,
+    max_retry_attempts: Option<i32>,
+    logout_request_timeout_seconds: Option<i32>,
+) -> Result<(), ApiError> {
     let conn_ptr = CONN_HANDLE_MANAGER
         .get_obj(conn_handle)
         .context(InvalidArgumentSnafu {
             argument: "Connection handle not found".to_string(),
         })?;
 
-    // Get logout config from connection (set during connection_init)
+    // Build effective config using merge method (hierarchy: override > connection-wide > defaults)
     let config = {
         let conn = conn_ptr
             .lock()
             .map_err(|_| ConnectionLockingSnafu {}.build())?;
-        conn.logout_config.clone()
+        conn.logout_config.merge_with_request(
+            server_session_keep_alive,
+            enable_auto_detection,
+            error_strategy,
+            logout_total_timeout_seconds,
+            max_retry_attempts,
+            logout_request_timeout_seconds,
+        )
     };
 
     let (send_logout, skip_reason, logout_data) = prepare_logout(&conn_ptr, &config)?;

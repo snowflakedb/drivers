@@ -30,7 +30,7 @@ fn test_connection_is_closed_after_close() {
     assert!(!connection_is_closed(conn_handle).unwrap());
 
     // Close the connection
-    connection_close(conn_handle).unwrap();
+    connection_close(conn_handle, None, None, None, None, None, None).unwrap();
 
     // Connection should now be closed
     let is_closed = connection_is_closed(conn_handle).unwrap();
@@ -53,13 +53,13 @@ fn test_connection_is_closed_idempotent() {
     let conn_handle = connection_new();
 
     // Close the connection
-    connection_close(conn_handle).unwrap();
+    connection_close(conn_handle, None, None, None, None, None, None).unwrap();
 
     // Verify closed
     assert!(connection_is_closed(conn_handle).unwrap());
 
     // Close again (should be idempotent)
-    connection_close(conn_handle).unwrap();
+    connection_close(conn_handle, None, None, None, None, None, None).unwrap();
 
     // Should still be closed
     assert!(connection_is_closed(conn_handle).unwrap());

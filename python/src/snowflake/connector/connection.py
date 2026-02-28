@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+import threading
 import warnings
 
 from collections.abc import Generator, Iterable
@@ -71,16 +72,43 @@ class ConnectionClassConfig:
     USE_PHASE3_LOGOUT_SEMANTICS: bool = False
 
 
-@dataclass
 class ConnectionClassState:
-    """Mutable class-level state shared across all Connection instances in the process.
+    """Thread-safe process-level state shared across all Connection instances.
 
     This is static/class-level state, NOT instance state.
+    Uses a lock to prevent race conditions in multi-threaded environments.
     """
 
-    # Track if first auto-cleanup warning has been emitted in this process
-    # False = warning already emitted, True = warning not yet emitted
-    first_auto_cleanup_warning_pending: bool = True
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._first_auto_cleanup_warning_pending = True
+
+    @property
+    def first_auto_cleanup_warning_pending(self) -> bool:
+        """Thread-safe getter for warning flag."""
+        with self._lock:
+            return self._first_auto_cleanup_warning_pending
+
+    @first_auto_cleanup_warning_pending.setter
+    def first_auto_cleanup_warning_pending(self, value: bool) -> None:
+        """Thread-safe setter for warning flag."""
+        with self._lock:
+            self._first_auto_cleanup_warning_pending = value
+
+    def check_and_clear_first_warning(self) -> bool:
+        """Atomically check and clear the first warning flag.
+
+        Returns:
+            True if this is the first warning (and flag was cleared), False otherwise.
+
+        This is an atomic operation that prevents race conditions where multiple
+        threads might all emit the warning.
+        """
+        with self._lock:
+            if self._first_auto_cleanup_warning_pending:
+                self._first_auto_cleanup_warning_pending = False
+                return True
+            return False
 
 
 class Connection:
@@ -257,24 +285,26 @@ class Connection:
         Close the connection now.
 
         Sends logout request to server based on configuration set at connection initialization,
-        then cleans up resources.
+        with optional per-request overrides.
 
         Args:
-            retry: DEPRECATED - Logout retry behavior is now configured at connection initialization
-                   via the max_retry_attempts parameter. This parameter is kept for backward
-                   compatibility but has no effect.
+            retry: If False, disables logout retries for this close operation only.
+                   Overrides connection-wide max_retry_attempts to 0.
+                   If True, uses the connection-wide configured value.
 
         Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
             - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
             - server_session_keep_alive=False still respects auto-detection
             - server_session_keep_alive=True never sends logout (Fire & Forget)
             - server_session_keep_alive=None delegates to auto-detection setting
-            - Logout configuration (timeouts, retries, error strategy) is set at connection
-              initialization time and cannot be changed at close time
+            - Logout configuration is set at connection initialization time (init-time)
+            - retry parameter provides close-time override for max_retry_attempts only
 
-        Note: Logout configuration is now set at connection initialization (init-time) rather
-        than at close time. This matches the architecture of all existing Snowflake drivers
-        (Go, JDBC, .NET, Node.js).
+        Configuration Hierarchy:
+            close-time override (retry parameter) > connection-wide (init-time) > defaults
+
+        Note: This matches the architecture of all existing Snowflake drivers
+        (Go, JDBC, .NET, Node.js) while supporting Python's legacy retry parameter.
         """
         # Unregister atexit handler to prevent it from running at process exit
         # after explicit close(). This prevents double cleanup and false warnings.
@@ -283,21 +313,18 @@ class Connection:
 
         # Note: Idempotence is handled atomically in Core (connection_close)
 
-        # Emit deprecation warning if retry parameter is used with non-default value
-        if not retry:
-            warnings.warn(
-                "The 'retry' parameter is deprecated. Logout retry behavior should be "
-                "configured at connection initialization time via the max_retry_attempts parameter. "
-                "This parameter will be removed in a future version.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        # Dual config approach: override max_retry_attempts at close-time if retry=False
+        # - retry=True: Pass None → Rust hierarchy uses connection-wide value
+        # - retry=False: Pass 0 → Rust hierarchy overrides (0 retries = disabled, 1 attempt only)
 
-        # Call Core connection_close with no configuration (uses connection state)
-        # Configuration was set at init time via ConnectionSetOption* calls
+        max_retry_override = None if retry else 0
+
+        # Call Core connection_close with optional override
+        # When None is passed, Rust's merge_with_request uses connection-wide configured value
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
+                max_retry_attempts=max_retry_override,
             )
         )
 
@@ -319,7 +346,8 @@ class Connection:
 
         # Connection is leaked (not explicitly closed) - emit deprecation warning
         # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
-        if self.__class__._class_state.first_auto_cleanup_warning_pending:
+        # Atomically check and clear warning flag (thread-safe)
+        if self.__class__._class_state.check_and_clear_first_warning():
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
                 "Auto-cleanup at exit will be disabled by default in a future version. "
@@ -327,7 +355,6 @@ class Connection:
                 FutureWarning,
                 stacklevel=2,
             )
-            self.__class__._class_state.first_auto_cleanup_warning_pending = False
 
         # Attempt cleanup for leaked connection
         try:

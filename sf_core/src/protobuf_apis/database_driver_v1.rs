@@ -580,9 +580,24 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionCloseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        // Call connection_close - it reads logout config from connection state
-        // Config must be set via ConnectionSetOption* before ConnectionInit
-        connection_close(conn_handle.into()).to_protobuf()?;
+        // Convert protobuf ErrorStrategy enum to internal ErrorStrategy
+        use crate::config::logout::ErrorStrategy;
+        let error_strategy = input
+            .error_strategy
+            .and_then(|es| ErrorStrategy::from_protobuf_enum(es).ok());
+
+        // Call connection_close with optional overrides
+        // Hierarchy: close-request override > connection-wide > defaults
+        connection_close(
+            conn_handle.into(),
+            input.server_session_keep_alive,
+            input.enable_auto_detection,
+            error_strategy,
+            input.logout_total_timeout_seconds,
+            input.max_retry_attempts,
+            input.logout_request_timeout_seconds,
+        )
+        .to_protobuf()?;
         Ok(ConnectionCloseResponse {})
     }
 
