@@ -1228,7 +1228,7 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
                 .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_connection_option_int("logout_error_strategy", 2); // STRICT
+            client.set_logout_error_strategy(ErrorStrategy::Strict);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
 
@@ -1313,7 +1313,7 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
                 .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_connection_option_int("logout_error_strategy", 1); // BEST_EFFORT
+            client.set_logout_error_strategy(ErrorStrategy::BestEffort);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
 
@@ -1424,7 +1424,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
                 .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_connection_option_int("logout_error_strategy", 2); // ERROR_STRATEGY_STRICT
+            client.set_logout_error_strategy(ErrorStrategy::Strict);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 3);
 
@@ -1534,7 +1534,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
                 .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_connection_option_int("logout_error_strategy", 1); // ERROR_STRATEGY_BEST_EFFORT
+            client.set_logout_error_strategy(ErrorStrategy::BestEffort);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 3);
 

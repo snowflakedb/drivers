@@ -149,24 +149,22 @@ pub enum ErrorStrategy {
 }
 
 impl ErrorStrategy {
-    /// Parse ErrorStrategy from protobuf enum value (int).
-    ///
-    /// Protobuf enum values:
-    /// - 0: UNSPECIFIED (uses default)
-    /// - 1: BEST_EFFORT
-    /// - 2: STRICT
-    ///
-    /// # Arguments
-    /// * `value` - Integer value from protobuf enum
-    ///
-    /// # Returns
-    /// * `Ok(ErrorStrategy)` - Parsed strategy
-    /// * `Err(ConfigError)` - Invalid enum value
+    pub const UNSPECIFIED_PROTOBUF: i64 = 0;
+    pub const BEST_EFFORT_PROTOBUF: i64 = 1;
+    pub const STRICT_PROTOBUF: i64 = 2;
+
+    pub fn to_protobuf_value(self) -> i64 {
+        match self {
+            ErrorStrategy::BestEffort => Self::BEST_EFFORT_PROTOBUF,
+            ErrorStrategy::Strict => Self::STRICT_PROTOBUF,
+        }
+    }
+
     pub fn from_protobuf_value(value: i64) -> Result<Self, ConfigError> {
         match value {
-            0 => Ok(Self::default()), // UNSPECIFIED uses default (Strict)
-            1 => Ok(ErrorStrategy::BestEffort),
-            2 => Ok(ErrorStrategy::Strict),
+            Self::UNSPECIFIED_PROTOBUF => Ok(Self::default()),
+            Self::BEST_EFFORT_PROTOBUF => Ok(ErrorStrategy::BestEffort),
+            Self::STRICT_PROTOBUF => Ok(ErrorStrategy::Strict),
             _ => InvalidParameterValueSnafu {
                 parameter: "logout_error_strategy",
                 value: value.to_string(),

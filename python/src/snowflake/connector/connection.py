@@ -265,41 +265,20 @@ class Connection:
         then cleans up resources.
 
         Args:
-            retry: DEPRECATED - Logout retry behavior is now configured at connection initialization
-                   via the max_attempts parameter. This parameter is kept for backward
-                   compatibility but has no effect.
-
-        Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
-            - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
-            - server_session_keep_alive=False still respects auto-detection
-            - server_session_keep_alive=True never sends logout (Fire & Forget)
-            - server_session_keep_alive=None delegates to auto-detection setting
-            - Logout configuration (timeouts, retries, error strategy) is set at connection
-              initialization time and cannot be changed at close time
-
-        Note: Logout configuration is now set at connection initialization (init-time) rather
-        than at close time. This matches the architecture of all existing Snowflake drivers
-        (Go, JDBC, .NET, Node.js).
+            retry: If False, overrides max_attempts to 1 (no retries) before closing.
+                   If True (default), uses init-time configuration.
         """
-        # Unregister atexit handler to prevent it from running at process exit
-        # after explicit close(). This prevents double cleanup and false warnings.
-        # atexit.unregister() is idempotent, safe to call multiple times.
         atexit.unregister(self._close_at_process_exit)
 
-        # Note: Idempotence is handled atomically in Core (connection_close)
-
-        # Emit deprecation warning if retry parameter is used with non-default value
         if not retry:
-            warnings.warn(
-                "The 'retry' parameter is deprecated. Logout retry behavior should be "
-                "configured at connection initialization time via the max_attempts parameter. "
-                "This parameter will be removed in a future version.",
-                DeprecationWarning,
-                stacklevel=2,
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key="logout_max_attempts",
+                    value=1,
+                )
             )
 
-        # Call Core connection_close with no configuration (uses connection state)
-        # Configuration was set at init time via ConnectionSetOption* calls
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
