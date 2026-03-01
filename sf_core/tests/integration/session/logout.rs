@@ -1594,9 +1594,9 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
 async fn should_throw_on_timeout_with_strict_strategy() {
     // Scenario Outline: Examples (timeout_seconds=3, delay_seconds=5)
     //Given Core logout function called with strict strategy
-    //And Timeout configured to 3 seconds
+    //And Timeout configured to <timeout_seconds> seconds
     let timeout = Duration::from_secs(3);
-    //And Mock HTTP server delays response by 5 seconds
+    //And Mock HTTP server delays response by <delay_seconds> seconds
     let delay = Duration::from_secs(5);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1640,7 +1640,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
     .await;
     let elapsed = start.elapsed();
 
-    //Then Request times out after timeout_seconds
+    //Then Request times out after <timeout_seconds> seconds
     assert!(
         elapsed >= timeout && elapsed < timeout + Duration::from_secs(2),
         "Should timeout after ~{:?}, took {:?}",
@@ -1648,7 +1648,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
         elapsed
     );
 
-    //And Close throws timeout error (Strict raises error)
+    //And Close throws timeout error
     assert!(result.is_err(), "Strict strategy should fail on timeout");
 
     let error_msg = format!("{:?}", result.unwrap_err());
@@ -1669,9 +1669,9 @@ async fn should_throw_on_timeout_with_strict_strategy() {
 async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     // Scenario Outline: Examples (timeout_seconds=3, delay_seconds=5)
     //Given Core logout function called with best-effort strategy
-    //And Timeout configured to 3 seconds
+    //And Timeout configured to <timeout_seconds> seconds
     let timeout = Duration::from_secs(3);
-    //And Mock HTTP server delays response by 5 seconds
+    //And Mock HTTP server delays response by <delay_seconds> seconds
     let delay = Duration::from_secs(5);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1715,7 +1715,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     .await;
     let elapsed = start.elapsed();
 
-    //Then Request times out after timeout_seconds
+    //Then Request times out after <timeout_seconds> seconds
     assert!(
         elapsed >= timeout && elapsed < timeout + Duration::from_secs(2),
         "Should timeout after ~{:?}, took {:?}",
@@ -1723,7 +1723,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         elapsed
     );
 
-    // Apply error strategy (same logic as connection_close)
+    //And Timeout is logged as WARN
     let api_result =
         result.map_err(
             |e| sf_core::apis::database_driver_v1::ApiError::LogoutFailed {
@@ -1733,7 +1733,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         );
     let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
-    //And Close succeeds (BestEffort suppresses timeout error)
+    //And Close succeeds
     assert!(
         handled_result.is_ok(),
         "BestEffort should succeed despite timeout, raw result: {:?}",

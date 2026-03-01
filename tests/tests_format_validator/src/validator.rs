@@ -905,10 +905,31 @@ impl GherkinValidator {
         feature_path: &Path,
         language: Language,
     ) -> Result<LanguageValidation> {
-        // Find test file using the feature path (includes subdirectory structure)
-        let test_file = self
-            .discovery
-            .find_test_file_with_path(feature_path, &language);
+        // Check if all scenarios for this language have the same test level
+        let language_specific_scenarios: Vec<_> = feature
+            .scenarios
+            .iter()
+            .filter(|scenario| {
+                TestDiscovery::get_target_languages(&scenario.tags).contains(&language)
+            })
+            .collect();
+
+        // If all scenarios have the same test level, use that level to find the test file
+        let test_file = if !language_specific_scenarios.is_empty() {
+            let common_level =
+                self.determine_common_test_level(&language_specific_scenarios, &language);
+            if let Some(level) = common_level {
+                self.discovery
+                    .find_test_file_with_path_and_level(feature_path, &language, level)
+            } else {
+                self.discovery
+                    .find_test_file_with_path(feature_path, &language)
+            }
+        } else {
+            // No language-specific scenarios, use default discovery
+            self.discovery
+                .find_test_file_with_path(feature_path, &language)
+        };
 
         if let Some(test_file_path) = test_file {
             let step_finder = StepFinder::new(language.clone());
@@ -1111,6 +1132,25 @@ impl GherkinValidator {
             .collect()
     }
 
+    /// Determine if all scenarios have the same test level (e2e or integration).
+    /// Returns Some(TestLevel) if all scenarios have the same level, None otherwise.
+    fn determine_common_test_level(
+        &self,
+        scenarios: &[&crate::feature_parser::Scenario],
+        language: &Language,
+    ) -> Option<TestLevel> {
+        if scenarios.is_empty() {
+            return None;
+        }
+
+        let first_level = TestDiscovery::get_test_level_for_language(&scenarios[0].tags, language);
+        let all_same = scenarios.iter().all(|scenario| {
+            TestDiscovery::get_test_level_for_language(&scenario.tags, language) == first_level
+        });
+
+        if all_same { Some(first_level) } else { None }
+    }
+
     fn steps_match(&self, implemented_step: &str, feature_step: &str) -> bool {
         // Normalize both steps for comparison - only remove punctuation, keep all words
         let normalize = |s: &str| {
@@ -1132,7 +1172,9 @@ impl GherkinValidator {
         let norm_impl = normalize(implemented_step);
         let norm_feature = normalize(feature_step);
 
-        // Require exact match after normalization - no partial matches allowed
+        // Require exact match after normalization - no partial matches allowed.
+        // Placeholders like <error_code> are kept literally in both feature steps
+        // and test step comments, so they match exactly.
         norm_impl == norm_feature
     }
 

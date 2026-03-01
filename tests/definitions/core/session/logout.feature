@@ -312,7 +312,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Failure path: exhausted retries (outcome differs per strategy) --
 
-  # TODO: Requires connection layer error strategy implementation (not HTTP layer)
+  @core_int
   Scenario Outline: should throw after exhausted retries with strict strategy
     Given Core logout function called with strict strategy
     And Retry policy configured with <max_attempts> max attempts
@@ -328,6 +328,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 2            |
       | 3            |
 
+  @core_int
   Scenario Outline: should log WARN and succeed after exhausted retries with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Retry policy configured with <max_attempts> max attempts
@@ -345,6 +346,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Failure path: timeout (outcome differs per strategy) --
 
+  @core_int
   Scenario Outline: should throw on timeout with strict strategy
     Given Core logout function called with strict strategy
     And Timeout configured to <timeout_seconds> seconds
@@ -358,6 +360,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 3               | 5             |
       | 5               | 10            |
 
+  @core_int
   Scenario Outline: should log WARN and succeed on timeout with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Timeout configured to <timeout_seconds> seconds
@@ -374,7 +377,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Non-retryable errors: outcome differs per strategy --
 
-  # TODO: Requires connection layer error strategy implementation (not HTTP layer)
+  @core_int
   Scenario Outline: should throw on non-retryable <error_code> in strict strategy
     Given Core logout function called with strict strategy
     And Mock HTTP server returns <error_code> error
@@ -390,7 +393,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 404 Not Found               |
       | MASTER_TOKEN_EXPIRED 390114 |
 
-  # TODO: Requires connection layer error strategy implementation (not HTTP layer)
+  @core_int
   Scenario Outline: should log and suppress non-retryable <error_code> in best-effort strategy
     Given Core logout function called with best-effort strategy
     And Mock HTTP server returns <error_code> error
