@@ -174,15 +174,16 @@ class TestAutocommitKwargUnit:
         params = call_args[0][0].parameters
         assert params["AUTOCOMMIT"] == "false"
 
-    def test_no_autocommit_kwarg_does_not_set_session_parameter(self, mock_db_api):
-        """Connection without autocommit kwarg should not inject AUTOCOMMIT session parameter."""
+    def test_no_autocommit_kwarg_defaults_to_false(self, mock_db_api):
+        """Connection without autocommit kwarg should default to AUTOCOMMIT=false (PEP 249)."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             conn = Connection(user="test_user", account="test_account")
 
-        assert conn.get_autocommit() is False
-        mock_db_api.connection_set_session_parameters.assert_not_called()
+        call_args = mock_db_api.connection_set_session_parameters.call_args
+        params = call_args[0][0].parameters
+        assert params["AUTOCOMMIT"] == "false"
 
 
 class TestContextManagerUnit:
