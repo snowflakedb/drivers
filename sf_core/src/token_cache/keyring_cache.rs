@@ -38,7 +38,8 @@ impl KeyringTokenCache {
     pub fn new() -> Result<Self, TokenCacheError> {
         let result = FALLBACK_INIT
             .get_or_init(|| install_file_credential_fallback().map_err(|e| format!("{e}")));
-        if result.is_err() {
+        if let Err(err_msg) = result {
+            debug!("Failed to install file credential fallback: {err_msg}");
             return CacheDirectoryResolutionSnafu.fail();
         }
         Ok(Self)
@@ -85,7 +86,7 @@ impl TokenCache for KeyringTokenCache {
         token_type: TokenType,
     ) -> Result<(), TokenCacheError> {
         validate_key_components(host, username)?;
-        debug!("Saving secret for {token_type:?}");
+        debug!("Removing secret for {token_type:?}");
         let entry = self.create_entry(host, username, token_type)?;
         match entry.delete_credential() {
             Ok(()) => Ok(()),
