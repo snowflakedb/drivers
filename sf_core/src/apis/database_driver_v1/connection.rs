@@ -713,11 +713,8 @@ fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError>
     tracing::debug!("Cleared session tokens and HTTP client");
 
     // TODO: SNOW-2881763 - Stop heartbeat thread
-    tracing::debug!("Heartbeat cleanup deferred");
     // TODO: SNOW-2912513 - Flush telemetry cache
-    tracing::debug!("Telemetry flush deferred");
     // TODO: Implement QCC (query result cache) clearing
-    tracing::debug!("Query result cache cleanup deferred");
 
     Ok(())
 }
@@ -762,11 +759,6 @@ pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
     }
 
     // TODO: SNOW-2912513 - Record telemetry for logout decision
-    tracing::debug!(
-        send_logout,
-        skip_reason = ?skip_reason,
-        "TODO: SNOW-2912513 - Record logout decision metrics"
-    );
 
     let logout_result = match logout_data {
         Some(data) => {
