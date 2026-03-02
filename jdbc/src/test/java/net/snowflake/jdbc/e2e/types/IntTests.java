@@ -206,33 +206,57 @@ public class IntTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  public void shouldSelectLargeResultSetFromTableForIntAndSynonyms() throws Exception {
+  public void shouldHandleServerSideArrowMemoryOptimizationForIntColumnsOnMultipleChunks()
+      throws Exception {
     // Given Snowflake client is logged in
-    // And Table with <type> column exists with 50000 sequential values
-    // When Query "SELECT * FROM <table> ORDER BY col" is executed
-    // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
+    // And Table with four INT columns exists
+    // And Each column contains values of different magnitudes (50000 rows to span multiple Arrow
+    // chunks)
+    // When Query "SELECT * FROM <table>" is executed
+    // Then Result should contain 50000 rows
+    // And All values should be equal to expected data
+    final long expectedInt8Value = 100L;
+    final long expectedInt16Value = 30_000L;
+    final long expectedInt32Value = 2_000_000_000L;
+    final long expectedInt64Value = 9_000_000_000_000_000_000L;
+
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
+    String tableName =
+        createTempTable(
+            connection,
+            "ud_int_arrow_",
+            "col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT");
     execute(
         connection,
         "INSERT INTO "
             + tableName
-            + " SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::"
-            + INT_TYPE
+            + " SELECT "
+            + expectedInt8Value
+            + ", "
+            + expectedInt16Value
+            + ", "
+            + expectedInt32Value
+            + ", "
+            + expectedInt64Value
             + " FROM TABLE(GENERATOR(ROWCOUNT => "
             + LARGE_RESULT_SET_SIZE
             + "))");
 
     try (Statement statement = connection.createStatement();
-        ResultSet resultSet =
-            statement.executeQuery("SELECT * FROM " + tableName + " ORDER BY col")) {
-      int expected = 0;
+        ResultSet resultSet = statement.executeQuery("SELECT * FROM " + tableName)) {
+      int rowCount = 0;
       while (resultSet.next()) {
-        assertAllIntegerGettersInRange(
-            resultSet, 1, expected, "Value mismatch for " + INT_TYPE + ", row " + expected);
-        expected++;
+        assertEquals(
+            expectedInt8Value, resultSet.getLong(1), "col_int8 mismatch at row " + rowCount);
+        assertEquals(
+            expectedInt16Value, resultSet.getLong(2), "col_int16 mismatch at row " + rowCount);
+        assertEquals(
+            expectedInt32Value, resultSet.getLong(3), "col_int32 mismatch at row " + rowCount);
+        assertEquals(
+            expectedInt64Value, resultSet.getLong(4), "col_int64 mismatch at row " + rowCount);
+        rowCount++;
       }
-      assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + INT_TYPE);
+      assertEquals(LARGE_RESULT_SET_SIZE, rowCount, "Unexpected row count");
     }
   }
 
