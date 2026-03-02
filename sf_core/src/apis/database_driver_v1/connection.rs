@@ -20,9 +20,6 @@ use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseEr
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
-/// Skip reason constant for when connection is already closed
-const SKIP_REASON_ALREADY_CLOSED: &str = "already_closed";
-
 /// Load configuration from TOML files for a named connection.
 ///
 /// Takes a mutable reference to the connection to avoid double-locking.
@@ -604,8 +601,22 @@ fn validate_logout_config(config: &LogoutConfig) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Extract logout data from a locked connection, set is_closed, and determine
-/// whether to send logout. Returns early `Ok(())` if already closed.
+/// Atomically mark connection as closed.
+///
+/// Returns true if the connection was already closed (duplicate close attempt).
+/// This provides idempotent close() behavior - multiple calls are safe.
+fn mark_connection_closed(conn_ptr: &Arc<Mutex<Connection>>) -> Result<bool, ApiError> {
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    // Atomic swap returns the previous value
+    Ok(conn.is_closed.swap(true, Ordering::SeqCst))
+}
+
+/// Extract logout data from a locked connection and determine whether to send logout.
+///
+/// Precondition: Connection must not be marked as closed yet (caller should check first).
 fn prepare_logout(
     conn_ptr: &Arc<Mutex<Connection>>,
     config: &LogoutConfig,
@@ -615,13 +626,6 @@ fn prepare_logout(
     let conn = conn_ptr
         .lock()
         .map_err(|_| ConnectionLockingSnafu {}.build())?;
-
-    if conn.is_closed.swap(true, Ordering::SeqCst) {
-        tracing::debug!("Connection already closed, skipping duplicate close");
-        // Caller checks send_logout=false + logout_data=None to detect this case,
-        // but we need a way to signal "already closed". Use send_logout=false + skip_reason.
-        return Ok((false, Some(SKIP_REASON_ALREADY_CLOSED.to_string()), None));
-    }
 
     tracing::info!("Closing connection");
 
@@ -744,6 +748,13 @@ pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
             argument: "Connection handle not found".to_string(),
         })?;
 
+    // Check if already closed (idempotent close)
+    let was_already_closed = mark_connection_closed(&conn_ptr)?;
+    if was_already_closed {
+        tracing::debug!("Connection already closed, skipping duplicate close");
+        return Ok(());
+    }
+
     // Get logout config from connection (set during connection_init)
     let config = {
         let conn = conn_ptr
@@ -753,10 +764,6 @@ pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
     };
 
     let (send_logout, skip_reason, logout_data) = prepare_logout(&conn_ptr, &config)?;
-
-    if skip_reason.as_deref() == Some(SKIP_REASON_ALREADY_CLOSED) {
-        return Ok(());
-    }
 
     // TODO: SNOW-2912513 - Record telemetry for logout decision
 
