@@ -748,7 +748,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementPrepareResponse {
             result: Some(PrepareResult {
                 stream: Some(result_ptr),
-                columns: result.columns,
+                columns: result.columns.into_iter().map(|cm| cm.into()).collect(),
             }),
         })
     }
