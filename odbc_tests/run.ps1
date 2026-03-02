@@ -7,6 +7,12 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $ProjectRoot
 
 $env:PARAMETER_PATH = Join-Path $ProjectRoot "parameters.json"
+$vcpkgRoot = if ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } elseif ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { $null }
+if ($vcpkgRoot) {
+    $env:OPENSSL_DIR = Join-Path $vcpkgRoot "installed\x64-windows"
+    $env:OPENSSL_LIB_DIR = Join-Path $vcpkgRoot "installed\x64-windows\lib"
+    $env:OPENSSL_INCLUDE_DIR = Join-Path $vcpkgRoot "installed\x64-windows\include"
+}
 
 try {
     cargo build

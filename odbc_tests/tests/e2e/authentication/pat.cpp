@@ -108,7 +108,7 @@ ConnectionHandleWrapper get_pat_connection_handle(EnvironmentHandleWrapper& env)
 std::string get_pat_as_password_connection_string(const std::string& pat_secret) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_name() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
@@ -119,7 +119,7 @@ std::string get_pat_as_password_connection_string(const std::string& pat_secret)
 std::string get_pat_as_token_connection_string(const std::string& pat_secret) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_name() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");

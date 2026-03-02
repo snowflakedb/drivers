@@ -25,11 +25,7 @@ using pg_utils::TempTestDir;
 
 std::string get_jwt_connection_string_without_private_key() {
   std::stringstream ss;
-  #ifdef _WIN32
-    ss << "DSN=" << get_driver_name() << ";";
-  #else
-    ss << "DRIVER=" << get_driver_name() << ";";
-  #endif
+  configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";
@@ -45,11 +41,7 @@ std::string get_jwt_connection_string_without_private_key() {
 
 std::string get_base_jwt_connection_string_int() {
   std::stringstream ss;
-  #ifdef _WIN32
-    ss << "DSN=" << get_driver_name() << ";";
-  #else
-    ss << "DRIVER=" << get_driver_name() << ";";
-  #endif
+  configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";

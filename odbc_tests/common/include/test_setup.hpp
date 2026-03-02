@@ -87,19 +87,18 @@ inline std::string read_private_key(const picojson::object& params) {
   return private_key_stream.str();
 }
 
-inline std::string get_driver_name() {
+inline void configure_driver_string(std::stringstream& ss) {
   static std::shared_ptr<DriverConfig> driver_config = DriverConfig::Default();
   static ConfigInstallation config_installation = ConfigInstallation::install_driver(driver_config);
-  return driver_config->name();
+  #ifdef _WIN32
+  ss << "DSN=" << driver_config->name() << ";";
+  #else
+  ss << "DRIVER={" << driver_config->name() << "};";
+  #endif
 }
 
 inline void read_default_params(std::stringstream& ss, const picojson::object& params) {
-#ifdef _WIN32
-  // On Windows, the driver is registered as a User DSN (no admin needed)
-  ss << "DSN=" << get_driver_name() << ";";
-#else
-  ss << "DRIVER={" << get_driver_name() << "};";
-#endif
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
