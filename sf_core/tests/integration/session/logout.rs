@@ -858,13 +858,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
 
             // Configure logout behavior BEFORE connection_init
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_connection_option(
-                "logout_error_strategy",
-                match error_strategy {
-                    ErrorStrategy::Strict => "strict",
-                    ErrorStrategy::BestEffort => "best_effort",
-                },
-            );
+            client.set_logout_error_strategy(error_strategy);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 1); // 1 attempt (0 retries)
 
@@ -1003,13 +997,7 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
 
             // Configure logout behavior BEFORE connection_init
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_connection_option(
-                "logout_error_strategy",
-                match error_strategy {
-                    ErrorStrategy::Strict => "strict",
-                    ErrorStrategy::BestEffort => "best_effort",
-                },
-            );
+            client.set_logout_error_strategy(error_strategy);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 1); // 1 attempt (0 retries)
 
@@ -1749,9 +1737,25 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
 
 #[tokio::test]
 async fn should_reject_queries_client_side_after_connection_is_closed() {
+    use serde_json::json;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, ResponseTemplate};
+
     //Given Mock HTTP server is configured
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
+
+    // Mount logout endpoint mock
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .and(query_param("delete", "true"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "success": true }))
+                .insert_header("Content-Type", "application/json"),
+        )
+        .mount(&server)
+        .await;
 
     //And UD Core connection is logged in
     let server_uri = server.uri();
