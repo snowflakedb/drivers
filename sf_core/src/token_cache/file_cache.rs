@@ -13,8 +13,8 @@ use snafu::{ResultExt, ensure};
 
 use super::{
     CacheDirectoryResolutionSnafu, FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu,
-    IrregularFileTypeSnafu, LockAcquisitionSnafu, TokenCacheError, TokenRetrievalSnafu,
-    TokenStorageSnafu,
+    IrregularFileTypeSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
+    TokenRetrievalSnafu, TokenStorageSnafu,
 };
 
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
@@ -135,11 +135,7 @@ impl FileLock {
             }
         }
 
-        Err(std::io::Error::new(
-            std::io::ErrorKind::WouldBlock,
-            "failed to acquire file lock after maximum retries",
-        ))
-        .context(LockAcquisitionSnafu)
+        LockExhaustedSnafu.fail()
     }
 
     fn is_stale(lock_path: &Path, stale_timeout: Duration) -> bool {

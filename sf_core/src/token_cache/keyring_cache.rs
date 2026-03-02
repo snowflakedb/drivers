@@ -38,8 +38,8 @@ impl KeyringTokenCache {
     pub fn new() -> Result<Self, TokenCacheError> {
         let result = FALLBACK_INIT
             .get_or_init(|| install_file_credential_fallback().map_err(|e| format!("{e}")));
-        if let Err(err_msg) = result {
-            debug!("Failed to install file credential fallback: {err_msg}");
+        if let Err(error_msg) = result {
+            debug!("Failed to install file credential fallback: {error_msg}");
             return CacheDirectoryResolutionSnafu.fail();
         }
         Ok(Self)

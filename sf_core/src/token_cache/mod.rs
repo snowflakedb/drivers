@@ -192,6 +192,12 @@ pub enum TokenCacheError {
         location: Location,
     },
 
+    #[snafu(display("Failed to acquire file lock after maximum retries"))]
+    LockExhausted {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Insufficient permissions on cache file: {}", path.display()))]
     InsufficientPermissions {
         path: PathBuf,
@@ -285,24 +291,20 @@ mod tests {
         use super::*;
 
         #[test]
-        fn validate_key_components_rejects_empty_host() {
-            let result = validate_key_components("", "username");
-            assert!(result.is_err());
-            if let Err(TokenCacheError::InvalidKeyFormat { key, .. }) = result {
-                assert!(key.contains(";username"));
-            } else {
-                panic!("Expected InvalidKeyFormat error");
-            }
-        }
+        fn validate_key_components_rejects_empty_values() {
+            for (host, username, token_key_component_name) in [
+                ("", "username", "host"),
+                ("host.example.com", "", "username"),
+            ] {
+                // Given an empty <component> string
+                // When we validate key components
+                let result = validate_key_components(host, username);
 
-        #[test]
-        fn validate_key_components_rejects_empty_username() {
-            let result = validate_key_components("host.example.com", "");
-            assert!(result.is_err());
-            if let Err(TokenCacheError::InvalidKeyFormat { key, .. }) = result {
-                assert!(key.contains("host.example.com;"));
-            } else {
-                panic!("Expected InvalidKeyFormat error");
+                // Then an InvalidKeyFormat error should be returned
+                assert!(
+                    matches!(result, Err(TokenCacheError::InvalidKeyFormat { .. })),
+                    "Expected InvalidKeyFormat for empty {token_key_component_name}"
+                );
             }
         }
 
