@@ -102,7 +102,13 @@ class Connection:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
 
         for key, value in kwargs.items():
-            if isinstance(value, int):
+            # bool check must come before int because bool is a subclass of int in Python
+            if isinstance(value, bool):
+                self.db_api.connection_set_option_int(
+                    ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=int(value))
+                )
+
+            elif isinstance(value, int):
                 self.db_api.connection_set_option_int(
                     ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
