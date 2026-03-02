@@ -121,7 +121,7 @@ class SnowflakeCursorBase(abc.ABC):
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
-        self._rownumber: int | None = None
+        self._rownumber: int = -1
         self._errorhandler: Callable
 
     # ------------------------------------------------------------------
@@ -671,7 +671,7 @@ class SnowflakeCursorBase(abc.ABC):
     @pep249
     def rownumber(self) -> int | None:
         """The current 0-based index of the cursor in the result set, or ``None`` if indeterminate."""
-        return self._rownumber if self._rownumber is not None and self._rownumber >= 0 else None
+        return self._rownumber if self._rownumber >= 0 else None
 
     @property
     def sqlstate(self) -> str | None:

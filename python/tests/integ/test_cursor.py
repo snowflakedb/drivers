@@ -11,8 +11,6 @@ from snowflake.connector.errors import NotSupportedError, ProgrammingError
 from tests.e2e.types.utils import assert_sequential_values
 
 
-
-
 class TestCursorSfqid:
     """Integration tests for Cursor.sfqid property."""
 
