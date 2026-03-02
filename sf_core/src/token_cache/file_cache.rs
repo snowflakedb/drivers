@@ -107,7 +107,7 @@ struct FileLock {
 }
 
 impl FileLock {
-    async fn acquire(
+    fn acquire(
         cache_path: &Path,
         retry_count: u32,
         retry_delay: Duration,
@@ -126,7 +126,7 @@ impl FileLock {
                         continue;
                     }
                     if attempt < retry_count - 1 {
-                        tokio::time::sleep(retry_delay).await;
+                        std::thread::sleep(retry_delay);
                     }
                 }
                 Err(e) => {
@@ -325,11 +325,11 @@ impl FileTokenCache {
 
     /// Stores a secret under the given key. The key is SHA-256 hashed before
     /// storage. The secret bytes must be valid UTF-8.
-    pub async fn set_secret(&self, key: &str, secret: &[u8]) -> Result<(), TokenCacheError> {
+    pub fn set_secret(&self, key: &str, secret: &[u8]) -> Result<(), TokenCacheError> {
         let value = String::from_utf8(secret.to_vec())
             .boxed()
             .context(TokenStorageSnafu)?;
-        let _lock = self.acquire_lock().await?;
+        let _lock = self.acquire_lock()?;
         let hashed_key = hash_cache_key(key);
 
         #[cfg(unix)]
@@ -398,8 +398,8 @@ impl FileTokenCache {
     }
 
     /// Retrieves a secret by key. Returns `None` if the key does not exist.
-    pub async fn get_secret(&self, key: &str) -> Result<Option<Vec<u8>>, TokenCacheError> {
-        let _lock = self.acquire_lock().await?;
+    pub fn get_secret(&self, key: &str) -> Result<Option<Vec<u8>>, TokenCacheError> {
+        let _lock = self.acquire_lock()?;
         let hashed_key = hash_cache_key(key);
 
         #[cfg(unix)]
@@ -442,8 +442,8 @@ impl FileTokenCache {
     }
 
     /// Deletes a credential by key. Returns `true` if the key existed.
-    pub async fn delete_credential(&self, key: &str) -> Result<bool, TokenCacheError> {
-        let _lock = self.acquire_lock().await?;
+    pub fn delete_credential(&self, key: &str) -> Result<bool, TokenCacheError> {
+        let _lock = self.acquire_lock()?;
         let hashed_key = hash_cache_key(key);
 
         #[cfg(unix)]
@@ -500,14 +500,13 @@ impl FileTokenCache {
         }
     }
 
-    async fn acquire_lock(&self) -> Result<FileLock, TokenCacheError> {
+    fn acquire_lock(&self) -> Result<FileLock, TokenCacheError> {
         FileLock::acquire(
             &self.cache_file_path,
             self.retry_count,
             self.retry_delay,
             self.stale_lock_timeout,
         )
-        .await
     }
 }
 
@@ -533,35 +532,25 @@ struct FileCredential {
 
 impl CredentialApi for FileCredential {
     fn set_secret(&self, secret: &[u8]) -> keyring::Result<()> {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.cache.set_secret(&self.user, secret))
-                .map_err(wrap_error)
-        })
+        self.cache
+            .set_secret(&self.user, secret)
+            .map_err(wrap_error)
     }
 
     fn get_secret(&self) -> keyring::Result<Vec<u8>> {
-        tokio::task::block_in_place(|| {
-            let result =
-                tokio::runtime::Handle::current().block_on(self.cache.get_secret(&self.user));
-            match result {
-                Ok(Some(secret)) => Ok(secret),
-                Ok(None) => Err(keyring::Error::NoEntry),
-                Err(e) => Err(wrap_error(e)),
-            }
-        })
+        match self.cache.get_secret(&self.user) {
+            Ok(Some(secret)) => Ok(secret),
+            Ok(None) => Err(keyring::Error::NoEntry),
+            Err(e) => Err(wrap_error(e)),
+        }
     }
 
     fn delete_credential(&self) -> keyring::Result<()> {
-        tokio::task::block_in_place(|| {
-            let result = tokio::runtime::Handle::current()
-                .block_on(self.cache.delete_credential(&self.user));
-            match result {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(keyring::Error::NoEntry),
-                Err(e) => Err(wrap_error(e)),
-            }
-        })
+        match self.cache.delete_credential(&self.user) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(keyring::Error::NoEntry),
+            Err(e) => Err(wrap_error(e)),
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -665,115 +654,91 @@ mod tests {
             (dir, cache)
         }
 
-        #[tokio::test]
-        async fn set_and_get_secret() {
+        #[test]
+        fn set_and_get_secret() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("my_key", b"my_secret")
-                .await
                 .expect("Failed to set secret");
 
-            let result = cache
-                .get_secret("my_key")
-                .await
-                .expect("Failed to get secret");
+            let result = cache.get_secret("my_key").expect("Failed to get secret");
             assert_eq!(result, Some(b"my_secret".to_vec()));
         }
 
-        #[tokio::test]
-        async fn get_missing_key_returns_none() {
+        #[test]
+        fn get_missing_key_returns_none() {
             let (_dir, cache) = create_temp_cache();
             let result = cache
                 .get_secret("nonexistent")
-                .await
                 .expect("Failed to get secret");
             assert_eq!(result, None);
         }
 
-        #[tokio::test]
-        async fn delete_existing_credential() {
+        #[test]
+        fn delete_existing_credential() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("to_delete", b"val")
-                .await
                 .expect("Failed to set secret");
 
             let existed = cache
                 .delete_credential("to_delete")
-                .await
                 .expect("Failed to delete");
             assert!(existed);
 
-            let result = cache.get_secret("to_delete").await.expect("Failed to get");
+            let result = cache.get_secret("to_delete").expect("Failed to get");
             assert_eq!(result, None);
         }
 
-        #[tokio::test]
-        async fn delete_nonexistent_returns_false() {
+        #[test]
+        fn delete_nonexistent_returns_false() {
             let (_dir, cache) = create_temp_cache();
             let existed = cache
                 .delete_credential("nonexistent")
-                .await
                 .expect("Failed to delete");
             assert!(!existed);
         }
 
-        #[tokio::test]
-        async fn overwrite_secret() {
+        #[test]
+        fn overwrite_secret() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"old")
-                .await
                 .expect("Failed to set secret");
             cache
                 .set_secret("key", b"new")
-                .await
                 .expect("Failed to overwrite");
 
-            let result = cache.get_secret("key").await.expect("Failed to get");
+            let result = cache.get_secret("key").expect("Failed to get");
             assert_eq!(result, Some(b"new".to_vec()));
         }
 
-        #[tokio::test]
-        async fn different_keys_stored_separately() {
+        #[test]
+        fn different_keys_stored_separately() {
             let (_dir, cache) = create_temp_cache();
-            cache
-                .set_secret("key_a", b"val_a")
-                .await
-                .expect("Failed to set");
-            cache
-                .set_secret("key_b", b"val_b")
-                .await
-                .expect("Failed to set");
+            cache.set_secret("key_a", b"val_a").expect("Failed to set");
+            cache.set_secret("key_b", b"val_b").expect("Failed to set");
 
-            assert_eq!(
-                cache.get_secret("key_a").await.unwrap(),
-                Some(b"val_a".to_vec())
-            );
-            assert_eq!(
-                cache.get_secret("key_b").await.unwrap(),
-                Some(b"val_b".to_vec())
-            );
+            assert_eq!(cache.get_secret("key_a").unwrap(), Some(b"val_a".to_vec()));
+            assert_eq!(cache.get_secret("key_b").unwrap(), Some(b"val_b".to_vec()));
         }
 
-        #[tokio::test]
-        async fn cache_file_uses_correct_name() {
+        #[test]
+        fn cache_file_uses_correct_name() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Failed to set secret");
 
             assert!(cache.cache_file_path.ends_with("credential_cache_v2.json"));
             assert!(cache.cache_file_path.exists());
         }
 
-        #[tokio::test]
-        async fn cache_file_contains_valid_json() {
+        #[test]
+        fn cache_file_contains_valid_json() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Failed to set secret");
 
             let content = fs::read_to_string(&cache.cache_file_path).expect("Failed to read file");
@@ -782,12 +747,11 @@ mod tests {
             assert!(parsed.get("tokens").is_some());
         }
 
-        #[tokio::test]
-        async fn keys_are_sha256_hashed_in_file() {
+        #[test]
+        fn keys_are_sha256_hashed_in_file() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("my_raw_key", b"val")
-                .await
                 .expect("Failed to set secret");
 
             let content = fs::read_to_string(&cache.cache_file_path).expect("Failed to read file");
@@ -800,13 +764,12 @@ mod tests {
         }
 
         #[cfg(unix)]
-        #[tokio::test]
-        async fn cache_file_has_mode_600() {
+        #[test]
+        fn cache_file_has_mode_600() {
             use std::os::unix::fs::PermissionsExt;
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Failed to set secret");
 
             let metadata =
@@ -816,13 +779,12 @@ mod tests {
         }
 
         #[cfg(unix)]
-        #[tokio::test]
-        async fn remediates_file_with_wrong_permissions() {
+        #[test]
+        fn remediates_file_with_wrong_permissions() {
             use std::os::unix::fs::PermissionsExt;
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Failed to set secret");
 
             fs::set_permissions(&cache.cache_file_path, fs::Permissions::from_mode(0o644))
@@ -830,7 +792,6 @@ mod tests {
 
             let result = cache
                 .get_secret("key")
-                .await
                 .expect("Should succeed after remediating permissions");
             assert_eq!(result, Some(b"val".to_vec()));
 
@@ -841,15 +802,14 @@ mod tests {
         }
 
         #[cfg(unix)]
-        #[tokio::test]
-        async fn accepts_file_owned_by_current_user() {
+        #[test]
+        fn accepts_file_owned_by_current_user() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Failed to set secret");
 
-            let result = cache.get_secret("key").await;
+            let result = cache.get_secret("key");
             assert!(
                 result.is_ok(),
                 "File created by current user should pass ownership check"
@@ -857,13 +817,12 @@ mod tests {
         }
 
         #[cfg(unix)]
-        #[tokio::test]
-        async fn rejects_file_not_owned_by_current_user() {
+        #[test]
+        fn rejects_file_not_owned_by_current_user() {
             use std::os::unix::fs::MetadataExt;
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Failed to set secret");
 
             let metadata = fs::metadata(&cache.cache_file_path).unwrap();
@@ -876,12 +835,11 @@ mod tests {
             );
         }
 
-        #[tokio::test]
-        async fn lock_file_removed_after_operation() {
+        #[test]
+        fn lock_file_removed_after_operation() {
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Failed to set secret");
 
             let lock_path = cache.cache_file_path.with_extension("json.lck");
@@ -891,8 +849,8 @@ mod tests {
             );
         }
 
-        #[tokio::test]
-        async fn stale_lock_is_broken() {
+        #[test]
+        fn stale_lock_is_broken() {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = FileTokenCache::with_directory(dir.path().to_path_buf())
                 .stale_lock_timeout(Duration::from_millis(50));
@@ -900,19 +858,18 @@ mod tests {
             let lock_path = cache.cache_file_path.with_extension("json.lck");
             fs::create_dir(&lock_path).expect("Failed to create stale lock dir");
 
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            std::thread::sleep(Duration::from_millis(100));
 
             cache
                 .set_secret("key", b"val")
-                .await
                 .expect("Should succeed after breaking stale lock");
 
-            let result = cache.get_secret("key").await.expect("Failed to get secret");
+            let result = cache.get_secret("key").expect("Failed to get secret");
             assert_eq!(result, Some(b"val".to_vec()));
         }
 
-        #[tokio::test]
-        async fn configurable_retry_parameters() {
+        #[test]
+        fn configurable_retry_parameters() {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = FileTokenCache::with_directory(dir.path().to_path_buf())
                 .retry_count(10)
@@ -933,8 +890,8 @@ mod tests {
             FileCredentialBuilder::new(cache)
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn set_and_get_password() {
+        #[test]
+        fn set_and_get_password() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -946,8 +903,8 @@ mod tests {
             assert_eq!(password, "secret123");
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn get_missing_entry_returns_no_entry() {
+        #[test]
+        fn get_missing_entry_returns_no_entry() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -958,8 +915,8 @@ mod tests {
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn delete_existing_credential() {
+        #[test]
+        fn delete_existing_credential() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -973,8 +930,8 @@ mod tests {
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn delete_missing_credential_returns_no_entry() {
+        #[test]
+        fn delete_missing_credential_returns_no_entry() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -985,8 +942,8 @@ mod tests {
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn overwrite_password() {
+        #[test]
+        fn overwrite_password() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred = builder
@@ -998,8 +955,8 @@ mod tests {
             assert_eq!(cred.get_password().unwrap(), "second");
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn separate_credentials_are_independent() {
+        #[test]
+        fn separate_credentials_are_independent() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             let cred1 = builder
@@ -1016,8 +973,8 @@ mod tests {
             assert_eq!(cred2.get_password().unwrap(), "mfa_val");
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn persistence_is_until_delete() {
+        #[test]
+        fn persistence_is_until_delete() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
             assert!(matches!(
@@ -1026,8 +983,8 @@ mod tests {
             ));
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn credentials_share_same_backing_file() {
+        #[test]
+        fn credentials_share_same_backing_file() {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
 
@@ -1045,9 +1002,9 @@ mod tests {
 
     mod concurrency_tests {
         use super::*;
-        use std::sync::Arc;
+        use std::sync::{Arc, Barrier};
 
-        const TASK_COUNT: usize = 10;
+        const THREAD_COUNT: usize = 10;
 
         fn create_shared_cache() -> (tempfile::TempDir, Arc<FileTokenCache>) {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -1059,37 +1016,35 @@ mod tests {
             (dir, cache)
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn concurrent_writes_do_not_corrupt() {
+        #[test]
+        fn concurrent_writes_do_not_corrupt() {
             let (_dir, cache) = create_shared_cache();
-            let barrier = Arc::new(tokio::sync::Barrier::new(TASK_COUNT));
+            let barrier = Arc::new(Barrier::new(THREAD_COUNT));
 
-            let handles: Vec<_> = (0..TASK_COUNT)
+            let handles: Vec<_> = (0..THREAD_COUNT)
                 .map(|i| {
                     let cache = Arc::clone(&cache);
                     let barrier = Arc::clone(&barrier);
-                    tokio::spawn(async move {
-                        barrier.wait().await;
+                    std::thread::spawn(move || {
+                        barrier.wait();
                         let key = format!("key_{i}");
                         let value = format!("value_{i}");
                         cache
                             .set_secret(&key, value.as_bytes())
-                            .await
                             .expect("Failed to set secret in concurrent write");
                     })
                 })
                 .collect();
 
             for handle in handles {
-                handle.await.expect("Task panicked");
+                handle.join().expect("Thread panicked");
             }
 
-            for i in 0..TASK_COUNT {
+            for i in 0..THREAD_COUNT {
                 let key = format!("key_{i}");
                 let expected = format!("value_{i}");
                 let actual = cache
                     .get_secret(&key)
-                    .await
                     .expect("Failed to get secret after concurrent writes");
                 assert_eq!(
                     actual,
@@ -1099,46 +1054,44 @@ mod tests {
             }
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn concurrent_reads_during_writes() {
+        #[test]
+        fn concurrent_reads_during_writes() {
             let (_dir, cache) = create_shared_cache();
 
-            for i in 0..TASK_COUNT {
+            for i in 0..THREAD_COUNT {
                 let key = format!("key_{i}");
                 let value = format!("old_{i}");
-                cache.set_secret(&key, value.as_bytes()).await.unwrap();
+                cache.set_secret(&key, value.as_bytes()).unwrap();
             }
 
-            let total_tasks = TASK_COUNT * 2;
-            let barrier = Arc::new(tokio::sync::Barrier::new(total_tasks));
+            let total_threads = THREAD_COUNT * 2;
+            let barrier = Arc::new(Barrier::new(total_threads));
 
-            let handles: Vec<_> = (0..TASK_COUNT)
+            let handles: Vec<_> = (0..THREAD_COUNT)
                 .flat_map(|i| {
                     let writer_cache = Arc::clone(&cache);
                     let reader_cache = Arc::clone(&cache);
                     let writer_barrier = Arc::clone(&barrier);
                     let reader_barrier = Arc::clone(&barrier);
 
-                    let writer = tokio::spawn(async move {
-                        writer_barrier.wait().await;
+                    let writer = std::thread::spawn(move || {
+                        writer_barrier.wait();
                         let key = format!("key_{i}");
                         let value = format!("new_{i}");
                         writer_cache
                             .set_secret(&key, value.as_bytes())
-                            .await
-                            .expect("Failed to set secret in writer task");
+                            .expect("Failed to set secret in writer thread");
                     });
 
-                    let reader = tokio::spawn(async move {
-                        reader_barrier.wait().await;
+                    let reader = std::thread::spawn(move || {
+                        reader_barrier.wait();
                         let key = format!("key_{i}");
                         let old_value = format!("old_{i}").into_bytes();
                         let new_value = format!("new_{i}").into_bytes();
 
                         let result = reader_cache
                             .get_secret(&key)
-                            .await
-                            .expect("Failed to get secret in reader task");
+                            .expect("Failed to get secret in reader thread");
                         let value = result.expect("Seeded key should always be present");
                         assert!(
                             value == old_value || value == new_value,
@@ -1152,16 +1105,15 @@ mod tests {
                 .collect();
 
             for handle in handles {
-                handle.await.expect("Task panicked");
+                handle.join().expect("Thread panicked");
             }
 
-            for i in 0..TASK_COUNT {
+            for i in 0..THREAD_COUNT {
                 let key = format!("key_{i}");
                 let old_value = format!("old_{i}").into_bytes();
                 let new_value = format!("new_{i}").into_bytes();
                 let actual = cache
                     .get_secret(&key)
-                    .await
                     .expect("Failed to verify final state")
                     .expect("Key should still be present after concurrent access");
                 assert!(
@@ -1172,46 +1124,44 @@ mod tests {
             }
         }
 
-        #[tokio::test(flavor = "multi_thread")]
-        async fn concurrent_deletes_are_consistent() {
+        #[test]
+        fn concurrent_deletes_are_consistent() {
             let (_dir, cache) = create_shared_cache();
 
-            let total_keys = TASK_COUNT * 2;
+            let total_keys = THREAD_COUNT * 2;
             for i in 0..total_keys {
                 let key = format!("key_{i}");
                 let value = format!("value_{i}");
-                cache.set_secret(&key, value.as_bytes()).await.unwrap();
+                cache.set_secret(&key, value.as_bytes()).unwrap();
             }
 
             let delete_count = total_keys / 2;
-            let barrier = Arc::new(tokio::sync::Barrier::new(delete_count));
+            let barrier = Arc::new(Barrier::new(delete_count));
 
             let handles: Vec<_> = (0..total_keys)
                 .filter(|i| i % 2 == 0)
                 .map(|i| {
                     let cache = Arc::clone(&cache);
                     let barrier = Arc::clone(&barrier);
-                    tokio::spawn(async move {
-                        barrier.wait().await;
+                    std::thread::spawn(move || {
+                        barrier.wait();
                         let key = format!("key_{i}");
                         let existed = cache
                             .delete_credential(&key)
-                            .await
-                            .expect("Failed to delete in concurrent task");
+                            .expect("Failed to delete in concurrent thread");
                         assert!(existed, "Expected {key} to exist before deletion");
                     })
                 })
                 .collect();
 
             for handle in handles {
-                handle.await.expect("Task panicked");
+                handle.join().expect("Thread panicked");
             }
 
             for i in 0..total_keys {
                 let key = format!("key_{i}");
                 let result = cache
                     .get_secret(&key)
-                    .await
                     .expect("Failed to read after deletes");
                 if i % 2 == 0 {
                     assert_eq!(result, None, "Deleted {key} should be gone");
