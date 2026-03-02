@@ -379,7 +379,7 @@ pipeline {
           steps {
             script {
               e2eDockerSetup(E2E_DOCKER_IMAGE)
-              docker.image(E2E_DOCKER_IMAGE).inside('-u root --privileged') {
+              docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
                 withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
                   sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
                 }
