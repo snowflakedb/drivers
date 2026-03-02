@@ -151,9 +151,9 @@ pub enum ErrorStrategy {
 }
 
 impl ErrorStrategy {
-    pub const UNSPECIFIED_PROTOBUF: i64 = 0;
-    pub const BEST_EFFORT_PROTOBUF: i64 = 1;
-    pub const STRICT_PROTOBUF: i64 = 2;
+    const UNSPECIFIED_PROTOBUF: i64 = 0;
+    const BEST_EFFORT_PROTOBUF: i64 = 1;
+    const STRICT_PROTOBUF: i64 = 2;
 
     /// Explicitly convert to the protobuf value.
     pub fn to_protobuf_value(self) -> i64 {
