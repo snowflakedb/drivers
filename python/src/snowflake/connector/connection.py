@@ -317,11 +317,7 @@ class Connection:
 
         # Attempt cleanup for leaked connection
         try:
-            # Temporarily disable auto_cleanup flag to avoid atexit recursion
-            saved_auto_cleanup = self.auto_cleanup
-            self.auto_cleanup = False
             self.close(retry=False)
-            self.auto_cleanup = saved_auto_cleanup
         except Exception:
             pass  # Suppress errors during exit cleanup
 
