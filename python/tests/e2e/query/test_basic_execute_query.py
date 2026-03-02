@@ -66,7 +66,6 @@ class TestSelectQueries:
         values = [row[0] for row in rows]
         assert_sequential_values(values, 5)
 
-    @pytest.mark.skip_universal(reason="Known issue SNOW-2997744: Empty result set handling")
     def test_should_execute_select_returning_empty_result_set(self, cursor):
         """Test SELECT returning empty result set."""
         # Given Snowflake client is logged in

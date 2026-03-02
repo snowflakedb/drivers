@@ -706,7 +706,6 @@ class TestCursorFetch:
         result = cursor.fetchall()
         assert result == [(1, "hello", Decimal("3.14"))]
 
-    @pytest.mark.skip("TODO: Known issue, SNOW-2997744")
     def test_fetchall_empty_result(self, cursor):
         """Test fetchall with empty result."""
         cursor.execute("SELECT 1 WHERE FALSE")
