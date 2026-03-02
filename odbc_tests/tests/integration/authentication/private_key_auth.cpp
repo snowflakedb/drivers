@@ -18,13 +18,18 @@
 #include "put_get_utils.hpp"
 #include "sf_odbc.h"
 #include "test_setup.hpp"
+#include "ODBCConfig.hpp"
 #include "utils.hpp"
 
 using pg_utils::TempTestDir;
 
 std::string get_jwt_connection_string_without_private_key() {
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_name() << ";";
+  #ifdef _WIN32
+    ss << "DSN=" << get_driver_name() << ";";
+  #else
+    ss << "DRIVER=" << get_driver_name() << ";";
+  #endif
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";
@@ -40,7 +45,11 @@ std::string get_jwt_connection_string_without_private_key() {
 
 std::string get_base_jwt_connection_string_int() {
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  #ifdef _WIN32
+    ss << "DSN=" << get_driver_name() << ";";
+  #else
+    ss << "DRIVER=" << get_driver_name() << ";";
+  #endif
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";

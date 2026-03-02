@@ -94,7 +94,12 @@ inline std::string get_driver_name() {
 }
 
 inline void read_default_params(std::stringstream& ss, const picojson::object& params) {
+#ifdef _WIN32
+  // On Windows, the driver is registered as a User DSN (no admin needed)
+  ss << "DSN=" << get_driver_name() << ";";
+#else
   ss << "DRIVER={" << get_driver_name() << "};";
+#endif
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");

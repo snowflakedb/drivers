@@ -11,6 +11,8 @@ add_library(common STATIC
     src/ODBCConfig.cpp
     src/DataSourceConfig.cpp
     src/ConfigInstallation.cpp
+    src/WindowsConfigInstallation.cpp
+    src/UnixConfigInstallation.cpp
     include/test_setup.hpp
     include/macros.hpp
     include/Connection.hpp
