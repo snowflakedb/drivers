@@ -138,14 +138,16 @@ impl LogoutConfig {
 /// Strategy for error handling during logout.
 ///
 /// Controls how errors are surfaced after all retry mechanisms have been exhausted.
+/// Uses #[repr(i64)] to directly map enum discriminants to protobuf values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(i64)]
 pub enum ErrorStrategy {
     /// Strict strategy: surface errors to the caller (close() may fail)
     #[default]
-    Strict,
+    Strict = Self::STRICT_PROTOBUF,
 
     /// Best-effort strategy: suppress errors, log WARN (close() always succeeds)
-    BestEffort,
+    BestEffort = Self::BEST_EFFORT_PROTOBUF,
 }
 
 impl ErrorStrategy {
@@ -153,22 +155,26 @@ impl ErrorStrategy {
     pub const BEST_EFFORT_PROTOBUF: i64 = 1;
     pub const STRICT_PROTOBUF: i64 = 2;
 
+    /// Explicitly convert to the protobuf value.
     pub fn to_protobuf_value(self) -> i64 {
-        match self {
-            ErrorStrategy::BestEffort => Self::BEST_EFFORT_PROTOBUF,
-            ErrorStrategy::Strict => Self::STRICT_PROTOBUF,
-        }
+        self as i64
     }
 
+    /// Explicitly create from a protobuf value.
     pub fn from_protobuf_value(value: i64) -> Result<Self, ConfigError> {
         match value {
             Self::UNSPECIFIED_PROTOBUF => Ok(Self::default()),
-            Self::BEST_EFFORT_PROTOBUF => Ok(ErrorStrategy::BestEffort),
-            Self::STRICT_PROTOBUF => Ok(ErrorStrategy::Strict),
+            Self::BEST_EFFORT_PROTOBUF => Ok(Self::BestEffort),
+            Self::STRICT_PROTOBUF => Ok(Self::Strict),
             _ => InvalidParameterValueSnafu {
                 parameter: "logout_error_strategy",
                 value: value.to_string(),
-                explanation: "Must be 0 (UNSPECIFIED), 1 (BestEffort), or 2 (Strict)",
+                explanation: format!(
+                    "Must be {} (UNSPECIFIED), {} (BestEffort), or {} (Strict)",
+                    Self::UNSPECIFIED_PROTOBUF,
+                    Self::BEST_EFFORT_PROTOBUF,
+                    Self::STRICT_PROTOBUF
+                ),
             }
             .fail(),
         }
