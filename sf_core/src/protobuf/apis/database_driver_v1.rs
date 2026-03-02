@@ -3,9 +3,16 @@ use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
+use crate::apis::database_driver_v1::connection::QueryStatus as NativeQueryStatus;
+use crate::apis::database_driver_v1::connection::{
+    connection_fetch_async_results, connection_get_query_status,
+};
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
+use crate::apis::database_driver_v1::global_state::CONN_HANDLE_MANAGER;
+use crate::apis::database_driver_v1::statement::calculate_rows_affected;
 use crate::apis::database_driver_v1::statement_bind;
+use crate::apis::database_driver_v1::statement_execute_async;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     connection_close, connection_get_info, connection_get_parameter, connection_init,
@@ -19,9 +26,6 @@ use crate::apis::database_driver_v1::{
     statement_execute_query, statement_new, statement_prepare, statement_release,
     statement_set_option, statement_set_sql_query,
 };
-// TODO: Uncomment when implementing Step 3 protobuf handlers
-// use crate::apis::database_driver_v1::{QueryStatus, QueryStatusInfo};
-// use crate::apis::database_driver_v1::{connection_get_query_status, connection_fetch_async_results};
 use crate::config::config_manager;
 use crate::protobuf::generated::database_driver_v1::*;
 use arrow::ffi::FFI_ArrowArray;
@@ -863,35 +867,153 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(name = "DatabaseDriverV1::statement_execute_async")]
     fn statement_execute_async(
-        _input: StatementExecuteAsyncRequest,
+        input: StatementExecuteAsyncRequest,
     ) -> Result<StatementExecuteAsyncResponse, DriverException> {
-        // TODO: Implement in Step 2 - statement convenience functions
-        Err(to_driver_exception(ApiError::InvalidArgument {
-            argument: "statement_execute_async not yet implemented".to_string(),
-            location: snafu::Location::new(file!(), line!(), 0),
-        }))
+        let stmt_handle = required(input.stmt_handle, "stmt_handle")?;
+
+        let bindings_opt = input
+            .bindings
+            .and_then(|b| b.binding_type)
+            .map(BindingType::from);
+
+        // Call statement-level function
+        let result = statement_execute_async(stmt_handle.into(), bindings_opt)
+            .map_err(to_driver_exception)?;
+
+        Ok(StatementExecuteAsyncResponse {
+            query_id: result.query_id,
+            get_result_url: Some(result.get_result_url),
+        })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_get_query_status")]
-    fn statement_get_query_status(
-        _input: StatementGetQueryStatusRequest,
-    ) -> Result<StatementGetQueryStatusResponse, DriverException> {
-        // TODO: Implement in Step 2 - statement convenience functions
-        Err(to_driver_exception(ApiError::InvalidArgument {
-            argument: "statement_get_query_status not yet implemented".to_string(),
-            location: snafu::Location::new(file!(), line!(), 0),
-        }))
+    #[instrument(name = "DatabaseDriverV1::connection_get_query_status")]
+    fn connection_get_query_status(
+        input: ConnectionGetQueryStatusRequest,
+    ) -> Result<ConnectionGetQueryStatusResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "conn_handle")?;
+        let query_id = input.query_id;
+
+        // Call connection-level function directly
+        let status = connection_get_query_status(conn_handle.into(), &query_id)
+            .map_err(to_driver_exception)?;
+
+        // Convert native QueryStatus to protobuf enum
+        let proto_status = match status.status {
+            NativeQueryStatus::Running => QueryStatus::Running,
+            NativeQueryStatus::Success => QueryStatus::Success,
+            NativeQueryStatus::Failed => QueryStatus::Failed,
+        };
+
+        Ok(ConnectionGetQueryStatusResponse {
+            query_id: status.query_id,
+            status: proto_status.into(),
+            error_code: status.error_code,
+            error_message: status.error_message,
+        })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_fetch_results_by_query_id")]
-    fn statement_fetch_results_by_query_id(
-        _input: StatementFetchResultsByQueryIdRequest,
-    ) -> Result<StatementFetchResultsByQueryIdResponse, DriverException> {
-        // TODO: Implement in Step 2 - statement convenience functions
-        Err(to_driver_exception(ApiError::InvalidArgument {
-            argument: "statement_fetch_results_by_query_id not yet implemented".to_string(),
-            location: snafu::Location::new(file!(), line!(), 0),
-        }))
+    #[instrument(name = "DatabaseDriverV1::connection_fetch_async_results")]
+    fn connection_fetch_async_results(
+        input: ConnectionFetchAsyncResultsRequest,
+    ) -> Result<ConnectionFetchAsyncResultsResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "conn_handle")?;
+        let query_id = input.query_id;
+
+        // Call connection-level function to get response
+        let response = connection_fetch_async_results(conn_handle.into(), &query_id)
+            .map_err(to_driver_exception)?;
+
+        // Get http_client for response processing
+        let http_client = {
+            let conn_ptr = CONN_HANDLE_MANAGER
+                .get_obj(conn_handle.into())
+                .ok_or_else(|| {
+                    to_driver_exception(ApiError::InvalidArgument {
+                        argument: "Connection handle not found".to_string(),
+                        location: snafu::Location::new(file!(), line!(), 0),
+                    })
+                })?;
+            let conn = conn_ptr.lock().map_err(|_| {
+                to_driver_exception(ApiError::ConnectionLocking {
+                    location: snafu::Location::new(file!(), line!(), 0),
+                })
+            })?;
+            conn.http_client.clone().ok_or_else(|| {
+                to_driver_exception(ApiError::ConnectionNotInitialized {
+                    location: snafu::Location::new(file!(), line!(), 0),
+                })
+            })?
+        };
+
+        // Process response to ExecuteResult
+        let rt = crate::async_bridge::runtime().map_err(|e| {
+            to_driver_exception(ApiError::RuntimeCreation {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })
+        })?;
+
+        let query_result = rt
+            .block_on(
+                crate::apis::database_driver_v1::query::process_query_response(
+                    &response.data,
+                    &http_client,
+                ),
+            )
+            .map_err(|e| {
+                to_driver_exception(ApiError::QueryResponseProcessing {
+                    source: Box::new(e),
+                    location: snafu::Location::new(file!(), line!(), 0),
+                })
+            })?;
+
+        let stream = Box::new(arrow::ffi_stream::FFI_ArrowArrayStream::new(
+            query_result.reader,
+        ));
+        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(stream).into();
+
+        // Calculate rows_affected and extract metadata
+        let rows_affected = calculate_rows_affected(&response.data);
+        let result_query_id = response
+            .data
+            .query_id
+            .clone()
+            .unwrap_or_else(|| query_id.to_string());
+        let statement_type_id = response.data.statement_type_id;
+
+        let columns = query_result
+            .columns
+            .unwrap_or_else(|| {
+                response
+                    .data
+                    .row_type
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|rt| NativeColumnMetadata {
+                        name: rt.name.clone(),
+                        r#type: rt.type_.clone(),
+                        precision: rt.precision.map(|v| v as i64),
+                        scale: rt.scale.map(|v| v as i64),
+                        length: rt.length.map(|v| v as i64),
+                        byte_length: rt.byte_length.map(|v| v as i64),
+                        nullable: rt.nullable,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .into_iter()
+            .map(ColumnMetadata::from)
+            .collect();
+
+        Ok(ConnectionFetchAsyncResultsResponse {
+            result: Some(ExecuteResult {
+                stream: Some(stream_ptr),
+                rows_affected,
+                query_id: result_query_id,
+                columns,
+                statement_type_id,
+                query: format!("/* Results for {} */", query_id),
+            }),
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(_input))]

@@ -753,20 +753,17 @@ class Connection:
             ProgrammingError: If query_id is not found in async registry
         """
         from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+            ConnectionGetQueryStatusRequest,
             QueryStatus,
-            StatementGetQueryStatusRequest,
-            StatementNewRequest,
         )
 
-        # Core tracks URL mapping internally - just pass query_id
-        stmt_handle = self.db_api.statement_new(StatementNewRequest(conn_handle=self.conn_handle)).stmt_handle
-
-        request = StatementGetQueryStatusRequest(
-            stmt_handle=stmt_handle,
+        # Call connection-level API directly
+        request = ConnectionGetQueryStatusRequest(
+            conn_handle=self.conn_handle,
             query_id=sf_qid,
         )
 
-        response = self.db_api.statement_get_query_status(request)
+        response = self.db_api.connection_get_query_status(request)
 
         # Map protobuf status to old driver format
         if response.status == QueryStatus.QUERY_STATUS_RUNNING:

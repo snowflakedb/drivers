@@ -557,24 +557,24 @@ enum QueryStatus {
   QUERY_STATUS_FAILED = 3;
 }
 
-message StatementGetQueryStatusRequest {
-  StatementHandle stmt_handle = 1;
+message ConnectionGetQueryStatusRequest {
+  ConnectionHandle conn_handle = 1;
   string query_id = 2;
 }
 
-message StatementGetQueryStatusResponse {
+message ConnectionGetQueryStatusResponse {
   string query_id = 1;
   QueryStatus status = 2;
   optional string error_code = 3;
   optional string error_message = 4;
 }
 
-message StatementFetchResultsByQueryIdRequest {
-  StatementHandle stmt_handle = 1;
+message ConnectionFetchAsyncResultsRequest {
+  ConnectionHandle conn_handle = 1;
   string query_id = 2;
 }
 
-message StatementFetchResultsByQueryIdResponse {
+message ConnectionFetchAsyncResultsResponse {
   ExecuteResult result = 1;
 }
 
@@ -675,8 +675,8 @@ service DatabaseDriver {
 
   // Async query lifecycle operations
   rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
-  rpc StatementGetQueryStatus(StatementGetQueryStatusRequest) returns (StatementGetQueryStatusResponse);
-  rpc StatementFetchResultsByQueryId(StatementFetchResultsByQueryIdRequest) returns (StatementFetchResultsByQueryIdResponse);
+  rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  rpc ConnectionFetchAsyncResults(ConnectionFetchAsyncResultsRequest) returns (ConnectionFetchAsyncResultsResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);

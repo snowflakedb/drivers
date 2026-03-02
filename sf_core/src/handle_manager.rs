@@ -109,4 +109,30 @@ impl<T> HandleManager<T> {
             }
         }
     }
+
+    /// Find a handle for a given object by pointer equality.
+    ///
+    /// This searches through all handles and returns the handle that points
+    /// to the same Arc<T> as the provided object (using Arc::ptr_eq).
+    ///
+    /// # Returns
+    ///
+    /// - `Some(Handle)` if a matching handle is found
+    /// - `None` if no handle points to the same object
+    pub fn find_handle_for_obj(&self, obj: &Arc<T>) -> Option<Handle> {
+        let handles = self.handles.read().unwrap();
+
+        for (index, handle_value) in handles.iter().enumerate() {
+            if let Some(value) = &handle_value.value
+                && Arc::ptr_eq(value, obj)
+            {
+                return Some(Handle {
+                    id: index as u64,
+                    magic: handle_value.magic,
+                });
+            }
+        }
+
+        None
+    }
 }

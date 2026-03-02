@@ -1413,12 +1413,12 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
     }
     
     /**
-     * Method: statementGetQueryStatus
+     * Method: connectionGetQueryStatus
      */
-    public DatabaseDriverV1.StatementGetQueryStatusResponse statementGetQueryStatus(DatabaseDriverV1.StatementGetQueryStatusRequest request) throws ServiceException, TransportException {
+    public DatabaseDriverV1.ConnectionGetQueryStatusResponse connectionGetQueryStatus(DatabaseDriverV1.ConnectionGetQueryStatusRequest request) throws ServiceException, TransportException {
         TransportResponse response = transport.handleMessage(
             "DatabaseDriver",
-            "statement_get_query_status",
+            "connection_get_query_status",
             request.toByteArray()
         );
         
@@ -1427,7 +1427,7 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
         
         if (code == CoreTransport.CODE_SUCCESS) {
             try {
-                return DatabaseDriverV1.StatementGetQueryStatusResponse.parseFrom(responseBytes);
+                return DatabaseDriverV1.ConnectionGetQueryStatusResponse.parseFrom(responseBytes);
             } catch (InvalidProtocolBufferException e) {
                 throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
             }
@@ -1447,12 +1447,12 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
     }
     
     /**
-     * Method: statementFetchResultsByQueryId
+     * Method: connectionFetchAsyncResults
      */
-    public DatabaseDriverV1.StatementFetchResultsByQueryIdResponse statementFetchResultsByQueryId(DatabaseDriverV1.StatementFetchResultsByQueryIdRequest request) throws ServiceException, TransportException {
+    public DatabaseDriverV1.ConnectionFetchAsyncResultsResponse connectionFetchAsyncResults(DatabaseDriverV1.ConnectionFetchAsyncResultsRequest request) throws ServiceException, TransportException {
         TransportResponse response = transport.handleMessage(
             "DatabaseDriver",
-            "statement_fetch_results_by_query_id",
+            "connection_fetch_async_results",
             request.toByteArray()
         );
         
@@ -1461,7 +1461,7 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
         
         if (code == CoreTransport.CODE_SUCCESS) {
             try {
-                return DatabaseDriverV1.StatementFetchResultsByQueryIdResponse.parseFrom(responseBytes);
+                return DatabaseDriverV1.ConnectionFetchAsyncResultsResponse.parseFrom(responseBytes);
             } catch (InvalidProtocolBufferException e) {
                 throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
             }

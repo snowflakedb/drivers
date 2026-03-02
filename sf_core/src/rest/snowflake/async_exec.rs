@@ -618,7 +618,7 @@ fn handle_poll_response(
     Err(snowflake_failure(&resp, is_first_poll))
 }
 
-/// Submit an async query and return immediately without blocking.
+/// Submit an async query and return immediately.
 ///
 /// This is a thin wrapper around `submit_statement_async()` that exposes
 /// the async submission to external callers. The query is submitted with
@@ -649,7 +649,7 @@ fn handle_poll_response(
 ///
 /// Returns `SfError` for HTTP failures, transport errors, or invalid responses.
 /// SessionExpired (390112) errors should be handled by the caller with token refresh.
-pub async fn submit_async_non_blocking(
+pub async fn submit_async(
     client: &reqwest::Client,
     params: &QueryParameters,
     session_token: &str,
@@ -679,7 +679,7 @@ pub async fn submit_async_non_blocking(
 /// # Usage
 ///
 /// This is the second step in the async query lifecycle:
-/// 1. **Submit** (`submit_async_non_blocking()`) - Returns immediately with query_id
+/// 1. **Submit** (`submit_async()`) - Returns immediately with query_id
 /// 2. **Poll** (this function) - Check query status independently
 /// 3. **Fetch** (`fetch_results_by_query_id()`) - Retrieve results when ready
 ///
@@ -717,7 +717,7 @@ pub async fn get_query_status_by_id(
 /// # Usage
 ///
 /// This is the third step in the async query lifecycle:
-/// 1. **Submit** (`submit_async_non_blocking()`) - Returns immediately with query_id
+/// 1. **Submit** (`submit_async()`) - Returns immediately with query_id
 /// 2. **Poll** (`get_query_status_by_id()`) - Check query status independently
 /// 3. **Fetch** (this function) - Retrieve results when ready
 ///

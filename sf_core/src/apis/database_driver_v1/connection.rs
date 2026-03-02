@@ -864,7 +864,7 @@ pub enum QueryStatus {
 ///
 /// ```ignore
 /// // Submit async query (via any statement)
-/// let result = statement_execute_async_non_blocking(...)?;
+/// let result = statement_execute_async(...)?;
 /// let query_id = result.query_id;
 ///
 /// // Check status via CONNECTION (statement can be dropped)

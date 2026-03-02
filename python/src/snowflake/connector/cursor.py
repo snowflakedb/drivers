@@ -492,20 +492,16 @@ class SnowflakeCursorBase(abc.ABC):
             ProgrammingError: If query_id is not found or query failed
         """
         from ._internal.protobuf_gen.database_driver_v1_pb2 import (
-            StatementFetchResultsByQueryIdRequest,
+            ConnectionFetchAsyncResultsRequest,
         )
 
-        # Core tracks URL mapping internally - just pass query_id
-        stmt_handle = self._connection.db_api.statement_new(
-            StatementNewRequest(conn_handle=self._connection.conn_handle)
-        ).stmt_handle
-
-        request = StatementFetchResultsByQueryIdRequest(
-            stmt_handle=stmt_handle,
+        # Call connection-level API directly
+        request = ConnectionFetchAsyncResultsRequest(
+            conn_handle=self._connection.conn_handle,
             query_id=query_id,
         )
 
-        self.execute_result = self._connection.db_api.statement_fetch_results_by_query_id(request).result
+        self.execute_result = self._connection.db_api.connection_fetch_async_results(request).result
 
         # Reset streaming state for the new result
         self._binding_data = None

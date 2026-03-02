@@ -214,14 +214,14 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.StatementExecuteAsyncResponse statementExecuteAsync(DatabaseDriverV1.StatementExecuteAsyncRequest request) throws ServiceException, TransportException;
 
     /**
-     * Method: statementGetQueryStatus
+     * Method: connectionGetQueryStatus
      */
-    DatabaseDriverV1.StatementGetQueryStatusResponse statementGetQueryStatus(DatabaseDriverV1.StatementGetQueryStatusRequest request) throws ServiceException, TransportException;
+    DatabaseDriverV1.ConnectionGetQueryStatusResponse connectionGetQueryStatus(DatabaseDriverV1.ConnectionGetQueryStatusRequest request) throws ServiceException, TransportException;
 
     /**
-     * Method: statementFetchResultsByQueryId
+     * Method: connectionFetchAsyncResults
      */
-    DatabaseDriverV1.StatementFetchResultsByQueryIdResponse statementFetchResultsByQueryId(DatabaseDriverV1.StatementFetchResultsByQueryIdRequest request) throws ServiceException, TransportException;
+    DatabaseDriverV1.ConnectionFetchAsyncResultsResponse connectionFetchAsyncResults(DatabaseDriverV1.ConnectionFetchAsyncResultsRequest request) throws ServiceException, TransportException;
 
     /**
      * Method: configLoadAllSections

@@ -106,7 +106,7 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
 /// - For DML: Parse rowset columns to sum affected rows
 /// - For SELECT and other queries: Use total field
 /// - For unknown: Return None
-fn calculate_rows_affected(data: &Data) -> Option<i64> {
+pub fn calculate_rows_affected(data: &Data) -> Option<i64> {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
         // For DML, parse the rowset to get affected rows
@@ -691,6 +691,181 @@ fn parse_json_bindings<'a>(data_ptr: &'a DataPtr<'a>) -> Result<&'a RawValue, St
     })?;
 
     Ok(raw)
+}
+
+/// Result returned from async query submission (non-blocking)
+pub struct AsyncExecuteResult {
+    pub query_id: String,
+    pub get_result_url: String,
+}
+
+/// Execute query asynchronously (non-blocking) - returns immediately with query_id.
+///
+/// This function submits a query for asynchronous execution and returns immediately
+/// with a query_id. The query continues executing on the server, and results can be
+/// fetched later using `statement_fetch_results_by_query_id()`.
+///
+/// # Architecture
+///
+/// This is a thin wrapper over connection-level async execution. It:
+/// 1. Extracts SQL query from statement
+/// 2. Gets connection handle from statement
+/// 3. Delegates to connection-level async execution
+///
+/// # Usage
+///
+/// ```ignore
+/// let stmt_handle = statement_new(conn_handle)?;
+/// statement_set_sql_query(stmt_handle, "SELECT * FROM large_table".to_string())?;
+///
+/// // Submit async query - returns immediately
+/// let result = statement_execute_async(stmt_handle, None)?;
+/// println!("Query submitted: {}", result.query_id);
+///
+/// // Later: fetch results (polls until complete)
+/// let execute_result = connection_fetch_async_results(conn_handle, &result.query_id)?;
+/// ```
+///
+/// # Errors
+///
+/// Returns `ApiError` for:
+/// - Invalid statement handle
+/// - No query set on statement
+/// - Connection not initialized
+/// - HTTP errors during submission
+pub fn statement_execute_async<'a>(
+    stmt_handle: Handle,
+    bindings: Option<BindingType<'a>>,
+) -> Result<AsyncExecuteResult, ApiError> {
+    with_statement(stmt_handle, |mut stmt| {
+        // Extract SQL query from statement (validation only)
+        let _query_str = stmt.query.as_deref().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Query not set on statement".to_string(),
+            }
+            .build()
+        })?;
+
+        let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+
+        // Get connection-level resources
+        let (query_parameters, http_client, retry_policy, conn_ptr) = {
+            let conn = stmt
+                .conn
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu.build())?;
+            (
+                crate::config::rest_parameters::QueryParameters::from_settings(&conn.settings)
+                    .context(ConfigurationSnafu)?,
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?,
+                conn.retry_policy.clone(),
+                stmt.conn.clone(),
+            )
+        };
+
+        let query = stmt.query.take().expect("query must be present");
+
+        // Get bindings from request or from statement's Arrow bindings
+        let owned_bindings = if bindings.is_none() {
+            stmt.get_query_parameter_bindings()
+                .context(StatementSnafu)?
+        } else {
+            None
+        };
+        let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
+            match &binding_type {
+                BindingType::Json(data_ptr) => {
+                    Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
+                }
+                BindingType::Csv(_csv_ptr) => {
+                    return Err(InvalidArgumentSnafu {
+                        argument: "CSV bindings are not yet implemented".to_string(),
+                    }
+                    .build());
+                }
+            }
+        } else {
+            owned_bindings.as_deref()
+        };
+
+        // Submit async query
+        let result = rt.block_on(async {
+            let mut ctx = super::connection::RefreshContext::from_arc(&conn_ptr)?;
+            let mut last_error = None;
+            let request_id = uuid::Uuid::new_v4();
+
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match crate::rest::snowflake::async_exec::submit_async(
+                    &http_client,
+                    &query_parameters,
+                    &session_token,
+                    query.clone(),
+                    query_bindings,
+                    request_id,
+                    &retry_policy,
+                )
+                .await
+                {
+                    Ok(submit_result) => {
+                        // Store query_id → get_result_url mapping in connection
+                        if let (Some(query_id), Some(get_result_url)) = (
+                            submit_result.query_id.as_ref(),
+                            submit_result.get_result_url.as_ref(),
+                        ) {
+                            let conn = conn_ptr
+                                .lock()
+                                .map_err(|_| ConnectionLockingSnafu.build())?;
+                            if let Ok(mut url_map) = conn.async_query_urls.write() {
+                                url_map.insert(query_id.clone(), get_result_url.clone());
+                            }
+
+                            // Register with AsyncQueryRegistry for Fire-and-Forget tracking
+                            if let Err(e) = conn.async_query_registry.register(query_id.to_string())
+                            {
+                                tracing::warn!(
+                                    query_id,
+                                    error = ?e,
+                                    "Failed to register async query"
+                                );
+                            }
+                        }
+
+                        return Ok(submit_result);
+                    }
+                    Err(e) => {
+                        last_error = Some(crate::rest::snowflake::RestError::AsyncQuery {
+                            source: e,
+                            location: snafu::Location::new(file!(), line!(), 0),
+                        });
+                    }
+                }
+            }
+        })?;
+
+        let query_id = result.query_id.ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "No query_id returned from async submission".to_string(),
+            }
+            .build()
+        })?;
+
+        let get_result_url = result.get_result_url.ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "No get_result_url returned from async submission".to_string(),
+            }
+            .build()
+        })?;
+
+        stmt.state = StatementState::Executed;
+
+        Ok(AsyncExecuteResult {
+            query_id,
+            get_result_url,
+        })
+    })
 }
 
 #[cfg(test)]
