@@ -912,17 +912,23 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .context(ConfigurationSnafu)
             .to_protobuf()?;
 
+        let config_file = paths.config_file.ok_or_else(|| DriverException {
+            message: "Configuration path for config file is unavailable".to_string(),
+            status_code: StatusCode::InternalError as i32,
+            error: None,
+            error_trace: vec![],
+        })?;
+
+        let connections_file = paths.connections_file.ok_or_else(|| DriverException {
+            message: "Configuration path for connections file is unavailable".to_string(),
+            status_code: StatusCode::InternalError as i32,
+            error: None,
+            error_trace: vec![],
+        })?;
+
         Ok(ConfigGetPathsResponse {
-            config_file: paths
-                .config_file
-                .expect("get_config_paths always returns Some")
-                .to_string_lossy()
-                .into_owned(),
-            connections_file: paths
-                .connections_file
-                .expect("get_config_paths always returns Some")
-                .to_string_lossy()
-                .into_owned(),
+            config_file: config_file.to_string_lossy().into_owned(),
+            connections_file: connections_file.to_string_lossy().into_owned(),
         })
     }
 }

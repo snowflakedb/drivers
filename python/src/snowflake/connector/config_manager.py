@@ -85,11 +85,7 @@ def _translate_core_error(
     """
     msg = str(exc.message) if hasattr(exc, "message") else str(exc)
 
-    if "parse TOML" in msg or "Failed to parse" in msg:
-        display_path = str(file_path) if file_path else "unknown"
-        return ConfigSourceError(f"An unknown error happened while loading '{display_path}'")
-
-    if "Failed to read config file" in msg:
+    if "parse TOML" in msg or "Failed to parse" in msg or "Failed to read config file" in msg:
         display_path = str(file_path) if file_path else "unknown"
         return ConfigSourceError(f"An unknown error happened while loading '{display_path}'")
 
