@@ -16,7 +16,8 @@ use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayPtr, ArrowArrayStreamPtr, ArrowSchemaPtr, ConnectionGetParameterRequest,
     ConnectionHandle, StatementBindRequest, StatementExecuteQueryRequest,
-    StatementExecuteQueryResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
+    StatementExecuteQueryResponse, StatementHandle, StatementPrepareRequest,
+    StatementSetSqlQueryRequest,
 };
 use snafu::ResultExt;
 use tracing;
@@ -70,23 +71,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
                 query: statement_text.to_string(),
             })?;
 
-            if !stmt.parameter_bindings.is_empty() {
-                tracing::info!(
-                    "exec_direct: Found {} bound parameters",
-                    stmt.parameter_bindings.len()
-                );
-
-                let (schema, array) = odbc_bindings_to_arrow_bindings(&stmt.parameter_bindings)
-                    .context(ArrowBindingSnafu {})?;
-
-                DatabaseDriverClient::statement_bind(StatementBindRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    schema: Some(protobuf_from_ffi_arrow_schema(Box::into_raw(schema))),
-                    array: Some(protobuf_from_ffi_arrow_array(Box::into_raw(array))),
-                })?;
-
-                tracing::info!("exec_direct: Successfully bound parameters");
-            }
+            apply_parameter_bindings(&stmt.stmt_handle, &stmt.parameter_bindings)?;
 
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
@@ -240,27 +225,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            // If there are bound parameters, we should bind them to the statement
-            if !stmt.parameter_bindings.is_empty() {
-                tracing::info!(
-                    "execute: Found {} bound parameters",
-                    stmt.parameter_bindings.len()
-                );
+            apply_parameter_bindings(&stmt.stmt_handle, &stmt.parameter_bindings)?;
 
-                let (schema, array) = odbc_bindings_to_arrow_bindings(&stmt.parameter_bindings)
-                    .context(ArrowBindingSnafu {})?;
-
-                // Bind parameters to statement
-                DatabaseDriverClient::statement_bind(StatementBindRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    schema: Some(protobuf_from_ffi_arrow_schema(Box::into_raw(schema))),
-                    array: Some(protobuf_from_ffi_arrow_array(Box::into_raw(array))),
-                })?;
-
-                tracing::info!("Successfully bound parameters");
-            }
-
-            // Execute the prepared statement
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
@@ -332,6 +298,31 @@ fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<S
         reader,
         rows_affected,
     })
+}
+
+fn apply_parameter_bindings(
+    stmt_handle: &StatementHandle,
+    parameter_bindings: &std::collections::HashMap<u16, ParameterBinding>,
+) -> OdbcResult<()> {
+    if parameter_bindings.is_empty() {
+        return Ok(());
+    }
+    tracing::info!(
+        "apply_parameter_bindings: Found {} bound parameters",
+        parameter_bindings.len()
+    );
+
+    let (schema, array) =
+        odbc_bindings_to_arrow_bindings(parameter_bindings).context(ArrowBindingSnafu {})?;
+
+    DatabaseDriverClient::statement_bind(StatementBindRequest {
+        stmt_handle: Some(*stmt_handle),
+        schema: Some(protobuf_from_ffi_arrow_schema(Box::into_raw(schema))),
+        array: Some(protobuf_from_ffi_arrow_array(Box::into_raw(array))),
+    })?;
+
+    tracing::info!("apply_parameter_bindings: Successfully bound parameters");
+    Ok(())
 }
 
 /// Bind a parameter to a prepared statement
