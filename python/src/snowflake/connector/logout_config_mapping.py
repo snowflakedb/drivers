@@ -18,8 +18,6 @@ if TYPE_CHECKING:
 class LogoutConfig:
     """Final logout configuration for Core API.
 
-    All values are fully resolved - no additional logic needed in close().
-
     Attributes:
         server_session_keep_alive: Final value for Core (already mapped)
         enable_auto_detection: Final value for Core (None = treat as False in Core)
