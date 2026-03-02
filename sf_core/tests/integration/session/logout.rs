@@ -12,8 +12,8 @@ use crate::common::test_server::{
 use sf_core::config::logout::{ErrorStrategy, LogoutConfig};
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::logout::logout_session;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -884,7 +884,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1029,7 +1029,7 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
         //When Connection close is initiated
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1247,7 +1247,7 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1332,7 +1332,7 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1443,7 +1443,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1553,7 +1553,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })

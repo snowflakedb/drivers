@@ -7,7 +7,7 @@ use crate::conversion::NumericSettings;
 use crate::conversion::warning::Warnings;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
-use sf_core::protobuf_gen::database_driver_v1::{
+use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
 };
 use std::collections::HashMap;

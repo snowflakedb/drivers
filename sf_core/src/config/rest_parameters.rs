@@ -501,4 +501,71 @@ mod tests {
             _ => panic!("Expected Password login method"),
         }
     }
+
+    fn okta_config(extras: Vec<(&str, Setting)>) -> NativeOktaConfig {
+        let mut base = vec![
+            ("user", Setting::String("okta_user".to_string())),
+            ("password", Setting::String("okta_pass".to_string())),
+            (
+                "host",
+                Setting::String("account.snowflakecomputing.com".to_string()),
+            ),
+            ("account", Setting::String("account".to_string())),
+            (
+                "authenticator",
+                Setting::String("https://myorg.okta.com".to_string()),
+            ),
+        ];
+        base.extend(extras);
+        let settings = create_test_settings(base);
+        match LoginMethod::from_settings(&settings).unwrap() {
+            LoginMethod::NativeOkta(cfg) => cfg,
+            other => panic!("Expected NativeOkta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_native_okta_uses_default_authentication_timeout() {
+        let cfg = okta_config(vec![]);
+        assert_eq!(
+            cfg.authentication_timeout_secs,
+            DEFAULT_AUTHENTICATION_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn test_native_okta_custom_authentication_timeout() {
+        let cfg = okta_config(vec![(
+            "authentication_timeout",
+            Setting::String("60".to_string()),
+        )]);
+        assert_eq!(cfg.authentication_timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_native_okta_invalid_authentication_timeout_uses_default() {
+        let cfg = okta_config(vec![(
+            "authentication_timeout",
+            Setting::String("not_a_number".to_string()),
+        )]);
+        assert_eq!(
+            cfg.authentication_timeout_secs, DEFAULT_AUTHENTICATION_TIMEOUT_SECS,
+            "Invalid timeout should fall back to the default"
+        );
+    }
+
+    #[test]
+    fn test_native_okta_disable_saml_url_check_defaults_to_false() {
+        let cfg = okta_config(vec![]);
+        assert!(!cfg.disable_saml_url_check);
+    }
+
+    #[test]
+    fn test_native_okta_disable_saml_url_check_true() {
+        let cfg = okta_config(vec![(
+            "disable_saml_url_check",
+            Setting::String("true".to_string()),
+        )]);
+        assert!(cfg.disable_saml_url_check);
+    }
 }

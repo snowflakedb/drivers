@@ -42,20 +42,27 @@ class TestConfig:
         """Parse connection parameters from JSON."""
         params = json.loads(self.params_json)
         conn_params = params.get("testconnection", {})
-        
-        # Parse private key contents (array of strings) and write to temporary file
-        private_key_contents = conn_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS", [])
-        private_key_file = None
-        
-        if private_key_contents:
-            # Write private key to a temporary file for authentication (OS-agnostic)
-            temp_dir = Path(tempfile.gettempdir())
-            key_file_path = temp_dir / "perf_test_private_key.p8"
-            with open(key_file_path, 'w') as f:
-                f.write("\n".join(private_key_contents))
-                f.write("\n")
-            private_key_file = str(key_file_path)
-        
+
+        # First check if private key file path is provided
+        private_key_file = conn_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_FILE")
+
+        # If a file path is provided, ensure it exists to avoid confusing auth errors later
+        if private_key_file and not Path(private_key_file).is_file():
+            print(f"ERROR: Private key file '{private_key_file}' does not exist")
+            sys.exit(1)
+
+        # If no file path, parse private key contents (array of strings) and write to temporary file
+        if not private_key_file:
+            private_key_contents = conn_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS", [])
+            if private_key_contents:
+                # Write private key to a temporary file for authentication (OS-agnostic)
+                temp_dir = Path(tempfile.gettempdir())
+                key_file_path = temp_dir / "perf_test_private_key.p8"
+                with open(key_file_path, 'w') as f:
+                    f.write("\n".join(private_key_contents))
+                    f.write("\n")
+                private_key_file = str(key_file_path)
+
         connection_params = {
             "account": conn_params.get("SNOWFLAKE_TEST_ACCOUNT") or conn_params.get("account"),
             "host": conn_params.get("SNOWFLAKE_TEST_HOST") or conn_params.get("host"),
@@ -65,15 +72,15 @@ class TestConfig:
             "warehouse": conn_params.get("SNOWFLAKE_TEST_WAREHOUSE") or conn_params.get("warehouse"),
             "role": conn_params.get("SNOWFLAKE_TEST_ROLE") or conn_params.get("role"),
         }
-        
+
         # Add JWT authentication parameters if private key is provided
         if private_key_file:
             connection_params["authenticator"] = "SNOWFLAKE_JWT"
             connection_params["private_key_file"] = private_key_file
-        
+
         # Process TLS/certificate verification parameters (for WireMock testing)
         _process_tls_parameters(conn_params, connection_params, self.driver_type)
-        
+
         return connection_params
     
     def get_driver_label(self):

@@ -2,7 +2,7 @@ use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::file_utils::create_test_file;
 use crate::common::put_get_common::{assert_file_exists, upload_to_stage};
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 use std::path::Path;
 use tempfile::TempDir;
 

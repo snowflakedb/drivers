@@ -2,8 +2,8 @@
 
 type Result<T> = std::result::Result<T, String>;
 use arrow_array::StringArray;
-use sf_core::protobuf_apis::RustTransport;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::apis::RustTransport;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 use std::fs;
 
@@ -44,7 +44,16 @@ pub fn create_connection(
 
     // Use JWT key-pair authentication
     set_connection_option(&conn_handle, "authenticator", "SNOWFLAKE_JWT")?;
-    let private_key_file = write_private_key_to_file(&params.private_key_contents)?;
+
+    // First check if a private key file path is provided, otherwise create from contents
+    let private_key_file = if let Some(ref key_file_path) = params.private_key_file {
+        key_file_path.clone()
+    } else if let Some(ref key_contents) = params.private_key_contents {
+        write_private_key_to_file(key_contents)?
+    } else {
+        return Err("Neither SNOWFLAKE_TEST_PRIVATE_KEY_FILE nor SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS provided".to_string());
+    };
+
     set_connection_option(&conn_handle, "private_key_file", &private_key_file)?;
     if let Some(password) = &params.private_key_password {
         set_connection_option(&conn_handle, "private_key_password", password)?;

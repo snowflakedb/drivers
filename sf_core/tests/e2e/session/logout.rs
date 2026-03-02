@@ -5,8 +5,8 @@
 //! Core-specific integration tests with mock servers are in tests/integration/session/logout.rs.
 
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::*;
 
 // ===========================================================================
 //                          Token Cleanup
@@ -128,14 +128,13 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
     //And Query is attempted on closed connection
     let result_after = client.execute_query_no_unwrap("SELECT 1");
 
-    //Then Query throws ConnectionClosedException
+    //Then The query fails with a connection-closed error
     assert!(
         result_after.is_err(),
         "Query should fail after close, but got: {:?}",
         result_after
     );
 
-    //And Error message indicates connection is unusable
     let error_msg = result_after.unwrap_err();
     assert!(
         error_msg.contains("closed")

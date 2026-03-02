@@ -43,8 +43,7 @@ Feature: Session Logout
     And Simple query SELECT 1 executes successfully
     When Connection is closed
     And Query is attempted on closed connection
-    Then Query throws ConnectionClosedException
-    And Error message indicates connection is unusable
+    Then The query fails with a connection-closed error
 
   # ===========================================================================
   #                        Process Exit and Thread Management

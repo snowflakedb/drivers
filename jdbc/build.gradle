@@ -58,7 +58,7 @@ dependencies {
 spotless {
     java {
         removeUnusedImports()
-        googleJavaFormat('1.15.0')
+        googleJavaFormat('1.7')
         target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
         targetExclude 'src/**/protobuf_gen/**/*.java'
     }

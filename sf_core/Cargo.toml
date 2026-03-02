@@ -7,8 +7,9 @@ name = "sf_core"
 crate-type = ["dylib", "rlib"]
 
 [features]
-default = []
+default = ["fips", "protobuf"]
 fips = ["rustls/fips"]
+protobuf = ["prost", "proto_utils"]
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
@@ -36,8 +37,8 @@ jwt = { version = "0.16.0", features = ["openssl"] }
 infer = "0.19.0"
 
 # Proto
-prost = "0.14.1"
-proto_utils = { path = "../proto_utils" }
+prost = { version = "0.14.1", optional = true }
+proto_utils = { path = "../proto_utils", optional = true }
 
 # AWS SDK dependencies
 aws-sdk-s3 = "1.103.0"

@@ -32,6 +32,8 @@ pub struct Parameters {
     pub port: Option<i64>,
     #[serde(rename = "SNOWFLAKE_TEST_PROTOCOL")]
     pub protocol: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_FILE")]
+    pub private_key_file: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")]
     pub private_key_contents: Option<Vec<String>>,
     #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")]
