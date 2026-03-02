@@ -662,7 +662,13 @@ fn prepare_logout(
                     refresh_ctx: refresh_ctx_result?,
                 })
             }
-            _ => None,
+            _ => {
+                // Connection was never fully initialized, skip logout
+                tracing::debug!(
+                    "Connection missing required fields (http_client, server_url, or client_info), skipping logout"
+                );
+                None
+            }
         }
     } else {
         None
