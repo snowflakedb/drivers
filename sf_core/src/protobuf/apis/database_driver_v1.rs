@@ -19,6 +19,9 @@ use crate::apis::database_driver_v1::{
     statement_execute_query, statement_new, statement_prepare, statement_release,
     statement_set_option, statement_set_sql_query,
 };
+// TODO: Uncomment when implementing Step 3 protobuf handlers
+// use crate::apis::database_driver_v1::{QueryStatus, QueryStatusInfo};
+// use crate::apis::database_driver_v1::{connection_get_query_status, connection_fetch_async_results};
 use crate::config::config_manager;
 use crate::protobuf::generated::database_driver_v1::*;
 use arrow::ffi::FFI_ArrowArray;
@@ -856,6 +859,39 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Err(not_implemented(
             "statement_read_partition is not yet implemented",
         ))
+    }
+
+    #[instrument(name = "DatabaseDriverV1::statement_execute_async")]
+    fn statement_execute_async(
+        _input: StatementExecuteAsyncRequest,
+    ) -> Result<StatementExecuteAsyncResponse, DriverException> {
+        // TODO: Implement in Step 2 - statement convenience functions
+        Err(to_driver_exception(ApiError::InvalidArgument {
+            argument: "statement_execute_async not yet implemented".to_string(),
+            location: snafu::Location::new(file!(), line!(), 0),
+        }))
+    }
+
+    #[instrument(name = "DatabaseDriverV1::statement_get_query_status")]
+    fn statement_get_query_status(
+        _input: StatementGetQueryStatusRequest,
+    ) -> Result<StatementGetQueryStatusResponse, DriverException> {
+        // TODO: Implement in Step 2 - statement convenience functions
+        Err(to_driver_exception(ApiError::InvalidArgument {
+            argument: "statement_get_query_status not yet implemented".to_string(),
+            location: snafu::Location::new(file!(), line!(), 0),
+        }))
+    }
+
+    #[instrument(name = "DatabaseDriverV1::statement_fetch_results_by_query_id")]
+    fn statement_fetch_results_by_query_id(
+        _input: StatementFetchResultsByQueryIdRequest,
+    ) -> Result<StatementFetchResultsByQueryIdResponse, DriverException> {
+        // TODO: Implement in Step 2 - statement convenience functions
+        Err(to_driver_exception(ApiError::InvalidArgument {
+            argument: "statement_fetch_results_by_query_id not yet implemented".to_string(),
+            location: snafu::Location::new(file!(), line!(), 0),
+        }))
     }
 
     #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(_input))]

@@ -424,6 +424,105 @@ class SnowflakeCursorBase(abc.ABC):
         self.execute(operation, transposed)
 
     # ------------------------------------------------------------------
+    # Async query lifecycle methods
+    # ------------------------------------------------------------------
+
+    def execute_async(
+        self,
+        operation: str,
+        parameters: Sequence[Any] | dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """
+        Submit an async query and return immediately without blocking.
+
+        This is the first step in the async query lifecycle:
+        1. execute_async() - Returns immediately with query_id
+        2. connection.get_query_status(query_id) - Check query status
+        3. get_results_from_sfqid(query_id) - Retrieve results when ready
+
+        Args:
+            operation (str): SQL statement to execute
+            parameters (sequence or dict): Parameters for the operation
+
+        Returns:
+            dict: Dictionary with 'queryId' key containing the query ID
+
+        Raises:
+            ProgrammingError: If the query submission fails
+        """
+        from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+            StatementExecuteAsyncRequest,
+        )
+
+        query, bindings = self._prepare_query(operation, parameters)
+
+        stmt_handle = self._connection.db_api.statement_new(
+            StatementNewRequest(conn_handle=self._connection.conn_handle)
+        ).stmt_handle
+        self._connection.db_api.statement_set_sql_query(
+            StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
+        )
+
+        request = StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
+
+        response = self._connection.db_api.statement_execute_async(request)
+
+        # Keep binding data reference to prevent garbage collection
+        self._binding_data = None
+
+        # Core handles all URL tracking - just return query_id
+        return {"queryId": response.query_id}
+
+    def get_results_from_sfqid(self, query_id: str) -> SnowflakeCursorBase:
+        """
+        Fetch results for an async query, polling until completion.
+
+        This is the third step in the async query lifecycle:
+        1. execute_async() - Returns immediately with query_id
+        2. connection.get_query_status(query_id) - Check query status
+        3. get_results_from_sfqid() - Retrieve results when ready (this method)
+
+        Args:
+            query_id (str): Query ID returned from execute_async()
+
+        Returns:
+            SnowflakeCursorBase: This cursor positioned to read results
+
+        Raises:
+            ProgrammingError: If query_id is not found or query failed
+        """
+        from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+            StatementFetchResultsByQueryIdRequest,
+        )
+
+        # Core tracks URL mapping internally - just pass query_id
+        stmt_handle = self._connection.db_api.statement_new(
+            StatementNewRequest(conn_handle=self._connection.conn_handle)
+        ).stmt_handle
+
+        request = StatementFetchResultsByQueryIdRequest(
+            stmt_handle=stmt_handle,
+            query_id=query_id,
+        )
+
+        self.execute_result = self._connection.db_api.statement_fetch_results_by_query_id(request).result
+
+        # Reset streaming state for the new result
+        self._binding_data = None
+        self._reader = None
+        self._current_batch = None
+        self._current_row_in_batch = 0
+
+        # Set description and rowcount from execute result
+        self._description = [ResultMetadata.from_column(col) for col in self.execute_result.columns]
+        if self.execute_result.HasField("rows_affected"):
+            self._rowcount = self.execute_result.rows_affected
+        else:
+            self._rowcount = None
+
+        return self
+
+    # ------------------------------------------------------------------
     # Arrow stream helpers
     # ------------------------------------------------------------------
 
@@ -714,16 +813,6 @@ class SnowflakeCursorBase(abc.ABC):
         """Snowflake does not support lastrowid; returns None per PEP 249."""
         return None
 
-    def execute_async(
-        self,
-        command: str,
-        params: Sequence[Any] | dict[str, Any] | None = None,
-        timeout: int | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Execute a query asynchronously without waiting for results."""
-        raise NotImplementedError("execute_async is not yet implemented")
-
     def describe(
         self,
         command: str,
@@ -766,10 +855,6 @@ class SnowflakeCursorBase(abc.ABC):
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
         raise NotImplementedError("abort_query is not yet implemented")
-
-    def get_results_from_sfqid(self, sfqid: str) -> None:
-        """Get results from a previously executed async query."""
-        raise NotImplementedError("get_results_from_sfqid is not yet implemented")
 
     def get_result_batches(self) -> list[Any] | None:
         """Get the previously executed query's ResultBatches if available."""

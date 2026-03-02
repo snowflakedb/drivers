@@ -538,6 +538,46 @@ message StatementExecuteQueryResponse {
   ExecuteResult result = 1;
 }
 
+// Async query lifecycle messages
+
+message StatementExecuteAsyncRequest {
+  StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;
+}
+
+message StatementExecuteAsyncResponse {
+  string query_id = 1;
+  optional string get_result_url = 2;
+}
+
+enum QueryStatus {
+  QUERY_STATUS_UNSPECIFIED = 0;
+  QUERY_STATUS_RUNNING = 1;
+  QUERY_STATUS_SUCCESS = 2;
+  QUERY_STATUS_FAILED = 3;
+}
+
+message StatementGetQueryStatusRequest {
+  StatementHandle stmt_handle = 1;
+  string query_id = 2;
+}
+
+message StatementGetQueryStatusResponse {
+  string query_id = 1;
+  QueryStatus status = 2;
+  optional string error_code = 3;
+  optional string error_message = 4;
+}
+
+message StatementFetchResultsByQueryIdRequest {
+  StatementHandle stmt_handle = 1;
+  string query_id = 2;
+}
+
+message StatementFetchResultsByQueryIdResponse {
+  ExecuteResult result = 1;
+}
+
 message StatementExecutePartitionsRequest {
   StatementHandle stmt_handle = 1;
 }
@@ -632,6 +672,11 @@ service DatabaseDriver {
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
+
+  // Async query lifecycle operations
+  rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
+  rpc StatementGetQueryStatus(StatementGetQueryStatusRequest) returns (StatementGetQueryStatusResponse);
+  rpc StatementFetchResultsByQueryId(StatementFetchResultsByQueryIdRequest) returns (StatementFetchResultsByQueryIdResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);

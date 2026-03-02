@@ -193,6 +193,8 @@ pub struct Connection {
     pub init_session_parameters: Option<HashMap<String, String>>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
+    /// Mapping of query_id to get_result_url for async queries
+    pub async_query_urls: Arc<RwLock<HashMap<String, String>>>,
     /// Flag indicating if connection has been closed
     pub is_closed: Arc<AtomicBool>,
 
@@ -218,6 +220,7 @@ impl Connection {
             session_parameters: Arc::new(RwLock::new(HashMap::new())),
             init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
+            async_query_urls: Arc::new(RwLock::new(HashMap::new())),
             is_closed: Arc::new(AtomicBool::new(false)),
             logout_config: LogoutConfig::default(),
         }
@@ -793,6 +796,290 @@ pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
         tracing::info!("Connection closed successfully");
     }
     logout_result
+}
+
+/// Query status information returned from async query status checks.
+#[derive(Debug, Clone)]
+pub struct QueryStatusInfo {
+    pub query_id: String,
+    pub status: QueryStatus,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+/// Query execution status
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueryStatus {
+    Running,
+    Success,
+    Failed,
+}
+
+/// Check the status of an async query (CONNECTION-level API).
+///
+/// This is the PRIMARY API for checking async query status. Query lifecycle
+/// is independent of statement lifecycle - queries outlive statements.
+///
+/// This matches all legacy drivers:
+/// - Python: `connection.get_query_status(query_id)`
+/// - JDBC: `session.getQueryStatus(queryID)`
+/// - Go: Session-level status checks
+///
+/// # Architecture
+///
+/// Query status is a CONNECTION concern, not a statement concern:
+/// - Connection owns the session
+/// - Session owns the queries
+/// - Query can outlive statement (Fire-and-Forget pattern)
+///
+/// # Usage
+///
+/// ```ignore
+/// // Submit async query (via any statement)
+/// let result = statement_execute_async_non_blocking(...)?;
+/// let query_id = result.query_id;
+///
+/// // Check status via CONNECTION (statement can be dropped)
+/// let status = connection_get_query_status(conn_handle, &query_id)?;
+/// ```
+///
+/// # Token Refresh
+///
+/// Automatically refreshes the session token if it expires (390112 error).
+///
+/// # Errors
+///
+/// Returns `ApiError` for invalid handles, unknown query_id, HTTP errors,
+/// or token refresh failures.
+pub fn connection_get_query_status(
+    conn_handle: Handle,
+    query_id: &str,
+) -> Result<QueryStatusInfo, ApiError> {
+    let conn_ptr = CONN_HANDLE_MANAGER.get_obj(conn_handle).ok_or_else(|| {
+        InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .build()
+    })?;
+
+    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+
+    let (http_client, client_info, retry_policy, url_map) = {
+        let conn = conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
+        (
+            conn.http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            conn.client_info
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            conn.retry_policy.clone(),
+            conn.async_query_urls.clone(),
+        )
+    };
+
+    // Retrieve get_result_url from the connection's mapping
+    let get_result_url = {
+        let url_map_guard = url_map.read().map_err(|_| ConnectionLockingSnafu.build())?;
+        url_map_guard.get(query_id).cloned().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: format!(
+                    "Query ID {} not found in async query URL mapping. \
+                     This query may not have been submitted via execute_async() \
+                     or may have already been fetched.",
+                    query_id
+                ),
+            }
+            .build()
+        })?
+    };
+
+    let response = rt.block_on(async {
+        let mut ctx = RefreshContext::from_arc(&conn_ptr)?;
+        let mut last_error = None;
+        loop {
+            let session_token = ctx.refresh_token(last_error).await?;
+            match crate::rest::snowflake::async_exec::get_query_status_by_id(
+                &http_client,
+                &client_info,
+                &session_token,
+                &get_result_url,
+                &retry_policy,
+            )
+            .await
+            {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    last_error = Some(crate::rest::snowflake::RestError::AsyncQuery {
+                        source: e,
+                        location: snafu::Location::new(file!(), line!(), 0),
+                    });
+                }
+            }
+        }
+    })?;
+
+    // Determine status from response
+    let status = if response.success {
+        // Check if query is still running (has get_result_url but no data)
+        let has_data = response.data.rowset.is_some()
+            || response.data.rowset_base64.is_some()
+            || response
+                .data
+                .chunks
+                .as_ref()
+                .map(|c| !c.is_empty())
+                .unwrap_or(false);
+        if !has_data && response.data.get_result_url.is_some() {
+            QueryStatus::Running
+        } else {
+            QueryStatus::Success
+        }
+    } else {
+        // Check if query is still running (has get_result_url in failure response)
+        if response.data.get_result_url.is_some() {
+            QueryStatus::Running
+        } else {
+            QueryStatus::Failed
+        }
+    };
+
+    Ok(QueryStatusInfo {
+        query_id: query_id.to_string(),
+        status,
+        error_code: response.code,
+        error_message: response.message,
+    })
+}
+
+/// Fetch results for an async query, polling until completion (CONNECTION-level API).
+///
+/// This is the PRIMARY API for fetching async query results. Query lifecycle
+/// is independent of statement lifecycle - can fetch results even after
+/// statement is dropped.
+///
+/// # Architecture
+///
+/// This is a connection-level operation because:
+/// - Query is tracked by connection (session)
+/// - Query can outlive statement that submitted it
+/// - Matches legacy driver patterns (connection-level result fetching)
+///
+/// # Polling Strategy
+///
+/// Uses exponential backoff:
+/// - Initial burst: 5ms → 10ms → 20ms → 40ms (for fast queries)
+/// - Exponential: Base 5ms, factor 2.0, cap 5000ms
+///
+/// # Registry Cleanup
+///
+/// After successful fetch, the query_id is:
+/// - Unregistered from AsyncQueryRegistry (Fire-and-Forget tracking)
+/// - Removed from URL mapping (cleanup)
+///
+/// # Token Refresh
+///
+/// Automatically refreshes the session token if it expires (390112 error).
+///
+/// # Errors
+///
+/// Returns `ApiError` for invalid handles, unknown query_id, query errors,
+/// deadline exceeded, or token refresh failures.
+pub fn connection_fetch_async_results(
+    conn_handle: Handle,
+    query_id: &str,
+) -> Result<crate::rest::snowflake::query_response::Response, ApiError> {
+    let conn_ptr = CONN_HANDLE_MANAGER.get_obj(conn_handle).ok_or_else(|| {
+        InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .build()
+    })?;
+
+    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+
+    let (http_client, client_info, retry_policy, registry, url_map) = {
+        let conn = conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
+        (
+            conn.http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            conn.client_info
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            conn.retry_policy.clone(),
+            conn.async_query_registry.clone(),
+            conn.async_query_urls.clone(),
+        )
+    };
+
+    // Retrieve get_result_url from the connection's mapping
+    let get_result_url = {
+        let url_map_guard = url_map.read().map_err(|_| ConnectionLockingSnafu.build())?;
+        url_map_guard.get(query_id).cloned().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: format!(
+                    "Query ID {} not found in async query URL mapping. \
+                     This query may not have been submitted via execute_async() \
+                     or may have already been fetched.",
+                    query_id
+                ),
+            }
+            .build()
+        })?
+    };
+
+    let response = rt.block_on(async {
+        let mut ctx = RefreshContext::from_arc(&conn_ptr)?;
+        let mut last_error = None;
+        loop {
+            let session_token = ctx.refresh_token(last_error).await?;
+            match crate::rest::snowflake::async_exec::fetch_results_by_query_id(
+                &http_client,
+                &client_info,
+                &session_token,
+                &get_result_url,
+                &retry_policy,
+            )
+            .await
+            {
+                Ok(resp) => {
+                    // Unregister from AsyncQueryRegistry (Fire-and-Forget tracking)
+                    if let Err(e) = registry.unregister(query_id) {
+                        tracing::warn!(
+                            query_id,
+                            error = ?e,
+                            "Failed to unregister async query"
+                        );
+                    }
+
+                    // Remove query_id → URL mapping after successful fetch
+                    if let Ok(mut url_map_guard) = url_map.write() {
+                        url_map_guard.remove(query_id);
+                    } else {
+                        tracing::warn!(
+                            query_id,
+                            "Failed to acquire write lock for URL mapping cleanup"
+                        );
+                    }
+
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    last_error = Some(crate::rest::snowflake::RestError::AsyncQuery {
+                        source: e,
+                        location: snafu::Location::new(file!(), line!(), 0),
+                    });
+                }
+            }
+        }
+    })?;
+
+    Ok(response)
 }
 
 #[cfg(test)]

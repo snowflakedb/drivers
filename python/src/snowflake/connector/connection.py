@@ -743,23 +743,105 @@ class Connection:
         """The current Snowflake server version string."""
         raise NotImplementedError("snowflake_version is not yet implemented")
 
-    def get_query_status(self, sf_qid: str) -> Any:
-        """Retrieve the status of query with sf_qid."""
-        raise NotImplementedError("get_query_status is not yet implemented")
+    def get_query_status(self, sf_qid: str) -> dict[str, Any]:
+        """Retrieve the status of query with sf_qid.
 
-    def get_query_status_throw_if_error(self, sf_qid: str) -> Any:
-        """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
-        raise NotImplementedError("get_query_status_throw_if_error is not yet implemented")
+        Args:
+            sf_qid (str): Snowflake query ID
+
+        Returns:
+            dict: Status response in old driver format:
+                {'queries': [{'status': 'RUNNING'|'SUCCESS'|'FAILED_WITH_ERROR', ...}]}
+
+        Raises:
+            ProgrammingError: If query_id is not found in async registry
+        """
+        from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+            QueryStatus,
+            StatementGetQueryStatusRequest,
+            StatementNewRequest,
+        )
+
+        # Core tracks URL mapping internally - just pass query_id
+        stmt_handle = self.db_api.statement_new(StatementNewRequest(conn_handle=self.conn_handle)).stmt_handle
+
+        request = StatementGetQueryStatusRequest(
+            stmt_handle=stmt_handle,
+            query_id=sf_qid,
+        )
+
+        response = self.db_api.statement_get_query_status(request)
+
+        # Map protobuf status to old driver format
+        if response.status == QueryStatus.QUERY_STATUS_RUNNING:
+            status_str = "RUNNING"
+        elif response.status == QueryStatus.QUERY_STATUS_SUCCESS:
+            status_str = "SUCCESS"
+        elif response.status == QueryStatus.QUERY_STATUS_FAILED:
+            status_str = "FAILED_WITH_ERROR"
+        else:
+            status_str = "UNKNOWN"
+
+        return {
+            "queries": [
+                {
+                    "id": response.query_id,
+                    "status": status_str,
+                    "errorCode": response.error_code if response.HasField("error_code") else None,
+                    "errorMessage": response.error_message if response.HasField("error_message") else None,
+                }
+            ]
+        }
+
+    def get_query_status_throw_if_error(self, sf_qid: str) -> dict[str, Any]:
+        """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error.
+
+        Args:
+            sf_qid (str): Snowflake query ID
+
+        Returns:
+            dict: Status response in old driver format
+
+        Raises:
+            ProgrammingError: If query failed or query_id is not found
+        """
+        status = self.get_query_status(sf_qid)
+        if self.is_an_error(status):
+            error_info = status["queries"][0]
+            error_code = error_info.get("errorCode", "unknown")
+            error_message = error_info.get("errorMessage", "Query failed")
+            raise ProgrammingError(f"Query {sf_qid} failed with error {error_code}: {error_message}")
+        return status
 
     @staticmethod
-    def is_still_running(status: Any) -> bool:
-        """Check whether given status is currently running."""
-        raise NotImplementedError("is_still_running is not yet implemented")
+    def is_still_running(status: dict[str, Any]) -> bool:
+        """Check whether given status is currently running.
+
+        Args:
+            status: Status response from get_query_status()
+
+        Returns:
+            bool: True if query is still running, False otherwise
+        """
+        if "queries" in status and len(status["queries"]) > 0:
+            query_status: str = cast(str, status["queries"][0].get("status", ""))
+            return query_status == "RUNNING"
+        return False
 
     @staticmethod
-    def is_an_error(status: Any) -> bool:
-        """Check whether given status means that there has been an error."""
-        raise NotImplementedError("is_an_error is not yet implemented")
+    def is_an_error(status: dict[str, Any]) -> bool:
+        """Check whether given status means that there has been an error.
+
+        Args:
+            status: Status response from get_query_status()
+
+        Returns:
+            bool: True if query failed, False otherwise
+        """
+        if "queries" in status and len(status["queries"]) > 0:
+            query_status: str = cast(str, status["queries"][0].get("status", ""))
+            return query_status == "FAILED_WITH_ERROR"
+        return False
 
 
 # Backward compatibility alias

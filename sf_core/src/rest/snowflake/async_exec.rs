@@ -618,6 +618,148 @@ fn handle_poll_response(
     Err(snowflake_failure(&resp, is_first_poll))
 }
 
+/// Submit an async query and return immediately without blocking.
+///
+/// This is a thin wrapper around `submit_statement_async()` that exposes
+/// the async submission to external callers. The query is submitted with
+/// `asyncExec=true` and the function returns immediately with the query_id
+/// and get_result_url for subsequent polling.
+///
+/// # Usage
+///
+/// This function is the first step in the async query lifecycle:
+/// 1. **Submit** (this function) - Returns immediately with query_id
+/// 2. **Poll** (`get_query_status_by_id()`) - Check query status independently
+/// 3. **Fetch** (`fetch_results_by_query_id()`) - Retrieve results when ready
+///
+/// # Registry Integration
+///
+/// The caller should register the returned query_id in the AsyncQueryRegistry
+/// for Fire-and-Forget semantics. Registry registration should happen after
+/// successful submission and failures should be logged but not propagated.
+///
+/// # Returns
+///
+/// Returns `SubmitOk` containing:
+/// - `query_id`: Snowflake query identifier for status checks and result fetching
+/// - `get_result_url`: URL for polling query status
+/// - `response`: Full query response (may contain immediate results for fast queries)
+///
+/// # Errors
+///
+/// Returns `SfError` for HTTP failures, transport errors, or invalid responses.
+/// SessionExpired (390112) errors should be handled by the caller with token refresh.
+pub async fn submit_async_non_blocking(
+    client: &reqwest::Client,
+    params: &QueryParameters,
+    session_token: &str,
+    sql: String,
+    parameter_bindings: Option<&RawValue>,
+    request_id: uuid::Uuid,
+    policy: &RetryPolicy,
+) -> Result<SubmitOk, SfError> {
+    submit_statement_async(
+        client,
+        params,
+        session_token,
+        sql,
+        parameter_bindings,
+        request_id,
+        policy,
+    )
+    .await
+}
+
+/// Check the status of an async query without blocking.
+///
+/// Performs a single HTTP poll to the query's result URL to check its current
+/// status. This function does NOT loop or wait - it returns immediately with
+/// the current state.
+///
+/// # Usage
+///
+/// This is the second step in the async query lifecycle:
+/// 1. **Submit** (`submit_async_non_blocking()`) - Returns immediately with query_id
+/// 2. **Poll** (this function) - Check query status independently
+/// 3. **Fetch** (`fetch_results_by_query_id()`) - Retrieve results when ready
+///
+/// The caller should implement their own polling loop with appropriate delays.
+/// See `wait_for_completion()` for the recommended exponential backoff strategy.
+///
+/// # Response Interpretation
+///
+/// The response indicates query state:
+/// - `success=true` with tabular data: Query completed successfully, results available
+/// - `success=true` with get_result_url but no data: Query still running, poll again
+/// - `success=false` with get_result_url: Query still running, poll again
+/// - `success=false` without get_result_url: Query failed, error in code/message
+///
+/// # Errors
+///
+/// Returns `SfError` for HTTP failures, transport errors, or invalid responses.
+/// SessionExpired (390112) errors should be handled by the caller with token refresh.
+pub async fn get_query_status_by_id(
+    client: &reqwest::Client,
+    client_info: &ClientInfo,
+    session_token: &str,
+    get_result_url: &str,
+    policy: &RetryPolicy,
+) -> Result<query_response::Response, SfError> {
+    poll_query_status(client, client_info, session_token, get_result_url, policy).await
+}
+
+/// Fetch results for an async query, polling until completion.
+///
+/// Polls the query result URL with exponential backoff until the query completes
+/// (either successfully with results or with a terminal error). This function
+/// blocks until the query finishes.
+///
+/// # Usage
+///
+/// This is the third step in the async query lifecycle:
+/// 1. **Submit** (`submit_async_non_blocking()`) - Returns immediately with query_id
+/// 2. **Poll** (`get_query_status_by_id()`) - Check query status independently
+/// 3. **Fetch** (this function) - Retrieve results when ready
+///
+/// # Polling Strategy
+///
+/// Uses exponential backoff with the following delays:
+/// - Initial burst: 5ms → 10ms → 20ms → 40ms (inline polling for fast queries)
+/// - Exponential: Starts at `policy.backoff.base` (typically 5ms), multiplied by
+///   `policy.backoff.factor` (typically 2.0) on each poll, capped at
+///   `policy.backoff.cap` (typically 5000ms)
+///
+/// # Registry Cleanup
+///
+/// The caller should unregister the query_id from the AsyncQueryRegistry after
+/// successful fetch. Registry failures should be logged but not propagated.
+///
+/// # Returns
+///
+/// Returns the final `query_response::Response` containing:
+/// - `success`: True if query completed successfully
+/// - `data`: Query results (rowset, chunks, etc.)
+/// - `code`/`message`: Error details if query failed
+///
+/// # Errors
+///
+/// Returns `SfError` for:
+/// - HTTP failures or transport errors during polling
+/// - Query execution errors (returned by Snowflake)
+/// - Deadline exceeded if `policy.max_elapsed` is reached
+/// - SessionExpired (390112) errors (caller should handle with token refresh)
+pub async fn fetch_results_by_query_id(
+    client: &reqwest::Client,
+    client_info: &ClientInfo,
+    session_token: &str,
+    get_result_url: &str,
+    policy: &RetryPolicy,
+) -> Result<query_response::Response, SfError> {
+    let (response, _polls) =
+        wait_for_completion(client, client_info, session_token, get_result_url, policy).await?;
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

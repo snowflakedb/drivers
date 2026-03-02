@@ -69,6 +69,11 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.ConnectionSetOptionDoubleResponse connectionSetOptionDouble(DatabaseDriverV1.ConnectionSetOptionDoubleRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: connectionSetOptionBool
+     */
+    DatabaseDriverV1.ConnectionSetOptionBoolResponse connectionSetOptionBool(DatabaseDriverV1.ConnectionSetOptionBoolRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: connectionInit
      */
     DatabaseDriverV1.ConnectionInitResponse connectionInit(DatabaseDriverV1.ConnectionInitRequest request) throws ServiceException, TransportException;
@@ -202,6 +207,21 @@ public interface DatabaseDriverService {
      * Method: statementReadPartition
      */
     DatabaseDriverV1.StatementReadPartitionResponse statementReadPartition(DatabaseDriverV1.StatementReadPartitionRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: statementExecuteAsync
+     */
+    DatabaseDriverV1.StatementExecuteAsyncResponse statementExecuteAsync(DatabaseDriverV1.StatementExecuteAsyncRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: statementGetQueryStatus
+     */
+    DatabaseDriverV1.StatementGetQueryStatusResponse statementGetQueryStatus(DatabaseDriverV1.StatementGetQueryStatusRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: statementFetchResultsByQueryId
+     */
+    DatabaseDriverV1.StatementFetchResultsByQueryIdResponse statementFetchResultsByQueryId(DatabaseDriverV1.StatementFetchResultsByQueryIdRequest request) throws ServiceException, TransportException;
 
     /**
      * Method: configLoadAllSections
