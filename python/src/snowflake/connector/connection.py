@@ -48,12 +48,19 @@ ConnectionParameters = dict[str, ConnectionParamValue]
 class Connection:
     """Connection objects represent a database connection."""
 
-    def __init__(self, *, paramstyle: str | None = None, **kwargs: ConnectionParamValue) -> None:
+    def __init__(
+        self,
+        *,
+        paramstyle: str | None = None,
+        autocommit: bool | None = None,
+        **kwargs: ConnectionParamValue,
+    ) -> None:
         """
         Initialize a new connection object.
 
         Args:
             paramstyle: Binding style – ``"pyformat"`` (default), ``"format"``, ``"qmark"`` or ``"numeric"``
+            autocommit: Optional bool to enable/disable autocommit at connection time
             database: Database name
             user: Username
             password: Password
@@ -78,15 +85,9 @@ class Connection:
         # Extract session_parameters before processing other kwargs
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
-        # TODO: _session_parameters should be read from sf_core instead of being tracked locally
-        self._session_parameters: dict[str, Any] = {}
-
-        # Pop autocommit before the type-dispatch loop (bool is a subclass of int)
-        autocommit = kwargs.pop("autocommit", None)
         if autocommit is not None:
             if not isinstance(autocommit, bool):
                 raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
-            self._session_parameters["AUTOCOMMIT"] = autocommit
             if session_params is None:
                 session_params = {}
             session_params["AUTOCOMMIT"] = str(autocommit).lower()
@@ -226,17 +227,13 @@ class Connection:
 
     @property
     def _autocommit(self) -> bool:
-        return bool(self._session_parameters.get("AUTOCOMMIT", False))
-
-    @_autocommit.setter
-    def _autocommit(self, value: bool) -> None:
-        self._session_parameters["AUTOCOMMIT"] = value
+        value = self._get_session_parameter("AUTOCOMMIT")
+        return value is not None and value.lower() == "true"
 
     def set_autocommit(self, autocommit: bool) -> None:
         """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
         if not isinstance(autocommit, bool):
             raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
-        self._autocommit = autocommit
         cur = self.cursor()
         try:
             cur.execute(f"ALTER SESSION SET autocommit={str(autocommit).lower()}")

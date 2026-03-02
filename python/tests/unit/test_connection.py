@@ -23,6 +23,7 @@ def mock_db_api():
     db_api = MagicMock()
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
+    db_api.connection_get_parameter.return_value = MagicMock(value="")
     return db_api
 
 
@@ -94,20 +95,6 @@ class TestSetAutocommitValidation:
 class TestSetAutocommit:
     """Unit tests for set_autocommit behavior."""
 
-    def test_set_autocommit_true_updates_flag(self, connection):
-        """set_autocommit(True) should update the internal _autocommit flag."""
-        connection.cursor = MagicMock(return_value=MagicMock())
-        assert connection._autocommit is False
-        connection.set_autocommit(True)
-        assert connection._autocommit is True
-
-    def test_set_autocommit_false_updates_flag(self, connection):
-        """set_autocommit(False) should update the internal _autocommit flag."""
-        connection.cursor = MagicMock(return_value=MagicMock())
-        connection._autocommit = True
-        connection.set_autocommit(False)
-        assert connection._autocommit is False
-
     def test_set_autocommit_executes_alter_session(self, connection):
         """set_autocommit should execute ALTER SESSION via a cursor."""
         mock_cursor = MagicMock()
@@ -126,8 +113,8 @@ class TestSetAutocommit:
 
         mock_cursor.execute.assert_called_once_with("ALTER SESSION SET autocommit=false")
 
-    def test_set_autocommit_updates_flag_even_when_alter_session_fails(self, connection):
-        """The _autocommit flag should be updated even if ALTER SESSION raises."""
+    def test_set_autocommit_closes_cursor_on_error(self, connection):
+        """The cursor should be closed even if ALTER SESSION raises."""
         from snowflake.connector.errors import Error
 
         mock_cursor = MagicMock()
@@ -136,7 +123,6 @@ class TestSetAutocommit:
 
         connection.set_autocommit(True)
 
-        assert connection._autocommit is True
         mock_cursor.close.assert_called_once()
 
     def test_set_autocommit_closes_cursor(self, connection):
@@ -156,19 +142,10 @@ class TestGetAutocommit:
         """get_autocommit should return False by default."""
         assert connection.get_autocommit() is False
 
-    def test_get_autocommit_reflects_set_autocommit(self, connection):
-        """get_autocommit should return the value last set by set_autocommit."""
-        connection.cursor = MagicMock(return_value=MagicMock())
-        connection.set_autocommit(True)
-        assert connection.get_autocommit() is True
-
-        connection.set_autocommit(False)
+    def test_get_autocommit_reads_from_sf_core(self, connection):
+        """get_autocommit should read from sf_core via _get_session_parameter."""
         assert connection.get_autocommit() is False
-
-    def test_get_autocommit_reads_from_session_parameters(self, connection):
-        """get_autocommit should read from _session_parameters."""
-        assert connection.get_autocommit() is False
-        connection._session_parameters["AUTOCOMMIT"] = True
+        connection.db_api.connection_get_parameter.return_value = MagicMock(value="true")
         assert connection.get_autocommit() is True
 
 
@@ -180,9 +157,8 @@ class TestAutocommitKwargUnit:
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            conn = Connection(user="test_user", account="test_account", autocommit=True)
+            Connection(user="test_user", account="test_account", autocommit=True)
 
-        assert conn.get_autocommit() is True
         call_args = mock_db_api.connection_set_session_parameters.call_args
         params = call_args[0][0].parameters
         assert params["AUTOCOMMIT"] == "true"
@@ -192,9 +168,8 @@ class TestAutocommitKwargUnit:
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            conn = Connection(user="test_user", account="test_account", autocommit=False)
+            Connection(user="test_user", account="test_account", autocommit=False)
 
-        assert conn.get_autocommit() is False
         call_args = mock_db_api.connection_set_session_parameters.call_args
         params = call_args[0][0].parameters
         assert params["AUTOCOMMIT"] == "false"
@@ -207,7 +182,6 @@ class TestAutocommitKwargUnit:
             conn = Connection(user="test_user", account="test_account")
 
         assert conn.get_autocommit() is False
-        # No session parameters should be set at all
         mock_db_api.connection_set_session_parameters.assert_not_called()
 
 
@@ -216,7 +190,7 @@ class TestContextManagerUnit:
 
     def test_exit_skips_commit_when_autocommit_on(self, connection):
         """When autocommit is on, __exit__ should not execute COMMIT or ROLLBACK."""
-        connection._autocommit = True
+        connection.db_api.connection_get_parameter.return_value = MagicMock(value="true")
         connection.commit = MagicMock()
         connection.rollback = MagicMock()
 
@@ -227,7 +201,6 @@ class TestContextManagerUnit:
 
     def test_exit_always_closes(self, connection):
         """close() should be called even if commit raises an exception."""
-        connection._autocommit = False
 
         def failing_commit():
             raise RuntimeError("commit failed")
@@ -241,7 +214,6 @@ class TestContextManagerUnit:
 
     def test_exit_rollback_failure_does_not_mask_original_exception(self, connection):
         """If rollback fails during exception handling, the original exception should propagate."""
-        connection._autocommit = False
 
         def failing_rollback():
             raise RuntimeError("rollback failed")

@@ -63,7 +63,7 @@ class TestConnectionOptionalMethods:
     def test_get_autocommit(self, connection):
         """Test that get_autocommit returns the current setting."""
         assert connection.get_autocommit() is False
-        connection._autocommit = True
+        connection.set_autocommit(True)
         assert connection.get_autocommit() is True
 
 
