@@ -179,7 +179,7 @@ class TestAutocommitKwargUnit:
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            conn = Connection(user="test_user", account="test_account")
+            Connection(user="test_user", account="test_account")
 
         call_args = mock_db_api.connection_set_session_parameters.call_args
         params = call_args[0][0].parameters
