@@ -9398,6 +9398,23 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
      */
     com.google.protobuf.ByteString
         getQueryBytes();
+
+    /**
+     * <code>optional string sql_state = 7;</code>
+     * @return Whether the sqlState field is set.
+     */
+    boolean hasSqlState();
+    /**
+     * <code>optional string sql_state = 7;</code>
+     * @return The sqlState.
+     */
+    java.lang.String getSqlState();
+    /**
+     * <code>optional string sql_state = 7;</code>
+     * @return The bytes for sqlState.
+     */
+    com.google.protobuf.ByteString
+        getSqlStateBytes();
   }
   /**
    * <pre>
@@ -9428,6 +9445,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       queryId_ = "";
       columns_ = java.util.Collections.emptyList();
       query_ = "";
+      sqlState_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -9627,6 +9645,53 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
     }
 
+    public static final int SQL_STATE_FIELD_NUMBER = 7;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object sqlState_ = "";
+    /**
+     * <code>optional string sql_state = 7;</code>
+     * @return Whether the sqlState field is set.
+     */
+    @java.lang.Override
+    public boolean hasSqlState() {
+      return ((bitField0_ & 0x00000008) != 0);
+    }
+    /**
+     * <code>optional string sql_state = 7;</code>
+     * @return The sqlState.
+     */
+    @java.lang.Override
+    public java.lang.String getSqlState() {
+      java.lang.Object ref = sqlState_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        sqlState_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>optional string sql_state = 7;</code>
+     * @return The bytes for sqlState.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getSqlStateBytes() {
+      java.lang.Object ref = sqlState_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        sqlState_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -9659,6 +9724,9 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(query_)) {
         com.google.protobuf.GeneratedMessage.writeString(output, 6, query_);
       }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 7, sqlState_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -9689,6 +9757,9 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       if (!com.google.protobuf.GeneratedMessage.isStringEmpty(query_)) {
         size += com.google.protobuf.GeneratedMessage.computeStringSize(6, query_);
+      }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(7, sqlState_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -9726,6 +9797,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       if (!getQuery()
           .equals(other.getQuery())) return false;
+      if (hasSqlState() != other.hasSqlState()) return false;
+      if (hasSqlState()) {
+        if (!getSqlState()
+            .equals(other.getSqlState())) return false;
+      }
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -9759,6 +9835,10 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       hash = (37 * hash) + QUERY_FIELD_NUMBER;
       hash = (53 * hash) + getQuery().hashCode();
+      if (hasSqlState()) {
+        hash = (37 * hash) + SQL_STATE_FIELD_NUMBER;
+        hash = (53 * hash) + getSqlState().hashCode();
+      }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -9917,6 +9997,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         bitField0_ = (bitField0_ & ~0x00000008);
         statementTypeId_ = 0L;
         query_ = "";
+        sqlState_ = "";
         return this;
       }
 
@@ -9984,6 +10065,10 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         if (((from_bitField0_ & 0x00000020) != 0)) {
           result.query_ = query_;
         }
+        if (((from_bitField0_ & 0x00000040) != 0)) {
+          result.sqlState_ = sqlState_;
+          to_bitField0_ |= 0x00000008;
+        }
         result.bitField0_ |= to_bitField0_;
       }
 
@@ -10042,6 +10127,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         if (!other.getQuery().isEmpty()) {
           query_ = other.query_;
           bitField0_ |= 0x00000020;
+          onChanged();
+        }
+        if (other.hasSqlState()) {
+          sqlState_ = other.sqlState_;
+          bitField0_ |= 0x00000040;
           onChanged();
         }
         this.mergeUnknownFields(other.getUnknownFields());
@@ -10110,6 +10200,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
                 bitField0_ |= 0x00000020;
                 break;
               } // case 50
+              case 58: {
+                sqlState_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000040;
+                break;
+              } // case 58
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -10708,6 +10803,85 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         checkByteStringIsUtf8(value);
         query_ = value;
         bitField0_ |= 0x00000020;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object sqlState_ = "";
+      /**
+       * <code>optional string sql_state = 7;</code>
+       * @return Whether the sqlState field is set.
+       */
+      public boolean hasSqlState() {
+        return ((bitField0_ & 0x00000040) != 0);
+      }
+      /**
+       * <code>optional string sql_state = 7;</code>
+       * @return The sqlState.
+       */
+      public java.lang.String getSqlState() {
+        java.lang.Object ref = sqlState_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          sqlState_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>optional string sql_state = 7;</code>
+       * @return The bytes for sqlState.
+       */
+      public com.google.protobuf.ByteString
+          getSqlStateBytes() {
+        java.lang.Object ref = sqlState_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          sqlState_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>optional string sql_state = 7;</code>
+       * @param value The sqlState to set.
+       * @return This builder for chaining.
+       */
+      public Builder setSqlState(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        sqlState_ = value;
+        bitField0_ |= 0x00000040;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string sql_state = 7;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearSqlState() {
+        sqlState_ = getDefaultInstance().getSqlState();
+        bitField0_ = (bitField0_ & ~0x00000040);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string sql_state = 7;</code>
+       * @param value The bytes for sqlState to set.
+       * @return This builder for chaining.
+       */
+      public Builder setSqlStateBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        sqlState_ = value;
+        bitField0_ |= 0x00000040;
         onChanged();
         return this;
       }
@@ -64336,350 +64510,351 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       "precision\030\003 \001(\003H\000\210\001\001\022\022\n\005scale\030\004 \001(\003H\001\210\001\001" +
       "\022\023\n\006length\030\005 \001(\003H\002\210\001\001\022\030\n\013byte_length\030\006 \001" +
       "(\003H\003\210\001\001\022\020\n\010nullable\030\007 \001(\010B\014\n\n_precisionB" +
-      "\010\n\006_scaleB\t\n\007_lengthB\016\n\014_byte_length\"\202\002\n" +
+      "\010\n\006_scaleB\t\n\007_lengthB\016\n\014_byte_length\"\250\002\n" +
       "\rExecuteResult\0227\n\006stream\030\001 \001(\0132\'.databas" +
       "e_driver_v1.ArrowArrayStreamPtr\022\032\n\rrows_" +
       "affected\030\002 \001(\003H\000\210\001\001\022\020\n\010query_id\030\003 \001(\t\0223\n" +
       "\007columns\030\004 \003(\0132\".database_driver_v1.Colu" +
       "mnMetadata\022\036\n\021statement_type_id\030\005 \001(\003H\001\210" +
-      "\001\001\022\r\n\005query\030\006 \001(\tB\020\n\016_rows_affectedB\024\n\022_" +
-      "statement_type_id\"e\n\021PartitionedResult\022\016" +
-      "\n\006schema\030\001 \001(\003\022\022\n\npartitions\030\002 \003(\014\022\032\n\rro" +
-      "ws_affected\030\003 \001(\003H\000\210\001\001B\020\n\016_rows_affected" +
-      "\"+\n\016DatabaseHandle\022\n\n\002id\030\001 \001(\003\022\r\n\005magic\030" +
-      "\002 \001(\003\"-\n\020ConnectionHandle\022\n\n\002id\030\001 \001(\003\022\r\n" +
-      "\005magic\030\002 \001(\003\",\n\017StatementHandle\022\n\n\002id\030\001 " +
-      "\001(\003\022\r\n\005magic\030\002 \001(\003\"$\n\023ArrowArrayStreamPt" +
-      "r\022\r\n\005value\030\001 \001(\014\"\037\n\016ArrowSchemaPtr\022\r\n\005va" +
-      "lue\030\001 \001(\014\"\036\n\rArrowArrayPtr\022\r\n\005value\030\001 \001(" +
-      "\014\".\n\rBinaryDataPtr\022\r\n\005value\030\001 \001(\014\022\016\n\006len" +
-      "gth\030\002 \001(\003\"\204\001\n\rQueryBindings\0221\n\004json\030\001 \001(" +
-      "\0132!.database_driver_v1.BinaryDataPtrH\000\0220" +
-      "\n\003csv\030\002 \001(\0132!.database_driver_v1.BinaryD" +
-      "ataPtrH\000B\016\n\014binding_type\"\024\n\022DatabaseNewR" +
-      "equest\"L\n\023DatabaseNewResponse\0225\n\tdb_hand" +
-      "le\030\001 \001(\0132\".database_driver_v1.DatabaseHa" +
-      "ndle\"s\n\036DatabaseSetOptionStringRequest\0225" +
-      "\n\tdb_handle\030\001 \001(\0132\".database_driver_v1.D" +
-      "atabaseHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(" +
-      "\t\"!\n\037DatabaseSetOptionStringResponse\"r\n\035" +
-      "DatabaseSetOptionBytesRequest\0225\n\tdb_hand" +
-      "le\030\001 \001(\0132\".database_driver_v1.DatabaseHa" +
-      "ndle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\014\" \n\036Data" +
-      "baseSetOptionBytesResponse\"p\n\033DatabaseSe" +
-      "tOptionIntRequest\0225\n\tdb_handle\030\001 \001(\0132\".d" +
-      "atabase_driver_v1.DatabaseHandle\022\013\n\003key\030" +
-      "\002 \001(\t\022\r\n\005value\030\003 \001(\003\"\036\n\034DatabaseSetOptio" +
-      "nIntResponse\"s\n\036DatabaseSetOptionDoubleR" +
-      "equest\0225\n\tdb_handle\030\001 \001(\0132\".database_dri" +
-      "ver_v1.DatabaseHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005va" +
-      "lue\030\003 \001(\001\"!\n\037DatabaseSetOptionDoubleResp" +
-      "onse\"L\n\023DatabaseInitRequest\0225\n\tdb_handle" +
+      "\001\001\022\r\n\005query\030\006 \001(\t\022\026\n\tsql_state\030\007 \001(\tH\002\210\001" +
+      "\001B\020\n\016_rows_affectedB\024\n\022_statement_type_i" +
+      "dB\014\n\n_sql_state\"e\n\021PartitionedResult\022\016\n\006" +
+      "schema\030\001 \001(\003\022\022\n\npartitions\030\002 \003(\014\022\032\n\rrows" +
+      "_affected\030\003 \001(\003H\000\210\001\001B\020\n\016_rows_affected\"+" +
+      "\n\016DatabaseHandle\022\n\n\002id\030\001 \001(\003\022\r\n\005magic\030\002 " +
+      "\001(\003\"-\n\020ConnectionHandle\022\n\n\002id\030\001 \001(\003\022\r\n\005m" +
+      "agic\030\002 \001(\003\",\n\017StatementHandle\022\n\n\002id\030\001 \001(" +
+      "\003\022\r\n\005magic\030\002 \001(\003\"$\n\023ArrowArrayStreamPtr\022" +
+      "\r\n\005value\030\001 \001(\014\"\037\n\016ArrowSchemaPtr\022\r\n\005valu" +
+      "e\030\001 \001(\014\"\036\n\rArrowArrayPtr\022\r\n\005value\030\001 \001(\014\"" +
+      ".\n\rBinaryDataPtr\022\r\n\005value\030\001 \001(\014\022\016\n\006lengt" +
+      "h\030\002 \001(\003\"\204\001\n\rQueryBindings\0221\n\004json\030\001 \001(\0132" +
+      "!.database_driver_v1.BinaryDataPtrH\000\0220\n\003" +
+      "csv\030\002 \001(\0132!.database_driver_v1.BinaryDat" +
+      "aPtrH\000B\016\n\014binding_type\"\024\n\022DatabaseNewReq" +
+      "uest\"L\n\023DatabaseNewResponse\0225\n\tdb_handle" +
       "\030\001 \001(\0132\".database_driver_v1.DatabaseHand" +
-      "le\"\026\n\024DatabaseInitResponse\"O\n\026DatabaseRe" +
-      "leaseRequest\0225\n\tdb_handle\030\001 \001(\0132\".databa" +
-      "se_driver_v1.DatabaseHandle\"\031\n\027DatabaseR" +
-      "eleaseResponse\"\026\n\024ConnectionNewRequest\"R" +
-      "\n\025ConnectionNewResponse\0229\n\013conn_handle\030\001" +
-      " \001(\0132$.database_driver_v1.ConnectionHand" +
-      "le\"y\n ConnectionSetOptionStringRequest\0229" +
-      "\n\013conn_handle\030\001 \001(\0132$.database_driver_v1" +
-      ".ConnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030" +
-      "\003 \001(\t\"#\n!ConnectionSetOptionStringRespon" +
-      "se\"x\n\037ConnectionSetOptionBytesRequest\0229\n" +
-      "\013conn_handle\030\001 \001(\0132$.database_driver_v1." +
-      "ConnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003" +
-      " \001(\014\"\"\n ConnectionSetOptionBytesResponse" +
-      "\"v\n\035ConnectionSetOptionIntRequest\0229\n\013con" +
-      "n_handle\030\001 \001(\0132$.database_driver_v1.Conn" +
-      "ectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\003" +
-      "\" \n\036ConnectionSetOptionIntResponse\"y\n Co" +
-      "nnectionSetOptionDoubleRequest\0229\n\013conn_h" +
-      "andle\030\001 \001(\0132$.database_driver_v1.Connect" +
-      "ionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\001\"#\n" +
-      "!ConnectionSetOptionDoubleResponse\"\211\001\n\025C" +
-      "onnectionInitRequest\0229\n\013conn_handle\030\001 \001(" +
-      "\0132$.database_driver_v1.ConnectionHandle\022" +
-      "5\n\tdb_handle\030\002 \001(\0132\".database_driver_v1." +
-      "DatabaseHandle\"\030\n\026ConnectionInitResponse" +
-      "\"U\n\030ConnectionReleaseRequest\0229\n\013conn_han" +
-      "dle\030\001 \001(\0132$.database_driver_v1.Connectio" +
-      "nHandle\"\033\n\031ConnectionReleaseResponse\"\207\001\n" +
-      "\030ConnectionGetInfoRequest\0229\n\013conn_handle" +
-      "\030\001 \001(\0132$.database_driver_v1.ConnectionHa" +
-      "ndle\0220\n\ninfo_codes\030\002 \003(\0162\034.database_driv" +
-      "er_v1.InfoCode\"\321\001\n\031ConnectionGetInfoResp" +
-      "onse\022\021\n\004host\030\001 \001(\tH\000\210\001\001\022\021\n\004port\030\002 \001(\003H\001\210" +
-      "\001\001\022\027\n\nserver_url\030\003 \001(\tH\002\210\001\001\022\032\n\rsession_t" +
-      "oken\030\004 \001(\tH\003\210\001\001\022\027\n\nsession_id\030\005 \001(\003H\004\210\001\001" +
-      "B\007\n\005_hostB\007\n\005_portB\r\n\013_server_urlB\020\n\016_se" +
-      "ssion_tokenB\r\n\013_session_id\"\225\002\n\033Connectio" +
-      "nGetObjectsRequest\0229\n\013conn_handle\030\001 \001(\0132" +
-      "$.database_driver_v1.ConnectionHandle\022\r\n" +
-      "\005depth\030\002 \001(\005\022\024\n\007catalog\030\003 \001(\tH\000\210\001\001\022\026\n\tdb" +
-      "_schema\030\004 \001(\tH\001\210\001\001\022\027\n\ntable_name\030\005 \001(\tH\002" +
-      "\210\001\001\022\022\n\ntable_type\030\006 \003(\t\022\030\n\013column_name\030\007" +
-      " \001(\tH\003\210\001\001B\n\n\010_catalogB\014\n\n_db_schemaB\r\n\013_" +
-      "table_nameB\016\n\014_column_name\"4\n\034Connection" +
-      "GetObjectsResponse\022\024\n\014objects_data\030\001 \001(\014" +
-      "\"\270\001\n\037ConnectionGetTableSchemaRequest\0229\n\013" +
-      "conn_handle\030\001 \001(\0132$.database_driver_v1.C" +
-      "onnectionHandle\022\024\n\007catalog\030\002 \001(\tH\000\210\001\001\022\026\n" +
-      "\tdb_schema\030\003 \001(\tH\001\210\001\001\022\022\n\ntable_name\030\004 \001(" +
-      "\tB\n\n\010_catalogB\014\n\n_db_schema\"7\n Connectio" +
-      "nGetTableSchemaResponse\022\023\n\013schema_data\030\001" +
-      " \001(\014\"[\n\036ConnectionGetTableTypesRequest\0229" +
-      "\n\013conn_handle\030\001 \001(\0132$.database_driver_v1" +
-      ".ConnectionHandle\";\n\037ConnectionGetTableT" +
-      "ypesResponse\022\030\n\020table_types_data\030\001 \001(\014\"T" +
-      "\n\027ConnectionCommitRequest\0229\n\013conn_handle" +
-      "\030\001 \001(\0132$.database_driver_v1.ConnectionHa" +
-      "ndle\"\032\n\030ConnectionCommitResponse\"V\n\031Conn" +
-      "ectionRollbackRequest\0229\n\013conn_handle\030\001 \001" +
+      "le\"s\n\036DatabaseSetOptionStringRequest\0225\n\t" +
+      "db_handle\030\001 \001(\0132\".database_driver_v1.Dat" +
+      "abaseHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\t\"" +
+      "!\n\037DatabaseSetOptionStringResponse\"r\n\035Da" +
+      "tabaseSetOptionBytesRequest\0225\n\tdb_handle" +
+      "\030\001 \001(\0132\".database_driver_v1.DatabaseHand" +
+      "le\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\014\" \n\036Databa" +
+      "seSetOptionBytesResponse\"p\n\033DatabaseSetO" +
+      "ptionIntRequest\0225\n\tdb_handle\030\001 \001(\0132\".dat" +
+      "abase_driver_v1.DatabaseHandle\022\013\n\003key\030\002 " +
+      "\001(\t\022\r\n\005value\030\003 \001(\003\"\036\n\034DatabaseSetOptionI" +
+      "ntResponse\"s\n\036DatabaseSetOptionDoubleReq" +
+      "uest\0225\n\tdb_handle\030\001 \001(\0132\".database_drive" +
+      "r_v1.DatabaseHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005valu" +
+      "e\030\003 \001(\001\"!\n\037DatabaseSetOptionDoubleRespon" +
+      "se\"L\n\023DatabaseInitRequest\0225\n\tdb_handle\030\001" +
+      " \001(\0132\".database_driver_v1.DatabaseHandle" +
+      "\"\026\n\024DatabaseInitResponse\"O\n\026DatabaseRele" +
+      "aseRequest\0225\n\tdb_handle\030\001 \001(\0132\".database" +
+      "_driver_v1.DatabaseHandle\"\031\n\027DatabaseRel" +
+      "easeResponse\"\026\n\024ConnectionNewRequest\"R\n\025" +
+      "ConnectionNewResponse\0229\n\013conn_handle\030\001 \001" +
       "(\0132$.database_driver_v1.ConnectionHandle" +
-      "\"\034\n\032ConnectionRollbackResponse\"\364\001\n%Conne" +
-      "ctionSetSessionParametersRequest\0229\n\013conn" +
-      "_handle\030\001 \001(\0132$.database_driver_v1.Conne" +
-      "ctionHandle\022]\n\nparameters\030\002 \003(\0132I.databa" +
-      "se_driver_v1.ConnectionSetSessionParamet" +
-      "ersRequest.ParametersEntry\0321\n\017Parameters" +
-      "Entry\022\013\n\003key\030\001 \001(\t\022\r\n\005value\030\002 \001(\t:\0028\001\"(\n" +
-      "&ConnectionSetSessionParametersResponse\"" +
-      "g\n\035ConnectionGetParameterRequest\0229\n\013conn" +
-      "_handle\030\001 \001(\0132$.database_driver_v1.Conne" +
-      "ctionHandle\022\013\n\003key\030\002 \001(\t\">\n\036ConnectionGe" +
-      "tParameterResponse\022\022\n\005value\030\001 \001(\tH\000\210\001\001B\010" +
-      "\n\006_value\"P\n\023StatementNewRequest\0229\n\013conn_" +
+      "\"y\n ConnectionSetOptionStringRequest\0229\n\013" +
+      "conn_handle\030\001 \001(\0132$.database_driver_v1.C" +
+      "onnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 " +
+      "\001(\t\"#\n!ConnectionSetOptionStringResponse" +
+      "\"x\n\037ConnectionSetOptionBytesRequest\0229\n\013c" +
+      "onn_handle\030\001 \001(\0132$.database_driver_v1.Co" +
+      "nnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001" +
+      "(\014\"\"\n ConnectionSetOptionBytesResponse\"v" +
+      "\n\035ConnectionSetOptionIntRequest\0229\n\013conn_" +
       "handle\030\001 \001(\0132$.database_driver_v1.Connec" +
-      "tionHandle\"P\n\024StatementNewResponse\0228\n\013st" +
+      "tionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\003\" " +
+      "\n\036ConnectionSetOptionIntResponse\"y\n Conn" +
+      "ectionSetOptionDoubleRequest\0229\n\013conn_han" +
+      "dle\030\001 \001(\0132$.database_driver_v1.Connectio" +
+      "nHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\001\"#\n!C" +
+      "onnectionSetOptionDoubleResponse\"\211\001\n\025Con" +
+      "nectionInitRequest\0229\n\013conn_handle\030\001 \001(\0132" +
+      "$.database_driver_v1.ConnectionHandle\0225\n" +
+      "\tdb_handle\030\002 \001(\0132\".database_driver_v1.Da" +
+      "tabaseHandle\"\030\n\026ConnectionInitResponse\"U" +
+      "\n\030ConnectionReleaseRequest\0229\n\013conn_handl" +
+      "e\030\001 \001(\0132$.database_driver_v1.ConnectionH" +
+      "andle\"\033\n\031ConnectionReleaseResponse\"\207\001\n\030C" +
+      "onnectionGetInfoRequest\0229\n\013conn_handle\030\001" +
+      " \001(\0132$.database_driver_v1.ConnectionHand" +
+      "le\0220\n\ninfo_codes\030\002 \003(\0162\034.database_driver" +
+      "_v1.InfoCode\"\321\001\n\031ConnectionGetInfoRespon" +
+      "se\022\021\n\004host\030\001 \001(\tH\000\210\001\001\022\021\n\004port\030\002 \001(\003H\001\210\001\001" +
+      "\022\027\n\nserver_url\030\003 \001(\tH\002\210\001\001\022\032\n\rsession_tok" +
+      "en\030\004 \001(\tH\003\210\001\001\022\027\n\nsession_id\030\005 \001(\003H\004\210\001\001B\007" +
+      "\n\005_hostB\007\n\005_portB\r\n\013_server_urlB\020\n\016_sess" +
+      "ion_tokenB\r\n\013_session_id\"\225\002\n\033ConnectionG" +
+      "etObjectsRequest\0229\n\013conn_handle\030\001 \001(\0132$." +
+      "database_driver_v1.ConnectionHandle\022\r\n\005d" +
+      "epth\030\002 \001(\005\022\024\n\007catalog\030\003 \001(\tH\000\210\001\001\022\026\n\tdb_s" +
+      "chema\030\004 \001(\tH\001\210\001\001\022\027\n\ntable_name\030\005 \001(\tH\002\210\001" +
+      "\001\022\022\n\ntable_type\030\006 \003(\t\022\030\n\013column_name\030\007 \001" +
+      "(\tH\003\210\001\001B\n\n\010_catalogB\014\n\n_db_schemaB\r\n\013_ta" +
+      "ble_nameB\016\n\014_column_name\"4\n\034ConnectionGe" +
+      "tObjectsResponse\022\024\n\014objects_data\030\001 \001(\014\"\270" +
+      "\001\n\037ConnectionGetTableSchemaRequest\0229\n\013co" +
+      "nn_handle\030\001 \001(\0132$.database_driver_v1.Con" +
+      "nectionHandle\022\024\n\007catalog\030\002 \001(\tH\000\210\001\001\022\026\n\td" +
+      "b_schema\030\003 \001(\tH\001\210\001\001\022\022\n\ntable_name\030\004 \001(\tB" +
+      "\n\n\010_catalogB\014\n\n_db_schema\"7\n ConnectionG" +
+      "etTableSchemaResponse\022\023\n\013schema_data\030\001 \001" +
+      "(\014\"[\n\036ConnectionGetTableTypesRequest\0229\n\013" +
+      "conn_handle\030\001 \001(\0132$.database_driver_v1.C" +
+      "onnectionHandle\";\n\037ConnectionGetTableTyp" +
+      "esResponse\022\030\n\020table_types_data\030\001 \001(\014\"T\n\027" +
+      "ConnectionCommitRequest\0229\n\013conn_handle\030\001" +
+      " \001(\0132$.database_driver_v1.ConnectionHand" +
+      "le\"\032\n\030ConnectionCommitResponse\"V\n\031Connec" +
+      "tionRollbackRequest\0229\n\013conn_handle\030\001 \001(\013" +
+      "2$.database_driver_v1.ConnectionHandle\"\034" +
+      "\n\032ConnectionRollbackResponse\"\364\001\n%Connect" +
+      "ionSetSessionParametersRequest\0229\n\013conn_h" +
+      "andle\030\001 \001(\0132$.database_driver_v1.Connect" +
+      "ionHandle\022]\n\nparameters\030\002 \003(\0132I.database" +
+      "_driver_v1.ConnectionSetSessionParameter" +
+      "sRequest.ParametersEntry\0321\n\017ParametersEn" +
+      "try\022\013\n\003key\030\001 \001(\t\022\r\n\005value\030\002 \001(\t:\0028\001\"(\n&C" +
+      "onnectionSetSessionParametersResponse\"g\n" +
+      "\035ConnectionGetParameterRequest\0229\n\013conn_h" +
+      "andle\030\001 \001(\0132$.database_driver_v1.Connect" +
+      "ionHandle\022\013\n\003key\030\002 \001(\t\">\n\036ConnectionGetP" +
+      "arameterResponse\022\022\n\005value\030\001 \001(\tH\000\210\001\001B\010\n\006" +
+      "_value\"P\n\023StatementNewRequest\0229\n\013conn_ha" +
+      "ndle\030\001 \001(\0132$.database_driver_v1.Connecti" +
+      "onHandle\"P\n\024StatementNewResponse\0228\n\013stmt" +
+      "_handle\030\001 \001(\0132#.database_driver_v1.State" +
+      "mentHandle\"S\n\027StatementReleaseRequest\0228\n" +
+      "\013stmt_handle\030\001 \001(\0132#.database_driver_v1." +
+      "StatementHandle\"\032\n\030StatementReleaseRespo" +
+      "nse\"f\n\033StatementSetSqlQueryRequest\0228\n\013st" +
       "mt_handle\030\001 \001(\0132#.database_driver_v1.Sta" +
-      "tementHandle\"S\n\027StatementReleaseRequest\022" +
-      "8\n\013stmt_handle\030\001 \001(\0132#.database_driver_v" +
-      "1.StatementHandle\"\032\n\030StatementReleaseRes" +
-      "ponse\"f\n\033StatementSetSqlQueryRequest\0228\n\013" +
-      "stmt_handle\030\001 \001(\0132#.database_driver_v1.S" +
-      "tatementHandle\022\r\n\005query\030\002 \001(\t\"\036\n\034Stateme" +
-      "ntSetSqlQueryResponse\"j\n StatementSetSub" +
-      "straitPlanRequest\0228\n\013stmt_handle\030\001 \001(\0132#" +
-      ".database_driver_v1.StatementHandle\022\014\n\004p" +
-      "lan\030\002 \001(\014\"#\n!StatementSetSubstraitPlanRe" +
-      "sponse\"}\n\rPrepareResult\0227\n\006stream\030\001 \001(\0132" +
-      "\'.database_driver_v1.ArrowArrayStreamPtr" +
-      "\0223\n\007columns\030\004 \003(\0132\".database_driver_v1.C" +
-      "olumnMetadata\"S\n\027StatementPrepareRequest" +
-      "\0228\n\013stmt_handle\030\001 \001(\0132#.database_driver_" +
-      "v1.StatementHandle\"M\n\030StatementPrepareRe" +
-      "sponse\0221\n\006result\030\001 \001(\0132!.database_driver" +
-      "_v1.PrepareResult\"w\n\037StatementSetOptionS" +
-      "tringRequest\0228\n\013stmt_handle\030\001 \001(\0132#.data" +
-      "base_driver_v1.StatementHandle\022\013\n\003key\030\002 " +
-      "\001(\t\022\r\n\005value\030\003 \001(\t\"\"\n StatementSetOption" +
-      "StringResponse\"v\n\036StatementSetOptionByte" +
-      "sRequest\0228\n\013stmt_handle\030\001 \001(\0132#.database" +
-      "_driver_v1.StatementHandle\022\013\n\003key\030\002 \001(\t\022" +
-      "\r\n\005value\030\003 \001(\014\"!\n\037StatementSetOptionByte" +
-      "sResponse\"t\n\034StatementSetOptionIntReques" +
-      "t\0228\n\013stmt_handle\030\001 \001(\0132#.database_driver" +
-      "_v1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005valu" +
-      "e\030\003 \001(\003\"\037\n\035StatementSetOptionIntResponse" +
-      "\"w\n\037StatementSetOptionDoubleRequest\0228\n\013s" +
-      "tmt_handle\030\001 \001(\0132#.database_driver_v1.St" +
-      "atementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(" +
-      "\001\"\"\n StatementSetOptionDoubleResponse\"^\n" +
-      "\"StatementGetParameterSchemaRequest\0228\n\013s" +
-      "tmt_handle\030\001 \001(\0132#.database_driver_v1.St" +
-      "atementHandle\"Y\n#StatementGetParameterSc" +
-      "hemaResponse\0222\n\006schema\030\001 \001(\0132\".database_" +
-      "driver_v1.ArrowSchemaPtr\"\266\001\n\024StatementBi" +
-      "ndRequest\0228\n\013stmt_handle\030\001 \001(\0132#.databas" +
-      "e_driver_v1.StatementHandle\0222\n\006schema\030\002 " +
-      "\001(\0132\".database_driver_v1.ArrowSchemaPtr\022" +
-      "0\n\005array\030\003 \001(\0132!.database_driver_v1.Arro" +
-      "wArrayPtr\"\027\n\025StatementBindResponse\"f\n\032St" +
-      "atementBindStreamRequest\0228\n\013stmt_handle\030" +
-      "\001 \001(\0132#.database_driver_v1.StatementHand" +
-      "le\022\016\n\006stream\030\002 \001(\014\"\035\n\033StatementBindStrea" +
-      "mResponse\"\237\001\n\034StatementExecuteQueryReque" +
-      "st\0228\n\013stmt_handle\030\001 \001(\0132#.database_drive" +
-      "r_v1.StatementHandle\0228\n\010bindings\030\002 \001(\0132!" +
-      ".database_driver_v1.QueryBindingsH\000\210\001\001B\013" +
-      "\n\t_bindings\"R\n\035StatementExecuteQueryResp" +
+      "tementHandle\022\r\n\005query\030\002 \001(\t\"\036\n\034Statement" +
+      "SetSqlQueryResponse\"j\n StatementSetSubst" +
+      "raitPlanRequest\0228\n\013stmt_handle\030\001 \001(\0132#.d" +
+      "atabase_driver_v1.StatementHandle\022\014\n\004pla" +
+      "n\030\002 \001(\014\"#\n!StatementSetSubstraitPlanResp" +
+      "onse\"}\n\rPrepareResult\0227\n\006stream\030\001 \001(\0132\'." +
+      "database_driver_v1.ArrowArrayStreamPtr\0223" +
+      "\n\007columns\030\004 \003(\0132\".database_driver_v1.Col" +
+      "umnMetadata\"S\n\027StatementPrepareRequest\0228" +
+      "\n\013stmt_handle\030\001 \001(\0132#.database_driver_v1" +
+      ".StatementHandle\"M\n\030StatementPrepareResp" +
       "onse\0221\n\006result\030\001 \001(\0132!.database_driver_v" +
-      "1.ExecuteResult\"]\n!StatementExecuteParti" +
-      "tionsRequest\0228\n\013stmt_handle\030\001 \001(\0132#.data" +
-      "base_driver_v1.StatementHandle\"[\n\"Statem" +
-      "entExecutePartitionsResponse\0225\n\006result\030\001" +
-      " \001(\0132%.database_driver_v1.PartitionedRes" +
-      "ult\"w\n\035StatementReadPartitionRequest\0228\n\013" +
-      "stmt_handle\030\001 \001(\0132#.database_driver_v1.S" +
-      "tatementHandle\022\034\n\024partition_descriptor\030\002" +
-      " \001(\014\":\n\036StatementReadPartitionResponse\022\030" +
-      "\n\020partition_stream\030\001 \001(\003\"\212\001\n\rConfigSetti" +
-      "ng\022\026\n\014string_value\030\001 \001(\tH\000\022\023\n\tint_value\030" +
-      "\002 \001(\003H\000\022\026\n\014double_value\030\003 \001(\001H\000\022\025\n\013bytes" +
-      "_value\030\004 \001(\014H\000\022\024\n\nbool_value\030\005 \001(\010H\000B\007\n\005" +
-      "value\"\246\001\n\rConfigSection\022A\n\010settings\030\001 \003(" +
-      "\0132/.database_driver_v1.ConfigSection.Set" +
-      "tingsEntry\032R\n\rSettingsEntry\022\013\n\003key\030\001 \001(\t" +
-      "\0220\n\005value\030\002 \001(\0132!.database_driver_v1.Con" +
-      "figSetting:\0028\001\"|\n\034ConfigLoadAllSectionsR" +
-      "equest\022\030\n\013config_file\030\001 \001(\tH\000\210\001\001\022\035\n\020conn" +
-      "ections_file\030\002 \001(\tH\001\210\001\001B\016\n\014_config_fileB" +
-      "\023\n\021_connections_file\"4\n\035ConfigLoadAllSec" +
-      "tionsResponse\022\023\n\013config_json\030\001 \001(\t\"\027\n\025Co" +
-      "nfigGetPathsRequest\"G\n\026ConfigGetPathsRes" +
-      "ponse\022\023\n\013config_file\030\001 \001(\t\022\030\n\020connection" +
-      "s_file\030\002 \001(\t*\264\004\n\nStatusCode\022\033\n\027STATUS_CO" +
-      "DE_UNSPECIFIED\020\000\022\022\n\016STATUS_CODE_OK\020\001\022$\n " +
-      "STATUS_CODE_AUTHENTICATION_ERROR\020\002\022\037\n\033ST" +
-      "ATUS_CODE_NOT_IMPLEMENTED\020\003\022\031\n\025STATUS_CO" +
-      "DE_NOT_FOUND\020\004\022\036\n\032STATUS_CODE_ALREADY_EX" +
-      "ISTS\020\005\022 \n\034STATUS_CODE_INVALID_ARGUMENT\020\006" +
-      "\022\035\n\031STATUS_CODE_INVALID_STATE\020\007\022\034\n\030STATU" +
-      "S_CODE_INVALID_DATA\020\010\022\022\n\016STATUS_CODE_IO\020" +
-      "\t\022\031\n\025STATUS_CODE_CANCELLED\020\n\022\037\n\033STATUS_C" +
-      "ODE_UNAUTHENTICATED\020\013\022\034\n\030STATUS_CODE_UNA" +
-      "UTHORIZED\020\014\022\035\n\031STATUS_CODE_GENERIC_ERROR" +
-      "\020\r\022\036\n\032STATUS_CODE_INTERNAL_ERROR\020\016\022!\n\035ST" +
-      "ATUS_CODE_MISSING_PARAMETER\020\017\022\'\n#STATUS_" +
-      "CODE_INVALID_PARAMETER_VALUE\020\020\022\033\n\027STATUS" +
-      "_CODE_LOGIN_ERROR\020\021*\230\003\n\010InfoCode\022\031\n\025INFO" +
-      "_CODE_UNSPECIFIED\020\000\022\031\n\025INFO_CODE_VENDOR_" +
-      "NAME\020\001\022\034\n\030INFO_CODE_VENDOR_VERSION\020\002\022\"\n\036" +
-      "INFO_CODE_VENDOR_ARROW_VERSION\020\003\022\030\n\024INFO" +
-      "_CODE_VENDOR_SQL\020e\022\036\n\032INFO_CODE_VENDOR_S" +
-      "UBSTRAIT\020f\022*\n&INFO_CODE_VENDOR_SUBSTRAIT" +
-      "_MIN_VERSION\020g\022*\n&INFO_CODE_VENDOR_SUBST" +
-      "RAIT_MAX_VERSION\020h\022\032\n\025INFO_CODE_DRIVER_N" +
-      "AME\020\311\001\022\035\n\030INFO_CODE_DRIVER_VERSION\020\312\001\022#\n" +
-      "\036INFO_CODE_DRIVER_ARROW_VERSION\020\313\001\022\"\n\035IN" +
-      "FO_CODE_DRIVER_ADBC_VERSION\020\314\0012\361%\n\016Datab" +
-      "aseDriver\022^\n\013DatabaseNew\022&.database_driv" +
-      "er_v1.DatabaseNewRequest\032\'.database_driv" +
-      "er_v1.DatabaseNewResponse\022\202\001\n\027DatabaseSe" +
-      "tOptionString\0222.database_driver_v1.Datab" +
-      "aseSetOptionStringRequest\0323.database_dri" +
-      "ver_v1.DatabaseSetOptionStringResponse\022\177" +
-      "\n\026DatabaseSetOptionBytes\0221.database_driv" +
-      "er_v1.DatabaseSetOptionBytesRequest\0322.da" +
-      "tabase_driver_v1.DatabaseSetOptionBytesR" +
-      "esponse\022y\n\024DatabaseSetOptionInt\022/.databa" +
-      "se_driver_v1.DatabaseSetOptionIntRequest" +
-      "\0320.database_driver_v1.DatabaseSetOptionI" +
-      "ntResponse\022\202\001\n\027DatabaseSetOptionDouble\0222" +
-      ".database_driver_v1.DatabaseSetOptionDou" +
-      "bleRequest\0323.database_driver_v1.Database" +
-      "SetOptionDoubleResponse\022a\n\014DatabaseInit\022" +
-      "\'.database_driver_v1.DatabaseInitRequest" +
-      "\032(.database_driver_v1.DatabaseInitRespon" +
-      "se\022j\n\017DatabaseRelease\022*.database_driver_" +
-      "v1.DatabaseReleaseRequest\032+.database_dri" +
-      "ver_v1.DatabaseReleaseResponse\022d\n\rConnec" +
-      "tionNew\022(.database_driver_v1.ConnectionN" +
-      "ewRequest\032).database_driver_v1.Connectio" +
-      "nNewResponse\022\210\001\n\031ConnectionSetOptionStri" +
-      "ng\0224.database_driver_v1.ConnectionSetOpt" +
-      "ionStringRequest\0325.database_driver_v1.Co" +
-      "nnectionSetOptionStringResponse\022\205\001\n\030Conn" +
-      "ectionSetOptionBytes\0223.database_driver_v" +
-      "1.ConnectionSetOptionBytesRequest\0324.data" +
-      "base_driver_v1.ConnectionSetOptionBytesR" +
-      "esponse\022\177\n\026ConnectionSetOptionInt\0221.data" +
-      "base_driver_v1.ConnectionSetOptionIntReq" +
-      "uest\0322.database_driver_v1.ConnectionSetO" +
-      "ptionIntResponse\022\210\001\n\031ConnectionSetOption" +
-      "Double\0224.database_driver_v1.ConnectionSe" +
-      "tOptionDoubleRequest\0325.database_driver_v" +
-      "1.ConnectionSetOptionDoubleResponse\022g\n\016C" +
-      "onnectionInit\022).database_driver_v1.Conne" +
-      "ctionInitRequest\032*.database_driver_v1.Co" +
-      "nnectionInitResponse\022p\n\021ConnectionReleas" +
-      "e\022,.database_driver_v1.ConnectionRelease" +
-      "Request\032-.database_driver_v1.ConnectionR" +
-      "eleaseResponse\022p\n\021ConnectionGetInfo\022,.da" +
-      "tabase_driver_v1.ConnectionGetInfoReques" +
-      "t\032-.database_driver_v1.ConnectionGetInfo" +
-      "Response\022y\n\024ConnectionGetObjects\022/.datab" +
-      "ase_driver_v1.ConnectionGetObjectsReques" +
-      "t\0320.database_driver_v1.ConnectionGetObje" +
-      "ctsResponse\022\205\001\n\030ConnectionGetTableSchema" +
-      "\0223.database_driver_v1.ConnectionGetTable" +
-      "SchemaRequest\0324.database_driver_v1.Conne" +
-      "ctionGetTableSchemaResponse\022\202\001\n\027Connecti" +
-      "onGetTableTypes\0222.database_driver_v1.Con" +
-      "nectionGetTableTypesRequest\0323.database_d" +
-      "river_v1.ConnectionGetTableTypesResponse" +
-      "\022m\n\020ConnectionCommit\022+.database_driver_v" +
-      "1.ConnectionCommitRequest\032,.database_dri" +
-      "ver_v1.ConnectionCommitResponse\022s\n\022Conne" +
-      "ctionRollback\022-.database_driver_v1.Conne" +
-      "ctionRollbackRequest\032..database_driver_v" +
-      "1.ConnectionRollbackResponse\022\227\001\n\036Connect" +
-      "ionSetSessionParameters\0229.database_drive" +
-      "r_v1.ConnectionSetSessionParametersReque" +
-      "st\032:.database_driver_v1.ConnectionSetSes" +
-      "sionParametersResponse\022\177\n\026ConnectionGetP" +
-      "arameter\0221.database_driver_v1.Connection" +
-      "GetParameterRequest\0322.database_driver_v1" +
-      ".ConnectionGetParameterResponse\022a\n\014State" +
-      "mentNew\022\'.database_driver_v1.StatementNe" +
-      "wRequest\032(.database_driver_v1.StatementN" +
-      "ewResponse\022m\n\020StatementRelease\022+.databas" +
-      "e_driver_v1.StatementReleaseRequest\032,.da" +
-      "tabase_driver_v1.StatementReleaseRespons" +
-      "e\022y\n\024StatementSetSqlQuery\022/.database_dri" +
-      "ver_v1.StatementSetSqlQueryRequest\0320.dat" +
-      "abase_driver_v1.StatementSetSqlQueryResp" +
-      "onse\022\210\001\n\031StatementSetSubstraitPlan\0224.dat" +
-      "abase_driver_v1.StatementSetSubstraitPla" +
-      "nRequest\0325.database_driver_v1.StatementS" +
-      "etSubstraitPlanResponse\022m\n\020StatementPrep" +
-      "are\022+.database_driver_v1.StatementPrepar" +
-      "eRequest\032,.database_driver_v1.StatementP" +
-      "repareResponse\022\205\001\n\030StatementSetOptionStr" +
-      "ing\0223.database_driver_v1.StatementSetOpt" +
-      "ionStringRequest\0324.database_driver_v1.St" +
-      "atementSetOptionStringResponse\022\202\001\n\027State" +
-      "mentSetOptionBytes\0222.database_driver_v1." +
-      "StatementSetOptionBytesRequest\0323.databas" +
-      "e_driver_v1.StatementSetOptionBytesRespo" +
-      "nse\022|\n\025StatementSetOptionInt\0220.database_" +
-      "driver_v1.StatementSetOptionIntRequest\0321" +
-      ".database_driver_v1.StatementSetOptionIn" +
-      "tResponse\022\205\001\n\030StatementSetOptionDouble\0223" +
-      ".database_driver_v1.StatementSetOptionDo" +
-      "ubleRequest\0324.database_driver_v1.Stateme" +
-      "ntSetOptionDoubleResponse\022\216\001\n\033StatementG" +
-      "etParameterSchema\0226.database_driver_v1.S" +
-      "tatementGetParameterSchemaRequest\0327.data" +
-      "base_driver_v1.StatementGetParameterSche" +
-      "maResponse\022d\n\rStatementBind\022(.database_d" +
-      "river_v1.StatementBindRequest\032).database" +
-      "_driver_v1.StatementBindResponse\022v\n\023Stat" +
-      "ementBindStream\022..database_driver_v1.Sta" +
-      "tementBindStreamRequest\032/.database_drive" +
-      "r_v1.StatementBindStreamResponse\022|\n\025Stat" +
-      "ementExecuteQuery\0220.database_driver_v1.S" +
-      "tatementExecuteQueryRequest\0321.database_d" +
-      "river_v1.StatementExecuteQueryResponse\022\213" +
-      "\001\n\032StatementExecutePartitions\0225.database" +
-      "_driver_v1.StatementExecutePartitionsReq" +
-      "uest\0326.database_driver_v1.StatementExecu" +
-      "tePartitionsResponse\022\177\n\026StatementReadPar" +
-      "tition\0221.database_driver_v1.StatementRea" +
-      "dPartitionRequest\0322.database_driver_v1.S" +
-      "tatementReadPartitionResponse\022|\n\025ConfigL" +
-      "oadAllSections\0220.database_driver_v1.Conf" +
-      "igLoadAllSectionsRequest\0321.database_driv" +
-      "er_v1.ConfigLoadAllSectionsResponse\022g\n\016C" +
-      "onfigGetPaths\022).database_driver_v1.Confi" +
-      "gGetPathsRequest\032*.database_driver_v1.Co" +
-      "nfigGetPathsResponse\032\024\302\251\311\001\017DriverExcepti" +
-      "on:;\n\rservice_error\022\037.google.protobuf.Se" +
-      "rviceOptions\030\230\225\031 \001(\t\210\001\001:9\n\014method_error\022" +
-      "\036.google.protobuf.MethodOptions\030\230\225\031 \001(\t\210" +
-      "\001\001B4\n2net.snowflake.client.internal.unic" +
-      "ore.protobuf_genb\006proto3"
+      "1.PrepareResult\"w\n\037StatementSetOptionStr" +
+      "ingRequest\0228\n\013stmt_handle\030\001 \001(\0132#.databa" +
+      "se_driver_v1.StatementHandle\022\013\n\003key\030\002 \001(" +
+      "\t\022\r\n\005value\030\003 \001(\t\"\"\n StatementSetOptionSt" +
+      "ringResponse\"v\n\036StatementSetOptionBytesR" +
+      "equest\0228\n\013stmt_handle\030\001 \001(\0132#.database_d" +
+      "river_v1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n" +
+      "\005value\030\003 \001(\014\"!\n\037StatementSetOptionBytesR" +
+      "esponse\"t\n\034StatementSetOptionIntRequest\022" +
+      "8\n\013stmt_handle\030\001 \001(\0132#.database_driver_v" +
+      "1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030" +
+      "\003 \001(\003\"\037\n\035StatementSetOptionIntResponse\"w" +
+      "\n\037StatementSetOptionDoubleRequest\0228\n\013stm" +
+      "t_handle\030\001 \001(\0132#.database_driver_v1.Stat" +
+      "ementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\001\"" +
+      "\"\n StatementSetOptionDoubleResponse\"^\n\"S" +
+      "tatementGetParameterSchemaRequest\0228\n\013stm" +
+      "t_handle\030\001 \001(\0132#.database_driver_v1.Stat" +
+      "ementHandle\"Y\n#StatementGetParameterSche" +
+      "maResponse\0222\n\006schema\030\001 \001(\0132\".database_dr" +
+      "iver_v1.ArrowSchemaPtr\"\266\001\n\024StatementBind" +
+      "Request\0228\n\013stmt_handle\030\001 \001(\0132#.database_" +
+      "driver_v1.StatementHandle\0222\n\006schema\030\002 \001(" +
+      "\0132\".database_driver_v1.ArrowSchemaPtr\0220\n" +
+      "\005array\030\003 \001(\0132!.database_driver_v1.ArrowA" +
+      "rrayPtr\"\027\n\025StatementBindResponse\"f\n\032Stat" +
+      "ementBindStreamRequest\0228\n\013stmt_handle\030\001 " +
+      "\001(\0132#.database_driver_v1.StatementHandle" +
+      "\022\016\n\006stream\030\002 \001(\014\"\035\n\033StatementBindStreamR" +
+      "esponse\"\237\001\n\034StatementExecuteQueryRequest" +
+      "\0228\n\013stmt_handle\030\001 \001(\0132#.database_driver_" +
+      "v1.StatementHandle\0228\n\010bindings\030\002 \001(\0132!.d" +
+      "atabase_driver_v1.QueryBindingsH\000\210\001\001B\013\n\t" +
+      "_bindings\"R\n\035StatementExecuteQueryRespon" +
+      "se\0221\n\006result\030\001 \001(\0132!.database_driver_v1." +
+      "ExecuteResult\"]\n!StatementExecutePartiti" +
+      "onsRequest\0228\n\013stmt_handle\030\001 \001(\0132#.databa" +
+      "se_driver_v1.StatementHandle\"[\n\"Statemen" +
+      "tExecutePartitionsResponse\0225\n\006result\030\001 \001" +
+      "(\0132%.database_driver_v1.PartitionedResul" +
+      "t\"w\n\035StatementReadPartitionRequest\0228\n\013st" +
+      "mt_handle\030\001 \001(\0132#.database_driver_v1.Sta" +
+      "tementHandle\022\034\n\024partition_descriptor\030\002 \001" +
+      "(\014\":\n\036StatementReadPartitionResponse\022\030\n\020" +
+      "partition_stream\030\001 \001(\003\"\212\001\n\rConfigSetting" +
+      "\022\026\n\014string_value\030\001 \001(\tH\000\022\023\n\tint_value\030\002 " +
+      "\001(\003H\000\022\026\n\014double_value\030\003 \001(\001H\000\022\025\n\013bytes_v" +
+      "alue\030\004 \001(\014H\000\022\024\n\nbool_value\030\005 \001(\010H\000B\007\n\005va" +
+      "lue\"\246\001\n\rConfigSection\022A\n\010settings\030\001 \003(\0132" +
+      "/.database_driver_v1.ConfigSection.Setti" +
+      "ngsEntry\032R\n\rSettingsEntry\022\013\n\003key\030\001 \001(\t\0220" +
+      "\n\005value\030\002 \001(\0132!.database_driver_v1.Confi" +
+      "gSetting:\0028\001\"|\n\034ConfigLoadAllSectionsReq" +
+      "uest\022\030\n\013config_file\030\001 \001(\tH\000\210\001\001\022\035\n\020connec" +
+      "tions_file\030\002 \001(\tH\001\210\001\001B\016\n\014_config_fileB\023\n" +
+      "\021_connections_file\"4\n\035ConfigLoadAllSecti" +
+      "onsResponse\022\023\n\013config_json\030\001 \001(\t\"\027\n\025Conf" +
+      "igGetPathsRequest\"G\n\026ConfigGetPathsRespo" +
+      "nse\022\023\n\013config_file\030\001 \001(\t\022\030\n\020connections_" +
+      "file\030\002 \001(\t*\264\004\n\nStatusCode\022\033\n\027STATUS_CODE" +
+      "_UNSPECIFIED\020\000\022\022\n\016STATUS_CODE_OK\020\001\022$\n ST" +
+      "ATUS_CODE_AUTHENTICATION_ERROR\020\002\022\037\n\033STAT" +
+      "US_CODE_NOT_IMPLEMENTED\020\003\022\031\n\025STATUS_CODE" +
+      "_NOT_FOUND\020\004\022\036\n\032STATUS_CODE_ALREADY_EXIS" +
+      "TS\020\005\022 \n\034STATUS_CODE_INVALID_ARGUMENT\020\006\022\035" +
+      "\n\031STATUS_CODE_INVALID_STATE\020\007\022\034\n\030STATUS_" +
+      "CODE_INVALID_DATA\020\010\022\022\n\016STATUS_CODE_IO\020\t\022" +
+      "\031\n\025STATUS_CODE_CANCELLED\020\n\022\037\n\033STATUS_COD" +
+      "E_UNAUTHENTICATED\020\013\022\034\n\030STATUS_CODE_UNAUT" +
+      "HORIZED\020\014\022\035\n\031STATUS_CODE_GENERIC_ERROR\020\r" +
+      "\022\036\n\032STATUS_CODE_INTERNAL_ERROR\020\016\022!\n\035STAT" +
+      "US_CODE_MISSING_PARAMETER\020\017\022\'\n#STATUS_CO" +
+      "DE_INVALID_PARAMETER_VALUE\020\020\022\033\n\027STATUS_C" +
+      "ODE_LOGIN_ERROR\020\021*\230\003\n\010InfoCode\022\031\n\025INFO_C" +
+      "ODE_UNSPECIFIED\020\000\022\031\n\025INFO_CODE_VENDOR_NA" +
+      "ME\020\001\022\034\n\030INFO_CODE_VENDOR_VERSION\020\002\022\"\n\036IN" +
+      "FO_CODE_VENDOR_ARROW_VERSION\020\003\022\030\n\024INFO_C" +
+      "ODE_VENDOR_SQL\020e\022\036\n\032INFO_CODE_VENDOR_SUB" +
+      "STRAIT\020f\022*\n&INFO_CODE_VENDOR_SUBSTRAIT_M" +
+      "IN_VERSION\020g\022*\n&INFO_CODE_VENDOR_SUBSTRA" +
+      "IT_MAX_VERSION\020h\022\032\n\025INFO_CODE_DRIVER_NAM" +
+      "E\020\311\001\022\035\n\030INFO_CODE_DRIVER_VERSION\020\312\001\022#\n\036I" +
+      "NFO_CODE_DRIVER_ARROW_VERSION\020\313\001\022\"\n\035INFO" +
+      "_CODE_DRIVER_ADBC_VERSION\020\314\0012\361%\n\016Databas" +
+      "eDriver\022^\n\013DatabaseNew\022&.database_driver" +
+      "_v1.DatabaseNewRequest\032\'.database_driver" +
+      "_v1.DatabaseNewResponse\022\202\001\n\027DatabaseSetO" +
+      "ptionString\0222.database_driver_v1.Databas" +
+      "eSetOptionStringRequest\0323.database_drive" +
+      "r_v1.DatabaseSetOptionStringResponse\022\177\n\026" +
+      "DatabaseSetOptionBytes\0221.database_driver" +
+      "_v1.DatabaseSetOptionBytesRequest\0322.data" +
+      "base_driver_v1.DatabaseSetOptionBytesRes" +
+      "ponse\022y\n\024DatabaseSetOptionInt\022/.database" +
+      "_driver_v1.DatabaseSetOptionIntRequest\0320" +
+      ".database_driver_v1.DatabaseSetOptionInt" +
+      "Response\022\202\001\n\027DatabaseSetOptionDouble\0222.d" +
+      "atabase_driver_v1.DatabaseSetOptionDoubl" +
+      "eRequest\0323.database_driver_v1.DatabaseSe" +
+      "tOptionDoubleResponse\022a\n\014DatabaseInit\022\'." +
+      "database_driver_v1.DatabaseInitRequest\032(" +
+      ".database_driver_v1.DatabaseInitResponse" +
+      "\022j\n\017DatabaseRelease\022*.database_driver_v1" +
+      ".DatabaseReleaseRequest\032+.database_drive" +
+      "r_v1.DatabaseReleaseResponse\022d\n\rConnecti" +
+      "onNew\022(.database_driver_v1.ConnectionNew" +
+      "Request\032).database_driver_v1.ConnectionN" +
+      "ewResponse\022\210\001\n\031ConnectionSetOptionString" +
+      "\0224.database_driver_v1.ConnectionSetOptio" +
+      "nStringRequest\0325.database_driver_v1.Conn" +
+      "ectionSetOptionStringResponse\022\205\001\n\030Connec" +
+      "tionSetOptionBytes\0223.database_driver_v1." +
+      "ConnectionSetOptionBytesRequest\0324.databa" +
+      "se_driver_v1.ConnectionSetOptionBytesRes" +
+      "ponse\022\177\n\026ConnectionSetOptionInt\0221.databa" +
+      "se_driver_v1.ConnectionSetOptionIntReque" +
+      "st\0322.database_driver_v1.ConnectionSetOpt" +
+      "ionIntResponse\022\210\001\n\031ConnectionSetOptionDo" +
+      "uble\0224.database_driver_v1.ConnectionSetO" +
+      "ptionDoubleRequest\0325.database_driver_v1." +
+      "ConnectionSetOptionDoubleResponse\022g\n\016Con" +
+      "nectionInit\022).database_driver_v1.Connect" +
+      "ionInitRequest\032*.database_driver_v1.Conn" +
+      "ectionInitResponse\022p\n\021ConnectionRelease\022" +
+      ",.database_driver_v1.ConnectionReleaseRe" +
+      "quest\032-.database_driver_v1.ConnectionRel" +
+      "easeResponse\022p\n\021ConnectionGetInfo\022,.data" +
+      "base_driver_v1.ConnectionGetInfoRequest\032" +
+      "-.database_driver_v1.ConnectionGetInfoRe" +
+      "sponse\022y\n\024ConnectionGetObjects\022/.databas" +
+      "e_driver_v1.ConnectionGetObjectsRequest\032" +
+      "0.database_driver_v1.ConnectionGetObject" +
+      "sResponse\022\205\001\n\030ConnectionGetTableSchema\0223" +
+      ".database_driver_v1.ConnectionGetTableSc" +
+      "hemaRequest\0324.database_driver_v1.Connect" +
+      "ionGetTableSchemaResponse\022\202\001\n\027Connection" +
+      "GetTableTypes\0222.database_driver_v1.Conne" +
+      "ctionGetTableTypesRequest\0323.database_dri" +
+      "ver_v1.ConnectionGetTableTypesResponse\022m" +
+      "\n\020ConnectionCommit\022+.database_driver_v1." +
+      "ConnectionCommitRequest\032,.database_drive" +
+      "r_v1.ConnectionCommitResponse\022s\n\022Connect" +
+      "ionRollback\022-.database_driver_v1.Connect" +
+      "ionRollbackRequest\032..database_driver_v1." +
+      "ConnectionRollbackResponse\022\227\001\n\036Connectio" +
+      "nSetSessionParameters\0229.database_driver_" +
+      "v1.ConnectionSetSessionParametersRequest" +
+      "\032:.database_driver_v1.ConnectionSetSessi" +
+      "onParametersResponse\022\177\n\026ConnectionGetPar" +
+      "ameter\0221.database_driver_v1.ConnectionGe" +
+      "tParameterRequest\0322.database_driver_v1.C" +
+      "onnectionGetParameterResponse\022a\n\014Stateme" +
+      "ntNew\022\'.database_driver_v1.StatementNewR" +
+      "equest\032(.database_driver_v1.StatementNew" +
+      "Response\022m\n\020StatementRelease\022+.database_" +
+      "driver_v1.StatementReleaseRequest\032,.data" +
+      "base_driver_v1.StatementReleaseResponse\022" +
+      "y\n\024StatementSetSqlQuery\022/.database_drive" +
+      "r_v1.StatementSetSqlQueryRequest\0320.datab" +
+      "ase_driver_v1.StatementSetSqlQueryRespon" +
+      "se\022\210\001\n\031StatementSetSubstraitPlan\0224.datab" +
+      "ase_driver_v1.StatementSetSubstraitPlanR" +
+      "equest\0325.database_driver_v1.StatementSet" +
+      "SubstraitPlanResponse\022m\n\020StatementPrepar" +
+      "e\022+.database_driver_v1.StatementPrepareR" +
+      "equest\032,.database_driver_v1.StatementPre" +
+      "pareResponse\022\205\001\n\030StatementSetOptionStrin" +
+      "g\0223.database_driver_v1.StatementSetOptio" +
+      "nStringRequest\0324.database_driver_v1.Stat" +
+      "ementSetOptionStringResponse\022\202\001\n\027Stateme" +
+      "ntSetOptionBytes\0222.database_driver_v1.St" +
+      "atementSetOptionBytesRequest\0323.database_" +
+      "driver_v1.StatementSetOptionBytesRespons" +
+      "e\022|\n\025StatementSetOptionInt\0220.database_dr" +
+      "iver_v1.StatementSetOptionIntRequest\0321.d" +
+      "atabase_driver_v1.StatementSetOptionIntR" +
+      "esponse\022\205\001\n\030StatementSetOptionDouble\0223.d" +
+      "atabase_driver_v1.StatementSetOptionDoub" +
+      "leRequest\0324.database_driver_v1.Statement" +
+      "SetOptionDoubleResponse\022\216\001\n\033StatementGet" +
+      "ParameterSchema\0226.database_driver_v1.Sta" +
+      "tementGetParameterSchemaRequest\0327.databa" +
+      "se_driver_v1.StatementGetParameterSchema" +
+      "Response\022d\n\rStatementBind\022(.database_dri" +
+      "ver_v1.StatementBindRequest\032).database_d" +
+      "river_v1.StatementBindResponse\022v\n\023Statem" +
+      "entBindStream\022..database_driver_v1.State" +
+      "mentBindStreamRequest\032/.database_driver_" +
+      "v1.StatementBindStreamResponse\022|\n\025Statem" +
+      "entExecuteQuery\0220.database_driver_v1.Sta" +
+      "tementExecuteQueryRequest\0321.database_dri" +
+      "ver_v1.StatementExecuteQueryResponse\022\213\001\n" +
+      "\032StatementExecutePartitions\0225.database_d" +
+      "river_v1.StatementExecutePartitionsReque" +
+      "st\0326.database_driver_v1.StatementExecute" +
+      "PartitionsResponse\022\177\n\026StatementReadParti" +
+      "tion\0221.database_driver_v1.StatementReadP" +
+      "artitionRequest\0322.database_driver_v1.Sta" +
+      "tementReadPartitionResponse\022|\n\025ConfigLoa" +
+      "dAllSections\0220.database_driver_v1.Config" +
+      "LoadAllSectionsRequest\0321.database_driver" +
+      "_v1.ConfigLoadAllSectionsResponse\022g\n\016Con" +
+      "figGetPaths\022).database_driver_v1.ConfigG" +
+      "etPathsRequest\032*.database_driver_v1.Conf" +
+      "igGetPathsResponse\032\024\302\251\311\001\017DriverException" +
+      ":;\n\rservice_error\022\037.google.protobuf.Serv" +
+      "iceOptions\030\230\225\031 \001(\t\210\001\001:9\n\014method_error\022\036." +
+      "google.protobuf.MethodOptions\030\230\225\031 \001(\t\210\001\001" +
+      "B4\n2net.snowflake.client.internal.unicor" +
+      "e.protobuf_genb\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -64757,7 +64932,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
     internal_static_database_driver_v1_ExecuteResult_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ExecuteResult_descriptor,
-        new java.lang.String[] { "Stream", "RowsAffected", "QueryId", "Columns", "StatementTypeId", "Query", });
+        new java.lang.String[] { "Stream", "RowsAffected", "QueryId", "Columns", "StatementTypeId", "Query", "SqlState", });
     internal_static_database_driver_v1_PartitionedResult_descriptor =
       getDescriptor().getMessageTypes().get(12);
     internal_static_database_driver_v1_PartitionedResult_fieldAccessorTable = new
