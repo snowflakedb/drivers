@@ -79,11 +79,11 @@ impl LogoutConfig {
         // Parse and validate logout_total_timeout_seconds
         let logout_total_timeout = match settings.get_int("logout_total_timeout_seconds") {
             Some(v) => {
-                if v < 0 {
+                if v <= 0 {
                     return InvalidParameterValueSnafu {
                         parameter: "logout_total_timeout_seconds",
                         value: v.to_string(),
-                        explanation: "Must be non-negative",
+                        explanation: "Must be positive (greater than zero)",
                     }
                     .fail();
                 }
@@ -95,11 +95,11 @@ impl LogoutConfig {
         // Parse and validate logout_max_attempts
         let max_attempts = match settings.get_int("logout_max_attempts") {
             Some(v) => {
-                if v < 0 {
+                if v <= 0 {
                     return InvalidParameterValueSnafu {
                         parameter: "logout_max_attempts",
                         value: v.to_string(),
-                        explanation: "Must be non-negative",
+                        explanation: "Must be positive (minimum 1 attempt required)",
                     }
                     .fail();
                 }
@@ -115,7 +115,7 @@ impl LogoutConfig {
                     return InvalidParameterValueSnafu {
                         parameter: "logout_request_timeout_seconds",
                         value: v.to_string(),
-                        explanation: "Must be non-negative",
+                        explanation: "Must be non-negative (zero is validated at connection_init)",
                     }
                     .fail();
                 }
