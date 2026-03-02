@@ -11,7 +11,7 @@ use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
 use super::logout_decision::should_send_logout;
 use crate::config::config_manager;
-use crate::config::logout::LogoutConfig;
+use crate::config::logout::{ErrorStrategy, LogoutConfig};
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
@@ -729,6 +729,49 @@ fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError>
     Ok(())
 }
 
+/// Get logout configuration from a connection.
+fn get_logout_config(conn_ptr: &Arc<Mutex<Connection>>) -> Result<LogoutConfig, ApiError> {
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    Ok(conn.logout_config.clone())
+}
+
+/// Execute logout sequence with error strategy handling.
+///
+/// Handles three cases:
+/// 1. Some(data): Execute HTTP logout request
+/// 2. None with send_logout=false: Skip due to configuration
+/// 3. None with send_logout=true: Connection not initialized
+///
+/// Returns the logout result after applying the error strategy.
+fn execute_logout_with_strategy(
+    logout_data: Option<LogoutData>,
+    send_logout: bool,
+    skip_reason: Option<String>,
+    error_strategy: ErrorStrategy,
+) -> Result<(), ApiError> {
+    let logout_result = match logout_data {
+        Some(data) => {
+            let result = send_logout_request(data);
+            if result.is_ok() {
+                tracing::info!("Logout completed successfully");
+            }
+            result
+        }
+        None if !send_logout => {
+            tracing::info!(?skip_reason, "Skipping logout based on configuration");
+            Ok(())
+        }
+        None => {
+            tracing::debug!("Connection was never fully initialized, skipping logout");
+            Ok(())
+        }
+    };
+
+    error_strategy.handle_failed_logout(logout_result)
+}
+
 /// Close a connection and optionally send logout request.
 ///
 /// Behavior depends on `config.error_strategy`:
@@ -761,38 +804,17 @@ pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
         return Ok(());
     }
 
-    // Get logout config from connection (set during connection_init)
-    let config = {
-        let conn = conn_ptr
-            .lock()
-            .map_err(|_| ConnectionLockingSnafu {}.build())?;
-        conn.logout_config.clone()
-    };
-
+    // Get logout config and prepare logout data
+    let config = get_logout_config(&conn_ptr)?;
     let (send_logout, skip_reason, logout_data) = prepare_logout(&conn_ptr, &config)?;
 
     // TODO: SNOW-2912513 - Record telemetry for logout decision
 
-    let logout_result = match logout_data {
-        Some(data) => {
-            let result = send_logout_request(data);
-            if result.is_ok() {
-                tracing::info!("Logout completed successfully");
-            }
-            result
-        }
-        None if !send_logout => {
-            tracing::info!(?skip_reason, "Skipping logout based on configuration");
-            Ok(())
-        }
-        None => {
-            tracing::debug!("Connection was never fully initialized, skipping logout");
-            Ok(())
-        }
-    };
+    // Execute logout with error strategy handling
+    let logout_result =
+        execute_logout_with_strategy(logout_data, send_logout, skip_reason, config.error_strategy);
 
-    let logout_result = config.error_strategy.handle_failed_logout(logout_result);
-
+    // Cleanup connection resources
     cleanup_connection(&conn_ptr)?;
 
     if logout_result.is_ok() {
