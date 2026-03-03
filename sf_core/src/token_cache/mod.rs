@@ -233,26 +233,18 @@ mod tests {
     mod build_cache_key_tests {
         use super::*;
 
-        // Scenario: Should build correct key format
         #[test]
         fn builds_correct_key_format() {
-            // Given a host, username, and token type
-            // When we build a cache key
             let key = build_cache_key("myhost.snowflake.com", "testuser", TokenType::IdToken);
 
-            // Then the key should follow the format "host;username;TOKEN_TYPE"
             assert_eq!(key, "myhost.snowflake.com;testuser;ID_TOKEN");
         }
 
-        // Scenario: Should build key for all token types
         #[test]
         fn builds_key_for_all_token_types() {
-            // Given a host and username
             let host = "host.example.com";
             let user = "user1";
 
-            // When we build cache keys for every token type
-            // Then each key should contain the correct token type suffix
             for &token_type in TokenType::all() {
                 assert_eq!(
                     build_cache_key(host, user, token_type),
@@ -265,12 +257,8 @@ mod tests {
     mod token_type_tests {
         use super::*;
 
-        // Scenario: Should return correct values from token type as_str
         #[test]
         fn as_str_returns_correct_values() {
-            // Given all token type variants
-            // When we call as_str on each
-            // Then each should return the expected string representation
             assert_eq!(TokenType::IdToken.as_str(), "ID_TOKEN");
             assert_eq!(TokenType::MfaToken.as_str(), "MFA_TOKEN");
             assert_eq!(TokenType::OAuthAccessToken.as_str(), "OAUTH_ACCESS_TOKEN");
@@ -281,12 +269,8 @@ mod tests {
             );
         }
 
-        // Scenario: Should match display output with as_str
         #[test]
         fn display_matches_as_str() {
-            // Given a token type
-            // When we format it with Display
-            // Then the output should match as_str
             assert_eq!(format!("{}", TokenType::IdToken), "ID_TOKEN");
             assert_eq!(format!("{}", TokenType::MfaToken), "MFA_TOKEN");
             assert_eq!(
@@ -307,18 +291,14 @@ mod tests {
     mod validation_tests {
         use super::*;
 
-        // Scenario Outline: Should reject empty <component> when validating key components
         #[test]
         fn validate_key_components_rejects_empty_values() {
             for (host, username, token_key_component_name) in [
                 ("", "username", "host"),
                 ("host.example.com", "", "username"),
             ] {
-                // Given an empty <component> string
-                // When we validate key components
                 let result = validate_key_components(host, username);
 
-                // Then an InvalidKeyFormat error should be returned
                 assert!(
                     matches!(result, Err(TokenCacheError::InvalidKeyFormat { .. })),
                     "Expected InvalidKeyFormat for empty {token_key_component_name}"
@@ -326,36 +306,24 @@ mod tests {
             }
         }
 
-        // Scenario: Should accept valid inputs when validating key components
         #[test]
         fn validate_key_components_accepts_valid_inputs() {
-            // Given a valid host and username
-            // When we validate key components
             let result = validate_key_components("host.example.com", "testuser");
 
-            // Then validation should succeed
             assert!(result.is_ok());
         }
 
-        // Scenario: Should disallow invalid host when validating key components
         #[test]
         fn validate_key_components_disallows_invalid_host() {
-            // Given a host containing invalid characters
-            // When we validate key components
             let result = validate_key_components("host.example.com;", "testuser");
 
-            // Then an InvalidKeyFormat error should be returned
             assert!(result.is_err());
         }
 
-        // Scenario: Should disallow invalid user when validating key components
         #[test]
         fn validate_key_components_disallows_invalid_user() {
-            // Given a username containing invalid characters
-            // When we validate key components
             let result = validate_key_components("host.example.com", "test;user");
 
-            // Then an InvalidKeyFormat error should be returned
             assert!(result.is_err());
         }
     }

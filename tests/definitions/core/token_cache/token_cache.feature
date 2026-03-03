@@ -1,65 +1,6 @@
 @core
 Feature: SSO/MFA Token caching
 
-  # --- mod.rs: build_cache_key_tests ---
-
-  @core_unit
-  Scenario: Should build correct key format
-    Given a host, username, and token type
-    When we build a cache key
-    Then the key should follow the format "host;username;TOKEN_TYPE"
-
-  @core_unit
-  Scenario: Should build key for all token types
-    Given a host and username
-    When we build cache keys for every token type
-    Then each key should contain the correct token type suffix
-
-  # --- mod.rs: token_type_tests ---
-
-  @core_unit
-  Scenario: Should return correct values from token type as_str
-    Given all token type variants
-    When we call as_str on each
-    Then each should return the expected string representation
-
-  @core_unit
-  Scenario: Should match display output with as_str
-    Given a token type
-    When we format it with Display
-    Then the output should match as_str
-
-  # --- mod.rs: validation_tests ---
-
-  @core_unit
-  Scenario Outline: Should reject empty <component> when validating key components
-    Given an empty <component> string
-    When we validate key components
-    Then an InvalidKeyFormat error should be returned
-
-    Examples:
-      | component |
-      | host      |
-      | username  |
-
-  @core_unit
-  Scenario: Should accept valid inputs when validating key components
-    Given a valid host and username
-    When we validate key components
-    Then validation should succeed
-
-  @core_unit
-  Scenario: Should disallow invalid host when validating key components
-    Given a host containing invalid characters
-    When we validate key components
-    Then an InvalidKeyFormat error should be returned
-
-  @core_unit
-  Scenario: Should disallow invalid user when validating key components
-    Given a username containing invalid characters
-    When we validate key components
-    Then an InvalidKeyFormat error should be returned
-
   # --- file_cache.rs: hash_cache_key_tests ---
 
   @core_unit
