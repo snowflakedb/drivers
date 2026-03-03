@@ -40,10 +40,13 @@ class DriverConfig {
 
   // Accessors
   [[nodiscard]] const std::map<std::string, std::string>& parameters() const;
-  [[nodiscard]] static std::string name();
+  [[nodiscard]] const std::string& name() const;
   static std::string get_driver_path();
 
  private:
+  static std::string generate_random_name();
+
+  std::string name_;
   std::map<std::string, std::string> parameters_;
 };
 

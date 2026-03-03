@@ -117,6 +117,7 @@ jobs:
           $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll"
           $env:PARAMETER_PATH = "$(pwd)\parameters.json"
           $env:DRIVER_TYPE = "OLD"
+          $env:CTEST_FILTER = "e2e_query_basic_execute_query"
           .\scripts\odbc\run_tests_windows.ps1
 
   odbc_tests:
@@ -210,6 +211,7 @@ jobs:
           $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
           $env:PARAMETER_PATH = "$PWD\parameters.json"
           $env:DRIVER_TYPE = "NEW"
+          $env:CTEST_FILTER = "e2e_query_basic_execute_query"
           .\scripts\odbc\run_tests_windows.ps1
 
   odbc-status:

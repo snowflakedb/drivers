@@ -15,7 +15,11 @@ try {
     }
     cmake @cmakeArgs .
     cmake --build cmake-build --config Debug --parallel $NPROC
-    ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
+    $ctestArgs = @("-j", $NPROC, "-C", "Debug", "--test-dir", "cmake-build", "--output-on-failure")
+    if ($env:CTEST_FILTER) {
+        $ctestArgs += @("-R", $env:CTEST_FILTER)
+    }
+    ctest @ctestArgs
 }
 finally {
     Pop-Location
