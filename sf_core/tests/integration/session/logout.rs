@@ -4,10 +4,15 @@
 //! logout behavior without connecting to real Snowflake.
 
 use crate::common::mocks::auth::mount_jwt_login_success;
+use crate::common::private_key_helper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::test_server::{
-    json_error_response, json_response, service_unavailable_response, spawn_capture_server,
-    spawn_test_server,
+    json_error_response, json_response, service_unavailable_response, spawn_test_server,
+};
+use serde_json::json;
+use sf_core::apis::database_driver_v1::{
+    connection_close, connection_is_closed, connection_new, connection_release, database_init,
+    database_new, database_release,
 };
 use sf_core::config::logout::{ErrorStrategy, LogoutConfig};
 use sf_core::config::rest_parameters::ClientInfo;
@@ -21,7 +26,8 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
-use wiremock::MockServer;
+use wiremock::matchers::{body_partial_json, header, method, path, path_regex, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ===========================================================================
 //                      HTTP Request Construction
@@ -30,106 +36,132 @@ use wiremock::MockServer;
 #[tokio::test]
 async fn should_construct_logout_request_with_correct_http_method_url_headers_and_body() {
     //Given Mock HTTP server is configured to capture requests
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .and(query_param("delete", "true"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "success": true }))
+                .insert_header("Content-Type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
     //And UD Core connection is logged in
-    let (addr, _request_data, server) = spawn_capture_server().await;
-    let server_url = format!("http://{}", addr);
-    let session_token = "test_session_token_12345";
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .expect("Failed to build HTTP client");
-    let client_info = test_client_info();
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    })
+    .await
+    .unwrap();
 
     //When Logout is initiated
-    let result = logout_session(
-        &client,
-        &server_url,
-        session_token,
-        &client_info,
-        &RetryPolicy::default(),
-    )
-    .await;
+    let conn_handle = client.conn_handle;
+    let result = tokio::task::spawn_blocking(move || {
+        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            conn_handle: Some(conn_handle),
+        })
+    })
+    .await
+    .unwrap();
 
     //Then Logout succeeds
-    assert!(result.is_ok(), "Logout should succeed");
+    assert!(result.is_ok(), "Close should succeed: {:?}", result.err());
 
-    // Wait for server to capture the request
-    let captured = server.await.unwrap();
+    let received_requests = server.received_requests().await.unwrap();
+    let logout_request = received_requests
+        .iter()
+        .find(|r| is_logout_request(r))
+        .expect("Should have made a logout request");
 
     //Then HTTP method is POST
-    assert!(captured.starts_with(b"POST"), "Should be POST request");
+    assert_eq!(
+        logout_request.method.as_str(),
+        "POST",
+        "Should be POST request"
+    );
 
     //And Request URL path is /session
-    assert!(
-        captured.starts_with(b"POST /session"),
+    assert_eq!(
+        logout_request.url.path(),
+        "/session",
         "Should request /session"
     );
 
-    let request_str = String::from_utf8_lossy(&captured);
+    let url_str = logout_request.url.to_string();
 
     //And Query parameter delete is set to true
-    assert!(
-        request_str.contains("delete=true"),
-        "Should have delete=true"
-    );
+    assert!(url_str.contains("delete=true"), "Should have delete=true");
 
     //And Query parameter requestId is present and static across attempts
-    assert!(request_str.contains("requestId="), "Should have requestId");
+    assert!(url_str.contains("requestId="), "Should have requestId");
 
     //And Query parameter request_guid is present and unique per attempt
     assert!(
-        request_str.contains("request_guid="),
+        url_str.contains("request_guid="),
         "Should have request_guid"
     );
 
     //And Authorization header is present with format "Snowflake Token={session_token}"
+    let auth_header = logout_request
+        .headers
+        .get("authorization")
+        .expect("Should have Authorization header");
+    let auth_value = auth_header.to_str().unwrap();
     assert!(
-        request_str.contains(&format!(
-            "Authorization: Snowflake Token=\"{}\"",
-            session_token
-        )) || request_str.contains(&format!(
-            "authorization: Snowflake Token=\"{}\"",
-            session_token
-        )),
-        "Should have Authorization header with session token"
+        auth_value.starts_with("Snowflake Token=\"") && auth_value.ends_with('"'),
+        "Authorization should have format Snowflake Token=\"...\", got: {}",
+        auth_value
     );
 
     //And Content-Type header is application/json
-    assert!(
-        request_str
-            .to_lowercase()
-            .contains("content-type: application/json"),
+    let content_type = logout_request
+        .headers
+        .get("content-type")
+        .expect("Should have Content-Type header");
+    assert_eq!(
+        content_type.to_str().unwrap(),
+        "application/json",
         "Should have Content-Type: application/json"
     );
 
     //And Accept header is application/snowflake
-    assert!(
-        request_str
-            .to_lowercase()
-            .contains("accept: application/snowflake"),
+    let accept = logout_request
+        .headers
+        .get("accept")
+        .expect("Should have Accept header");
+    assert_eq!(
+        accept.to_str().unwrap(),
+        "application/snowflake",
         "Should have Accept: application/snowflake"
     );
 
     //And User-Agent header contains UD version and Rust version
+    let user_agent = logout_request
+        .headers
+        .get("user-agent")
+        .expect("Should have User-Agent header");
     assert!(
-        request_str.contains("user-agent:") && request_str.contains("UD/"),
-        "Should have User-Agent with UD version"
+        user_agent.to_str().unwrap().contains("UD/"),
+        "User-Agent should contain UD version, got: {}",
+        user_agent.to_str().unwrap()
     );
 
     //And Request body is exactly empty JSON object {}
-    assert!(
-        request_str.contains("{}"),
-        "Should have empty JSON object body"
+    let body_str = String::from_utf8_lossy(&logout_request.body);
+    assert_eq!(
+        body_str.trim(),
+        "{}",
+        "Should have empty JSON object body, got: {}",
+        body_str
     );
 }
 
 #[test]
 fn should_not_send_logout_when_connection_was_never_established() {
-    use sf_core::apis::database_driver_v1::{
-        connection_close, connection_is_closed, connection_new, connection_release, database_init,
-        database_new, database_release,
-    };
-
     //Given Connection handle created but never initialized
     let db_handle = database_new();
     database_init(db_handle).unwrap();
@@ -169,8 +201,6 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
     //And UD Core connection is logged in with server_session_keep_alive set to true
     let server_uri = server.uri();
     let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
-
         let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
 
         // Configure JWT authentication
@@ -233,10 +263,6 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
 
 #[tokio::test]
 async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false() {
-    use serde_json::json;
-    use wiremock::matchers::{method, path, query_param};
-    use wiremock::{Mock, ResponseTemplate};
-
     //Given Mock HTTP server is configured
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
@@ -256,8 +282,6 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
     //And UD Core connection is logged in with server_session_keep_alive set to false
     let server_uri = server.uri();
     let client = tokio::task::spawn_blocking(move || {
-        use crate::common::private_key_helper;
-
         let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
 
         // Configure JWT authentication
@@ -296,14 +320,13 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
     assert!(result.is_ok(), "Close should succeed");
     let received_requests = server.received_requests().await.unwrap();
     // Verify there was a logout request
-    let delete_requests: Vec<_> = received_requests
-        .into_iter()
-        .filter(|request| request.url.to_string().contains("delete=true"))
-        .collect();
+    let logout_count = received_requests
+        .iter()
+        .filter(|r| is_logout_request(r))
+        .count();
     assert_eq!(
-        delete_requests.len(),
-        1,
-        "Should have received exactly 1 logout request (delete=true)"
+        logout_count, 1,
+        "Should have received exactly 1 logout request"
     );
 }
 // ===========================================================================
@@ -746,10 +769,6 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
 
 #[tokio::test]
 async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_strategy_type() {
-    use serde_json::json;
-    use wiremock::matchers::{body_partial_json, header, method, path, path_regex, query_param};
-    use wiremock::{Mock, ResponseTemplate};
-
     // Scenario Outline: Examples (strategy_type)
     // strict, best-effort
     for (strategy_name, error_strategy) in [
@@ -845,8 +864,6 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         //And UD Core connection is configured and logged in
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
-            use crate::common::private_key_helper;
-
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
 
             // Configure JWT authentication
@@ -878,7 +895,6 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -898,35 +914,30 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
 
         // Verify requests: login + logout(390112) + token-refresh + logout(success)
         let received_requests = server.received_requests().await.unwrap();
-        let request_paths: Vec<String> = received_requests
-            .iter()
-            .map(|r| r.url.path().to_string())
-            .collect();
 
         assert!(
-            request_paths.iter().any(|p| p.contains("token-request")),
-            "Should have made token refresh request for {}: {:?}",
+            received_requests
+                .iter()
+                .any(|r| r.url.path().contains("token-request")),
+            "Should have made token refresh request for {}",
             strategy_name,
-            request_paths
         );
 
-        let logout_count = request_paths.iter().filter(|p| p == &"/session").count();
+        let logout_count = received_requests
+            .iter()
+            .filter(|r| is_logout_request(r))
+            .count();
         assert!(
             logout_count >= 2,
-            "Should have made at least 2 logout requests for {}, got {}: {:?}",
+            "Should have made at least 2 logout requests for {}, got {}",
             strategy_name,
             logout_count,
-            request_paths
         );
     }
 }
 
 #[tokio::test]
 async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_strategy_type() {
-    use serde_json::json;
-    use wiremock::matchers::{body_partial_json, method, path, path_regex, query_param};
-    use wiremock::{Mock, ResponseTemplate};
-
     // Scenario Outline: Examples (strategy_type)
     // Tests that when 390112 triggers a refresh but the master token is also expired,
     // Strict raises the error and BestEffort suppresses it.
@@ -984,8 +995,6 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
         //And UD Core connection is configured and logged in with <strategy_type> strategy
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
-            use crate::common::private_key_helper;
-
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
 
             // Configure JWT authentication
@@ -1017,7 +1026,6 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
         //When Connection close is initiated
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1186,7 +1194,6 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 #[tokio::test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     // Scenario Outline with Examples: max_attempts = 2, 3
-    use wiremock::{Mock, ResponseTemplate};
 
     for max_attempts in [2u64, 3] {
         //Given Core logout function called with strict strategy
@@ -1206,8 +1213,6 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         //And UD Core connection is configured and logged in
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
-            use crate::common::private_key_helper;
-
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
             client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
             let temp_key_file = private_key_helper::get_test_private_key_file()
@@ -1235,7 +1240,6 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1256,9 +1260,7 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
             .iter()
-            .filter(|r| {
-                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-            })
+            .filter(|r| is_logout_request(r))
             .count();
         assert_eq!(
             logout_count, max_attempts as usize,
@@ -1271,7 +1273,6 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
 #[tokio::test]
 async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy() {
     // Scenario Outline with Examples: max_attempts = 2, 3
-    use wiremock::{Mock, ResponseTemplate};
 
     for max_attempts in [2u64, 3] {
         //Given Core logout function called with best-effort strategy
@@ -1291,8 +1292,6 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         //And UD Core connection is configured and logged in
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
-            use crate::common::private_key_helper;
-
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
             client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
             let temp_key_file = private_key_helper::get_test_private_key_file()
@@ -1320,7 +1319,6 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1342,9 +1340,7 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
             .iter()
-            .filter(|r| {
-                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-            })
+            .filter(|r| is_logout_request(r))
             .count();
         assert_eq!(
             logout_count, max_attempts as usize,
@@ -1357,8 +1353,6 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
 #[tokio::test]
 async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
     // Scenario Outline with Examples: error_code = 400, 403, 404, 390114
-    use serde_json::json;
-    use wiremock::{Mock, ResponseTemplate};
 
     let error_cases: Vec<(&str, ResponseTemplate)> = vec![
         //And Mock HTTP server returns <error_code> error
@@ -1402,8 +1396,6 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
         //And UD Core connection is configured and logged in
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
-            use crate::common::private_key_helper;
-
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
             client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
             let temp_key_file = private_key_helper::get_test_private_key_file()
@@ -1431,7 +1423,6 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1452,9 +1443,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
             .iter()
-            .filter(|r| {
-                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-            })
+            .filter(|r| is_logout_request(r))
             .count();
         assert_eq!(
             logout_count, 1,
@@ -1467,8 +1456,6 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
 #[tokio::test]
 async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strategy() {
     // Scenario Outline with Examples: error_code = 400, 403, 404, 390114
-    use serde_json::json;
-    use wiremock::{Mock, ResponseTemplate};
 
     let error_cases: Vec<(&str, ResponseTemplate)> = vec![
         //And Mock HTTP server returns <error_code> error
@@ -1512,8 +1499,6 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         //And UD Core connection is configured and logged in
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
-            use crate::common::private_key_helper;
-
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
             client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
             let temp_key_file = private_key_helper::get_test_private_key_file()
@@ -1541,7 +1526,6 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         //When Logout is executed
         let conn_handle = client.conn_handle;
         let result = tokio::task::spawn_blocking(move || {
-            use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
             DatabaseDriverClient::connection_close(ConnectionCloseRequest {
                 conn_handle: Some(conn_handle),
             })
@@ -1562,9 +1546,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
             .iter()
-            .filter(|r| {
-                r.url.path() == "/session" && r.url.query().unwrap_or("").contains("delete=true")
-            })
+            .filter(|r| is_logout_request(r))
             .count();
         assert_eq!(
             logout_count, 1,
@@ -1737,10 +1719,6 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
 
 #[tokio::test]
 async fn should_reject_queries_client_side_after_connection_is_closed() {
-    use serde_json::json;
-    use wiremock::matchers::{method, path, query_param};
-    use wiremock::{Mock, ResponseTemplate};
-
     //Given Mock HTTP server is configured
     let server = MockServer::start().await;
     mount_jwt_login_success(&server).await;
@@ -1802,6 +1780,14 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
 }
 
 // Helper functions
+
+fn is_logout_request(r: &wiremock::Request) -> bool {
+    r.url.path() == "/session"
+        && r.url
+            .query()
+            .map(|q| q.contains("delete=true"))
+            .unwrap_or(false)
+}
 
 fn test_client_info() -> ClientInfo {
     ClientInfo {

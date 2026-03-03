@@ -5,7 +5,7 @@ pub mod connection;
 mod database;
 pub(crate) mod error;
 mod global_state;
-pub mod logout_decision;
+mod logout;
 mod query;
 mod session_parameters;
 mod statement;
@@ -39,3 +39,7 @@ pub use statement::statement_release;
 pub use statement::statement_set_option;
 pub use statement::statement_set_sql_query;
 pub use statement::{BindingType, ColumnMetadata, DataPtr};
+
+// Test-only exports
+#[cfg(test)]
+pub use logout::should_send_logout;

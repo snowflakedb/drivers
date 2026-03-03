@@ -1,10 +1,33 @@
-//! Logout decision logic
+//! Logout logic for session cleanup
 //!
-//! Implements Phase 3 truth table for determining whether to send logout request.
-//! See SNOW-2314152 for Phase 2/3 migration plan and semantics.
+//! This module consolidates all logout-related functionality:
+//! - Decision logic for whether to send logout
+//! - Data extraction and validation
+//! - HTTP logout request execution with token refresh
+//!
+//! The module exports a clean interface to connection.rs:
+//! - `prepare_logout()`: Returns Option<LogoutData> after validation and decision
+//! - `send_logout_request()`: Sends the HTTP logout request
 
 use super::async_query_registry::AsyncQueryRegistry;
+use super::connection::{Connection, RefreshContext};
+use super::error::*;
 use crate::config::logout::LogoutConfig;
+use crate::config::rest_parameters::ClientInfo;
+use crate::config::retry::RetryPolicy;
+use crate::rest::snowflake::RestError;
+use crate::rest::snowflake::logout::logout_session;
+use snafu::ResultExt;
+use std::sync::{Arc, Mutex};
+
+/// Data extracted from a locked connection needed to perform HTTP logout.
+pub(super) struct LogoutData {
+    pub(super) client: reqwest::Client,
+    pub(super) url: String,
+    pub(super) info: ClientInfo,
+    pub(super) retry_policy: RetryPolicy,
+    pub(super) refresh_ctx: RefreshContext,
+}
 
 /// Determine whether to send logout request based on configuration and async query state
 ///
@@ -69,7 +92,7 @@ pub fn should_send_logout(
                         (true, None)
                     }
                     Err(e) => {
-                        // Registry lock error - default to logout (safer behavior)
+                        // Registry lock error - default to logout
                         tracing::error!(
                             error = %e,
                             "Failed to check running queries, defaulting to logout"
@@ -96,9 +119,171 @@ pub fn should_send_logout(
     }
 }
 
+/// Validate logout configuration values.
+///
+/// Checks for invalid timeout configurations that would cause immediate failure.
+fn validate_config(config: &LogoutConfig) -> Result<(), ApiError> {
+    // Zero timeout means immediate failure - reject at configuration time
+    if let Some(timeout) = config.logout_request_timeout
+        && timeout.is_zero()
+    {
+        return Err(InvalidArgumentSnafu {
+            argument:
+                "logout_request_timeout: 0s. Zero timeout means immediate failure. Must be positive."
+                    .to_string(),
+        }
+        .build());
+    }
+    Ok(())
+}
+
+/// Prepare logout: validate config, make decision, extract data.
+///
+/// Returns:
+/// - `Ok(Some(LogoutData))`: Logout should be sent with this data
+/// - `Ok(None)`: Logout should be skipped (explicit config or missing fields)
+/// - `Err(ApiError)`: Validation failed or preparation error (error_strategy decides propagation)
+pub(super) fn prepare_logout(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    config: &LogoutConfig,
+) -> Result<Option<LogoutData>, ApiError> {
+    // Validate config first
+    validate_config(config)?;
+
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    tracing::info!("Closing connection");
+
+    // Check if logout should be sent based on configuration and state
+    let (send_logout, skip_reason) = should_send_logout(config, Some(&conn.async_query_registry));
+
+    if !send_logout {
+        // Logout explicitly skipped by configuration or state
+        tracing::info!(
+            reason = skip_reason.as_deref().unwrap_or("unknown"),
+            "Skipping logout based on configuration or state"
+        );
+        return Ok(None);
+    }
+
+    // Logout should be sent - extract required data
+    match (
+        conn.http_client.clone(),
+        conn.server_url.clone(),
+        conn.client_info.clone(),
+    ) {
+        (Some(client), Some(url), Some(info)) => {
+            // Try to create RefreshContext - if it fails, this is a preparation failure
+            let refresh_ctx = RefreshContext::new(&conn)?;
+
+            let mut retry_policy = conn.retry_policy.clone();
+            if let Some(max_attempts) = config.max_attempts {
+                retry_policy.max_attempts = max_attempts;
+            }
+            retry_policy.max_elapsed = config.logout_total_timeout;
+            retry_policy.per_request_timeout = config.logout_request_timeout;
+
+            tracing::debug!(
+                total_timeout_secs = config.logout_total_timeout.as_secs(),
+                max_attempts = retry_policy.max_attempts,
+                per_request_timeout_secs = retry_policy.per_request_timeout.map(|t| t.as_secs()),
+                "Configured logout retry policy"
+            );
+
+            Ok(Some(LogoutData {
+                client,
+                url,
+                info,
+                retry_policy,
+                refresh_ctx,
+            }))
+        }
+        _ => {
+            // Connection was never fully initialized - missing required fields
+            // This is not an error condition according to error_strategy:
+            // - BestEffort: Always skip silently (already the behavior)
+            // - Strict: Skip silently (connection never logged in, no session to kill)
+            tracing::debug!(
+                "Connection missing required fields (http_client, server_url, or client_info), skipping logout"
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// Send the HTTP logout request with automatic token refresh on 390112.
+///
+/// Uses the same RefreshContext loop pattern as statement.rs.
+pub(super) fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
+    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+    let mut ctx = data.refresh_ctx;
+
+    let result = rt.block_on(async {
+        let mut last_error: Option<RestError> = None;
+        loop {
+            let session_token = ctx.refresh_token(last_error).await?;
+            match logout_session(
+                &data.client,
+                &data.url,
+                &session_token,
+                &data.info,
+                &data.retry_policy,
+            )
+            .await
+            {
+                Ok(()) => return Ok(()),
+                Err(e) => last_error = Some(e),
+            }
+        }
+    });
+
+    // Remap ApiError::Query (from RefreshContext) to ApiError::LogoutFailed
+    result.map_err(|e| match e {
+        ApiError::Query { source, .. } => LogoutFailedSnafu {
+            message: format!("{source}"),
+        }
+        .build(),
+        other => other,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_validate_config_accepts_none() {
+        let config = LogoutConfig {
+            logout_request_timeout: None,
+            ..Default::default()
+        };
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_accepts_positive_timeout() {
+        let config = LogoutConfig {
+            logout_request_timeout: Some(Duration::from_secs(10)),
+            ..Default::default()
+        };
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_rejects_zero_timeout() {
+        let config = LogoutConfig {
+            logout_request_timeout: Some(Duration::ZERO),
+            ..Default::default()
+        };
+        let result = validate_config(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument { .. }));
+        assert!(err.to_string().contains("Zero timeout"));
+    }
 
     #[test]
     fn test_explicit_keep_alive_true() {
