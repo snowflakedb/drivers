@@ -30,7 +30,6 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ExecuteResult,
     QueryBindings,
     StatementExecuteQueryRequest,
-    StatementHandle,
     StatementNewRequest,
     StatementReleaseRequest,
     StatementSetSqlQueryRequest,
@@ -117,7 +116,6 @@ class SnowflakeCursorBase(abc.ABC):
         self._current_row_in_batch = 0
         self.execute_result: ExecuteResult | None = None
         self._iterator: Iterator[Row] | None = None
-        self._stmt_handle: StatementHandle | None = None
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
@@ -242,26 +240,7 @@ class SnowflakeCursorBase(abc.ABC):
     @pep249
     def close(self) -> None:
         """Close the cursor now (rather than whenever __del__ is called)."""
-        self._release_statement()
         self._closed = True
-
-    def _release_statement(self) -> None:
-        """Release the current statement handle in the Rust core, if any.
-
-        This method silently handles any exceptions during release to ensure
-        cleanup operations (like close() and execute()) can proceed even if
-        the release fails.
-        """
-        if self._stmt_handle is not None:
-            try:
-                self.connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=self._stmt_handle))
-            except Exception:
-                # Best-effort cleanup: if release fails, we still clear the handle
-                # to avoid re-releasing it. The Rust core will eventually clean up
-                # unreferenced handles.
-                pass
-            finally:
-                self._stmt_handle = None
 
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
@@ -359,19 +338,20 @@ class SnowflakeCursorBase(abc.ABC):
         """
         query, bindings = self._prepare_query(operation, parameters)
 
-        # Release the previous statement handle before creating a new one
-        self._release_statement()
-
-        self._stmt_handle = self._connection.db_api.statement_new(
+        stmt_handle = self._connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self._connection.conn_handle)
         ).stmt_handle
         self._connection.db_api.statement_set_sql_query(
-            StatementSetSqlQueryRequest(stmt_handle=self._stmt_handle, query=query)
+            StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
         )
 
-        request = StatementExecuteQueryRequest(stmt_handle=self._stmt_handle, bindings=bindings)
+        request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
 
         self.execute_result = self._connection.db_api.statement_execute_query(request).result
+
+        # The stream is fully owned by execute_result; the statement handle
+        # is no longer needed, so release it immediately.
+        self._connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=stmt_handle))
 
         # Reset streaming state for a new result
         self._binding_data = None

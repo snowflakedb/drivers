@@ -7,6 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionHandle,
+    StatementHandle,
+)
 from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
 from snowflake.connector.errors import ProgrammingError
 
@@ -429,6 +433,67 @@ class TestFetchmany:
         assert isinstance(result[0][2], Decimal)
         assert result[0][3] is None
         assert result[1][3] is True
+
+
+class TestStatementLifecycle:
+    """Unit tests for statement handle lifecycle (create/release).
+
+    Each execute() creates a statement handle, runs the query, then
+    releases the handle immediately — the Arrow stream returned by
+    execute is fully owned and does not reference the handle.
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        """Create a mock connection with db_api stubs for execute flow."""
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        handle_counter = 0
+
+        def new_handle(*_args, **_kwargs):
+            nonlocal handle_counter
+            handle_counter += 1
+            resp = MagicMock()
+            resp.stmt_handle = StatementHandle(id=handle_counter)
+            return resp
+
+        conn.db_api.statement_new.side_effect = new_handle
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        conn.db_api.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        """Create a cursor with the mocked connection."""
+        return SnowflakeCursor(mock_connection)
+
+    def test_execute_releases_handle_immediately(self, cursor, mock_connection):
+        """A single execute must release its statement handle before returning."""
+        cursor.execute("SELECT 1")
+
+        mock_connection.db_api.statement_release.assert_called_once()
+        released_id = mock_connection.db_api.statement_release.call_args.args[0].stmt_handle.id
+        assert released_id == 1
+
+    def test_sequential_executes_release_all_handles(self, cursor, mock_connection):
+        """Every execute creates and releases its own handle — nothing leaks."""
+        n = 5
+        for i in range(n):
+            cursor.execute(f"SELECT {i}")
+
+        release = mock_connection.db_api.statement_release
+        assert release.call_count == n
+
+        released_ids = [call.args[0].stmt_handle.id for call in release.call_args_list]
+        assert released_ids == list(range(1, n + 1))
+
+    def test_close_without_execute_does_not_release(self, cursor, mock_connection):
+        """Closing a cursor that never executed should not call release."""
+        cursor.close()
+
+        mock_connection.db_api.statement_release.assert_not_called()
 
 
 class TestFetchmanyArraysizeAttribute:
