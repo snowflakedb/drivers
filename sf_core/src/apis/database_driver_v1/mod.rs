@@ -39,7 +39,3 @@ pub use statement::statement_release;
 pub use statement::statement_set_option;
 pub use statement::statement_set_sql_query;
 pub use statement::{BindingType, ColumnMetadata, DataPtr};
-
-// Test-only exports
-#[cfg(test)]
-pub use logout::should_send_logout;
