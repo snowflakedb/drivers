@@ -649,19 +649,8 @@ pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
     // TODO: SNOW-2912513 - Record telemetry for logout decision
 
     // Prepare logout and send if needed - all failures go through error_strategy
-    let logout_result = match logout::prepare_logout(&conn_ptr, &config)? {
-        Some(data) => {
-            let result = logout::send_logout_request(data);
-            if result.is_ok() {
-                tracing::info!("Logout completed successfully");
-            }
-            config.error_strategy.handle_failed_logout(result)
-        }
-        None => {
-            // Logout skipped (explicit config or connection not initialized)
-            Ok(())
-        }
-    };
+    let logout_data = logout::prepare_logout(&conn_ptr, &config)?;
+    let logout_result = logout::execute_logout_with_strategy(logout_data, config.error_strategy);
 
     // Cleanup connection resources
     cleanup_connection(&conn_ptr)?;
