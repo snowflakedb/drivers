@@ -479,11 +479,7 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
     value.ok_or_else(|| DriverException {
         message: message.to_string(),
         status_code: StatusCode::InvalidArgument as i32,
-        error: None,
-        error_trace: vec![],
-        vendor_code: None,
-        sql_state: None,
-        root_cause: None,
+        ..Default::default()
     })
 }
 
@@ -491,11 +487,7 @@ fn not_implemented(message: &str) -> DriverException {
     DriverException {
         message: message.to_string(),
         status_code: StatusCode::NotImplemented as i32,
-        error: None,
-        error_trace: vec![],
-        vendor_code: None,
-        sql_state: None,
-        root_cause: None,
+        ..Default::default()
     }
 }
 
@@ -952,8 +944,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let config_json = serde_json::to_string(&nested_json).map_err(|e| DriverException {
             message: format!("Failed to serialize config to JSON: {e}"),
             status_code: StatusCode::InternalError as i32,
-            error: None,
-            error_trace: vec![],
+            ..Default::default()
         })?;
 
         Ok(ConfigLoadAllSectionsResponse { config_json })
@@ -970,15 +961,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let config_file = paths.config_file.ok_or_else(|| DriverException {
             message: "Configuration path for config file is unavailable".to_string(),
             status_code: StatusCode::InternalError as i32,
-            error: None,
-            error_trace: vec![],
+            ..Default::default()
         })?;
 
         let connections_file = paths.connections_file.ok_or_else(|| DriverException {
             message: "Configuration path for connections file is unavailable".to_string(),
             status_code: StatusCode::InternalError as i32,
-            error: None,
-            error_trace: vec![],
+            ..Default::default()
         })?;
 
         Ok(ConfigGetPathsResponse {
