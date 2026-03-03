@@ -66,9 +66,9 @@ class ConnectionClassConfig:
     """
 
     # Internal flag for logout semantics migration (SNOW-2314152)
-    # False (default): Phase 2 - server_session_keep_alive=False respects auto-detection
-    # True: Phase 3 - Pass parameters directly to Core without mapping
-    # WARNING: Phase 3 will become default in future release (Breaking Change)
+    # False (default): Phase 2 (SNOW-2314152) - server_session_keep_alive=False respects auto-detection
+    # True: Phase 3 (SNOW-2314152) - Pass parameters directly to Core without mapping
+    # WARNING: Phase 3 (SNOW-2314152) will become default in future release (Breaking Change)
     USE_PHASE3_LOGOUT_SEMANTICS: bool = False
 
 

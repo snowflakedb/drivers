@@ -37,7 +37,7 @@ Feature: Session Logout
   #                    Post-Logout Session Invalidation
   # ===========================================================================
 
-  @core_e2e
+  @core_e2e @python_e2e
   Scenario: should reject queries client-side after connection is closed
     Given Snowflake client is logged in
     And Simple query SELECT 1 executes successfully

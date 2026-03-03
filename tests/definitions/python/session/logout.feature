@@ -20,6 +20,7 @@ Feature: Session Logout - Python-specific behavior
   # always logout by default. ODBC already implements Phase 3 behavior.
   # Auto-detection logic scenarios moved to fire-and-forget ticket (SNOW-2923705)
 
+  # TODO: SNOW-2872349 - Requires improved assertions (weak log file parsing)
   Scenario: should have auto_detection enabled and server_session_keep_alive none by default
     # Phase 2 (doc for: SNOW-2314152) defaults for backward compatibility. Will change in Phase 3.
     # Python Phase 2 defaults: server_session_keep_alive=none (actually False in old driver),
@@ -71,6 +72,7 @@ Feature: Session Logout - Python-specific behavior
   #                     Wrapper Defaults
   # ===========================================================================
 
+  # TODO: SNOW-2872349 - Requires improved assertions (weak log file parsing)
   Scenario Outline: should skip logout when server_session_keep_alive is true regardless of auto_detection
     # Phase 2 truth table: True + any + any → No logout, No deprecation
     # Verifies Python correctly passes true to Core
@@ -93,6 +95,7 @@ Feature: Session Logout - Python-specific behavior
     Then enable_server_session_keep_alive_auto_detection defaults to true
     And Auto-detection is enabled by default
 
+  # TODO: SNOW-2314153 - Requires logging integration between Rust Core and Python
   Scenario: should use best-effort error handling strategy by default
     Given Snowflake Python client is created with default parameters
     And Server will return 500 Internal Server Error on logout on all attempts
@@ -137,6 +140,11 @@ Feature: Session Logout - Python-specific behavior
   #          Log deprecation warning whenever auto-cleanup runs.
   # Phase 3: flip default so auto_cleanup is off unless explicitly enabled.
   # Phase 4: remove auto_cleanup and its config entirely.
+  #
+  # TODO: SNOW-2314153 - Requires logging integration for deprecation warning validation
+  # TODO: SNOW-2912513 - Requires telemetry for connection leak metrics
+  # NOTE: The following 6 scenarios require subprocess-based testing approach
+  # NOTE: Implementation exists in connection.py:245-322 but is untested
 
   Scenario: should have auto_cleanup enabled by default
     # Phase 2 (doc for: SNOW-2314152): preserve backward compatibility.

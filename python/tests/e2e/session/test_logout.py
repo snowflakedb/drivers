@@ -81,6 +81,51 @@ class TestLogoutResourceCleanup:
         assert conn.is_closed(), f"Connection should be closed with keep_alive={keep_alive}"
 
 
+class TestLogoutSessionInvalidation:
+    """Post-logout session validation tests from shared/session/logout.feature.
+
+    These tests verify that connections properly reject operations after close().
+    """
+
+    def test_should_reject_queries_client_side_after_connection_is_closed(self, connection_factory):
+        """Verify queries are rejected client-side after connection is closed.
+
+        Gherkin: shared/session/logout.feature:40-46
+
+        This test verifies client-side validation prevents queries on closed connections.
+        The connection should detect the closed state before attempting network operations.
+
+        Verifies:
+        - Given: Snowflake client is logged in
+        - And: Simple query SELECT 1 executes successfully
+        - When: Connection is closed
+        - And: Query is attempted on closed connection
+        - Then: The query fails with a connection-closed error
+        """
+        # Given Snowflake client is logged in
+        conn = connection_factory()
+
+        # And Simple query SELECT 1 executes successfully
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        result_before = cursor.fetchall()
+        assert len(result_before) == 1, "SELECT 1 should return 1 row before close"
+
+        # When Connection is closed
+        conn.close()
+
+        # And Query is attempted on closed connection
+        # Then The query fails with a connection-closed error
+        with pytest.raises(Exception) as exc_info:
+            # Try to execute another query - should fail because connection is closed
+            cursor.execute("SELECT 1")
+
+        error_msg = str(exc_info.value).lower()
+        assert "closed" in error_msg or "not initialized" in error_msg, (
+            f"Error should mention connection is closed or not initialized, got: {exc_info.value}"
+        )
+
+
 class TestLogoutEdgeCases:
     """Edge cases and concurrency tests from shared/session/logout.feature.
 
