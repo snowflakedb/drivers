@@ -57,10 +57,15 @@ std::map<std::string, std::string> parse_parameters_json() {
   std::string search_str = json_str;
 
   std::vector<std::pair<std::string, std::vector<std::string>>> key_mappings = {
-      {"account", {"SNOWFLAKE_TEST_ACCOUNT", "account"}}, {"host", {"SNOWFLAKE_TEST_HOST", "host"}},
-      {"user", {"SNOWFLAKE_TEST_USER", "user"}},          {"database", {"SNOWFLAKE_TEST_DATABASE", "database"}},
-      {"schema", {"SNOWFLAKE_TEST_SCHEMA", "schema"}},    {"warehouse", {"SNOWFLAKE_TEST_WAREHOUSE", "warehouse"}},
-      {"role", {"SNOWFLAKE_TEST_ROLE", "role"}}};
+      {"account", {"SNOWFLAKE_TEST_ACCOUNT", "account"}},
+      {"host", {"SNOWFLAKE_TEST_HOST", "host"}},
+      {"user", {"SNOWFLAKE_TEST_USER", "user"}},
+      {"database", {"SNOWFLAKE_TEST_DATABASE", "database"}},
+      {"schema", {"SNOWFLAKE_TEST_SCHEMA", "schema"}},
+      {"warehouse", {"SNOWFLAKE_TEST_WAREHOUSE", "warehouse"}},
+      {"role", {"SNOWFLAKE_TEST_ROLE", "role"}},
+      {"verify_certificates", {"verify_certificates"}},
+      {"verify_hostname", {"verify_hostname"}}};
 
   for (const auto& [param_name, json_keys] : key_mappings) {
     for (const auto& json_key : json_keys) {
@@ -73,7 +78,18 @@ std::map<std::string, std::string> parse_parameters_json() {
     }
   }
 
-  // Parse private key contents (array of strings)
+  // Parse private key file path or contents
+  // First check for SNOWFLAKE_TEST_PRIVATE_KEY_FILE
+  size_t key_file_start = json_str.find("\"SNOWFLAKE_TEST_PRIVATE_KEY_FILE\"");
+  if (key_file_start != std::string::npos) {
+    std::regex pattern("\"SNOWFLAKE_TEST_PRIVATE_KEY_FILE\"\\s*:\\s*\"([^\"]*)\"");
+    std::smatch match;
+    if (std::regex_search(json_str, match, pattern)) {
+      params["private_key_file"] = match[1].str();
+    }
+  }
+
+  // Parse private key contents (array of strings) if no file path is provided
   // Find the start of SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS array
   size_t key_start = json_str.find("\"SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS\"");
   if (key_start != std::string::npos) {

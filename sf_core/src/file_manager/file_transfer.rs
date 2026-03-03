@@ -35,6 +35,9 @@ pub async fn upload_to_s3_or_skip(
 }
 
 /// Returns true if the file exists in S3, false if it does not.
+/// When the check cannot be performed due to 403 Forbidden (limited
+/// temporary credentials that allow PUT but not HEAD), returns false
+/// so the caller proceeds with upload.
 async fn check_if_file_exists(
     s3_client: &S3Client,
     stage_info: &StageInfo,
@@ -49,6 +52,12 @@ async fn check_if_file_exists(
     {
         Ok(_) => Ok(true),
         Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
+        Err(SdkError::ServiceError(ref err)) if err.raw().status().as_u16() == 403 => {
+            tracing::warn!(
+                "Access denied when checking if file exists in S3 ({s3_key}), proceeding with upload"
+            );
+            Ok(false)
+        }
         Err(e) => Err(aws_sdk_s3::Error::from(e)).context(S3HeadSnafu),
     }
 }
@@ -169,10 +178,22 @@ async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -
         .load()
         .await;
 
-    S3Client::new(&config)
+    let mut s3_config = aws_sdk_s3::config::Builder::from(&config);
+    if let Some(end_point) = &stage_info.end_point {
+        let endpoint_url = if end_point.starts_with("https://") || end_point.starts_with("http://")
+        {
+            end_point.clone()
+        } else {
+            format!("https://{end_point}")
+        };
+        tracing::debug!("Using Snowflake-provided S3 endpoint: {endpoint_url}");
+        s3_config = s3_config.endpoint_url(endpoint_url);
+    }
+
+    S3Client::from_conf(s3_config.build())
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum UploadFileError {
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
@@ -196,7 +217,7 @@ pub enum UploadFileError {
     },
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum DownloadFileError {
     #[snafu(display("Failed to download file from S3"))]
     S3Download {

@@ -100,25 +100,48 @@ message DriverError {
   }
 }
 
+// Single entry in an error trace (analogous to a stack-trace frame)
+message ErrorTraceEntry {
+  string file = 1;
+  uint32 line = 2;
+  uint32 column = 3;
+  string message = 4;
+}
+
 // Driver exception
 message DriverException {
   string message = 1;
   StatusCode status_code = 2;
   DriverError error = 3;
-  string report = 4;
+  repeated ErrorTraceEntry error_trace = 4;
+}
+
+// Column metadata for description
+message ColumnMetadata {
+  string name = 1;
+  string type = 2;
+  optional int64 precision = 3;
+  optional int64 scale = 4;
+  optional int64 length = 5;
+  optional int64 byte_length = 6;
+  bool nullable = 7;
 }
 
 // Execute result
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
-  int64 rows_affected = 2;
+  optional int64 rows_affected = 2;
+  string query_id = 3;
+  repeated ColumnMetadata columns = 4;
+  optional int64 statement_type_id = 5;
+  string query = 6;
 }
 
 // Partitioned result
 message PartitionedResult {
   int64 schema = 1;
   repeated bytes partitions = 2;
-  int64 rows_affected = 3;
+  optional int64 rows_affected = 3;
 }
 
 // Database handle
@@ -152,6 +175,30 @@ message ArrowSchemaPtr {
 // Arrow array pointer
 message ArrowArrayPtr {
   bytes value = 1;
+}
+
+// =============================================================================
+// POINTER TYPES - For passing data references to core
+// =============================================================================
+
+// Pointer to raw binary data in memory with explicit length.
+// Used for passing data from language wrappers without copying.
+//
+// Both JSON and CSV use this same pointer type since both point to raw bytes:
+// - JSON: pointer to UTF-8 encoded JSON bytes (e.g., from json_str.encode('utf-8'))
+// - CSV: pointer to raw CSV file bytes
+message BinaryDataPtr {
+  bytes value = 1;   // 8-byte pointer (encoded as little-endian)
+  int64 length = 2;  // Length of data in bytes
+}
+
+// Union of all binding types.
+// Both variants use BinaryDataPtr since both point to raw bytes in memory.
+message QueryBindings {
+  oneof binding_type {
+    BinaryDataPtr json = 1;  // Pointer to UTF-8 encoded JSON bytes
+    BinaryDataPtr csv = 2;   // Pointer to raw CSV bytes
+  }
 }
 
 // Database service requests and responses
@@ -279,7 +326,11 @@ message ConnectionGetInfoRequest {
 }
 
 message ConnectionGetInfoResponse {
-  bytes info_data = 1;
+  optional string host = 1;
+  optional int64 port = 2;
+  optional string server_url = 3;
+  optional string session_token = 4;
+  optional int64 session_id = 5;
 }
 
 message ConnectionGetObjectsRequest {
@@ -329,6 +380,23 @@ message ConnectionRollbackRequest {
 message ConnectionRollbackResponse {
 }
 
+message ConnectionSetSessionParametersRequest {
+  ConnectionHandle conn_handle = 1;
+  map<string, string> parameters = 2;
+}
+
+message ConnectionSetSessionParametersResponse {
+}
+
+message ConnectionGetParameterRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+}
+
+message ConnectionGetParameterResponse {
+  optional string value = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -362,11 +430,17 @@ message StatementSetSubstraitPlanRequest {
 message StatementSetSubstraitPlanResponse {
 }
 
+message PrepareResult {
+  ArrowArrayStreamPtr stream = 1;
+  repeated ColumnMetadata columns = 4;
+}
+
 message StatementPrepareRequest {
   StatementHandle stmt_handle = 1;
 }
 
 message StatementPrepareResponse {
+  PrepareResult result = 1;
 }
 
 message StatementSetOptionStringRequest {
@@ -430,8 +504,10 @@ message StatementBindStreamRequest {
 message StatementBindStreamResponse {
 }
 
+// Extend current StatementExecute
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;  // None = no bindings
 }
 
 message StatementExecuteQueryResponse {
@@ -453,6 +529,41 @@ message StatementReadPartitionRequest {
 
 message StatementReadPartitionResponse {
   int64 partition_stream = 1;
+}
+
+// Config setting value (union type)
+message ConfigSetting {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bytes bytes_value = 4;
+    bool bool_value = 5;
+  }
+}
+
+// A config section containing key-value settings
+message ConfigSection {
+  map<string, ConfigSetting> settings = 1;
+}
+
+// Config service requests and responses
+
+message ConfigLoadAllSectionsRequest {
+  optional string config_file = 1;
+  optional string connections_file = 2;
+}
+
+message ConfigLoadAllSectionsResponse {
+  string config_json = 1;
+}
+
+message ConfigGetPathsRequest {
+}
+
+message ConfigGetPathsResponse {
+  string config_file = 1;
+  string connections_file = 2;
 }
 
 // Database Driver service definition
@@ -481,6 +592,12 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  // sets initial session parameters connection should be initialized with
+  // call before opening the connection
+  rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
+  // gets cached session parameter. Cache is updated with subset of connection parameters
+  // (chosen by server, included in HTTP response) after each query
+  rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
@@ -498,4 +615,8 @@ service DatabaseDriver {
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
+
+  // Config operations
+  rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
+  rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
 }

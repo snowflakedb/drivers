@@ -20,16 +20,44 @@ impl PythonGenerator {
     ) -> Result<GenerationResult, Whatever> {
         let temp_dir = tempfile::tempdir().whatever_context("Failed to create temp directory")?;
 
+        let out_dir = temp_dir.path().display();
+        let proto_file = context.proto_file.to_str().unwrap();
+        let include_dir = context.proto_file.parent().unwrap().display();
+
+        let protoc = &context.protoc_path;
+
         // Run protoc with Python output
-        std::process::Command::new("protoc")
-            .arg(format!("--python_out={}", temp_dir.path().display()))
-            .arg(context.proto_file.to_str().unwrap())
-            .arg(format!(
-                "-I={}",
-                context.proto_file.parent().unwrap().display()
-            ))
-            .status()
-            .whatever_context("Failed to run protoc")?;
+        let python_output = std::process::Command::new(protoc)
+            .arg(format!("--python_out={out_dir}"))
+            .arg(proto_file)
+            .arg(format!("-I={include_dir}"))
+            .output()
+            .whatever_context("Failed to run protoc --python_out")?;
+
+        if !python_output.status.success() {
+            snafu::whatever!(
+                "protoc --python_out failed: {}",
+                String::from_utf8_lossy(&python_output.stderr)
+            );
+        }
+
+        // Generate .pyi type stubs via mypy-protobuf (--mypy_out).
+        // This is required to keep generated typing deterministic between
+        // local and CI environments.
+        let mypy_output = std::process::Command::new(protoc)
+            .arg(format!("--mypy_out={out_dir}"))
+            .arg(proto_file)
+            .arg(format!("-I={include_dir}"))
+            .output()
+            .whatever_context("Failed to run protoc --mypy_out")?;
+
+        if !mypy_output.status.success() {
+            snafu::whatever!(
+                "protoc --mypy_out failed: {}",
+                String::from_utf8_lossy(&mypy_output.stderr)
+            );
+        }
+        info!("Generated .pyi stubs using mypy-protobuf");
 
         let mut result = GenerationResult::new();
 
@@ -60,7 +88,7 @@ impl PythonGenerator {
         &self,
         context: &GeneratorContext,
     ) -> Result<GenerationResult, Whatever> {
-        let descriptor_set = run_protoc(context.proto_file.clone())?;
+        let descriptor_set = run_protoc(context)?;
         let mut result = GenerationResult::new();
 
         for file in descriptor_set.file {
@@ -261,13 +289,9 @@ class ProtoError(Exception):
             error.ParseFromString(response_bytes)
             raise ProtoApplicationException(error)
         elif code == 2:
-            error = str(response_bytes)
-            raise ProtoTransportException(response_bytes)
+            raise ProtoTransportException(str(response_bytes))
         else:
             raise ProtoTransportException(f"Unknown error code: %s", code)
-
-        response.ParseFromString(self._transport.handle_message('{service_name}', '{name}', request.SerializeToString()))
-        return response
 
 "#
             );

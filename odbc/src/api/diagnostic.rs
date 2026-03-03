@@ -196,6 +196,9 @@ impl<'a> WithDiagnosticInfo for Statement<'a> {
 }
 
 pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
+    if handle.is_null() {
+        return;
+    }
     let t: &mut dyn WithDiagnosticInfo = match handle_type {
         sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
@@ -224,10 +227,14 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
     let message_text = match warning {
         Warning::StringDataTruncated => "String data truncated",
         Warning::NumericValueTruncated => "Numeric value truncated",
+        Warning::RowError => "Error in row",
+        Warning::OptionValueChanged => "Option value changed",
     };
     let sql_state = match warning {
         Warning::StringDataTruncated => SqlState::StringDataRightTruncated,
         Warning::NumericValueTruncated => SqlState::FractionalTruncation,
+        Warning::RowError => SqlState::ErrorInRow,
+        Warning::OptionValueChanged => SqlState::OptionValueChanged,
     };
     DiagnosticRecord {
         native_error: 0,
@@ -258,6 +265,9 @@ pub fn set_diag_info_from_result(
     handle: sql::Handle,
     result: &OdbcResult<()>,
 ) {
+    if handle.is_null() {
+        return;
+    }
     if let Some(t) = from_handle_type(handle_type, handle) {
         let diagnostic_info = t.get_diag_info_mut();
         match result {

@@ -13,6 +13,7 @@ odbc_tests/cmake-build
 parameters.json
 **/rsa_key.p8
 .DS_Store
+/.tmp
 
 # Python/Cython build artifacts
 python/src/snowflake/connector/_internal/nanoarrow_cpp/ArrowIterator/arrow_stream_iterator.cpp
@@ -22,5 +23,13 @@ universal_driver_e2e_test_coverage.html
 sf_core/src/bin
 .vscode
 tests/wiremock/__files/*
+
+# Generated protobuf Rust code (built on the fly via build.rs)
+sf_core/src/protobuf_gen/database_driver_v1.rs
+
+# Generated protobuf Python code (built on the fly via hatch_build.py)
+python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.py
+python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.pyi
+python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_services.py
 
 .DS_Store

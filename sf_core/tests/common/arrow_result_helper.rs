@@ -7,7 +7,7 @@ use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_a
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::RecordBatchReader;
-use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 use std::fmt::Debug;
 use std::sync::Arc;
 

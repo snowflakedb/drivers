@@ -6,9 +6,9 @@ on:
   pull_request:
 
 concurrency:
-  # older builds for the same pull request number or branch should be cancelled
-  cancel-in-progress: true
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,7 +35,7 @@ jobs:
   build_wheel:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    strategy:
+    strategy: &matrix
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
@@ -59,7 +59,7 @@ jobs:
 
       - name: Build python wheel
         working-directory: ./python
-        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
+        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
       - name: Inspect wheel
         working-directory: ./python
@@ -71,8 +71,10 @@ jobs:
           name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
           path: python/dist/*.whl
 
-  # Format and lint checking
-  format:
+  # Packaging tests - verify sdist can be built and installed from source
+  packaging_tests:
+    needs: [detect-changes]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python_packaging == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -83,25 +85,21 @@ jobs:
         with:
           version: "0.9.28"
 
-      - name: Set up Python
+      - name: Set up Python 3.13
         run: uv python install 3.13
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Run format and lint checks
+      - name: Run packaging tests
         working-directory: ./python
-        run: hatch run precommit:check
+        run: hatch run packaging.py3.13:test -v --timeout=900
 
   # Combined unit + integration tests with universal connector
   python_tests:
-    needs: [detect-changes, build_wheel, format]
+    needs: [detect-changes, build_wheel]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    strategy: *matrix
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -137,7 +135,7 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Install snowflake ud driver from wheel
         working-directory: python
@@ -164,7 +162,7 @@ jobs:
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
-    needs: [detect-changes, build_wheel, format]
+    needs: [detect-changes, build_wheel]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
@@ -202,7 +200,7 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: *setup_env
 
       - name: Run reference integration tests
         env:
@@ -250,7 +248,7 @@ jobs:
           path: ${{ github.workspace }}/reference-results
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: *setup_env
 
       - name: Compare integration test results
         run: |
@@ -263,7 +261,7 @@ jobs:
         working-directory: python
 
   python-status:
-    needs: [detect-changes, build_wheel, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheel, packaging_tests, python_tests, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -281,10 +279,12 @@ jobs:
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.packaging_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+            echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
@@ -294,6 +294,7 @@ jobs:
           # Tests ran and passed
           echo "✓ Python CI PASSED"
           echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+          echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"

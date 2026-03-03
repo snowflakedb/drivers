@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 import pytest
 
+from snowflake.connector.cursor import DictCursor
+
 from .compatibility import IS_UNIVERSAL_DRIVER
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .private_key_helper import get_test_private_key_path
@@ -28,10 +30,32 @@ def connector_adapter(request):
     return ConnectorFactory.create_adapter()
 
 
+def with_paramstyle(style: str):
+    """Decorator that sets the paramstyle on the ``connection`` fixture.
+
+    Usage::
+
+        @with_paramstyle("qmark")
+        class TestBinding:
+            def test_example(self, cursor): ...
+
+
+        @with_paramstyle("numeric")
+        def test_numeric(self, cursor): ...
+    """
+    return pytest.mark.parametrize("connection", [style], indirect=True)
+
+
 @pytest.fixture
-def connection(connector_adapter):
-    """Create a test connection using the configured connector adapter."""
-    with create_connection_with_adapter(connector_adapter) as conn:
+def connection(request, connector_adapter):
+    """Create a test connection using the configured connector adapter.
+
+    Use ``@with_paramstyle(...)`` to enable parameter binding on the
+    connection.  When the decorator is absent the connection has no
+    paramstyle set.
+    """
+    paramstyle = getattr(request, "param", None)
+    with create_connection_with_adapter(connector_adapter, paramstyle=paramstyle) as conn:
         yield conn
 
 
@@ -61,6 +85,13 @@ def cursor(connection):
 
 
 @pytest.fixture
+def dict_cursor(connection):
+    """Create a DictCursor from a connection."""
+    with connection.cursor(cursor_class=DictCursor) as cursor:
+        yield cursor
+
+
+@pytest.fixture
 def execute_query(cursor):
     """Helper replacing cursor if your only use case is to execute a query."""
 
@@ -71,6 +102,27 @@ def execute_query(cursor):
         return cursor.fetchall()
 
     return _execute_query
+
+
+@pytest.fixture
+def executemany_insert(cursor):
+    """Fixture for bulk-inserting rows via executemany and reading them back.
+
+    Returns a callable:
+        executemany_insert(table_name, sql, rows) -> list[Row]
+
+    It executes cursor.executemany(sql, rows), then SELECTs all rows
+    from the table ordered by the first column.
+
+    Useful for testing multirow binding.
+    """
+
+    def _executemany_insert(table_name: str, sql: str, rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+        cursor.executemany(sql, rows)
+        cursor.execute(f"SELECT * FROM {table_name} ORDER BY 1")
+        return cursor.fetchall()
+
+    return _executemany_insert
 
 
 @pytest.fixture

@@ -37,6 +37,7 @@ def create_perf_container(
     setup_queries: list[str] = None,
     test_type: TestType = TestType.SELECT,
     s3_files_dir: Path = None,
+    network_mode: str = "host",
 ) -> DockerContainer:
     """
     Create and configure a Docker container for performance testing.
@@ -53,11 +54,22 @@ def create_perf_container(
         setup_queries: Optional list of SQL queries to run before warmup/test iterations
         test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
         s3_files_dir: Optional directory with S3-downloaded files to mount (for PUT/GET tests)
+        network_mode: Docker network mode ("host" for direct host network, reduces jitter)
     
     Returns:
         Configured DockerContainer instance
     """
     image_name = f"{driver}-perf-driver:latest"
+    
+    container_kwargs = {
+        "mem_limit": MEMORY_LIMIT,
+        "nano_cpus": int(CPU_LIMIT * 1_000_000_000)  # Convert to nano CPUs
+    }
+    
+    # Configure network mode (host network reduces jitter)
+    if network_mode:
+        container_kwargs["network_mode"] = network_mode
+        logger.info(f"Using network mode: {network_mode}")
     
     container = (
         DockerContainer(image_name)
@@ -68,10 +80,7 @@ def create_perf_container(
         .with_env("PERF_ITERATIONS", str(iterations))
         .with_env("PERF_WARMUP_ITERATIONS", str(warmup_iterations))
         .with_volume_mapping(str(results_dir), "/results", mode="rw")
-        .with_kwargs(
-            mem_limit=MEMORY_LIMIT,
-            nano_cpus=int(CPU_LIMIT * 1_000_000_000)  # Convert to nano CPUs
-        )
+        .with_kwargs(**container_kwargs)
     )
     
     if setup_queries:

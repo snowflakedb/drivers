@@ -88,15 +88,7 @@ macro_rules! parse_u_number {
 macro_rules! write_i_number {
     ($value:expr, $type:ty, $binding:expr) => {{
         let (value, warnings) = parse_i_number!($value, $type);
-        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
-        if !$binding.str_len_or_ind_ptr.is_null() {
-            unsafe {
-                std::ptr::write(
-                    $binding.str_len_or_ind_ptr,
-                    std::mem::size_of::<$type>() as sql::Len,
-                )
-            };
-        };
+        $binding.write_fixed(value);
         Ok(warnings)
     }};
 }
@@ -104,15 +96,7 @@ macro_rules! write_i_number {
 macro_rules! write_u_number {
     ($value:expr, $type:ty, $binding:expr) => {{
         let (value, warnings) = parse_u_number!($value, $type);
-        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
-        if !$binding.str_len_or_ind_ptr.is_null() {
-            unsafe {
-                std::ptr::write(
-                    $binding.str_len_or_ind_ptr,
-                    std::mem::size_of::<$type>() as sql::Len,
-                )
-            };
-        };
+        $binding.write_fixed(value);
         Ok(warnings)
     }};
 }
@@ -149,17 +133,7 @@ macro_rules! parse_float {
 macro_rules! write_float {
     ($value:expr, $type:ty, $binding:expr) => {{
         let value = parse_float!($value, $type);
-        unsafe {
-            std::ptr::write($binding.target_value_ptr as *mut $type, value);
-        };
-        if !$binding.str_len_or_ind_ptr.is_null() {
-            unsafe {
-                std::ptr::write(
-                    $binding.str_len_or_ind_ptr,
-                    std::mem::size_of::<$type>() as sql::Len,
-                )
-            };
-        }
+        $binding.write_fixed(value);
         Ok(vec![])
     }};
 }
@@ -204,77 +178,30 @@ fn is_valid_time_format(s: &str) -> bool {
         && bytes[7].is_ascii_digit()
 }
 
-fn write_wchar_string(src: &str, binding: &Binding) -> Warnings {
-    let max_len = (binding.buffer_length / 2) as usize;
-    let value_ptr = binding.target_value_ptr as *mut u16;
-    let mut dst_idx = 0;
-    for c in src.encode_utf16() {
-        if dst_idx == max_len - 1 {
-            unsafe {
-                std::ptr::write(value_ptr.add(max_len - 1), 0);
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
-                }
-            }
-            return vec![Warning::StringDataTruncated];
-        }
-        unsafe {
-            std::ptr::write(value_ptr.add(dst_idx), c);
-        }
-        dst_idx += 1;
-    }
-    unsafe {
-        std::ptr::write(value_ptr.add(dst_idx), 0);
-        if !binding.str_len_or_ind_ptr.is_null() {
-            // COMPATIBILITY: ODBC 3.80 specification says that the string length should be the number of characters, not the number of bytes.
-            // However, older versions of Snowflake ODBC driver returns the number of bytes.
-            // So we need to convert the number of characters to the number of bytes.
-            let num_characters = dst_idx as sql::Len;
-            let num_bytes = num_characters * 2;
-            std::ptr::write(binding.str_len_or_ind_ptr, num_bytes);
-        }
-    }
-    vec![]
-}
-
-fn write_char_string(src: &str, binding: &Binding) -> Warnings {
-    let max_len = binding.buffer_length as usize;
-    let mut dst_idx = 0;
-    let value_ptr = binding.target_value_ptr as *mut u8;
-    for c in src.chars() {
-        if dst_idx == max_len - 1 {
-            unsafe {
-                std::ptr::write(value_ptr.add(max_len - 1), 0);
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
-                }
-            }
-            return vec![Warning::StringDataTruncated];
-        }
-        let byte = if c.is_ascii() { c as u8 } else { 0x1a };
-        unsafe {
-            std::ptr::write(value_ptr.add(dst_idx), byte);
-        }
-        dst_idx += 1;
-    }
-    unsafe {
-        std::ptr::write(value_ptr.add(dst_idx), 0);
-        if !binding.str_len_or_ind_ptr.is_null() {
-            std::ptr::write(binding.str_len_or_ind_ptr, dst_idx as sql::Len);
-        }
-    }
-    vec![]
-}
-
 impl WriteODBCType for SnowflakeVarchar {
+    fn sql_type(&self) -> sql::SqlDataType {
+        sql::SqlDataType::VARCHAR
+    }
+
+    fn column_size(&self) -> sql::ULen {
+        self.len as sql::ULen
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        0
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Char => Ok(write_char_string(snowflake_value, binding)),
-            CDataType::WChar => Ok(write_wchar_string(snowflake_value, binding)),
+            CDataType::Default | CDataType::Char => {
+                Ok(binding.write_char_string(snowflake_value, get_data_offset))
+            }
+            CDataType::WChar => Ok(binding.write_wchar_string(snowflake_value, get_data_offset)),
             CDataType::SBigInt => write_i_number!(snowflake_value, i64, binding),
             CDataType::UBigInt => write_u_number!(snowflake_value, u64, binding),
             CDataType::Long | CDataType::SLong => write_i_number!(snowflake_value, i32, binding),
@@ -291,15 +218,7 @@ impl WriteODBCType for SnowflakeVarchar {
                 let (value, warnings) = parse_u_number!(snowflake_value, u8);
                 match value {
                     0 | 1 => {
-                        unsafe { std::ptr::write(binding.target_value_ptr as *mut u8, value) };
-                        if !binding.str_len_or_ind_ptr.is_null() {
-                            unsafe {
-                                std::ptr::write(
-                                    binding.str_len_or_ind_ptr,
-                                    std::mem::size_of::<u8>() as sql::Len,
-                                )
-                            };
-                        }
+                        binding.write_fixed(value);
                         Ok(warnings)
                     }
                     _ => NumericValueOutOfRangeSnafu {
@@ -328,15 +247,7 @@ impl WriteODBCType for SnowflakeVarchar {
                     month: Datelike::month(&date) as u16,
                     day: Datelike::day(&date) as u16,
                 };
-                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Date, date) };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Date>() as sql::Len,
-                        )
-                    };
-                }
+                binding.write_fixed(date);
                 Ok(vec![])
             }
             CDataType::Time | CDataType::TypeTime => {
@@ -359,15 +270,7 @@ impl WriteODBCType for SnowflakeVarchar {
                     minute: Timelike::minute(&time) as u16,
                     second: Timelike::second(&time) as u16,
                 };
-                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Time, time) };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Time>() as sql::Len,
-                        )
-                    };
-                }
+                binding.write_fixed(time);
                 Ok(vec![])
             }
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
@@ -416,17 +319,7 @@ impl WriteODBCType for SnowflakeVarchar {
                     second: Timelike::second(&timestamp) as u16,
                     fraction: 0,
                 };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Timestamp>() as sql::Len,
-                        )
-                    };
-                }
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut sql::Timestamp, timestamp)
-                };
+                binding.write_fixed(timestamp);
                 Ok(vec![])
             }
             CDataType::Numeric => {
@@ -459,32 +352,11 @@ impl WriteODBCType for SnowflakeVarchar {
                     sign,
                     val: value.to_le_bytes(),
                 };
-                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Numeric, numeric) };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Numeric>() as sql::Len,
-                        )
-                    };
-                }
+                binding.write_fixed(numeric);
                 Ok(warnings)
             }
             CDataType::Binary => {
-                // Copy the string bytes directly to the buffer
-                let bytes = snowflake_value.as_bytes();
-                let copy_len = std::cmp::min(bytes.len(), binding.buffer_length as usize);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        bytes.as_ptr(),
-                        binding.target_value_ptr as *mut u8,
-                        copy_len,
-                    );
-                }
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe { std::ptr::write(binding.str_len_or_ind_ptr, bytes.len() as sql::Len) };
-                }
-                Ok(vec![])
+                Ok(binding.write_binary(snowflake_value.as_bytes(), get_data_offset))
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,

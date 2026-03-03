@@ -109,6 +109,16 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.ConnectionRollbackResponse connectionRollback(DatabaseDriverV1.ConnectionRollbackRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: connectionSetSessionParameters
+     */
+    DatabaseDriverV1.ConnectionSetSessionParametersResponse connectionSetSessionParameters(DatabaseDriverV1.ConnectionSetSessionParametersRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: connectionGetParameter
+     */
+    DatabaseDriverV1.ConnectionGetParameterResponse connectionGetParameter(DatabaseDriverV1.ConnectionGetParameterRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: statementNew
      */
     DatabaseDriverV1.StatementNewResponse statementNew(DatabaseDriverV1.StatementNewRequest request) throws ServiceException, TransportException;
@@ -182,6 +192,16 @@ public interface DatabaseDriverService {
      * Method: statementReadPartition
      */
     DatabaseDriverV1.StatementReadPartitionResponse statementReadPartition(DatabaseDriverV1.StatementReadPartitionRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: configLoadAllSections
+     */
+    DatabaseDriverV1.ConfigLoadAllSectionsResponse configLoadAllSections(DatabaseDriverV1.ConfigLoadAllSectionsRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: configGetPaths
+     */
+    DatabaseDriverV1.ConfigGetPathsResponse configGetPaths(DatabaseDriverV1.ConfigGetPathsRequest request) throws ServiceException, TransportException;
 
 
     class ServiceException extends RuntimeException {

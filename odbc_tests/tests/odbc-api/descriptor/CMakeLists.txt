@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_copy_desc_tests copy_desc_tests.cpp)
+add_odbc_test(odbc_api_get_desc_field_tests get_desc_field_tests.cpp)
+add_odbc_test(odbc_api_get_desc_rec_tests get_desc_rec_tests.cpp)
+add_odbc_test(odbc_api_set_desc_field_tests set_desc_field_tests.cpp)
+add_odbc_test(odbc_api_set_desc_rec_tests set_desc_rec_tests.cpp)

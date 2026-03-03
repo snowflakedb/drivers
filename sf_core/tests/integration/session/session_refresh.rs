@@ -5,7 +5,7 @@ use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
-use sf_core::sensitive::SensitiveToken;
+use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -87,8 +87,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
 
     // Create a connection with initial tokens
     let tokens = SessionTokens {
-        session_token: SensitiveToken::new("old-session-token"),
-        master_token: SensitiveToken::new("valid-master-token"),
+        session_token: SensitiveString::new("old-session-token"),
+        master_token: SensitiveString::new("valid-master-token"),
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,
@@ -101,6 +101,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         retry_policy: RetryPolicy::default(),
         server_url: Some(format!("http://{}", addr)),
         client_info: Some(test_client_info()),
+        init_session_parameters: None,
+        session_parameters: Arc::new(std::sync::RwLock::new(HashMap::new())),
     }));
 
     // When multiple concurrent requests receive 401 errors

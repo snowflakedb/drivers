@@ -7,7 +7,7 @@ use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
-use sf_core::sensitive::{SensitivePassword, SensitivePrivateKey};
+use sf_core::sensitive::SensitiveString;
 use sf_core::tls::client::create_tls_client_with_config;
 use sf_core::tls::config::TlsConfig;
 use std::fs;
@@ -84,7 +84,7 @@ fn should_refresh_session_proactively() {
             tls_config: TlsConfig::insecure(),
         };
 
-        let private_key = SensitivePrivateKey::new(
+        let private_key = SensitiveString::new(
             fs::read_to_string(temp_key_file.path()).expect("Failed to read private key file"),
         );
 
@@ -97,29 +97,34 @@ fn should_refresh_session_proactively() {
                 passphrase: parameters
                     .private_key_password
                     .clone()
-                    .map(SensitivePassword::new),
+                    .map(SensitiveString::new),
             },
             database: parameters.database.clone(),
             schema: parameters.schema.clone(),
             warehouse: parameters.warehouse.clone(),
             role: parameters.role.clone(),
             client_info: client_info.clone(),
+            session_parameters: None,
         };
 
         let http_client = create_tls_client_with_config(TlsConfig::insecure())
             .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
-        let initial_tokens = snowflake_login_with_client(&http_client, &login_parameters)
+        let login_result = snowflake_login_with_client(&http_client, &login_parameters, None)
             .await
             .expect("Login should succeed");
 
-        let original_session_token = initial_tokens.session_token.clone();
+        let original_session_token = login_result.tokens.session_token.clone();
 
-        let refreshed_tokens =
-            refresh_session(&http_client, &server_url, &client_info, &initial_tokens)
-                .await
-                .expect("Proactive refresh should succeed");
+        let refreshed_tokens = refresh_session(
+            &http_client,
+            &server_url,
+            &client_info,
+            &login_result.tokens,
+        )
+        .await
+        .expect("Proactive refresh should succeed");
 
         // Then we should get new tokens that differ from the original
         assert!(

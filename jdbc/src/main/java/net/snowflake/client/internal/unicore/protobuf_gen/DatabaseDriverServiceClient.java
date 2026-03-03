@@ -699,6 +699,74 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
     }
     
     /**
+     * Method: connectionSetSessionParameters
+     */
+    public DatabaseDriverV1.ConnectionSetSessionParametersResponse connectionSetSessionParameters(DatabaseDriverV1.ConnectionSetSessionParametersRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "connection_set_session_parameters",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.ConnectionSetSessionParametersResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
+     * Method: connectionGetParameter
+     */
+    public DatabaseDriverV1.ConnectionGetParameterResponse connectionGetParameter(DatabaseDriverV1.ConnectionGetParameterRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "connection_get_parameter",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.ConnectionGetParameterResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
      * Method: statementNew
      */
     public DatabaseDriverV1.StatementNewResponse statementNew(DatabaseDriverV1.StatementNewRequest request) throws ServiceException, TransportException {
@@ -1190,6 +1258,74 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
         if (code == CoreTransport.CODE_SUCCESS) {
             try {
                 return DatabaseDriverV1.StatementReadPartitionResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
+     * Method: configLoadAllSections
+     */
+    public DatabaseDriverV1.ConfigLoadAllSectionsResponse configLoadAllSections(DatabaseDriverV1.ConfigLoadAllSectionsRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "config_load_all_sections",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.ConfigLoadAllSectionsResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
+     * Method: configGetPaths
+     */
+    public DatabaseDriverV1.ConfigGetPathsResponse configGetPaths(DatabaseDriverV1.ConfigGetPathsRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "config_get_paths",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.ConfigGetPathsResponse.parseFrom(responseBytes);
             } catch (InvalidProtocolBufferException e) {
                 throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
             }

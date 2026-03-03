@@ -5,10 +5,13 @@ import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.Properties;
 import java.util.logging.Logger;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 
 /**
  * Snowflake JDBC Driver implementation
@@ -17,11 +20,11 @@ import net.snowflake.client.internal.api.implementation.connection.SnowflakeConn
  * native Rust implementation via JNI.
  */
 public class SnowflakeDriver implements Driver {
-
+  private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeDriver.class);
   private static final String DRIVER_NAME = "Snowflake JDBC Driver";
-  private static final String DRIVER_VERSION = "0.1.0";
-  private static final int MAJOR_VERSION = 0;
-  private static final int MINOR_VERSION = 1;
+  private static final String DRIVER_VERSION = "4.0.0";
+  private static final int MAJOR_VERSION = 4;
+  private static final int MINOR_VERSION = 0;
 
   public static void empty() {}
 
@@ -39,17 +42,21 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public Connection connect(String url, Properties info) throws SQLException {
-    if (!acceptsURL(url)) {
+    if (ConnectionString.hasUnsupportedPrefix(url)) {
+      logger.debug("Connect strings must start with jdbc:snowflake://");
       return null;
     }
-
+    ConnectionString parsed = ConnectionString.parse(url, info);
+    if (!parsed.isValid()) {
+      throw new SnowflakeSQLException("Connection string is invalid. Unable to parse.");
+    }
     return new SnowflakeConnectionImpl(url, info);
   }
 
   @Override
   public boolean acceptsURL(String url) throws SQLException {
     if (url == null) {
-      return false;
+      throw new SQLException("URL must not be null");
     }
     return url.startsWith("jdbc:snowflake:");
   }
@@ -72,11 +79,11 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public boolean jdbcCompliant() {
-    return false; // Not fully compliant in stub implementation
+    return false; // Not fully compliant to JDBC 4.2 specification
   }
 
   @Override
-  public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-    throw new SQLFeatureNotSupportedException("getParentLogger not supported");
+  public Logger getParentLogger() {
+    return null;
   }
 }

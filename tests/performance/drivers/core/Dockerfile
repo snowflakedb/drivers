@@ -19,6 +19,8 @@ COPY rust-toolchain.toml ./rust-toolchain.toml
 COPY build_common.rs ./build_common.rs
 COPY sf_core/ ./sf_core/
 COPY proto_utils/ ./proto_utils/
+COPY error_trace/ ./error_trace/
+COPY error_trace_derive/ ./error_trace_derive/
 COPY tests/performance/drivers/core/app/ ./tests/performance/drivers/core/app/
 
 # Modify sf_core/Cargo.toml to only build rlib (not dylib) to avoid linker issues
@@ -40,6 +42,8 @@ RUN apt-get update && apt-get install -y \
     cmake \
     golang-go \
     clang \
+    curl \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cargo-chef
@@ -61,6 +65,10 @@ COPY build_common.rs ./build_common.rs
 # Copy sf_core and proto_utils source (needed for path dependencies)
 COPY sf_core/ ./sf_core/
 COPY proto_utils/ ./proto_utils/
+COPY error_trace/ ./error_trace/
+COPY error_trace_derive/ ./error_trace_derive/
+COPY proto_generator/ ./proto_generator/
+COPY protobuf/ ./protobuf/
 
 # Modify sf_core/Cargo.toml to only build rlib (not dylib) to avoid linker issues
 RUN sed -i 's/crate-type = \["dylib", "rlib"\]/crate-type = ["rlib"]/' ./sf_core/Cargo.toml
@@ -69,6 +77,9 @@ WORKDIR /workdir/tests/performance/drivers/core/app
 
 # Build dependencies - this layer will be cached unless dependencies change
 COPY --from=planner /workdir/tests/performance/drivers/core/app/recipe.json recipe.json
+# Copy Cargo.lock to ensure cargo-chef uses pinned dependency versions
+# (without this, cargo resolves the latest versions which may require a newer rustc)
+COPY tests/performance/drivers/core/app/Cargo.lock Cargo.lock
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy application source and build only the app (sf_core already compiled)

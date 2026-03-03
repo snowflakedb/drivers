@@ -3,7 +3,7 @@
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::{SessionTokens, refresh_session};
-use sf_core::sensitive::SensitiveToken;
+use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,8 +25,8 @@ fn test_client_info() -> ClientInfo {
 
 fn test_tokens() -> SessionTokens {
     SessionTokens {
-        session_token: SensitiveToken::new("old-session-token"),
-        master_token: SensitiveToken::new("valid-master-token"),
+        session_token: SensitiveString::new("old-session-token"),
+        master_token: SensitiveString::new("valid-master-token"),
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,

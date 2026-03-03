@@ -7,11 +7,41 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.Properties;
+import java.util.UUID;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import org.json.JSONObject;
 import org.json.JSONTokener;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.TestInstance;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class SnowflakeIntegrationTestBase {
+  private Connection defaultConnection;
+
+  @BeforeAll
+  protected void setUpDefaultConnection() throws Exception {
+    defaultConnection = openConnection();
+    ensureDatabaseAndSchema(defaultConnection);
+  }
+
+  @AfterAll
+  protected void tearDownDefaultConnection() throws Exception {
+    if (defaultConnection != null && !defaultConnection.isClosed()) {
+      defaultConnection.close();
+    }
+    defaultConnection = null;
+  }
+
+  protected Connection getDefaultConnection() throws Exception {
+    if (defaultConnection == null) {
+      throw new IllegalStateException("Default test connection is not initialized");
+    }
+    if (defaultConnection.isClosed()) {
+      throw new IllegalStateException("Default test connection is closed");
+    }
+    return defaultConnection;
+  }
 
   protected Properties loadConnectionProperties() throws Exception {
     // Load parameters.json from test resources
@@ -40,7 +70,7 @@ public abstract class SnowflakeIntegrationTestBase {
   protected Connection openConnection() throws Exception {
     Properties props = loadConnectionProperties();
     String url = buildJdbcUrl(props);
-    SnowflakeDriver.empty();
+    prepareDriver();
     return DriverManager.getConnection(url, props);
   }
 
@@ -67,6 +97,19 @@ public abstract class SnowflakeIntegrationTestBase {
     }
   }
 
+  protected void execute(Connection connection, String sql) throws Exception {
+    try (Statement statement = connection.createStatement()) {
+      statement.execute(sql);
+    }
+  }
+
+  protected String createTempTable(Connection connection, String tablePrefix, String columns)
+      throws Exception {
+    String tableName = tablePrefix + UUID.randomUUID().toString().replace("-", "");
+    execute(connection, "CREATE TEMPORARY TABLE " + tableName + " (" + columns + ")");
+    return tableName;
+  }
+
   private void addOptionalConnectionProperties(JSONObject params, Properties props) {
     if (params.has("SNOWFLAKE_TEST_PORT")) {
       props.setProperty("port", String.valueOf(params.getInt("SNOWFLAKE_TEST_PORT")));
@@ -87,5 +130,9 @@ public abstract class SnowflakeIntegrationTestBase {
     if (params.has("SNOWFLAKE_TEST_PROTOCOL")) {
       props.setProperty("protocol", params.getString("SNOWFLAKE_TEST_PROTOCOL"));
     }
+  }
+
+  private static synchronized void prepareDriver() throws Exception {
+    Class.forName(SnowflakeDriver.class.getName());
   }
 }

@@ -1,0 +1,23 @@
+{
+  "name": "Okta token MFA required",
+  "request": {
+    "urlPathPattern": "/api/v1/authn.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "status": "MFA_REQUIRED",
+      "stateToken": "00abc123",
+      "_embedded": {
+        "factors": [
+          {
+            "id": "factor123",
+            "factorType": "sms",
+            "provider": "OKTA"
+          }
+        ]
+      }
+    }
+  }
+}
