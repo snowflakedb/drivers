@@ -77,7 +77,7 @@ jobs:
           gpg --version
           $referenceOdbcVersion = (Get-Content "ci/reference-odbc-version" -Raw).Trim()
           $snowflakeOdbcMsi = "snowflake64_odbc-$referenceOdbcVersion.msi"
-          $snowflakeOdbcUrl = "https://sfc-repo.snowflakecomputing.com/odbc/windows/$referenceOdbcVersion/snowflake64_odbc-$referenceOdbcVersion.msi"
+          $snowflakeOdbcUrl = "https://sfc-repo.snowflakecomputing.com/odbc/win64/$referenceOdbcVersion/$snowflakeOdbcMsi"
           Write-Host "Downloading Snowflake ODBC MSI from: $snowflakeOdbcUrl"
           Invoke-Checked "Invoke-WebRequest download Snowflake ODBC MSI" { Invoke-WebRequest -Uri $snowflakeOdbcUrl -OutFile $snowflakeOdbcMsi }
           $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i $snowflakeOdbcMsi /quiet" -Wait -PassThru
