@@ -654,49 +654,63 @@ class TestCursorSqlstate:
 
     def test_sqlstate_is_none_before_execute(self, connection):
         """Test that sqlstate returns None before any query is executed."""
-        # Given a new cursor
         cursor = connection.cursor()
+        assert cursor.sqlstate is None
 
-        # When accessing sqlstate before execute
-        result = cursor.sqlstate
-
-        # Then it should be None
-        assert result is None
-
-    def test_sqlstate_after_successful_execute(self, cursor):
-        """Test that sqlstate is accessible after a successful query."""
-        # Given a cursor that executes a successful query
+    def test_sqlstate_none_after_successful_select(self, cursor):
+        """Successful queries set sqlstate to None (00000 is normalized)."""
         cursor.execute("SELECT 1")
+        assert cursor.sqlstate is None
 
-        # When accessing sqlstate
-        result = cursor.sqlstate
+    def test_sqlstate_none_after_dml(self, cursor):
+        """Successful DDL/DML statements set sqlstate to None."""
+        cursor.execute("CREATE TEMPORARY TABLE test_sqlstate_dml (id INT)")
+        assert cursor.sqlstate is None
 
-        # Then it should be None or a valid SQL state string
-        assert result is None or isinstance(result, str)
+        cursor.execute("INSERT INTO test_sqlstate_dml VALUES (1)")
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_stays_none_across_executes(self, cursor):
+        """sqlstate is refreshed on every execute call."""
+        cursor.execute("SELECT 1")
+        first = cursor.sqlstate
+
+        cursor.execute("SELECT 2")
+        second = cursor.sqlstate
+
+        assert first is None
+        assert second is None
 
     def test_sqlstate_persists_after_fetchall(self, cursor):
-        """Test that sqlstate persists after fetching all results."""
-        # Given a cursor that executes a query
+        """sqlstate is not cleared by fetching results."""
         cursor.execute("SELECT 1, 2, 3")
-        sqlstate_before = cursor.sqlstate
-
-        # When fetching all results
         cursor.fetchall()
-
-        # Then sqlstate should still be the same
-        assert cursor.sqlstate == sqlstate_before
+        assert cursor.sqlstate is None
 
     def test_sqlstate_persists_after_fetchone(self, cursor):
-        """Test that sqlstate persists after fetching one result."""
-        # Given a cursor that executes a query
+        """sqlstate is not cleared by fetching results."""
         cursor.execute("SELECT 1")
-        sqlstate_before = cursor.sqlstate
-
-        # When fetching one result
         cursor.fetchone()
+        assert cursor.sqlstate is None
 
-        # Then sqlstate should still be the same
-        assert cursor.sqlstate == sqlstate_before
+    def test_sqlstate_set_on_failed_execute(self, cursor):
+        """sqlstate is captured from the error when a query fails."""
+        with pytest.raises(Exception):  # noqa: B017
+            cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+
+        assert cursor.sqlstate == "42S02"
+
+    def test_sqlstate_transitions_across_success_and_failure(self, cursor):
+        """sqlstate updates correctly through None -> error -> None."""
+        cursor.execute("SELECT 1")
+        assert cursor.sqlstate is None
+
+        with pytest.raises(Exception):  # noqa: B017
+            cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+        assert cursor.sqlstate == "42S02"
+
+        cursor.execute("SELECT 2")
+        assert cursor.sqlstate is None
 
 
 class TestCursorStatementLifecycle:

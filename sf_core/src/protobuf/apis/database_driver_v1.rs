@@ -412,6 +412,15 @@ fn to_driver_exception(error: ApiError) -> DriverException {
 
     let message = error.to_string();
     let driver_error = to_driver_error(&error);
+
+    let sql_state = match &error {
+        ApiError::Query {
+            source: RestError::QueryFailed { sql_state, .. },
+            ..
+        } => sql_state.clone(),
+        _ => None,
+    };
+
     let error_trace = error
         .error_trace()
         .into_iter()
@@ -427,6 +436,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         status_code: status_code as i32,
         error: Some(driver_error),
         error_trace,
+        sql_state,
     }
 }
 
@@ -437,6 +447,7 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
         status_code: StatusCode::InvalidArgument as i32,
         error: None,
         error_trace: vec![],
+        sql_state: None,
     })
 }
 
@@ -446,6 +457,7 @@ fn not_implemented(message: &str) -> DriverException {
         status_code: StatusCode::NotImplemented as i32,
         error: None,
         error_trace: vec![],
+        sql_state: None,
     }
 }
 
@@ -905,6 +917,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             status_code: StatusCode::InternalError as i32,
             error: None,
             error_trace: vec![],
+            sql_state: None,
         })?;
 
         Ok(ConfigLoadAllSectionsResponse { config_json })
@@ -923,6 +936,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             status_code: StatusCode::InternalError as i32,
             error: None,
             error_trace: vec![],
+            sql_state: None,
         })?;
 
         let connections_file = paths.connections_file.ok_or_else(|| DriverException {
@@ -930,6 +944,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             status_code: StatusCode::InternalError as i32,
             error: None,
             error_trace: vec![],
+            sql_state: None,
         })?;
 
         Ok(ConfigGetPathsResponse {

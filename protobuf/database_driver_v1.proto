@@ -114,6 +114,7 @@ message DriverException {
   StatusCode status_code = 2;
   DriverError error = 3;
   repeated ErrorTraceEntry error_trace = 4;
+  optional string sql_state = 5;
 }
 
 // Column metadata for description

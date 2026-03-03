@@ -34,6 +34,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementReleaseRequest,
     StatementSetSqlQueryRequest,
 )
+from ._internal.protobuf_gen.proto_exception import ProtoApplicationException
 from ._internal.type_codes import get_type_code
 from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
@@ -347,11 +348,13 @@ class SnowflakeCursorBase(abc.ABC):
 
         request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
 
-        self.execute_result = self._connection.db_api.statement_execute_query(request).result
-
-        # The stream is fully owned by execute_result; the statement handle
-        # is no longer needed, so release it immediately.
-        self._connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=stmt_handle))
+        try:
+            self.execute_result = self._connection.db_api.statement_execute_query(request).result
+        except ProtoApplicationException as exc:
+            self._sqlstate = exc.sql_state or None
+            raise
+        finally:
+            self._connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=stmt_handle))
 
         # Reset streaming state for a new result
         self._binding_data = None
@@ -371,8 +374,11 @@ class SnowflakeCursorBase(abc.ABC):
             self._rowcount = None
 
     def _populate_sqlstate(self) -> None:
-        if self.execute_result and self.execute_result.HasField("sql_state"):
-            self._sqlstate = self.execute_result.sql_state
+        # "00000" (successful completion) is treated as None for
+        # backwards compatibility with the old connector.
+        sql_state = self.execute_result.sql_state if self.execute_result else None
+        if sql_state and sql_state != "00000":
+            self._sqlstate = sql_state
         else:
             self._sqlstate = None
 

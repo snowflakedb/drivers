@@ -791,7 +791,8 @@ async fn execute_sync_query<'a>(
         let message = query_response
             .message
             .unwrap_or_else(|| "Unknown error".to_owned());
-        return QueryFailedSnafu { message }.fail();
+        let sql_state = query_response.data.sql_state;
+        return QueryFailedSnafu { message, sql_state }.fail();
     }
     Ok(query_response)
 }
@@ -959,6 +960,7 @@ pub enum RestError {
     #[snafu(display("Query failed: {message}"))]
     QueryFailed {
         message: String,
+        sql_state: Option<String>,
         #[snafu(implicit)]
         location: Location,
     },
