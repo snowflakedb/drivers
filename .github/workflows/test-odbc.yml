@@ -76,10 +76,11 @@ jobs:
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
           $referenceOdbcVersion = (Get-Content "ci/reference-odbc-version" -Raw).Trim()
+          $snowflakeOdbcMsi = "snowflake64_odbc-$referenceOdbcVersion.msi"
           $snowflakeOdbcUrl = "https://sfc-repo.snowflakecomputing.com/odbc/windows/$referenceOdbcVersion/snowflake64_odbc-$referenceOdbcVersion.msi"
           Write-Host "Downloading Snowflake ODBC MSI from: $snowflakeOdbcUrl"
-          Invoke-Checked "curl download Snowflake ODBC MSI" { curl -fL -O $snowflakeOdbcUrl }
-          $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i snowflake64_odbc-${referenceOdbcVersion}.msi /quiet" -Wait -PassThru
+          Invoke-Checked "Invoke-WebRequest download Snowflake ODBC MSI" { Invoke-WebRequest -Uri $snowflakeOdbcUrl -OutFile $snowflakeOdbcMsi }
+          $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i $snowflakeOdbcMsi /quiet" -Wait -PassThru
           if ($msiProcess.ExitCode -ne 0) { throw "msiexec failed with exit code $($msiProcess.ExitCode)" }
 
       - name: Install dependencies (Linux)
