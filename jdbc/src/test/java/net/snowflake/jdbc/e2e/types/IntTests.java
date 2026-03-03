@@ -246,7 +246,7 @@ public class IntTests extends SnowflakeIntegrationTestBase {
     // And Query "SELECT * FROM <table>" is executed
     // Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + INT_TYPE);
+    String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
 
     try (PreparedStatement preparedStatement =
         connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {

@@ -12,9 +12,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Types;
-import java.util.UUID;
 import java.util.stream.Stream;
 import lombok.ToString;
 import lombok.Value;
@@ -29,7 +27,7 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   @MethodSource("singleSetterCases")
   public void testSingleSetterBindings(SingleSetterCase testCase) throws Exception {
     Connection conn = getDefaultConnection();
-    String tableName = prepareTable(conn, testCase.getSchema());
+    String tableName = createTempTable(conn, "ud_bindings_", testCase.getSchema());
 
     executeInsert(conn, "INSERT INTO " + tableName + " (v) VALUES (?)", testCase.getBinder());
 
@@ -40,10 +38,10 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   public void testAllSupportedSetters() throws Exception {
     Connection conn = getDefaultConnection();
     String tableName =
-        prepareTable(
+        createTempTable(
             conn,
-            "(n INTEGER, s STRING, b BOOLEAN, byte_col INTEGER, short_col INTEGER, i INTEGER, l INTEGER,"
-                + " f FLOAT, d FLOAT, bd NUMBER(18,2), bin BINARY)");
+            "ud_bindings_",
+            "n INTEGER, s STRING, b BOOLEAN, byte_col INTEGER, short_col INTEGER, i INTEGER, l INTEGER, f FLOAT, d FLOAT, bd NUMBER(18,2), bin BINARY");
     byte[] bytesValue = new byte[] {0x0A, 0x0B, 0x0C};
     BigDecimal expectedDecimal = new BigDecimal("77.88");
 
@@ -90,10 +88,10 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   public void testSetObject() throws Exception {
     Connection conn = getDefaultConnection();
     String tableName =
-        prepareTable(
+        createTempTable(
             conn,
-            "(n INTEGER, s STRING, b BOOLEAN, i INTEGER, l INTEGER, f FLOAT, d FLOAT,"
-                + " bd NUMBER(18,2), bin BINARY)");
+            "ud_bindings_",
+            "n INTEGER, s STRING, b BOOLEAN, i INTEGER, l INTEGER, f FLOAT, d FLOAT, bd NUMBER(18,2), bin BINARY");
     byte[] bytesValue = new byte[] {0x01, 0x02, 0x03};
     BigDecimal expectedDecimal = new BigDecimal("77.88");
 
@@ -135,7 +133,7 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   @Test
   public void testSetObjectWithTargetSqlTypeAndNull() throws Exception {
     Connection conn = getDefaultConnection();
-    String tableName = prepareTable(conn, "(id INTEGER, txt STRING)");
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
 
     executeInsert(
         conn,
@@ -179,7 +177,7 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   @Test
   public void testSetObjectUnsupportedTypeThrowsSQLException() throws Exception {
     Connection conn = getDefaultConnection();
-    String tableName = prepareTable(conn, "(v STRING)");
+    String tableName = createTempTable(conn, "ud_bindings_", "v STRING");
 
     try (PreparedStatement insert =
         conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
@@ -190,7 +188,7 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   @Test
   public void testClearParametersAndPartialRebindFailsDeterministically() throws Exception {
     Connection conn = getDefaultConnection();
-    String tableName = prepareTable(conn, "(id INTEGER, txt STRING)");
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
 
     try (PreparedStatement insert =
         conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
@@ -206,7 +204,7 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
   @Test
   public void testSetNullWithRepresentativeSqlTypes() throws Exception {
     Connection conn = getDefaultConnection();
-    String tableName = prepareTable(conn, "(b BOOLEAN, i INTEGER, bin BINARY)");
+    String tableName = createTempTable(conn, "ud_bindings_", "b BOOLEAN, i INTEGER, bin BINARY");
 
     executeInsert(
         conn,
@@ -227,69 +225,63 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
         });
   }
 
-  private String prepareTable(Connection conn, String schema) throws Exception {
-    String tableName = buildTempTableName();
-    createTempTable(conn, tableName, schema);
-    return tableName;
-  }
-
   private static Stream<SingleSetterCase> singleSetterCases() {
     byte[] bytesValue = new byte[] {0x01, 0x02, 0x03};
     BigDecimal bigDecimalValue = new BigDecimal("12345.67");
     return Stream.of(
         new SingleSetterCase(
             "setNull",
-            "(v INTEGER)",
+            "v INTEGER",
             insert -> insert.setNull(1, Types.INTEGER),
             rs -> assertNull(rs.getObject(1))),
         new SingleSetterCase(
             "setString",
-            "(v STRING)",
+            "v STRING",
             insert -> insert.setString(1, "hello"),
             rs -> assertEquals("hello", rs.getString(1))),
         new SingleSetterCase(
             "setBoolean",
-            "(v BOOLEAN)",
+            "v BOOLEAN",
             insert -> insert.setBoolean(1, true),
             rs -> assertTrue(rs.getBoolean(1))),
         new SingleSetterCase(
             "setByte",
-            "(v INTEGER)",
+            "v INTEGER",
             insert -> insert.setByte(1, (byte) 7),
             rs -> assertEquals((byte) 7, rs.getByte(1))),
         new SingleSetterCase(
             "setShort",
-            "(v INTEGER)",
+            "v INTEGER",
             insert -> insert.setShort(1, (short) 11),
             rs -> assertEquals((short) 11, rs.getShort(1))),
         new SingleSetterCase(
             "setInt",
-            "(v INTEGER)",
+            "v INTEGER",
             insert -> insert.setInt(1, 42),
             rs -> assertEquals(42, rs.getInt(1))),
         new SingleSetterCase(
             "setLong",
-            "(v INTEGER)",
+            "v INTEGER",
             insert -> insert.setLong(1, 123456789L),
             rs -> assertEquals(123456789L, rs.getLong(1))),
         new SingleSetterCase(
             "setFloat",
-            "(v FLOAT)",
+            "v FLOAT",
             insert -> insert.setFloat(1, 1.25f),
             rs -> assertEquals(1.25f, rs.getFloat(1), 0.0001f)),
         new SingleSetterCase(
             "setDouble",
-            "(v FLOAT)",
+            "v FLOAT",
             insert -> insert.setDouble(1, 2.5d),
             rs -> assertEquals(2.5d, rs.getDouble(1), 0.0001d)),
         new SingleSetterCase(
             "setBigDecimal",
-            "(v NUMBER(18,2))",
+            "v NUMBER(18,2)",
             insert -> insert.setBigDecimal(1, bigDecimalValue),
             rs -> assertEquals(0, bigDecimalValue.compareTo(rs.getBigDecimal(1)))),
         new SingleSetterCase(
             "setBytes",
-            "(v BINARY)",
+            "v BINARY",
             insert -> insert.setBytes(1, bytesValue),
             rs -> assertArrayEquals(bytesValue, rs.getBytes(1))));
   }
@@ -339,16 +331,5 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
     String schema;
     SqlInsertBinder binder;
     ResultSetVerifier verifier;
-  }
-
-  private String buildTempTableName() {
-    return "JDBC_PS_BINDING_" + UUID.randomUUID().toString().replace("-", "");
-  }
-
-  private void createTempTable(Connection conn, String tableName, String schema) throws Exception {
-    try (Statement stmt = conn.createStatement()) {
-      stmt.execute("ALTER SESSION SET JDBC_QUERY_RESULT_FORMAT='JSON'");
-      stmt.execute("CREATE OR REPLACE TEMPORARY TABLE " + tableName + " " + schema);
-    }
   }
 }

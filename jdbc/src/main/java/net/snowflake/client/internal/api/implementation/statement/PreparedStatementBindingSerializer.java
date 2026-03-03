@@ -123,7 +123,7 @@ final class PreparedStatementBindingSerializer {
       this.address = address;
     }
 
-    static NativeBuffer fromBytes(byte[] source) throws SQLException {
+    private static NativeBuffer fromBytes(byte[] source) throws SQLException {
       RootAllocator allocator = null;
       ArrowBuf arrowBuf = null;
       boolean success = false;
