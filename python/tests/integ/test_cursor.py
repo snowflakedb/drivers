@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
+from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import NotSupportedError, ProgrammingError
 from tests.e2e.types.utils import assert_sequential_values
 
@@ -1301,9 +1301,10 @@ class TestDictCursorCreation:
         with connection.cursor(DictCursor) as cur:
             assert isinstance(cur, DictCursor)
 
+    @pytest.mark.skip_reference
     def test_dict_cursor_is_base_cursor_subclass(self):
         """Test that DictCursor is a subclass of BaseCursor."""
-        from snowflake.connector.cursor import DictCursor
+        from snowflake.connector.cursor import DictCursor, SnowflakeCursorBase
 
         assert issubclass(DictCursor, SnowflakeCursorBase)
 
