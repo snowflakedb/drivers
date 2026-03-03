@@ -1,0 +1,101 @@
+id: universal-driver-security-rules
+friendly_name: "Universal Driver Security Rules"
+status: enabled
+percentage_of_prs_reviewed: 100
+allowed_folders:
+  - "sf_core/src"
+  - "odbc/src"
+excluded_folders:
+  - "sf_core/src/bin"
+llm_model: "claude-sonnet-4-5"
+allowed_file_extensions:
+  - ".rs"
+  - ".toml"
+rules:
+  - id: ud-sensitive-data-must-use-sensitive-string
+    rule: |
+      **OBJECTIVE**: Ensure all sensitive data (passwords, tokens, private keys, encryption keys, credentials) is wrapped in `SensitiveString` from the `crate::sensitive` module — never stored as plain `String`.
+
+      **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SensitiveString` instead of `String`. This ensures:
+      - Memory is zeroized on drop (OWASP ASVS 8.3.6)
+      - Debug/Display output is redacted (shows `***` instead of the secret)
+      - Accessing the raw value requires an explicit `.expose()` call, preventing accidental logging
+
+      Look for fields or variables whose names contain: `password`, `token`, `secret`, `private_key`, `passphrase`, `master_key`, `session_token`, `master_token`, `pat`, `credential`, or `encryption_key`. If they are typed as `String` or `Option<String>`, flag them.
+
+      **EXCEPTIONS**:
+      - Serde deserialization structs that represent raw JSON responses from Snowflake (e.g., `RefreshSessionData`, `AuthResponse`) may use `String` since they are intermediate — but the values MUST be wrapped in `SensitiveString` before being stored in long-lived structs.
+      - Function parameters that receive already-exposed values for immediate use (e.g., passing to HTTP headers or crypto APIs) may use `&str` or `String`.
+      - Test code is excluded from this rule.
+
+      ❌ **BAD:**
+      ```rust
+      pub struct SessionTokens {
+          pub session_token: String,
+          pub master_token: String,
+      }
+
+      pub struct Credentials {
+          pub aws_key_id: String,
+          pub aws_secret_key: String,
+          pub aws_token: String,
+      }
+
+      pub enum LoginMethod {
+          Password { username: String, password: String },
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      use crate::sensitive::SensitiveString;
+
+      pub struct SessionTokens {
+          pub session_token: SensitiveString,
+          pub master_token: SensitiveString,
+      }
+
+      pub struct Credentials {
+          pub aws_key_id: String,
+          pub aws_secret_key: SensitiveString,
+          pub aws_token: SensitiveString,
+      }
+
+      pub enum LoginMethod {
+          Password { username: String, password: SensitiveString },
+      }
+      ```
+
+  - id: ud-sensitive-debug-impl
+    rule: |
+      **OBJECTIVE**: Structs containing `SensitiveString` fields must not derive `Debug` — they need a custom `Debug` implementation that redacts the sensitive fields.
+
+      **REQUIREMENT**: If a struct contains one or more `SensitiveString` fields, it MUST NOT use `#[derive(Debug)]`. Instead, it MUST implement `std::fmt::Debug` manually, printing `"***"` for each sensitive field. `SensitiveString` itself already has a redacting `Debug` impl, so if you use `#[derive(Debug)]` it will show `SensitiveString(***)` which is acceptable — but if you want cleaner output (just `"***"`), a manual impl is preferred.
+
+      **EXCEPTION**: If all sensitive fields in the struct are `SensitiveString` (which already redacts in its own `Debug` impl), then `#[derive(Debug)]` is acceptable since it will delegate to `SensitiveString`'s redacting impl. Flag only cases where a struct has a plain `String` field that holds sensitive data AND uses `#[derive(Debug)]`.
+
+      ❌ **BAD:**
+      ```rust
+      #[derive(Debug)]
+      pub struct Credentials {
+          pub aws_key_id: String,
+          pub aws_secret_key: String,  // sensitive but plain String + derived Debug
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      pub struct Credentials {
+          pub aws_key_id: String,
+          pub aws_secret_key: SensitiveString,
+      }
+
+      impl std::fmt::Debug for Credentials {
+          fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+              f.debug_struct("Credentials")
+                  .field("aws_key_id", &self.aws_key_id)
+                  .field("aws_secret_key", &"***")
+                  .finish()
+          }
+      }
+      ```
