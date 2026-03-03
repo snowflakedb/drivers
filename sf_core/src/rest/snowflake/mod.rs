@@ -200,6 +200,19 @@ pub async fn auth_request_data(
                 data.token = Some(token);
                 data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
             }
+            Credentials::UserPasswordMfa {
+                username,
+                password,
+                passcode_in_password,
+                passcode,
+            } => {
+                data.login_name = Some(username);
+                data.password = Some(password);
+                data.authenticator = Some("USER_PASSWORD_MFA".to_string());
+                if !passcode_in_password {
+                    data.passcode = passcode.clone();
+                }
+            }
         },
     }
     Ok(data)

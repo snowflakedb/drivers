@@ -157,6 +157,12 @@ pub enum LoginMethod {
         username: String,
         token: SensitiveString,
     },
+    UserPasswordMfa {
+        username: String,
+        password: String,
+        passcode_in_password: bool,
+        passcode: Option<String>,
+    },
 }
 
 impl LoginMethod {
@@ -345,10 +351,22 @@ impl LoginMethod {
                     authentication_timeout_secs,
                 }))
             }
+            "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {
+                username: settings
+                    .get_string("user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                password: settings
+                    .get_string("password")
+                    .context(MissingParameterSnafu { parameter: "password" })?,
+                passcode_in_password: settings
+                    .get_bool("passcodeInPassword")
+                    .unwrap_or_default(),
+                passcode: Some(settings.get_string("passcode").unwrap_or_default()),
+            }),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, or an https:// URL for native Okta SSO",
+                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA, or an https:// URL for native Okta SSO",
             }
             .fail()?,
         }
