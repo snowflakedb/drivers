@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -330,6 +332,47 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
         expected++;
       }
       assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + FLOAT_TYPE);
+    }
+  }
+
+  @Test
+  public void shouldSelectFloatUsingParameterBindingForFloatAndSynonyms() throws Exception {
+    // Given Snowflake client is logged in
+    // When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values
+    // [123.456, -789.012, 42.0]
+    // Then Result should contain floats [123.456, -789.012, 42.0]
+    // When Query "SELECT ?::<type>" is executed with bound NULL value
+    // Then Result should contain NULL
+    Connection connection = getDefaultConnection();
+    String sql = String.format("SELECT ?::%1$s, ?::%1$s, ?::%1$s", FLOAT_TYPE);
+    try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+      preparedStatement.setDouble(1, 123.456);
+      preparedStatement.setDouble(2, -789.012);
+      preparedStatement.setDouble(3, 42.0);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+        assertAllFloatGetters(resultSet, 1, 123.456, "Column 1 mismatch for " + FLOAT_TYPE);
+        assertAllFloatGetters(resultSet, 2, -789.012, "Column 2 mismatch for " + FLOAT_TYPE);
+        assertAllFloatGetters(resultSet, 3, 42.0, "Column 3 mismatch for " + FLOAT_TYPE);
+        assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+      }
+    }
+
+    String nullSql = String.format("SELECT ?::%1$s", FLOAT_TYPE);
+    try (PreparedStatement preparedStatement = connection.prepareStatement(nullSql)) {
+      preparedStatement.setNull(1, Types.DOUBLE);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+        assertNull(resultSet.getObject(1), "Column 1 should be NULL for " + FLOAT_TYPE);
+        assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for " + FLOAT_TYPE);
+        assertEquals(
+            0.0,
+            resultSet.getDouble(1),
+            "Column 1 getDouble should return 0.0 for NULL " + FLOAT_TYPE);
+        assertTrue(
+            resultSet.wasNull(), "Column 1 getDouble should set wasNull() for " + FLOAT_TYPE);
+        assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+      }
     }
   }
 

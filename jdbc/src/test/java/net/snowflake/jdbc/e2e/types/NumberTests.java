@@ -10,9 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
+import java.sql.Types;
 import java.text.DecimalFormat;
 import java.text.ParseException;
 import java.util.ArrayList;
@@ -438,6 +440,155 @@ public class NumberTests extends SnowflakeIntegrationTestBase {
       }
       assertEquals(LARGE_RESULT_SET_SIZE, expectedRow, "Unexpected row count for " + NUMBER_TYPE);
     }
+  }
+
+  @Test
+  public void shouldSelectNumberUsingParameterBindingForNumberAndSynonyms() throws Exception {
+    // Given Snowflake client is logged in
+    // When Query "SELECT ?::<type>(10,0), ?::<type>(10,0), ?::<type>(10,2), ?::<type>(10,2),
+    // ?::<type>(10,0)" is executed with bound values [123, -456, 12.34, -56.78, NULL]
+    // Then Result should contain [123, -456, 12.34, -56.78, NULL]
+    Connection connection = getDefaultConnection();
+    String sql =
+        String.format(
+            "SELECT ?::%1$s(10,0), ?::%1$s(10,0), ?::%1$s(10,2), ?::%1$s(10,2), ?::%1$s(10,0)",
+            NUMBER_TYPE);
+    try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+      preparedStatement.setBigDecimal(1, new BigDecimal("123"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("-456"));
+      preparedStatement.setBigDecimal(3, new BigDecimal("12.34"));
+      preparedStatement.setBigDecimal(4, new BigDecimal("-56.78"));
+      preparedStatement.setNull(5, Types.DECIMAL);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: " + NUMBER_TYPE);
+        assertDecimalColumn(
+            resultSet, 1, new BigDecimal("123"), "Column 1 mismatch for " + NUMBER_TYPE);
+        assertDecimalColumn(
+            resultSet, 2, new BigDecimal("-456"), "Column 2 mismatch for " + NUMBER_TYPE);
+        assertDecimalColumn(
+            resultSet, 3, new BigDecimal("12.34"), "Column 3 mismatch for " + NUMBER_TYPE);
+        assertDecimalColumn(
+            resultSet, 4, new BigDecimal("-56.78"), "Column 4 mismatch for " + NUMBER_TYPE);
+        assertNull(resultSet.getObject(5), "Column 5 should be NULL for " + NUMBER_TYPE);
+        assertTrue(resultSet.wasNull(), "Column 5 should set wasNull() for " + NUMBER_TYPE);
+        assertNull(
+            resultSet.getBigDecimal(5), "Column 5 getBigDecimal should be NULL for " + NUMBER_TYPE);
+        assertTrue(
+            resultSet.wasNull(),
+            "Column 5 should set wasNull() after getBigDecimal for " + NUMBER_TYPE);
+        assertFalse(resultSet.next(), "Expected exactly one row for type: " + NUMBER_TYPE);
+      }
+    }
+  }
+
+  @Test
+  public void shouldSelectHighPrecisionNumberUsingParameterBindingForNumberAndSynonyms()
+      throws Exception {
+    // Given Snowflake client is logged in
+    // When Query "SELECT ?::<type>(38,0), ?::<type>(38,2)" is executed with bound values
+    // [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
+    // Then Result should contain [12345678901234567890123456789012345678,
+    // 123456789012345678901234567890123456.78]
+    Connection connection = getDefaultConnection();
+    String sql = String.format("SELECT ?::%1$s(38,0), ?::%1$s(38,2)", NUMBER_TYPE);
+    try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+      preparedStatement.setBigDecimal(1, new BigDecimal("12345678901234567890123456789012345678"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("123456789012345678901234567890123456.78"));
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: " + NUMBER_TYPE);
+        assertDecimalColumn(
+            resultSet,
+            1,
+            new BigDecimal("12345678901234567890123456789012345678"),
+            "Column 1 mismatch for " + NUMBER_TYPE);
+        assertDecimalColumn(
+            resultSet,
+            2,
+            new BigDecimal("123456789012345678901234567890123456.78"),
+            "Column 2 mismatch for " + NUMBER_TYPE);
+        assertFalse(resultSet.next(), "Expected exactly one row for type: " + NUMBER_TYPE);
+      }
+    }
+  }
+
+  @Test
+  public void shouldInsertNumberUsingParameterBindingForNumberAndSynonyms() throws Exception {
+    // Given Snowflake client is logged in
+    // And Table with columns (<type>(10,0), <type>(10,2)) exists
+    // When Rows (0, 0.00), (123, 123.45), (-456, -67.89), (999999, 999.99), (NULL, NULL) are
+    // inserted using binding
+    // Then Result should contain 5 rows with expected values
+    Connection connection = getDefaultConnection();
+    String tableName =
+        createTempTable(
+            connection, "ud_number_", String.format("c1 %1$s(10,0), c2 %1$s(10,2)", NUMBER_TYPE));
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?, ?)")) {
+      preparedStatement.setBigDecimal(1, new BigDecimal("0"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("0.00"));
+      preparedStatement.execute();
+      preparedStatement.setBigDecimal(1, new BigDecimal("123"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("123.45"));
+      preparedStatement.execute();
+      preparedStatement.setBigDecimal(1, new BigDecimal("-456"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("-67.89"));
+      preparedStatement.execute();
+      preparedStatement.setBigDecimal(1, new BigDecimal("999999"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("999.99"));
+      preparedStatement.execute();
+      preparedStatement.setNull(1, Types.DECIMAL);
+      preparedStatement.setNull(2, Types.DECIMAL);
+      preparedStatement.execute();
+    }
+
+    assertRowsInOrder(
+        connection,
+        "SELECT * FROM " + tableName + " ORDER BY c1 NULLS LAST, c2 NULLS LAST",
+        Arrays.asList(
+            Arrays.asList(new BigDecimal("-456"), new BigDecimal("-67.89")),
+            Arrays.asList(new BigDecimal("0"), new BigDecimal("0.00")),
+            Arrays.asList(new BigDecimal("123"), new BigDecimal("123.45")),
+            Arrays.asList(new BigDecimal("999999"), new BigDecimal("999.99")),
+            Arrays.asList(null, null)));
+  }
+
+  @Test
+  public void shouldInsertHighPrecisionNumberUsingParameterBindingForNumberAndSynonyms()
+      throws Exception {
+    // Given Snowflake client is logged in
+    // And Table with columns (<type>(38,0), <type>(38,2)) exists
+    // When Rows (12345678901234567890123456789012345678,
+    // 123456789012345678901234567890123456.78), (99999999999999999999999999999999999999, 0.01),
+    // (-99999999999999999999999999999999999999, -0.01) are inserted using binding
+    // Then Result should contain 3 rows with expected values keeping the precision
+    Connection connection = getDefaultConnection();
+    String tableName =
+        createTempTable(
+            connection, "ud_number_", String.format("c1 %1$s(38,0), c2 %1$s(38,2)", NUMBER_TYPE));
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?, ?)")) {
+      preparedStatement.setBigDecimal(1, new BigDecimal("12345678901234567890123456789012345678"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("123456789012345678901234567890123456.78"));
+      preparedStatement.execute();
+      preparedStatement.setBigDecimal(1, new BigDecimal("99999999999999999999999999999999999999"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("0.01"));
+      preparedStatement.execute();
+      preparedStatement.setBigDecimal(1, new BigDecimal("-99999999999999999999999999999999999999"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("-0.01"));
+      preparedStatement.execute();
+    }
+
+    assertRowsInOrder(
+        connection,
+        "SELECT * FROM " + tableName + " ORDER BY c1",
+        Arrays.asList(
+            Arrays.asList(
+                new BigDecimal("-99999999999999999999999999999999999999"), new BigDecimal("-0.01")),
+            Arrays.asList(
+                new BigDecimal("12345678901234567890123456789012345678"),
+                new BigDecimal("123456789012345678901234567890123456.78")),
+            Arrays.asList(
+                new BigDecimal("99999999999999999999999999999999999999"), new BigDecimal("0.01"))));
   }
 
   private static void assertSingleRowWithNulls(

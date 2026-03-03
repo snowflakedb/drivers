@@ -121,26 +121,26 @@ Feature: NUMBER type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select number using parameter binding for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT ?::<type>(10,0), ?::<type>(10,0), ?::<type>(10,2), ?::<type>(10,2), ?::<type>(10,0)" is executed with bound values [123, -456, 12.34, -56.78, NULL]
     Then Result should contain [123, -456, 12.34, -56.78, NULL]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select high precision number using parameter binding for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT ?::<type>(38,0), ?::<type>(38,2)" is executed with bound values [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
     Then Result should contain [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert number using parameter binding for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(10,0), <type>(10,2)) exists
     When Rows (0, 0.00), (123, 123.45), (-456, -67.89), (999999, 999.99), (NULL, NULL) are inserted using binding
     Then Result should contain 5 rows with expected values
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert high precision number using parameter binding for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(38,0), <type>(38,2)) exists

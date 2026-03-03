@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
@@ -295,6 +297,128 @@ public class DecfloatTests extends SnowflakeIntegrationTestBase {
       }
       assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for DECFLOAT");
     }
+  }
+
+  @Test
+  public void shouldSelectDecfloatUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    // When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed with bound DECFLOAT
+    // values [123.456, -789.012, 42.0]
+    // Then Result should contain [123.456, -789.012, 42.0]
+    // When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
+    // Then Result should contain [NULL]
+    Connection connection = getDefaultConnection();
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT")) {
+      preparedStatement.setBigDecimal(1, new BigDecimal("123.456"));
+      preparedStatement.setBigDecimal(2, new BigDecimal("-789.012"));
+      preparedStatement.setBigDecimal(3, new BigDecimal("42.0"));
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: DECFLOAT");
+        assertDecfloatColumn(
+            resultSet, 1, new BigDecimal("123.456"), "Column 1 mismatch for DECFLOAT");
+        assertDecfloatColumn(
+            resultSet, 2, new BigDecimal("-789.012"), "Column 2 mismatch for DECFLOAT");
+        assertDecfloatColumn(
+            resultSet, 3, new BigDecimal("42.0"), "Column 3 mismatch for DECFLOAT");
+        assertFalse(resultSet.next(), "Expected exactly one row for type: DECFLOAT");
+      }
+    }
+
+    try (PreparedStatement preparedStatement = connection.prepareStatement("SELECT ?::DECFLOAT")) {
+      preparedStatement.setNull(1, Types.DECIMAL);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: DECFLOAT");
+        assertNull(resultSet.getObject(1), "Column 1 should be NULL for DECFLOAT");
+        assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for DECFLOAT");
+        assertNull(resultSet.getBigDecimal(1), "Column 1 BigDecimal should be NULL for DECFLOAT");
+        assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() after getBigDecimal");
+        assertFalse(resultSet.next(), "Expected exactly one row for type: DECFLOAT");
+      }
+    }
+  }
+
+  @Test
+  public void shouldSelectExtremeDecfloatValuesUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    // When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
+    // Then Result should contain [1E+16384]
+    // When Query "SELECT ?::DECFLOAT" is executed with bound value -1.234E+8000
+    // Then Result should contain [-1.234E+8000]
+    Connection connection = getDefaultConnection();
+    try (PreparedStatement preparedStatement = connection.prepareStatement("SELECT ?::DECFLOAT")) {
+      preparedStatement.setBigDecimal(1, new BigDecimal("1E+16384"));
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: DECFLOAT");
+        assertDecfloatColumn(
+            resultSet, 1, new BigDecimal("1E+16384"), "Value mismatch for DECFLOAT");
+        assertFalse(resultSet.next(), "Expected exactly one row for type: DECFLOAT");
+      }
+      preparedStatement.setBigDecimal(1, new BigDecimal("-1.234E+8000"));
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: DECFLOAT");
+        assertDecfloatColumn(
+            resultSet, 1, new BigDecimal("-1.234E+8000"), "Value mismatch for DECFLOAT");
+        assertFalse(resultSet.next(), "Expected exactly one row for type: DECFLOAT");
+      }
+    }
+  }
+
+  @Test
+  public void shouldInsertDecfloatUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    // And Table with DECFLOAT column exists
+    // When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
+    // Then SELECT should return the same exact values
+    Connection connection = getDefaultConnection();
+    String tableName = createTempTable(connection, "ud_decfloat_", "col DECFLOAT");
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
+      preparedStatement.setBigDecimal(1, new BigDecimal("0"));
+      preparedStatement.execute();
+      preparedStatement.setBigDecimal(1, new BigDecimal("123.456"));
+      preparedStatement.execute();
+      preparedStatement.setBigDecimal(1, new BigDecimal("-789.012"));
+      preparedStatement.execute();
+      preparedStatement.setNull(1, Types.DECIMAL);
+      preparedStatement.execute();
+    }
+
+    assertSingleColumnRows(
+        connection,
+        tableName,
+        "ORDER BY col NULLS FIRST",
+        Arrays.asList(
+            null, new BigDecimal("-789.012"), new BigDecimal("0"), new BigDecimal("123.456")));
+  }
+
+  @Test
+  public void shouldInsertExtremeDecfloatValuesUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    // And Table with DECFLOAT column exists
+    // When DECFLOAT values [1E+16384, 1E-16383, -1.234E+8000] are inserted using explicit binding
+    // And Query "SELECT * FROM <table>" is executed
+    // Then SELECT should return the same exact values
+    Connection connection = getDefaultConnection();
+    String tableName = createTempTable(connection, "ud_decfloat_", "col DECFLOAT");
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?::DECFLOAT)")) {
+      preparedStatement.setString(1, "1E+16384");
+      preparedStatement.execute();
+      preparedStatement.setString(1, "1E-16383");
+      preparedStatement.execute();
+      preparedStatement.setString(1, "-1.234E+8000");
+      preparedStatement.execute();
+    }
+
+    assertSingleColumnRows(
+        connection,
+        tableName,
+        "ORDER BY col",
+        Arrays.asList(
+            new BigDecimal("-1.234E+8000"),
+            new BigDecimal("1E-16383"),
+            new BigDecimal("1E+16384")));
   }
 
   private static void assertSingleRowWithNulls(

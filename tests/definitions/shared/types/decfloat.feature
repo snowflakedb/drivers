@@ -94,7 +94,7 @@ Feature: DECFLOAT type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select decfloat using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed with bound DECFLOAT values [123.456, -789.012, 42.0]
@@ -102,7 +102,7 @@ Feature: DECFLOAT type support
     When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select extreme decfloat values using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
@@ -110,14 +110,14 @@ Feature: DECFLOAT type support
     When Query "SELECT ?::DECFLOAT" is executed with bound value -1.234E+8000
     Then Result should contain [-1.234E+8000]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert decfloat using parameter binding
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists
     When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
     Then SELECT should return the same exact values
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert extreme decfloat values using parameter binding
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists

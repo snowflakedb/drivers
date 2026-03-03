@@ -7,8 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
@@ -180,6 +182,79 @@ public class StringTests extends SnowflakeIntegrationTestBase {
     }
   }
 
+  @Test
+  public void shouldInsertAndSelectBackHardcodedStringValuesUsingParameterBinding()
+      throws Exception {
+    // Given Snowflake client is logged in
+    // And A temporary table with VARCHAR column is created
+    // When String value 'Test binding value 日本語' is inserted using parameter binding
+    // And Query "SELECT * FROM {table}" is executed
+    // Then the result should contain the bound string value 'Test binding value 日本語'
+    Connection connection = getDefaultConnection();
+    String tableName = createTempTable(connection, "ud_string_", "id INT, col " + STRING_TYPE);
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " (id, col) VALUES (?, ?)")) {
+      preparedStatement.setInt(1, 1);
+      preparedStatement.setString(2, "Test binding value " + JAPANESE_TEXT);
+      preparedStatement.execute();
+    }
+    assertRowsInOrder(
+        connection,
+        "SELECT col FROM " + tableName + " ORDER BY id",
+        Arrays.asList("Test binding value " + JAPANESE_TEXT));
+  }
+
+  @Test
+  public void shouldSelectStringLiteralsUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    // When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values
+    // ['hello', 'Hello World', '日本語テスト']
+    // Then the result should contain:
+    Connection connection = getDefaultConnection();
+    String sql = String.format("SELECT ?::%1$s, ?::%1$s, ?::%1$s", STRING_TYPE);
+    try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+      preparedStatement.setString(1, "hello");
+      preparedStatement.setString(2, "Hello World");
+      preparedStatement.setString(3, JAPANESE_TEXT);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
+        assertStringColumn(resultSet, 1, "hello", "Column 1 mismatch for " + STRING_TYPE);
+        assertStringColumn(resultSet, 2, "Hello World", "Column 2 mismatch for " + STRING_TYPE);
+        assertStringColumn(resultSet, 3, JAPANESE_TEXT, "Column 3 mismatch for " + STRING_TYPE);
+        assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
+      }
+    }
+  }
+
+  @Test
+  public void shouldSelectCornerCaseStringValuesUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
+    // Then the result should match the bound corner case value
+    Connection connection = getDefaultConnection();
+    assertSingleBoundStringValue(connection, "");
+    assertSingleBoundStringValue(connection, "X");
+    assertSingleBoundStringValue(connection, "   ");
+    assertSingleBoundStringValue(connection, "\t");
+    assertSingleBoundStringValue(connection, "\n");
+    assertSingleBoundStringValue(connection, SNOWMAN);
+    assertSingleBoundStringValue(connection, JAPANESE_TEXT);
+    assertSingleBoundStringValue(connection, "'");
+    assertSingleBoundStringValue(connection, "\\");
+    assertSingleBoundStringValue(connection, COMBINING_CHAR_TEXT);
+    assertSingleBoundStringValue(connection, SURROGATE_PAIR_TEXT);
+
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement(String.format("SELECT ?::%1$s", STRING_TYPE))) {
+      preparedStatement.setNull(1, Types.VARCHAR);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
+        assertStringColumn(resultSet, 1, null, "NULL value mismatch for " + STRING_TYPE);
+        assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
+      }
+    }
+  }
+
   private static void assertSingleRow(
       Connection connection, String sql, List<String> expectedValues) throws Exception {
     try (Statement statement = connection.createStatement();
@@ -229,5 +304,18 @@ public class StringTests extends SnowflakeIntegrationTestBase {
 
     assertEquals(expected, resultSet.getString(columnIndex), message + " (getString)");
     assertFalse(resultSet.wasNull(), message + " (getString should not be NULL)");
+  }
+
+  private static void assertSingleBoundStringValue(Connection connection, String expected)
+      throws Exception {
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement(String.format("SELECT ?::%1$s", STRING_TYPE))) {
+      preparedStatement.setString(1, expected);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
+        assertStringColumn(resultSet, 1, expected, "Bound value mismatch for " + STRING_TYPE);
+        assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
+      }
+    }
   }
 }
