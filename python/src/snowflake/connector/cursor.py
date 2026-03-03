@@ -33,9 +33,8 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
-from ._internal.protobuf_gen.proto_exception import ProtoApplicationException
 from ._internal.type_codes import get_type_code
-from .errors import DatabaseError, InterfaceError, NotSupportedError, ProgrammingError
+from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -347,10 +346,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
 
-        try:
-            self.execute_result = self._connection.db_api.statement_execute_query(request).result
-        except ProtoApplicationException as e:
-            raise DatabaseError(str(e)) from e
+        self.execute_result = self._connection.db_api.statement_execute_query(request).result
 
         # Reset streaming state for a new result
         self._binding_data = None
