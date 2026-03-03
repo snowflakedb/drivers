@@ -4,7 +4,7 @@ Tests for PEP 249 exception classes.
 
 from unittest.mock import MagicMock
 
-from snowflake.connector._internal.api_client.client_api import _convert_proto_error
+from snowflake.connector._internal.api_client.client_api import _proto_to_public_error
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     DriverError as ProtoDriverError,
 )
@@ -14,18 +14,20 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     LoginError as ProtoLoginError,
 )
+from snowflake.connector._internal.status_codes import (
+    STATUS_CODE_AUTHENTICATION_ERROR,
+    STATUS_CODE_INTERNAL_ERROR,
+    STATUS_CODE_INVALID_ARGUMENT,
+    STATUS_CODE_INVALID_DATA,
+    STATUS_CODE_INVALID_PARAMETER_VALUE,
+    STATUS_CODE_LOGIN_ERROR,
+    STATUS_CODE_MISSING_PARAMETER,
+    STATUS_CODE_NOT_FOUND,
+    STATUS_CODE_NOT_IMPLEMENTED,
+    STATUS_CODE_TIMEOUT,
+    STATUS_TO_EXCEPTION,
+)
 from snowflake.connector.errors import (
-    _STATUS_CODE_AUTHENTICATION_ERROR,
-    _STATUS_CODE_INTERNAL_ERROR,
-    _STATUS_CODE_INVALID_ARGUMENT,
-    _STATUS_CODE_INVALID_DATA,
-    _STATUS_CODE_INVALID_PARAMETER_VALUE,
-    _STATUS_CODE_LOGIN_ERROR,
-    _STATUS_CODE_MISSING_PARAMETER,
-    _STATUS_CODE_NOT_FOUND,
-    _STATUS_CODE_NOT_IMPLEMENTED,
-    _STATUS_CODE_TIMEOUT,
-    _STATUS_TO_EXCEPTION,
     DatabaseError,
     DataError,
     Error,
@@ -135,34 +137,34 @@ class TestStatusCodeMapping:
     """Test that proto status codes map to the correct PEP 249 exception class."""
 
     def test_authentication_error_maps_to_database_error(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_AUTHENTICATION_ERROR] is DatabaseError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_AUTHENTICATION_ERROR] is DatabaseError
 
     def test_internal_error_maps_to_programming(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_INTERNAL_ERROR] is ProgrammingError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_INTERNAL_ERROR] is ProgrammingError
 
     def test_login_error_maps_to_database_error(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_LOGIN_ERROR] is DatabaseError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_LOGIN_ERROR] is DatabaseError
 
     def test_timeout_maps_to_operational(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_TIMEOUT] is OperationalError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_TIMEOUT] is OperationalError
 
     def test_not_implemented_maps_to_not_supported(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_NOT_IMPLEMENTED] is NotSupportedError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_NOT_IMPLEMENTED] is NotSupportedError
 
     def test_not_found_maps_to_programming(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_NOT_FOUND] is ProgrammingError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_NOT_FOUND] is ProgrammingError
 
     def test_invalid_argument_maps_to_programming(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_INVALID_ARGUMENT] is ProgrammingError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_INVALID_ARGUMENT] is ProgrammingError
 
     def test_missing_parameter_maps_to_programming(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_MISSING_PARAMETER] is ProgrammingError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_MISSING_PARAMETER] is ProgrammingError
 
     def test_invalid_parameter_value_maps_to_programming(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_INVALID_PARAMETER_VALUE] is ProgrammingError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_INVALID_PARAMETER_VALUE] is ProgrammingError
 
     def test_invalid_data_maps_to_data_error(self):
-        assert _STATUS_TO_EXCEPTION[_STATUS_CODE_INVALID_DATA] is DataError
+        assert STATUS_TO_EXCEPTION[STATUS_CODE_INVALID_DATA] is DataError
 
 
 class TestExtractErrorDetail:
@@ -204,7 +206,7 @@ class TestExtractErrorDetail:
 
 
 class TestConvertProtoError:
-    """Test _convert_proto_error end-to-end conversion."""
+    """Test _proto_to_public_error end-to-end conversion."""
 
     def test_application_exception_with_status_code(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
@@ -213,13 +215,13 @@ class TestConvertProtoError:
 
         driver_exc = MagicMock()
         driver_exc.message = "Query failed"
-        driver_exc.status_code = _STATUS_CODE_INVALID_ARGUMENT
+        driver_exc.status_code = STATUS_CODE_INVALID_ARGUMENT
         driver_exc.report = ""
         driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, ProgrammingError)
         assert "Query failed" in str(result)
 
@@ -236,7 +238,7 @@ class TestConvertProtoError:
 
         driver_exc = MagicMock()
         driver_exc.message = "Authentication failed"
-        driver_exc.status_code = _STATUS_CODE_AUTHENTICATION_ERROR
+        driver_exc.status_code = STATUS_CODE_AUTHENTICATION_ERROR
         driver_exc.report = ""
         driver_exc.error = ProtoDriverError(
             auth_error=ProtoAuthenticationError(detail="Token expired"),
@@ -244,7 +246,7 @@ class TestConvertProtoError:
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, DatabaseError)
         assert "Authentication failed" in str(result)
         assert "Token expired" in str(result)
@@ -257,13 +259,13 @@ class TestConvertProtoError:
 
         driver_exc = MagicMock()
         driver_exc.message = "Feature X not implemented"
-        driver_exc.status_code = _STATUS_CODE_NOT_IMPLEMENTED
+        driver_exc.status_code = STATUS_CODE_NOT_IMPLEMENTED
         driver_exc.report = ""
         driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, NotSupportedError)
 
     def test_transport_exception_becomes_operational(self):
@@ -272,11 +274,11 @@ class TestConvertProtoError:
         )
 
         proto_exc = ProtoTransportException("connection lost")
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, OperationalError)
 
     def test_unknown_exception_type_becomes_database_error(self):
-        result = _convert_proto_error(Exception("something unexpected"))
+        result = _proto_to_public_error(Exception("something unexpected"))
         assert isinstance(result, DatabaseError)
         assert "something unexpected" in str(result)
 
@@ -287,17 +289,17 @@ class TestConvertProtoError:
 
         driver_exc = MagicMock()
         driver_exc.message = "Internal"
-        driver_exc.status_code = _STATUS_CODE_INTERNAL_ERROR
+        driver_exc.status_code = STATUS_CODE_INTERNAL_ERROR
         driver_exc.report = ""
         driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, ProgrammingError)
         # INTERNAL_ERROR has no old-driver errno mapping, so proto status code
         # is used as fallback.
-        assert result.errno == _STATUS_CODE_INTERNAL_ERROR
+        assert result.errno == STATUS_CODE_INTERNAL_ERROR
 
     def test_application_exception_login_error_uses_old_errno(self):
         from snowflake.connector._internal.protobuf_gen.proto_exception import (
@@ -306,7 +308,7 @@ class TestConvertProtoError:
 
         driver_exc = MagicMock()
         driver_exc.message = "Login failed"
-        driver_exc.status_code = _STATUS_CODE_LOGIN_ERROR
+        driver_exc.status_code = STATUS_CODE_LOGIN_ERROR
         driver_exc.report = ""
         driver_exc.error = ProtoDriverError(
             login_error=ProtoLoginError(
@@ -317,7 +319,7 @@ class TestConvertProtoError:
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, DatabaseError)
         # Login errors use ER_FAILED_TO_CONNECT_TO_DB (250001) to match old driver.
         assert result.errno == 250001
@@ -330,13 +332,13 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="SQL compilation error: syntax error",
-            status_code=_STATUS_CODE_INTERNAL_ERROR,
+            status_code=STATUS_CODE_INTERNAL_ERROR,
             vendor_code=1003,
             sql_state="42000",
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, ProgrammingError)
         # vendor_code from proto takes priority over status-code-based mapping
         assert result.errno == 1003
@@ -349,12 +351,12 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="Query failed",
-            status_code=_STATUS_CODE_INTERNAL_ERROR,
+            status_code=STATUS_CODE_INTERNAL_ERROR,
             root_cause="division by zero",
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert isinstance(result, ProgrammingError)
         assert "Query failed" in str(result)
         assert "division by zero" in str(result)
@@ -366,12 +368,12 @@ class TestConvertProtoError:
 
         driver_exc = ProtoDriverException(
             message="division by zero",
-            status_code=_STATUS_CODE_INTERNAL_ERROR,
+            status_code=STATUS_CODE_INTERNAL_ERROR,
             root_cause="division by zero",
         )
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         # root_cause should not be appended when it already appears in message
         msg_str = str(result)
         assert msg_str.count("division by zero") == 1
@@ -383,13 +385,13 @@ class TestConvertProtoError:
 
         driver_exc = MagicMock()
         driver_exc.message = "Query failed"
-        driver_exc.status_code = _STATUS_CODE_INVALID_ARGUMENT
+        driver_exc.status_code = STATUS_CODE_INVALID_ARGUMENT
         driver_exc.report = "Diagnostic report:\n  line 1: unexpected token"
         driver_exc.error = None
         driver_exc.HasField.return_value = False
         proto_exc = ProtoApplicationException(driver_exc)
 
-        result = _convert_proto_error(proto_exc)
+        result = _proto_to_public_error(proto_exc)
         assert "Query failed" in str(result)
         assert "Diagnostic report" not in str(result)
 

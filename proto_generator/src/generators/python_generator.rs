@@ -251,6 +251,13 @@ class ProtoError(Exception):
         let mut content = format!(
             r#"class {service_name}Client:
     def __init__(self, transport, error_handler=None):
+        """
+        Args:
+            transport: Transport layer that handles message serialization.
+            error_handler: Optional callable that converts a proto-layer exception
+                into a public exception.  Must **return** the converted exception
+                (not raise it); ``_raise_error`` takes care of raising.
+        """
         self._transport = transport
         self._error_handler = error_handler
 

@@ -361,6 +361,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
 /// Only populates vendor_code/sql_state for query errors where the Snowflake server
 /// code is the user-facing error number.  Login errors use client-side error codes
 /// (mapped by the Python layer) so the server code is NOT surfaced here.
+///
+/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
+/// New query-related error variants should be added here as they are introduced.
 fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     match error {
         ApiError::Query {

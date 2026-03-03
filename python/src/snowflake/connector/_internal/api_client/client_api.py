@@ -3,7 +3,11 @@ from __future__ import annotations
 import ctypes
 
 from ctypes import c_char_p
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+
+if TYPE_CHECKING:
+    from snowflake.connector.errors import Error
 
 from ..protobuf_gen.database_driver_v1_pb2 import (
     AuthenticationError as ProtoAuthenticationError,
@@ -68,13 +72,29 @@ def _append_detail(base: str, detail: str) -> str:
     return f"{base}. {detail}"
 
 
-def _convert_application_error(proto_exc: ProtoApplicationException) -> Any:
-    from snowflake.connector.errors import (
-        _STATUS_CODE_LABELS,
-        _STATUS_TO_ERRNO,
-        _STATUS_TO_EXCEPTION,
-        DatabaseError,
+def _proto_to_public_error(proto_exc: Exception) -> Error:
+    """Convert a proto-layer exception into a PEP 249 ``Error`` subclass.
+
+    This function **returns** the converted exception; it does not raise it.
+    The caller (``_raise_error`` in the generated client) is responsible for
+    raising the returned value.
+    """
+    from snowflake.connector.errors import DatabaseError, OperationalError
+
+    if isinstance(proto_exc, ProtoApplicationException):
+        return _convert_application_error(proto_exc)
+    if isinstance(proto_exc, ProtoTransportException):
+        return OperationalError(f"Driver communication error: {proto_exc}")
+    return DatabaseError(str(proto_exc))
+
+
+def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
+    from snowflake.connector._internal.status_codes import (
+        STATUS_CODE_LABELS,
+        STATUS_TO_ERRNO,
+        STATUS_TO_EXCEPTION,
     )
+    from snowflake.connector.errors import DatabaseError
 
     driver_exc = getattr(proto_exc, "api_error_pb", None)
     if driver_exc is None:
@@ -94,16 +114,16 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Any:
         message = _append_detail(message, detail)
 
     if not message:
-        message = _STATUS_CODE_LABELS.get(status_code, "Unknown error")
+        message = STATUS_CODE_LABELS.get(status_code, "Unknown error")
 
-    exc_class = _STATUS_TO_EXCEPTION.get(status_code, DatabaseError)
+    exc_class = STATUS_TO_EXCEPTION.get(status_code, DatabaseError)
 
     # Prefer the Snowflake server vendor_code when the core driver provides it
     # (e.g. 1003 for syntax error, 904 for invalid identifier).
     # Fall back to the old-driver-compatible errno mapping, then to the raw
     # proto status code.
     vendor_code = _get_optional_int(driver_exc, "vendor_code")
-    errno = vendor_code if vendor_code is not None else _STATUS_TO_ERRNO.get(status_code, status_code)
+    errno = vendor_code if vendor_code is not None else STATUS_TO_ERRNO.get(status_code, status_code)
 
     # Prefer the server-provided sql_state; fall back to a type-derived value.
     sqlstate = _get_optional_str(driver_exc, "sql_state") or _derive_sqlstate(driver_exc)
@@ -134,7 +154,12 @@ def _get_optional_str(msg: Any, field: str) -> str | None:
 
 
 def _derive_sqlstate(driver_exception: Any) -> str | None:
-    """Derive sqlstate from the error type when the proto does not carry it."""
+    """Derive sqlstate from the error type when the proto does not carry it.
+
+    Only login/auth errors have an obvious ANSI SQL state mapping today.
+    Other error types (missing_parameter, invalid_parameter_value, etc.)
+    will return ``None``; extend this function as mappings become clear.
+    """
     error = getattr(driver_exception, "error", None)
     if error is None:
         return None
@@ -142,16 +167,6 @@ def _derive_sqlstate(driver_exception: Any) -> str | None:
     if error_type in ("login_error", "auth_error"):
         return "08001"  # SQLSTATE_CONNECTION_WAS_NOT_ESTABLISHED
     return None
-
-
-def _convert_proto_error(proto_exc: Exception) -> Any:
-    from snowflake.connector.errors import DatabaseError, OperationalError
-
-    if isinstance(proto_exc, ProtoApplicationException):
-        return _convert_application_error(proto_exc)
-    if isinstance(proto_exc, ProtoTransportException):
-        return OperationalError(f"Driver communication error: {proto_exc}")
-    return DatabaseError(str(proto_exc))
 
 
 # ---------------------------------------------------------------------------
@@ -189,5 +204,5 @@ _DATABASE_DRIVER_CLIENT: DatabaseDriverClient | None = None
 def database_driver_client() -> DatabaseDriverClient:
     global _DATABASE_DRIVER_CLIENT
     if _DATABASE_DRIVER_CLIENT is None:
-        _DATABASE_DRIVER_CLIENT = DatabaseDriverClient(ProtoTransport(), error_handler=_convert_proto_error)
+        _DATABASE_DRIVER_CLIENT = DatabaseDriverClient(ProtoTransport(), error_handler=_proto_to_public_error)
     return _DATABASE_DRIVER_CLIENT
