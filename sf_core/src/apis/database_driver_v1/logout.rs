@@ -22,11 +22,11 @@ use std::sync::{Arc, Mutex};
 
 /// Data extracted from a locked connection needed to perform HTTP logout.
 pub(super) struct LogoutData {
-    pub(super) client: reqwest::Client,
-    pub(super) url: String,
-    pub(super) info: ClientInfo,
-    pub(super) retry_policy: RetryPolicy,
-    pub(super) refresh_ctx: RefreshContext,
+    client: reqwest::Client,
+    url: String,
+    info: ClientInfo,
+    retry_policy: RetryPolicy,
+    refresh_ctx: RefreshContext,
 }
 
 /// Determine whether to send logout request based on configuration and async query state
