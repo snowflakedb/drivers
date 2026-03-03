@@ -504,7 +504,10 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
             let (session_token, session_id) = {
                 let tokens_guard = conn.tokens.blocking_read();
                 match tokens_guard.as_ref() {
-                    Some(tokens) => (Some(tokens.session_token.expose().to_string()), Some(tokens.session_id)),
+                    Some(tokens) => (
+                        Some(tokens.session_token.expose().to_string()),
+                        Some(tokens.session_id),
+                    ),
                     None => (None, None),
                 }
             };
