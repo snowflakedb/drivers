@@ -89,13 +89,10 @@ class Connection:
             if not isinstance(autocommit, bool):
                 raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
 
-        # PEP 249: default to manual commit mode; Snowflake server default is autocommit=true
         if session_params is None:
             session_params = {}
         if autocommit is not None:
             session_params["AUTOCOMMIT"] = str(autocommit).lower()
-        else:
-            session_params.setdefault("AUTOCOMMIT", "false")
 
         # Pre-process private_key if present - normalize for Rust core
         if "private_key" in kwargs:

@@ -54,7 +54,8 @@ class TestConnectionOptionalMethods:
 
     @pytest.mark.skip_reference
     def test_set_autocommit(self, connection):
-        """Test that set_autocommit sets the internal flag."""
+        """Test that set_autocommit changes the autocommit flag."""
+        connection.set_autocommit(False)
         assert connection._autocommit is False
         connection.set_autocommit(True)
         assert connection._autocommit is True
@@ -62,6 +63,7 @@ class TestConnectionOptionalMethods:
     @pytest.mark.skip_reference
     def test_get_autocommit(self, connection):
         """Test that get_autocommit returns the current setting."""
+        connection.set_autocommit(False)
         assert connection.get_autocommit() is False
         connection.set_autocommit(True)
         assert connection.get_autocommit() is True
@@ -81,9 +83,9 @@ class TestConnectionAutocommitMethod:
         mock_set_autocommit.assert_called_once_with(True)
 
     @pytest.mark.skip_reference
-    def test_autocommit_default_is_false(self, connection):
-        """Test that autocommit defaults to False."""
-        assert connection._autocommit is False
+    def test_autocommit_default_is_server_default(self, connection):
+        """Test that autocommit defaults to the server default (true) when not explicitly set."""
+        assert connection._autocommit is True
 
     @pytest.mark.skip_reference
     def test_autocommit_roundtrip(self, connection):

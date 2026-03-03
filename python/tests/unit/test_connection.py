@@ -138,8 +138,8 @@ class TestSetAutocommit:
 class TestGetAutocommit:
     """Unit tests for get_autocommit behavior."""
 
-    def test_get_autocommit_default_is_false(self, connection):
-        """get_autocommit should return False by default."""
+    def test_get_autocommit_false_when_param_empty(self, connection):
+        """get_autocommit should return False when session parameter is empty/unset."""
         assert connection.get_autocommit() is False
 
     def test_get_autocommit_reads_from_sf_core(self, connection):
@@ -174,16 +174,18 @@ class TestAutocommitKwargUnit:
         params = call_args[0][0].parameters
         assert params["AUTOCOMMIT"] == "false"
 
-    def test_no_autocommit_kwarg_defaults_to_false(self, mock_db_api):
-        """Connection without autocommit kwarg should default to AUTOCOMMIT=false (PEP 249)."""
+    def test_no_autocommit_kwarg_does_not_set_autocommit(self, mock_db_api):
+        """Connection without autocommit kwarg should not inject AUTOCOMMIT, preserving server default."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="test_user", account="test_account")
 
         call_args = mock_db_api.connection_set_session_parameters.call_args
-        params = call_args[0][0].parameters
-        assert params["AUTOCOMMIT"] == "false"
+        if call_args is not None:
+            params = call_args[0][0].parameters
+            assert "AUTOCOMMIT" not in params
+        # If connection_set_session_parameters was not called at all, that's also correct
 
 
 class TestContextManagerUnit:
