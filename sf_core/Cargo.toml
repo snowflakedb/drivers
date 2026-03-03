@@ -77,6 +77,10 @@ der = "0.7"
 pkcs1 = "0.7"
 num-traits = "0.2.19"
 
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(feature, values("arbitrary"))']
+
 [build-dependencies]
 proto_generator = { path = "../proto_generator" }
 
