@@ -29,17 +29,15 @@ Push-Location $PSScriptRoot
 try {
     $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
 
-    if (-not (Test-Path "cmake-build")) {
-        New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
+    New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
 
-        $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=NEW")
-        $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } elseif ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { $null }
-        if ($vcpkgRoot) {
-            $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake"
-        }
-        & "C:\Program Files\CMake\bin\cmake" @cmakeArgs .
-        if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+    $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=NEW")
+    $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } elseif ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { $null }
+    if ($vcpkgRoot) {
+        $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake"
     }
+    & "C:\Program Files\CMake\bin\cmake" @cmakeArgs .
+    if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
     & "C:\Program Files\CMake\bin\cmake" --build cmake-build --config Debug --parallel $NPROC
     if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }

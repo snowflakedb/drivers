@@ -19,6 +19,7 @@ try {
     if ($env:CTEST_FILTER) {
         $ctestArgs += @("-R", $env:CTEST_FILTER)
     }
+    $ctestArgs += $args
     ctest @ctestArgs
 }
 finally {

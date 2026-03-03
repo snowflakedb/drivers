@@ -28,6 +28,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev
 
@@ -60,20 +61,29 @@ jobs:
 
       - name: Install dependencies (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          choco install openssl -y
-          vcpkg install zlib:x64-windows
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+
+          Invoke-Checked "choco install cmake" { choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y }
+          Invoke-Checked "choco install openssl" { choco install openssl -y }
+          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
           cmake --version
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
-          curl -O https://sfc-repo.snowflakecomputing.com/odbc/windows/3.9.0/snowflake-odbc-3.9.0.x86_64.msi
-          Start-Process -FilePath "msiexec" -ArgumentList "/i snowflake-odbc-3.9.0.x86_64.msi /quiet" -Wait
+          $referenceOdbcVersion = (Get-Content "ci/reference-odbc-version" -Raw).Trim()
+          Invoke-Checked "curl download Snowflake ODBC MSI" { curl -fL -O https://sfc-repo.snowflakecomputing.com/odbc/windows/${referenceOdbcVersion}/snowflake64_odbc-${referenceOdbcVersion}.msi }
+          $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i snowflake64_odbc-${referenceOdbcVersion}.msi /quiet" -Wait -PassThru
+          if ($msiProcess.ExitCode -ne 0) { throw "msiexec failed with exit code $($msiProcess.ExitCode)" }
 
       - name: Install dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          set -x
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
@@ -145,6 +155,7 @@ jobs:
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
@@ -155,6 +166,7 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
+          set -euxo pipefail
           # Go is required for building aws-lc-fips-sys (FIPS crypto)
           brew install unixodbc cmake go
           cmake --version
@@ -164,10 +176,17 @@ jobs:
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          choco install openssl -y
-          vcpkg install zlib:x64-windows
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+
+          Invoke-Checked "choco install cmake" { choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y }
+          Invoke-Checked "choco install openssl" { choco install openssl -y }
+          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
           cmake --version
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
