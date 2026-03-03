@@ -33,6 +33,9 @@ from snowflake.connector.errors import (
     ConfigSourceError,
     MissingConfigOptionError,
 )
+from snowflake.connector.errors import (
+    Error as DriverError,
+)
 
 
 _T = TypeVar("_T")
@@ -75,15 +78,26 @@ def _populate_tomlkit(target: Any, source: dict[str, Any]) -> None:
             target.add(key, value)
 
 
+def _extract_error_msg(exc: Exception) -> str:
+    """Extract the raw error message from a proto or PEP 249 exception."""
+    if hasattr(exc, "message"):
+        return str(exc.message)
+    if hasattr(exc, "raw_msg"):
+        return str(exc.raw_msg)
+    return str(exc)
+
+
 def _translate_core_error(
-    exc: ProtoApplicationException,
+    exc: Exception,
     file_path: Path | None = None,
 ) -> ConfigManagerError:
     """Translate a Rust core DriverException into the appropriate Python error.
 
     Maps sf_core error messages to backward-compatible Python exception types.
+    Accepts both raw ``ProtoApplicationException`` and PEP 249 ``Error``
+    subclasses (produced by the error_handler in the generated client).
     """
-    msg = str(exc.message) if hasattr(exc, "message") else str(exc)
+    msg = _extract_error_msg(exc)
 
     if "parse TOML" in msg or "Failed to parse" in msg or "Failed to read config file" in msg:
         display_path = str(file_path) if file_path else "unknown"
@@ -247,8 +261,8 @@ class ConfigManager:
         try:
             client = database_driver_client()
             response = client.config_load_all_sections(request)
-        except ProtoApplicationException as e:
-            msg = str(e.message) if hasattr(e, "message") else str(e)
+        except (ProtoApplicationException, DriverError) as e:
+            msg = _extract_error_msg(e)
             if "permission" in msg.lower() or "Permission denied" in msg:
                 LOGGER.debug(
                     "Config file '%s' could not be read due to no permission on its parent directory",
