@@ -80,7 +80,8 @@ pub fn driver_connect(
         let redacted_map: HashMap<&String, &str> = connection_string_map
             .keys()
             .map(|k| {
-                let v = if REDACTED_KEYS.contains(&k.to_uppercase().as_str()) {
+                let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
+                let v = if is_sensitive {
                     "****"
                 } else {
                     connection_string_map

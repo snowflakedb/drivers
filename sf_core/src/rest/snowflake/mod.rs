@@ -478,7 +478,7 @@ pub async fn refresh_session(
 #[tracing::instrument(skip(query_parameters, session_token, query_input), fields(sql))]
 pub async fn snowflake_query<'a>(
     query_parameters: QueryParameters,
-    session_token: String,
+    session_token: &str,
     query_input: QueryInput<'a>,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
@@ -502,7 +502,7 @@ pub async fn snowflake_query<'a>(
 pub async fn snowflake_query_with_client<'a>(
     client: &reqwest::Client,
     query_parameters: QueryParameters,
-    session_token: String,
+    session_token: &str,
     query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
@@ -523,7 +523,7 @@ pub async fn snowflake_query_with_client<'a>(
     execute_sync_with_retry(
         client,
         &query_parameters,
-        &session_token,
+        session_token,
         &query_input,
         retry_policy,
     )
@@ -534,14 +534,14 @@ pub async fn snowflake_query_with_client<'a>(
 async fn execute_async_with_fallback<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
-    session_token: String,
+    session_token: &str,
     query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     match snowflake_query_async_style(
         client,
         query_parameters,
-        session_token.clone(),
+        session_token,
         &query_input,
         retry_policy,
     )
@@ -581,7 +581,7 @@ async fn execute_async_with_fallback<'a>(
     let response = execute_sync_with_retry(
         client,
         query_parameters,
-        &session_token,
+        session_token,
         &query_input,
         retry_policy,
     )
@@ -806,7 +806,7 @@ async fn execute_sync_query<'a>(
 pub async fn snowflake_query_async_style<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
-    session_token: String,
+    session_token: &str,
     query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
@@ -814,7 +814,7 @@ pub async fn snowflake_query_async_style<'a>(
     crate::rest::snowflake::async_exec::execute_blocking_with_async(
         client,
         query_parameters,
-        &session_token,
+        session_token,
         query_input,
         request_id,
         retry_policy,
