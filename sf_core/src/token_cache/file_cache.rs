@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use keyring::credential::{CredentialApi, CredentialBuilderApi, CredentialPersistence};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snafu::{ResultExt, ensure};
+use tracing::warn;
 
 use super::{
     CacheDirectoryResolutionSnafu, FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu,
@@ -268,6 +268,53 @@ fn flush_to_fd(file: &mut fs::File, cache: &CacheFileContent) -> Result<(), Toke
     Ok(())
 }
 
+/// Reads the entire contents of an open file into a string.
+#[cfg(unix)]
+fn read_file_to_string(file: &mut fs::File) -> Result<String, TokenCacheError> {
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)
+        .boxed()
+        .context(TokenRetrievalSnafu)?;
+    Ok(buf)
+}
+
+/// Parses JSON cache content, falling back to an empty cache on empty or invalid input.
+fn parse_cache_lenient(content: &str) -> CacheFileContent {
+    if content.trim().is_empty() {
+        return CacheFileContent {
+            tokens: HashMap::new(),
+        };
+    }
+    serde_json::from_str(content).unwrap_or_else(|err| {
+        warn!("Failed to parse credential cache file as JSON, starting fresh: {err}");
+        CacheFileContent {
+            tokens: HashMap::new(),
+        }
+    })
+}
+
+/// Parses JSON cache content strictly, returning `None` if the input is empty or invalid.
+fn parse_cache_strict(content: &str) -> Option<CacheFileContent> {
+    if content.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str(content)
+        .inspect_err(|err| {
+            warn!("Failed to parse credential cache file as JSON, treating as empty: {err}");
+        })
+        .ok()
+}
+
+/// Platform-abstracted handle to the cache file.
+///
+/// On Unix, carries the open file descriptor so that `write_cache` can
+/// reuse it (seek + truncate + write) without a TOCTOU gap.
+/// On non-Unix, this is a zero-sized type — writes go through `fs::write`.
+struct CacheFileHandle {
+    #[cfg(unix)]
+    file: fs::File,
+}
+
 /// A file-based credential store for environments where the OS keyring is unavailable.
 ///
 /// Secrets are stored as plain text values in a JSON file keyed by the SHA-256
@@ -275,8 +322,9 @@ fn flush_to_fd(file: &mut fs::File, cache: &CacheFileContent) -> Result<(), Toke
 ///
 /// This struct provides low-level file operations (`set_secret`, `get_secret`,
 /// `delete_credential`) that mirror the keyring `CredentialApi` verbs, and is
-/// used as the backing store for [`FileCredentialBuilder`].
-pub struct FileTokenCache {
+/// used as the backing store for [`FileTokenCacheEntry`] credentials.
+#[derive(Clone, Debug)]
+pub(super) struct FileTokenCache {
     cache_file_path: PathBuf,
     retry_count: u32,
     retry_delay: Duration,
@@ -323,6 +371,97 @@ impl FileTokenCache {
         self
     }
 
+    /// Opens the existing cache file for read+write, returning the handle and
+    /// leniently-parsed content. Returns `Ok(None)` if the file does not exist.
+    fn open_existing_cache(
+        &self,
+    ) -> Result<Option<(CacheFileHandle, CacheFileContent)>, TokenCacheError> {
+        #[cfg(unix)]
+        {
+            match open_existing(&self.cache_file_path, true, true)? {
+                Some(mut file) => {
+                    let content = read_file_to_string(&mut file)?;
+                    let cache = parse_cache_lenient(&content);
+                    Ok(Some((CacheFileHandle { file }, cache)))
+                }
+                None => Ok(None),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if !self.cache_file_path.exists() {
+                return Ok(None);
+            }
+            let content = fs::read_to_string(&self.cache_file_path)
+                .boxed()
+                .context(TokenRetrievalSnafu)?;
+            let cache = parse_cache_lenient(&content);
+            Ok(Some((CacheFileHandle {}, cache)))
+        }
+    }
+
+    /// Creates a new, empty cache file and returns a handle to it.
+    fn create_empty_cache(&self) -> Result<(CacheFileHandle, CacheFileContent), TokenCacheError> {
+        let cache = CacheFileContent {
+            tokens: HashMap::new(),
+        };
+        #[cfg(unix)]
+        {
+            let file = create_exclusive(&self.cache_file_path)?;
+            Ok((CacheFileHandle { file }, cache))
+        }
+        #[cfg(not(unix))]
+        {
+            Ok((CacheFileHandle {}, cache))
+        }
+    }
+
+    /// Opens the cache file read-only and parses strictly.
+    /// Returns `Ok(None)` if the file is missing, empty, or contains invalid JSON.
+    fn read_cache(&self) -> Result<Option<CacheFileContent>, TokenCacheError> {
+        #[cfg(unix)]
+        {
+            let mut file = match open_existing(&self.cache_file_path, true, false)? {
+                Some(f) => f,
+                None => return Ok(None),
+            };
+            let content = read_file_to_string(&mut file)?;
+            Ok(parse_cache_strict(&content))
+        }
+        #[cfg(not(unix))]
+        {
+            if !self.cache_file_path.exists() {
+                return Ok(None);
+            }
+            let content = fs::read_to_string(&self.cache_file_path)
+                .boxed()
+                .context(TokenRetrievalSnafu)?;
+            Ok(parse_cache_strict(&content))
+        }
+    }
+
+    /// Serializes the cache content back through the given handle.
+    fn write_cache(
+        &self,
+        handle: &mut CacheFileHandle,
+        cache: &CacheFileContent,
+    ) -> Result<(), TokenCacheError> {
+        #[cfg(unix)]
+        {
+            flush_to_fd(&mut handle.file, cache)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = handle;
+            let content = serde_json::to_string_pretty(cache)
+                .boxed()
+                .context(TokenStorageSnafu)?;
+            fs::write(&self.cache_file_path, content)
+                .boxed()
+                .context(TokenStorageSnafu)
+        }
+    }
+
     /// Stores a secret under the given key. The key is SHA-256 hashed before
     /// storage. The secret bytes must be valid UTF-8.
     pub fn set_secret(&self, key: &str, secret: &[u8]) -> Result<(), TokenCacheError> {
@@ -330,174 +469,37 @@ impl FileTokenCache {
             .boxed()
             .context(TokenStorageSnafu)?;
         let _lock = self.acquire_lock()?;
-        let hashed_key = hash_cache_key(key);
-
-        #[cfg(unix)]
-        {
-            let (mut file, mut cache) = match open_existing(&self.cache_file_path, true, true)? {
-                Some(mut f) => {
-                    let mut buf = String::new();
-                    f.read_to_string(&mut buf)
-                        .boxed()
-                        .context(TokenStorageSnafu)?;
-                    let cache = if buf.trim().is_empty() {
-                        CacheFileContent {
-                            tokens: HashMap::new(),
-                        }
-                    } else {
-                        serde_json::from_str(&buf).unwrap_or_else(|_| CacheFileContent {
-                            tokens: HashMap::new(),
-                        })
-                    };
-                    (f, cache)
-                }
-                None => {
-                    let f = create_exclusive(&self.cache_file_path)?;
-                    (
-                        f,
-                        CacheFileContent {
-                            tokens: HashMap::new(),
-                        },
-                    )
-                }
-            };
-            cache.tokens.insert(hashed_key, value);
-            flush_to_fd(&mut file, &cache)?;
-        }
-
-        #[cfg(not(unix))]
-        {
-            let mut cache = if self.cache_file_path.exists() {
-                let content = fs::read_to_string(&self.cache_file_path)
-                    .boxed()
-                    .context(TokenRetrievalSnafu)?;
-                if content.trim().is_empty() {
-                    CacheFileContent {
-                        tokens: HashMap::new(),
-                    }
-                } else {
-                    serde_json::from_str(&content).unwrap_or_else(|_| CacheFileContent {
-                        tokens: HashMap::new(),
-                    })
-                }
-            } else {
-                CacheFileContent {
-                    tokens: HashMap::new(),
-                }
-            };
-            cache.tokens.insert(hashed_key, value);
-            let content = serde_json::to_string_pretty(&cache)
-                .boxed()
-                .context(TokenStorageSnafu)?;
-            fs::write(&self.cache_file_path, content)
-                .boxed()
-                .context(TokenStorageSnafu)?;
-        }
-
-        Ok(())
+        let (mut handle, mut cache) = match self.open_existing_cache()? {
+            Some(hc) => hc,
+            None => self.create_empty_cache()?,
+        };
+        cache.tokens.insert(hash_cache_key(key), value);
+        self.write_cache(&mut handle, &cache)
     }
 
     /// Retrieves a secret by key. Returns `None` if the key does not exist.
     pub fn get_secret(&self, key: &str) -> Result<Option<Vec<u8>>, TokenCacheError> {
         let _lock = self.acquire_lock()?;
         let hashed_key = hash_cache_key(key);
-
-        #[cfg(unix)]
-        {
-            let mut file = match open_existing(&self.cache_file_path, true, false)? {
-                Some(f) => f,
-                None => return Ok(None),
-            };
-            let mut buf = String::new();
-            file.read_to_string(&mut buf)
-                .boxed()
-                .context(TokenRetrievalSnafu)?;
-            if buf.trim().is_empty() {
-                return Ok(None);
-            }
-            let cache: CacheFileContent = match serde_json::from_str(&buf) {
-                Ok(c) => c,
-                Err(_) => return Ok(None),
-            };
-            Ok(cache.tokens.get(&hashed_key).map(|v| v.as_bytes().to_vec()))
-        }
-
-        #[cfg(not(unix))]
-        {
-            if !self.cache_file_path.exists() {
-                return Ok(None);
-            }
-            let content = fs::read_to_string(&self.cache_file_path)
-                .boxed()
-                .context(TokenRetrievalSnafu)?;
-            if content.trim().is_empty() {
-                return Ok(None);
-            }
-            let cache: CacheFileContent = match serde_json::from_str(&content) {
-                Ok(c) => c,
-                Err(_) => return Ok(None),
-            };
-            Ok(cache.tokens.get(&hashed_key).map(|v| v.as_bytes().to_vec()))
-        }
+        let cache = match self.read_cache()? {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+        Ok(cache.tokens.get(&hashed_key).map(|v| v.as_bytes().to_vec()))
     }
 
     /// Deletes a credential by key. Returns `true` if the key existed.
     pub fn delete_credential(&self, key: &str) -> Result<bool, TokenCacheError> {
         let _lock = self.acquire_lock()?;
-        let hashed_key = hash_cache_key(key);
-
-        #[cfg(unix)]
-        {
-            let mut file = match open_existing(&self.cache_file_path, true, true)? {
-                Some(f) => f,
-                None => return Ok(false),
-            };
-            let mut buf = String::new();
-            file.read_to_string(&mut buf)
-                .boxed()
-                .context(TokenStorageSnafu)?;
-            let mut cache = if buf.trim().is_empty() {
-                CacheFileContent {
-                    tokens: HashMap::new(),
-                }
-            } else {
-                serde_json::from_str(&buf).unwrap_or_else(|_| CacheFileContent {
-                    tokens: HashMap::new(),
-                })
-            };
-            let existed = cache.tokens.remove(&hashed_key).is_some();
-            flush_to_fd(&mut file, &cache)?;
-            Ok(existed)
+        let (mut handle, mut cache) = match self.open_existing_cache()? {
+            Some(hc) => hc,
+            None => return Ok(false),
+        };
+        let existed = cache.tokens.remove(&hash_cache_key(key)).is_some();
+        if existed {
+            self.write_cache(&mut handle, &cache)?;
         }
-
-        #[cfg(not(unix))]
-        {
-            if !self.cache_file_path.exists() {
-                return Ok(false);
-            }
-            let content = fs::read_to_string(&self.cache_file_path)
-                .boxed()
-                .context(TokenRetrievalSnafu)?;
-            let mut cache = if content.trim().is_empty() {
-                CacheFileContent {
-                    tokens: HashMap::new(),
-                }
-            } else {
-                serde_json::from_str(&content).unwrap_or_else(|_| CacheFileContent {
-                    tokens: HashMap::new(),
-                })
-            };
-            let existed = cache.tokens.remove(&hashed_key).is_some();
-            if existed {
-                let content = serde_json::to_string_pretty(&cache)
-                    .boxed()
-                    .context(TokenStorageSnafu)?;
-                fs::write(&self.cache_file_path, content)
-                    .boxed()
-                    .context(TokenStorageSnafu)?;
-            }
-            Ok(existed)
-        }
+        Ok(existed)
     }
 
     fn acquire_lock(&self) -> Result<FileLock, TokenCacheError> {
@@ -507,6 +509,28 @@ impl FileTokenCache {
             self.retry_delay,
             self.stale_lock_timeout,
         )
+    }
+}
+
+impl CredentialBuilderApi for FileTokenCache {
+    fn build(
+        &self,
+        _target: Option<&str>,
+        _service: &str,
+        user: &str,
+    ) -> keyring::Result<Box<keyring::credential::Credential>> {
+        Ok(Box::new(FileTokenCacheEntry {
+            user: user.to_string(),
+            cache: self.clone(),
+        }))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn persistence(&self) -> CredentialPersistence {
+        CredentialPersistence::UntilDelete
     }
 }
 
@@ -521,16 +545,14 @@ fn wrap_error(e: TokenCacheError) -> keyring::Error {
 /// A keyring credential backed by the file-based credential store.
 ///
 /// Implements [`keyring::credential::CredentialApi`] by delegating storage
-/// operations to a shared [`FileTokenCache`], preserving all file locking,
+/// operations to a cloned [`FileTokenCache`], preserving all file locking,
 /// SHA-256 key hashing, and permission enforcement logic.
-struct FileCredential {
-    #[allow(dead_code)]
-    service: String,
+struct FileTokenCacheEntry {
     user: String,
-    cache: Arc<FileTokenCache>,
+    cache: FileTokenCache,
 }
 
-impl CredentialApi for FileCredential {
+impl CredentialApi for FileTokenCacheEntry {
     fn set_secret(&self, secret: &[u8]) -> keyring::Result<()> {
         self.cache
             .set_secret(&self.user, secret)
@@ -558,52 +580,7 @@ impl CredentialApi for FileCredential {
     }
 
     fn debug_fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "FileCredential {{ user: {:?} }}", self.user)
-    }
-}
-
-/// A keyring credential builder that produces file-backed credentials.
-///
-/// When installed via [`keyring::set_default_credential_builder`], all
-/// `keyring::Entry` operations will be backed by the file-based credential
-/// store with the same file locking, SHA-256 key hashing, and permission
-/// enforcement as [`FileTokenCache`].
-pub struct FileCredentialBuilder {
-    cache: Arc<FileTokenCache>,
-}
-
-impl FileCredentialBuilder {
-    pub fn new(cache: Arc<FileTokenCache>) -> Self {
-        Self { cache }
-    }
-}
-
-impl CredentialBuilderApi for FileCredentialBuilder {
-    fn build(
-        &self,
-        _target: Option<&str>,
-        service: &str,
-        user: &str,
-    ) -> keyring::Result<Box<keyring::credential::Credential>> {
-        Ok(Box::new(FileCredential {
-            service: service.to_string(),
-            user: user.to_string(),
-            cache: Arc::clone(&self.cache),
-        }))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn persistence(&self) -> CredentialPersistence {
-        CredentialPersistence::UntilDelete
-    }
-}
-
-impl std::fmt::Debug for FileCredentialBuilder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FileCredentialBuilder").finish()
+        write!(f, "FileTokenCacheEntry {{ user: {:?} }}", self.user)
     }
 }
 
@@ -611,12 +588,11 @@ impl std::fmt::Debug for FileCredentialBuilder {
 /// installs the file-based credential store as a fallback if it does not.
 ///
 /// Call once at application startup, before creating any `keyring::Entry`.
-pub fn install_file_credential_fallback() -> Result<(), TokenCacheError> {
+pub(super) fn install_file_credential_fallback() -> Result<(), TokenCacheError> {
     let default_persistence = keyring::default::default_credential_builder().persistence();
     if !matches!(default_persistence, CredentialPersistence::UntilDelete) {
-        let cache = Arc::new(FileTokenCache::new()?);
-        let builder = FileCredentialBuilder::new(cache);
-        keyring::set_default_credential_builder(Box::new(builder));
+        let cache = FileTokenCache::new()?;
+        keyring::set_default_credential_builder(Box::new(cache));
     }
     Ok(())
 }
@@ -802,18 +778,17 @@ mod tests {
     mod file_credential_adapter_tests {
         use super::*;
 
-        fn create_builder(dir: &tempfile::TempDir) -> FileCredentialBuilder {
-            let cache = Arc::new(FileTokenCache::with_directory(dir.path().to_path_buf()));
-            FileCredentialBuilder::new(cache)
+        fn create_cache(dir: &tempfile::TempDir) -> FileTokenCache {
+            FileTokenCache::with_directory(dir.path().to_path_buf())
         }
 
         #[test]
         fn persistence_is_until_delete() {
             let dir = tempfile::tempdir().unwrap();
-            let builder = create_builder(&dir);
+            let cache = create_cache(&dir);
 
             assert!(matches!(
-                builder.persistence(),
+                cache.persistence(),
                 CredentialPersistence::UntilDelete
             ));
         }
@@ -821,14 +796,14 @@ mod tests {
         #[test]
         fn credentials_share_same_backing_file() {
             let dir = tempfile::tempdir().unwrap();
-            let builder = create_builder(&dir);
+            let cache = create_cache(&dir);
 
-            let cred_write = builder
+            let cred_write = cache
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();
             cred_write.set_password("shared_val").unwrap();
 
-            let cred_read = builder
+            let cred_read = cache
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();
             assert_eq!(cred_read.get_password().unwrap(), "shared_val");

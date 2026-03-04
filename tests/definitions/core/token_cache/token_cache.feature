@@ -136,13 +136,13 @@ Feature: SSO/MFA Token caching
 
   @core_unit
   Scenario: Should set and get password via credential adapter
-    Given a FileCredentialBuilder and a credential
+    Given a file-based credential builder and a credential
     When we set a password and then get it
     Then the retrieved password should match
 
   @core_unit
   Scenario: Should return no entry for missing credential adapter password
-    Given a FileCredentialBuilder and a credential with no stored value
+    Given a file-based credential builder and a credential with no stored value
     When we get the password
     Then a NoEntry error should be returned
 
@@ -172,7 +172,7 @@ Feature: SSO/MFA Token caching
 
   @core_unit
   Scenario: Should report persistence as until delete via adapter
-    Given a FileCredentialBuilder
+    Given a file-based credential builder
     Then its persistence should be UntilDelete
 
   @core_unit

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 use snafu::{Location, Snafu};
 
-pub use file_cache::{FileCredentialBuilder, FileTokenCache, install_file_credential_fallback};
 pub use keyring_cache::KeyringTokenCache;
 
 /// Represents the type of token stored in the keystore.
