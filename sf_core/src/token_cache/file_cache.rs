@@ -113,7 +113,7 @@ impl FileLock {
         retry_delay: Duration,
         stale_timeout: Duration,
     ) -> Result<Self, TokenCacheError> {
-        let lock_path = cache_path.with_extension("json.lck");
+        let lock_path = cache_path.with_extension(format!("{DEFAULT_CACHE_FILE_NAME}.lck"));
 
         for attempt in 0..retry_count {
             match fs::create_dir(&lock_path) {
@@ -730,6 +730,20 @@ mod tests {
                 current_uid,
                 "Temp file should be owned by current user — \
                  negative ownership test requires root to chown and is skipped"
+            );
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn validate_file_fd_rejects_file_not_owned_by_current_user() {
+            let path = Path::new("/etc/hosts");
+            let file = fs::File::open(path).expect("/etc/hosts should be readable");
+
+            let err = validate_file_fd(&file, path)
+                .expect_err("Expected FileNotOwnedByCurrentUser for root-owned file");
+            assert!(
+                matches!(err, TokenCacheError::FileNotOwnedByCurrentUser { .. }),
+                "Expected FileNotOwnedByCurrentUser, got: {err}"
             );
         }
 
