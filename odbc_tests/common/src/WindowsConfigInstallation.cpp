@@ -96,8 +96,8 @@ WindowsConfigInstallation::WindowsConfigInstallation(const std::vector<DataSourc
 }
 
 WindowsConfigInstallation::~WindowsConfigInstallation() {
-  cleanup_registry_drivers(driver_configs_);
   cleanup_registry_dsns(data_sources_);
+  cleanup_registry_drivers(driver_configs_);
 }
 
 WindowsConfigInstallation::WindowsConfigInstallation(WindowsConfigInstallation&& other) noexcept
@@ -105,8 +105,8 @@ WindowsConfigInstallation::WindowsConfigInstallation(WindowsConfigInstallation&&
 
 WindowsConfigInstallation& WindowsConfigInstallation::operator=(WindowsConfigInstallation&& other) noexcept {
   if (this != &other) {
-    cleanup_registry_drivers(driver_configs_);
     cleanup_registry_dsns(data_sources_);
+    cleanup_registry_drivers(driver_configs_);
     BaseConfigInstallation::operator=(std::move(other));
   }
   return *this;
