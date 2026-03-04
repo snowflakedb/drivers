@@ -181,76 +181,76 @@ Feature: SSO/MFA Token caching
     When one sets a password
     Then the other should be able to read it
 
-  # --- keyring_cache.rs: tests ---
+  # --- mod.rs: keyring_token_cache_tests ---
 
   @core_unit
-  Scenario: Should add and get token via keyring
-    Given a keyring-based token cache
+  Scenario: Should add and get token via keyring singleton
+    Given the keyring token cache singleton
     When we add a token and then retrieve it
     Then the retrieved token should match
 
   @core_unit
   Scenario: Should return none for nonexistent keyring token
-    Given a keyring-based token cache with no stored token
+    Given the keyring token cache singleton with no stored token
     When we get a token
     Then None should be returned
 
   @core_unit
   Scenario: Should remove existing token from keyring
-    Given a keyring-based token cache with a stored token
+    Given the keyring token cache singleton with a stored token
     When we remove the token
     Then getting it should return None
 
   @core_unit
   Scenario: Should succeed when removing nonexistent keyring token
-    Given a keyring-based token cache with no stored token
+    Given the keyring token cache singleton with no stored token
     When we remove a token
     Then the operation should succeed
 
   @core_unit
   Scenario: Should overwrite token in keyring
-    Given a keyring-based token cache with a stored token
+    Given the keyring token cache singleton with a stored token
     When we add a new value for the same key
     Then the new value should replace the old one
 
   @core_unit
   Scenario: Should store different token types separately in keyring
-    Given a keyring-based token cache
+    Given the keyring token cache singleton
     When we store tokens of different types for the same host and user
     Then each type should return its own value
 
   @core_unit
   Scenario: Should fail to add keyring token with empty host
-    Given a keyring-based token cache
+    Given the keyring token cache singleton
     When we add a token with an empty host
     Then an InvalidKeyFormat error should be returned
 
   @core_unit
   Scenario: Should fail to add keyring token with empty username
-    Given a keyring-based token cache
+    Given the keyring token cache singleton
     When we add a token with an empty username
     Then an InvalidKeyFormat error should be returned
 
   @core_unit
   Scenario: Should fail to get keyring token with empty host
-    Given a keyring-based token cache
+    Given the keyring token cache singleton
     When we get a token with an empty host
     Then an InvalidKeyFormat error should be returned
 
   @core_unit
   Scenario: Should fail to get keyring token with empty username
-    Given a keyring-based token cache
+    Given the keyring token cache singleton
     When we get a token with an empty username
     Then an InvalidKeyFormat error should be returned
 
   @core_unit
   Scenario: Should fail to remove keyring token with empty host
-    Given a keyring-based token cache
+    Given the keyring token cache singleton
     When we remove a token with an empty host
     Then an InvalidKeyFormat error should be returned
 
   @core_unit
   Scenario: Should fail to remove keyring token with empty username
-    Given a keyring-based token cache
+    Given the keyring token cache singleton
     When we remove a token with an empty username
     Then an InvalidKeyFormat error should be returned
