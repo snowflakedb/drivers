@@ -644,3 +644,89 @@ class TestFetchmanyArraysizeAttribute:
             result = cursor.fetchmany()
 
         assert len(result) == 5
+
+
+class TestRownumber:
+    """Unit tests for Cursor.rownumber property."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_rownumber_none_before_fetch(self, cursor):
+        """rownumber is None before any rows have been fetched."""
+        assert cursor.rownumber is None
+
+    def test_rownumber_increments_with_fetchone(self, cursor):
+        """rownumber increments by 1 for each fetchone call."""
+        cursor._iterator = iter([(1,), (2,), (3,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            assert cursor.rownumber == 0
+            cursor.fetchone()
+            assert cursor.rownumber == 1
+            cursor.fetchone()
+            assert cursor.rownumber == 2
+
+    def test_rownumber_stays_after_fetchone_exhausted(self, cursor):
+        """rownumber stays at last value when fetchone returns None."""
+        cursor._iterator = iter([(1,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            assert cursor.rownumber == 0
+            cursor.fetchone()  # returns None
+            assert cursor.rownumber == 0
+
+    def test_rownumber_updated_by_fetchall(self, cursor):
+        """rownumber reflects total rows fetched after fetchall."""
+        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchall()
+            assert cursor.rownumber == 4
+
+    def test_rownumber_updated_by_fetchall_after_partial_fetchone(self, cursor):
+        """rownumber is correct when fetchall follows partial fetchone consumption."""
+        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            cursor.fetchone()
+            assert cursor.rownumber == 1
+            cursor.fetchall()
+            assert cursor.rownumber == 4
+
+    def test_rownumber_updated_by_fetchmany(self, cursor):
+        """rownumber increments correctly through fetchmany calls."""
+        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchmany(3)
+            assert cursor.rownumber == 2
+            cursor.fetchmany(2)
+            assert cursor.rownumber == 4
+
+    def test_rownumber_fetchall_on_empty_result(self, cursor):
+        """rownumber stays None when fetchall returns no rows."""
+        cursor._iterator = iter([])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchall()
+            assert cursor.rownumber is None
+
+    def test_rownumber_none_after_execute_resets(self, cursor):
+        """rownumber resets to None after a new execute call."""
+        cursor._iterator = iter([(1,), (2,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            assert cursor.rownumber == 0
+
+        cursor._rownumber = -1  # simulates what execute() does
+        assert cursor.rownumber is None

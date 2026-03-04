@@ -648,6 +648,74 @@ class TestCursorRownumber:
         # Then rownumber should reflect the last row fetched (0-based)
         assert cursor.rownumber == 2
 
+    def test_rownumber_updated_by_fetchall(self, cursor):
+        """Test that rownumber reflects total rows fetched after fetchall."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching all rows at once
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 4
+
+    def test_rownumber_updated_by_fetchall_after_partial_fetchone(self, cursor):
+        """Test that rownumber is correct when fetchall follows partial fetchone."""
+        # Given a cursor with multiple rows, partially consumed
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        cursor.fetchone()
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        # When fetching remaining rows
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 4
+
+    def test_rownumber_fetchall_on_empty_result(self, cursor):
+        """Test that rownumber stays None when fetchall returns no rows."""
+        # Given a cursor with an empty result set
+        cursor.execute("SELECT 1 WHERE FALSE")
+
+        # When fetching all (no rows)
+        cursor.fetchall()
+
+        # Then rownumber should remain None
+        assert cursor.rownumber is None
+
+    def test_rownumber_fetchmany_then_fetchall(self, cursor):
+        """Test rownumber is correct after fetchmany followed by fetchall."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching some rows with fetchmany, then the rest with fetchall
+        cursor.fetchmany(3)
+        assert cursor.rownumber == 2
+
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 9
+
 
 class TestCursorSqlstate:
     """Integration tests for Cursor.sqlstate property."""

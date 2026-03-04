@@ -577,7 +577,9 @@ class SnowflakeCursorBase(abc.ABC):
         self._check_not_closed()
         if self._iterator is None:
             self._iterator = self._get_iterator()
-        return list(self._iterator)
+        rows = list(self._iterator)
+        self._rownumber += len(rows)
+        return rows
 
     # ------------------------------------------------------------------
     # PEP 249 optional / no-op methods
