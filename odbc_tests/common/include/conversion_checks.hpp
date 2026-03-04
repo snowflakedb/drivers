@@ -19,7 +19,6 @@ static typename MetaOfSqlCType<SQL_C_TYPE>::type check_fractional_truncation(con
   typename MetaOfSqlCType<SQL_C_TYPE>::type value;
   SQLLEN indicator = -999;
   SQLRETURN ret = get_data_raw(stmt, column, SQL_C_TYPE, &value, &indicator);
-  CHECK_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   CHECK(indicator == sizeof(typename MetaOfSqlCType<SQL_C_TYPE>::type));
   auto records = get_diag_rec(stmt);

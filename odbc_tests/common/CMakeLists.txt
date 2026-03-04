@@ -32,8 +32,12 @@ target_link_libraries(common PUBLIC Catch2::Catch2WithMain ODBC::ODBC ZLIB::ZLIB
 
 if (WIN32)
     # Windows ODBC headers (sqltypes.h etc.) require windows.h to be included first.
-    # Use /FI to force-include it before every source file.
-    target_compile_options(common PUBLIC /FI"windows.h")
+    # Force-include it before every source file.
+    if (MSVC)
+        target_compile_options(common PUBLIC /FI"windows.h")
+    else()
+        target_compile_options(common PUBLIC -include windows.h)
+    endif()
     target_compile_definitions(common PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 endif()
 

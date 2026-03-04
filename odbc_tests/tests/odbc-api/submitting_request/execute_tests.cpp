@@ -221,6 +221,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: SQL_NO_DATA for DML affecti
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
+  // TODO: Restore SECTIONs once ConfigInstallation supports re-entry within sections
   {
     std::string create_sql = "CREATE TABLE " + schema.name() + ".ex_nod_t(c1 INTEGER)";
     SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(create_sql.c_str()), SQL_NTS);
