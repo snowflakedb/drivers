@@ -220,36 +220,44 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: SQL_NO_DATA for DML affecti
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto schema = Schema::use_random_schema(dbc_handle());
-  std::string dml_sql;
 
-  SECTION("DELETE affecting zero rows") {
+  {
     std::string create_sql = "CREATE TABLE " + schema.name() + ".ex_nod_t(c1 INTEGER)";
     SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(create_sql.c_str()), SQL_NTS);
     REQUIRE(ret == SQL_SUCCESS);
     SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-    dml_sql = "DELETE FROM " + schema.name() + ".ex_nod_t WHERE c1 = 999";
+    std::string dml_sql = "DELETE FROM " + schema.name() + ".ex_nod_t WHERE c1 = 999";
+    ret = SQLPrepare(stmt_handle(), sqlchar(dml_sql.c_str()), SQL_NTS);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLExecute(stmt_handle());
+    REQUIRE(ret == SQL_NO_DATA);
+
+    SQLLEN rowCount = -1;
+    ret = SQLRowCount(stmt_handle(), &rowCount);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(rowCount == 0);
   }
 
-  SECTION("UPDATE affecting zero rows") {
+  {
     std::string create_sql = "CREATE TABLE " + schema.name() + ".ex_nou_t(c1 INTEGER)";
     SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(create_sql.c_str()), SQL_NTS);
     REQUIRE(ret == SQL_SUCCESS);
     SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-    dml_sql = "UPDATE " + schema.name() + ".ex_nou_t SET c1 = 2 WHERE c1 = 999";
+    std::string dml_sql = "UPDATE " + schema.name() + ".ex_nou_t SET c1 = 2 WHERE c1 = 999";
+    ret = SQLPrepare(stmt_handle(), sqlchar(dml_sql.c_str()), SQL_NTS);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLExecute(stmt_handle());
+    REQUIRE(ret == SQL_NO_DATA);
+
+    SQLLEN rowCount = -1;
+    ret = SQLRowCount(stmt_handle(), &rowCount);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(rowCount == 0);
   }
-
-  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(dml_sql.c_str()), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_NO_DATA);
-
-  SQLLEN rowCount = -1;
-  ret = SQLRowCount(stmt_handle(), &rowCount);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(rowCount == 0);
 }
 
 // ============================================================================

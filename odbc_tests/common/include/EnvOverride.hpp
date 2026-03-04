@@ -5,6 +5,8 @@
 #include <optional>
 #include <string>
 
+#include <catch2/catch_test_macros.hpp>
+
 #ifdef _WIN32
 #include <stdlib.h>
 inline void portable_setenv(const char* name, const char* value) { _putenv_s(name, value); }

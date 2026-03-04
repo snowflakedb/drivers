@@ -39,6 +39,13 @@ std::string BaseConfigInstallation::dsn_name(size_t index) const {
   return data_sources_[index].name();
 }
 
+std::string BaseConfigInstallation::connection_string(size_t index) const {
+  if (index >= data_sources_.size()) {
+    throw std::out_of_range("Data source index out of range");
+  }
+  return data_sources_[index].connection_string();
+}
+
 void BaseConfigInstallation::collect_driver_configs() {
   for (const auto& ds : data_sources_) {
     if (auto dc = ds.driver_config()) {
