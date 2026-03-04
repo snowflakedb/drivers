@@ -106,7 +106,7 @@ mod integration_tests {
         match login_params.login_method {
             LoginMethod::Password { username, password } => {
                 assert_eq!(username, "test_user");
-                assert_eq!(password, "test_password");
+                assert_eq!(password.reveal(), "test_password");
             }
             _ => panic!("Expected password login method"),
         }

@@ -18,8 +18,6 @@ import pytest
 
 from tests.e2e.types.utils import assert_sequential_values
 
-from ...compatibility import IS_UNIVERSAL_DRIVER
-
 
 class TestSelectQueries:
     """Tests for basic SELECT query execution."""
@@ -150,17 +148,9 @@ class TestErrorHandling:
 
         # When Invalid SQL "SELCT INVALID SYNTAX" is executed
         # Then An error should be returned
-        if IS_UNIVERSAL_DRIVER:
-            # TODO: this is not a desired state. Error type should match after error unification PR.
-            from snowflake.connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
+        from snowflake.connector import ProgrammingError
 
-            expected_error = ProtoApplicationException
-        else:
-            from snowflake.connector import ProgrammingError
-
-            expected_error = ProgrammingError
-
-        with pytest.raises(expected_error):
+        with pytest.raises(ProgrammingError):
             cursor.execute("SELCT INVALID SYNTAX")
 
 

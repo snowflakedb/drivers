@@ -5,6 +5,7 @@ use serde::Serialize;
 use snafu::{Location, ResultExt, Snafu};
 
 use crate::config::rest_parameters::{LoginMethod, LoginParameters};
+use crate::sensitive::SensitiveString;
 
 /// Extracts the account locator from a full account identifier.
 ///
@@ -21,9 +22,18 @@ pub fn extract_account_locator(account: &str) -> String {
 }
 
 pub enum Credentials {
-    Password { username: String, password: String },
-    Jwt { username: String, token: String },
-    Pat { username: String, token: String },
+    Password {
+        username: String,
+        password: SensitiveString,
+    },
+    Jwt {
+        username: String,
+        token: SensitiveString,
+    },
+    Pat {
+        username: String,
+        token: SensitiveString,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -126,12 +136,12 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             let token = generate_jwt_token(
                 &login_parameters.account_name,
                 username,
-                private_key,
-                passphrase.as_deref(),
+                private_key.reveal(),
+                passphrase.as_ref().map(|p| p.reveal().as_str()),
             )?;
             Ok(Credentials::Jwt {
                 username: username.clone(),
-                token,
+                token: token.into(),
             })
         }
         LoginMethod::Pat { username, token } => Ok(Credentials::Pat {

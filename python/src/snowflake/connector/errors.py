@@ -4,6 +4,8 @@ PEP 249 Database API 2.0 Exception Classes
 This module defines the exception hierarchy as specified in PEP 249.
 """
 
+from __future__ import annotations
+
 
 class Warning(Warning):  # type: ignore[misc]
     """Exception raised for important warnings like data truncations while inserting, etc."""
@@ -14,7 +16,26 @@ class Warning(Warning):  # type: ignore[misc]
 class Error(Exception):
     """Exception that is the base class of all other error exceptions."""
 
-    pass
+    def __init__(
+        self,
+        msg: str = "",
+        errno: int = -1,
+        sqlstate: str | None = None,
+        sfqid: str | None = None,
+        query: str | None = None,
+    ) -> None:
+        self.errno = errno
+        self.sqlstate = sqlstate
+        self.sfqid = sfqid
+        self.query = query
+        self.raw_msg = msg
+        self.msg = self._format_message(msg)
+        super().__init__(self.msg)
+
+    def _format_message(self, msg: str) -> str:
+        code_str = f"{self.errno:06d}" if isinstance(self.errno, int) and self.errno >= 0 else "------"
+        sqlstate_str = f" ({self.sqlstate})" if self.sqlstate else ""
+        return f"{code_str}{sqlstate_str}: {msg}" if msg else ""
 
 
 class InterfaceError(Error):

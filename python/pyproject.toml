@@ -263,7 +263,7 @@ template = "test"
 # This environment runs with old driver only. UD driver is not installed.
 test = [
     "uv pip uninstall snowflake-connector-python-ud",
-    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
+    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.2.0}",
     "pytest tests/integ tests/e2e {args}"
 ]
 compare = "python ci/reference_tests/compare_reports.py {args}"

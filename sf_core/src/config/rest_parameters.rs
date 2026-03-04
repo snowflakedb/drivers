@@ -8,6 +8,7 @@ use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
+use crate::sensitive::SensitiveString;
 use crate::tls::config::TlsConfig;
 use openssl::pkey::PKey;
 use snafu::OptionExt;
@@ -131,7 +132,7 @@ pub struct NativeOktaConfig {
     /// property — useful when the Okta email differs from the Snowflake user.
     pub okta_username: Option<String>,
     /// IdP password (native Okta SSO).
-    pub password: String,
+    pub password: SensitiveString,
     /// Okta authenticator URL endpoint (native Okta SSO).
     pub okta_url: Url,
     /// Disable SAML destination/postback validation (default false; discouraged).
@@ -144,17 +145,17 @@ pub struct NativeOktaConfig {
 pub enum LoginMethod {
     Password {
         username: String,
-        password: String,
+        password: SensitiveString,
     },
     NativeOkta(NativeOktaConfig),
     PrivateKey {
         username: String,
-        private_key: String,
-        passphrase: Option<String>,
+        private_key: SensitiveString,
+        passphrase: Option<SensitiveString>,
     },
     Pat {
         username: String,
-        token: String,
+        token: SensitiveString,
     },
 }
 
@@ -238,8 +239,6 @@ impl LoginMethod {
             // Otherwise, assume it's DER format and convert to PEM
             return Self::der_to_pem(&private_key_bytes);
         }
-
-        // Otherwise, check for private_key_file
         if let Some(private_key_file) = settings.get_string("private_key_file") {
             let private_key = fs::read_to_string(private_key_file.clone()).map_err(|e| {
                 InvalidParameterValueSnafu {
@@ -276,8 +275,10 @@ impl LoginMethod {
                 username: settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                private_key: Self::read_private_key(settings)?,
-                passphrase: settings.get_string("private_key_password"),
+                private_key: Self::read_private_key(settings)?.into(),
+                passphrase: settings
+                    .get_string("private_key_password")
+                    .map(SensitiveString::from),
             });
         }
 
@@ -290,7 +291,8 @@ impl LoginMethod {
                     .get_string("password")
                     .context(MissingParameterSnafu {
                         parameter: "password",
-                    })?,
+                    })?
+                    .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: settings
@@ -298,7 +300,8 @@ impl LoginMethod {
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 token: settings
                     .get_string("token")
-                    .context(MissingParameterSnafu { parameter: "token" })?,
+                    .context(MissingParameterSnafu { parameter: "token" })?
+                    .into(),
             }),
             _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
@@ -336,7 +339,7 @@ impl LoginMethod {
                 Ok(Self::NativeOkta(NativeOktaConfig {
                     username,
                     okta_username,
-                    password,
+                    password: password.into(),
                     okta_url,
                     disable_saml_url_check,
                     authentication_timeout_secs,
@@ -496,7 +499,7 @@ mod tests {
         match result.unwrap() {
             LoginMethod::Password { username, password } => {
                 assert_eq!(username, "test_user");
-                assert_eq!(password, "test_password");
+                assert_eq!(password.reveal(), "test_password");
             }
             _ => panic!("Expected Password login method"),
         }

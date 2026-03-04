@@ -69,10 +69,24 @@ pub fn driver_connect(
     let connection_string =
         api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
     let connection_string_map = parse_connection_string(&connection_string);
-    tracing::info!(
-        "driver_connect: connection_string={:?}",
-        connection_string_map
-    );
+    {
+        const REDACTED_KEYS: &[&str] = &[
+            "PWD",
+            "TOKEN",
+            "PRIV_KEY_FILE_PWD",
+            "PRIV_KEY_PWD",
+            "PRIV_KEY_BASE64",
+        ];
+        let redacted_map: HashMap<&String, &str> = connection_string_map
+            .iter()
+            .map(|(k, v)| {
+                let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
+                let v = if is_sensitive { "****" } else { v.as_str() };
+                (k, v)
+            })
+            .collect();
+        tracing::info!("driver_connect: connection_string={:?}", redacted_map);
+    }
 
     let connection = conn_from_handle(connection_handle);
     let db_handle = DatabaseDriverClient::database_new(DatabaseNewRequest {})?

@@ -1,11 +1,11 @@
-@python @core_not_needed
+@python @jdbc @core_not_needed
 Feature: DECFLOAT type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should cast decfloat values to appropriate type
     # Python: Values should be cast to 'Decimal' type with 38-digit precision
     Given Snowflake client is logged in
@@ -17,19 +17,19 @@ Feature: DECFLOAT type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select decfloat literals
     Given Snowflake client is logged in
     When Query "SELECT 0::DECFLOAT, 1.5::DECFLOAT, -1.5::DECFLOAT, 123.456789::DECFLOAT, -987.654321::DECFLOAT" is executed
     Then Result should contain exact decimals [0, 1.5, -1.5, 123.456789, -987.654321]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle full 38-digit precision values from literals
     Given Snowflake client is logged in
     When Query "SELECT '12345678901234567890123456789012345678'::DECFLOAT, '1.2345678901234567890123456789012345678E+100'::DECFLOAT, '1.2345678901234567890123456789012345678E-100'::DECFLOAT" is executed
     Then Result should preserve all 38 digits for each value
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle extreme exponent values from literals
     Given Snowflake client is logged in
     When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
@@ -37,13 +37,13 @@ Feature: DECFLOAT type support
     When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
     Then Result should contain [-1.234E+8000, 9.876E-8000]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle NULL values from literals
     Given Snowflake client is logged in
     When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
     Then Result should contain [NULL, 42.5, NULL]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR
     Given Snowflake client is logged in
     When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
@@ -54,35 +54,35 @@ Feature: DECFLOAT type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select decfloats from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain exact decimals [0, 123.456, -789.012, 1.23e20, -9.87e-15]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle full 38-digit precision values from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [12345678901234567890123456789012345678, 1.2345678901234567890123456789012345678E+100, 1.2345678901234567890123456789012345678E-100]
     When Query "SELECT * FROM <table>" is executed
     Then Result should preserve all 38 digits for each value
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle extreme exponent values from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle NULL values from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain [NULL, 123.456, NULL, -789.012]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should download large result set with multiple chunks from table
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists with values from 0 to 19999

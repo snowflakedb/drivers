@@ -695,7 +695,7 @@ class TestCursorSqlstate:
 
     def test_sqlstate_set_on_failed_execute(self, cursor):
         """sqlstate is captured from the error when a query fails."""
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(ProgrammingError):
             cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
 
         assert cursor.sqlstate == "42S02"
@@ -705,7 +705,7 @@ class TestCursorSqlstate:
         cursor.execute("SELECT 1")
         assert cursor.sqlstate is None
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(ProgrammingError):
             cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
         assert cursor.sqlstate == "42S02"
 

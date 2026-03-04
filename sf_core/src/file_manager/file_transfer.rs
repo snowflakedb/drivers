@@ -166,8 +166,8 @@ pub async fn download_from_s3(
 async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -> S3Client {
     let credentials = Credentials::new(
         &stage_info.creds.aws_key_id,
-        &stage_info.creds.aws_secret_key,
-        Some(stage_info.creds.aws_token.clone()),
+        stage_info.creds.aws_secret_key.reveal(),
+        Some(stage_info.creds.aws_token.reveal().to_string()),
         None,
         provider_name,
     );

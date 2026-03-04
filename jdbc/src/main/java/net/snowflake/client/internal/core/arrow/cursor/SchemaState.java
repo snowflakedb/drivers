@@ -94,6 +94,7 @@ public final class SchemaState {
       case VARIANT:
         return Types.VARCHAR;
       case FIXED:
+      case DECFLOAT:
         return Types.DECIMAL;
       case REAL:
         return Types.DOUBLE;

@@ -69,6 +69,7 @@ chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 html-escape = "0.2"
 urlencoding = "2.1"
+zeroize = "1.8"
 hex = "0.4"
 sha2 = "0.10"
 clap = { version = "4.5", features = ["derive"] }
@@ -76,6 +77,10 @@ signature = "2"
 der = "0.7"
 pkcs1 = "0.7"
 num-traits = "0.2.19"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(feature, values("arbitrary"))']
 
 [build-dependencies]
 proto_generator = { path = "../proto_generator" }

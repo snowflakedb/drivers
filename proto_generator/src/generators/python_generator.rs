@@ -250,8 +250,21 @@ class ProtoError(Exception):
 
         let mut content = format!(
             r#"class {service_name}Client:
-    def __init__(self, transport):
+    def __init__(self, transport, error_handler=None):
+        """
+        Args:
+            transport: Transport layer that handles message serialization.
+            error_handler: Optional callable that converts a proto-layer exception
+                into a public exception.  Must **return** the converted exception
+                (not raise it); ``_raise_error`` takes care of raising.
+        """
         self._transport = transport
+        self._error_handler = error_handler
+
+    def _raise_error(self, exc):
+        if self._error_handler is not None:
+            raise self._error_handler(exc) from None
+        raise exc
 
 "#
         );
@@ -287,12 +300,11 @@ class ProtoError(Exception):
         elif code == 1:
             error = {error_type}()
             error.ParseFromString(response_bytes)
-            raise ProtoApplicationException(error)
+            self._raise_error(ProtoApplicationException(error))
         elif code == 2:
-            raise ProtoTransportException(str(response_bytes))
+            self._raise_error(ProtoTransportException(str(response_bytes)))
         else:
-            raise ProtoTransportException(f"Unknown error code: %s", code)
-
+            self._raise_error(ProtoTransportException(f"Unknown error code: %s", code))
 "#
             );
         }

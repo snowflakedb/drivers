@@ -18,9 +18,8 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testCursorPosition() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
+    Connection conn = getDefaultConnection();
+    try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select * from values (1), (2), (3);")) {
         assertTrue(rs.isBeforeFirst());
         assertEquals(0, rs.getRow());
@@ -45,9 +44,8 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testNextAfterCloseReturnsFalse() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
+    Connection conn = getDefaultConnection();
+    try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select 1")) {
         assertFalse(rs.isClosed());
         rs.close();
@@ -59,9 +57,8 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testGettersAfterCloseThrow() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
+    Connection conn = getDefaultConnection();
+    try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select 1")) {
         assertTrue(rs.next());
         rs.close();
@@ -76,9 +73,8 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testWasNullUpdatesAfterReads() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
+    Connection conn = getDefaultConnection();
+    try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select null as n, 1 as v")) {
         assertTrue(rs.next());
         assertNull(rs.getString(1));
@@ -91,9 +87,8 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testGettersBeforeFirstAndAfterLastThrow() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
+    Connection conn = getDefaultConnection();
+    try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select 1")) {
         assertThrows(SQLException.class, () -> rs.getInt(1));
         assertTrue(rs.next());
@@ -106,9 +101,8 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testUnsupportedGettersThrow() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
+    Connection conn = getDefaultConnection();
+    try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select 1")) {
         assertTrue(rs.next());
         assertThrows(SQLFeatureNotSupportedException.class, () -> rs.getDate(1));
@@ -120,9 +114,8 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testFindColumnCaseInsensitive() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
+    Connection conn = getDefaultConnection();
+    try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select 1 as FooBar")) {
         assertTrue(rs.next());
         assertEquals(1, rs.findColumn("foobar"));

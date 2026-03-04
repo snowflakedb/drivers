@@ -22,6 +22,7 @@ use crate::apis::database_driver_v1::{
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
+use crate::rest::snowflake::error::SfError;
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -213,7 +214,7 @@ impl From<ConnectionInfo> for ConnectionGetInfoResponse {
             host: info.host,
             port: info.port,
             server_url: info.server_url,
-            session_token: info.session_token,
+            session_token: info.session_token.map(|t| t.reveal().to_string()),
             session_id: info.session_id,
         }
     }
@@ -355,6 +356,34 @@ fn to_driver_error(error: &ApiError) -> DriverError {
     }
 }
 
+/// Extract the Snowflake server vendor code and SQL state from an ApiError, if available.
+///
+/// Only populates vendor_code/sql_state for query errors where the Snowflake server
+/// code is the user-facing error number.  Login errors use client-side error codes
+/// (mapped by the Python layer) so the server code is NOT surfaced here.
+///
+/// NOTE: currently handles `QueryFailed` and `AsyncQuery` variants only.
+/// New query-related error variants should be added here as they are introduced.
+fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
+    match error {
+        ApiError::Query {
+            source: RestError::QueryFailed {
+                code, sql_state, ..
+            },
+            ..
+        } => (*code, sql_state.clone()),
+        ApiError::Query {
+            source:
+                RestError::AsyncQuery {
+                    source: SfError::SnowflakeBody { code, .. },
+                    ..
+                },
+            ..
+        } => (Some(*code), None),
+        _ => (None, None),
+    }
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let status_code = match &error {
         ApiError::GenericError { .. } => StatusCode::GenericError,
@@ -410,16 +439,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
     };
 
+    let (vendor_code, sql_state) = extract_vendor_info(&error);
     let message = error.to_string();
+    let root_cause = extract_root_cause(&error);
     let driver_error = to_driver_error(&error);
-
-    let sql_state = match &error {
-        ApiError::Query {
-            source: RestError::QueryFailed { sql_state, .. },
-            ..
-        } => sql_state.clone(),
-        _ => None,
-    };
 
     let error_trace = error
         .error_trace()
@@ -436,8 +459,23 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         status_code: status_code as i32,
         error: Some(driver_error),
         error_trace,
+        vendor_code,
         sql_state,
+        root_cause,
     }
+}
+
+/// Walk the `source()` chain to the deepest error and return its message.
+/// Returns `None` when the error has no source (i.e. the message itself is
+/// already the root cause).
+fn extract_root_cause(error: &dyn std::error::Error) -> Option<String> {
+    let mut deepest: Option<&dyn std::error::Error> = None;
+    let mut current = error.source();
+    while let Some(cause) = current {
+        deepest = Some(cause);
+        current = cause.source();
+    }
+    deepest.map(|e| e.to_string())
 }
 
 #[allow(clippy::result_large_err)]
@@ -445,9 +483,7 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
     value.ok_or_else(|| DriverException {
         message: message.to_string(),
         status_code: StatusCode::InvalidArgument as i32,
-        error: None,
-        error_trace: vec![],
-        sql_state: None,
+        ..Default::default()
     })
 }
 
@@ -455,9 +491,7 @@ fn not_implemented(message: &str) -> DriverException {
     DriverException {
         message: message.to_string(),
         status_code: StatusCode::NotImplemented as i32,
-        error: None,
-        error_trace: vec![],
-        sql_state: None,
+        ..Default::default()
     }
 }
 
@@ -915,9 +949,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let config_json = serde_json::to_string(&nested_json).map_err(|e| DriverException {
             message: format!("Failed to serialize config to JSON: {e}"),
             status_code: StatusCode::InternalError as i32,
-            error: None,
-            error_trace: vec![],
-            sql_state: None,
+            ..Default::default()
         })?;
 
         Ok(ConfigLoadAllSectionsResponse { config_json })
@@ -934,17 +966,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let config_file = paths.config_file.ok_or_else(|| DriverException {
             message: "Configuration path for config file is unavailable".to_string(),
             status_code: StatusCode::InternalError as i32,
-            error: None,
-            error_trace: vec![],
-            sql_state: None,
+            ..Default::default()
         })?;
 
         let connections_file = paths.connections_file.ok_or_else(|| DriverException {
             message: "Configuration path for connections file is unavailable".to_string(),
             status_code: StatusCode::InternalError as i32,
-            error: None,
-            error_trace: vec![],
-            sql_state: None,
+            ..Default::default()
         })?;
 
         Ok(ConfigGetPathsResponse {

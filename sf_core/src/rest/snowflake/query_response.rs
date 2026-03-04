@@ -669,8 +669,8 @@ impl TryFrom<&Credentials> for file_manager::Credentials {
 
         Ok(file_manager::Credentials {
             aws_key_id,
-            aws_secret_key,
-            aws_token,
+            aws_secret_key: aws_secret_key.into(),
+            aws_token: aws_token.into(),
         })
     }
 }
@@ -678,7 +678,7 @@ impl TryFrom<&Credentials> for file_manager::Credentials {
 impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
     fn from(value: &EncryptionMaterial) -> Self {
         Self {
-            query_stage_master_key: value.query_stage_master_key.clone(),
+            query_stage_master_key: value.query_stage_master_key.clone().into(),
             query_id: value.query_id.clone(),
             // Snowflake sends smk_id as i64, but later expects it as a string
             smk_id: value.smk_id.to_string(),

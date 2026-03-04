@@ -74,17 +74,24 @@ Feature: INT type support
     Then Result should contain integers [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
 
   @python_e2e @odbc_e2e @jdbc_e2e
-  Scenario: should select large result set from table for int and synonyms
+  Scenario: should handle server-side Arrow memory optimization for int columns on multiple chunks
     Given Snowflake client is logged in
-    And Table with <type> column exists with 50000 sequential values
-    When Query "SELECT * FROM <table> ORDER BY col" is executed
-    Then Result should contain 50000 sequentially numbered rows from 0 to 49999
+    And Table with four INT columns exists
+    And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
+      | Column    | Values          | Arrow Type |
+      | col_int8  | -128 to 127     | Int8       |
+      | col_int16 | -32768 to 32767 | Int16      |
+      | col_int32 | -2B to 2B       | Int32      |
+      | col_int64 | -9Q to 9Q       | Int64      |
+    When Query "SELECT * FROM <table>" is executed
+    Then Result should contain 50000 rows
+    And All values should be equal to expected data
 
   # =========================================================================== #
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert integer using parameter binding for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists

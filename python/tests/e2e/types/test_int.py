@@ -265,30 +265,32 @@ class TestIntTable:
         assert result == [INT38_MIN, INT38_MAX]
         assert_type(result, int)
 
-    @int_type_parametrize
-    def test_should_select_large_result_set_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
+    def test_should_handle_server_side_arrow_memory_optimization_for_int_columns_on_multiple_chunks(
+        self, execute_query, tmp_schema
+    ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # And Table with <type> column exists with 50000 sequential values
+        # And Table with four INT columns exists
+        table_name = f"{tmp_schema}.different_int_column_sizes"
+        execute_query(f"CREATE TABLE {table_name} (col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)")
 
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
-        table_name = f"{tmp_schema}.large_int_table_{int_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        # And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
         execute_query(
             f"INSERT INTO {table_name} "
-            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{int_type} "
+            f"SELECT 100, 30000, 2000000000, 9000000000000000000 "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
-        # When Query "SELECT * FROM <table> ORDER BY col" is executed
-        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+        # When Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
 
-        # Then Result should contain 50000 sequentially numbered rows from 0 to 49999
-        values = [row[0] for row in rows]
-        assert_type(values, int)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
+        # Then Result should contain 50000 rows
+        assert len(rows) == LARGE_RESULT_SET_SIZE
+
+        # And All values should be equal to expected data
+        for row in rows:
+            assert row == (100, 30000, 2000000000, 9000000000000000000)
 
 
 @with_paramstyle("qmark")

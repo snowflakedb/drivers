@@ -44,4 +44,25 @@ public class SchemaStateTest {
       assertTrue(exception.getMessage().contains("Invalid column index"));
     }
   }
+
+  @Test
+  public void testDecfloatMapsToDecimalType() throws Exception {
+    Map<String, String> metadata = new HashMap<>();
+    metadata.put("logicalType", "DECFLOAT");
+    FieldType fieldType = new FieldType(true, MinorType.VARCHAR.getType(), null, metadata);
+
+    try (RootAllocator allocator = new RootAllocator(Long.MAX_VALUE);
+        VarCharVector vector = new VarCharVector("dec_col", fieldType, allocator);
+        VectorSchemaRoot root = VectorSchemaRoot.of(vector)) {
+      vector.allocateNew();
+      vector.setSafe(0, "123.45".getBytes(StandardCharsets.UTF_8));
+      vector.setValueCount(1);
+      root.setRowCount(1);
+
+      SchemaState schema = new SchemaState(root);
+      assertArrayEquals(new String[] {"dec_col"}, schema.getColumnNames());
+      assertArrayEquals(new int[] {Types.DECIMAL}, schema.getColumnTypes());
+      assertEquals(1, schema.getColumnCount());
+    }
+  }
 }

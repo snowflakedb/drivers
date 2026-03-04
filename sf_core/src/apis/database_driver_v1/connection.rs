@@ -12,6 +12,7 @@ use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
+use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
@@ -285,7 +286,7 @@ pub async fn with_valid_session<F, Fut, T>(
     f: F,
 ) -> Result<T, ApiError>
 where
-    F: Fn(String) -> Fut,
+    F: Fn(SensitiveString) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
     let mut ctx = RefreshContext::from_arc(conn)?;
@@ -324,9 +325,9 @@ where
 enum RefreshState {
     /// No token has been issued yet (initial call).
     Initial,
-    /// A token was issued but hasn't been refreshed yet. Holds the token string
+    /// A token was issued but hasn't been refreshed yet. Holds the token
     /// so we can detect if another request already refreshed while we waited.
-    FirstToken(String),
+    FirstToken(SensitiveString),
     /// A refresh has already been performed. A second SessionExpired will be propagated.
     Refreshed,
 }
@@ -375,7 +376,7 @@ impl RefreshContext {
     pub async fn refresh_token(
         &mut self,
         last_error: Option<RestError>,
-    ) -> Result<String, ApiError> {
+    ) -> Result<SensitiveString, ApiError> {
         match &self.state {
             // No token issued yet - read the current session token
             RefreshState::Initial => {
@@ -407,7 +408,7 @@ impl RefreshContext {
                         .context(ConnectionNotInitializedSnafu)?;
 
                     // If another request already refreshed while we waited, use the new token.
-                    if tokens.session_token != failed_token {
+                    if tokens.session_token.reveal() != failed_token.reveal() {
                         tracing::debug!("Session already refreshed by another request");
                         return Ok(tokens.session_token.clone());
                     }
@@ -466,8 +467,8 @@ pub struct ConnectionInfo {
     pub port: Option<i64>,
     /// The full server URL
     pub server_url: Option<String>,
-    /// The session token for authentication
-    pub session_token: Option<String>,
+    /// The session token for authentication (redacted in Debug output)
+    pub session_token: Option<SensitiveString>,
     /// The server-assigned session ID
     pub session_id: Option<i64>,
 }

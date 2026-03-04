@@ -5,6 +5,7 @@ use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
+use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -86,8 +87,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
 
     // Create a connection with initial tokens
     let tokens = SessionTokens {
-        session_token: "old-session-token".to_string(),
-        master_token: "valid-master-token".to_string(),
+        session_token: SensitiveString::from("old-session-token"),
+        master_token: SensitiveString::from("valid-master-token"),
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,
@@ -117,7 +118,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
                     let client = reqwest::Client::new();
                     let resp = client
                         .post(format!("http://{}/queries/v1/query-request", query_addr))
-                        .header("Authorization", format!("Snowflake Token=\"{}\"", token))
+                        .header("Authorization", format!("Snowflake Token=\"{}\"", token.reveal()))
                         .send()
                         .await
                         .map_err(|e| sf_core::rest::snowflake::RestError::Communication {
@@ -167,7 +168,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         .as_ref()
         .unwrap()
         .session_token
-        .clone();
+        .reveal()
+        .to_string();
     assert_eq!(final_token, "new-session-token");
 
     server.abort();

@@ -11,9 +11,6 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     StatementHandle,
 )
-from snowflake.connector._internal.protobuf_gen.proto_exception import (
-    ProtoApplicationException,
-)
 from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
 from snowflake.connector.errors import ProgrammingError
 
@@ -451,6 +448,7 @@ class TestStatementLifecycle:
         """Create a mock connection with db_api stubs for execute flow."""
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
         handle_counter = 0
 
         def new_handle(*_args, **_kwargs):
@@ -506,6 +504,7 @@ class TestSqlstate:
     def mock_connection(self):
         conn = MagicMock()
         conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
         conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
         return conn
 
@@ -569,23 +568,19 @@ class TestSqlstate:
         assert cursor.sqlstate is None
 
     def test_sqlstate_set_from_error_on_failed_execute(self, cursor, mock_connection):
-        """sqlstate is captured from DriverException when execute raises."""
-        error_pb = MagicMock()
-        error_pb.sql_state = "42601"
-        mock_connection.db_api.statement_execute_query.side_effect = ProtoApplicationException(error_pb)
+        """sqlstate is captured from PEP 249 Error when execute raises."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
 
-        with pytest.raises(ProtoApplicationException):
+        with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
 
         assert cursor.sqlstate == "42601"
 
     def test_sqlstate_set_to_none_when_error_has_no_sqlstate(self, cursor, mock_connection):
-        """sqlstate is set to None when error carries no sql_state."""
-        error_pb = MagicMock()
-        error_pb.sql_state = ""
-        mock_connection.db_api.statement_execute_query.side_effect = ProtoApplicationException(error_pb)
+        """sqlstate is set to None when error carries no sqlstate."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate=None)
 
-        with pytest.raises(ProtoApplicationException):
+        with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
 
         assert cursor.sqlstate is None
@@ -596,16 +591,13 @@ class TestSqlstate:
         success_result.columns = []
         success_result.sql_state = "00000"
 
-        error_pb = MagicMock()
-        error_pb.sql_state = "42601"
-
         mock_connection.db_api.statement_execute_query.return_value.result = success_result
         mock_connection.db_api.statement_execute_query.side_effect = None
         cursor.execute("SELECT 1")
         assert cursor.sqlstate is None
 
-        mock_connection.db_api.statement_execute_query.side_effect = ProtoApplicationException(error_pb)
-        with pytest.raises(ProtoApplicationException):
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
+        with pytest.raises(ProgrammingError):
             cursor.execute("INVALID SQL")
         assert cursor.sqlstate == "42601"
 

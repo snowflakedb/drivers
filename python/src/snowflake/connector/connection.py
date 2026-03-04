@@ -6,10 +6,13 @@ This module defines the Connection class as specified in PEP 249.
 
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Generator, Iterable
 from io import StringIO
 from typing import Any, Callable, Union
 
+from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
@@ -32,9 +35,11 @@ from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.text_utils import split_statements
 from .cursor import CursorInstance, CursorType, SnowflakeCursor
-from .errors import InterfaceError, NotSupportedError, ProgrammingError
+from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
+
+logger = logging.getLogger(__name__)
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, SessionParameters]
@@ -44,12 +49,19 @@ ConnectionParameters = dict[str, ConnectionParamValue]
 class Connection:
     """Connection objects represent a database connection."""
 
-    def __init__(self, *, paramstyle: str | None = None, **kwargs: ConnectionParamValue) -> None:
+    def __init__(
+        self,
+        *,
+        paramstyle: str | None = None,
+        autocommit: bool | None = None,
+        **kwargs: ConnectionParamValue,
+    ) -> None:
         """
         Initialize a new connection object.
 
         Args:
             paramstyle: Binding style – ``"pyformat"`` (default), ``"format"``, ``"qmark"`` or ``"numeric"``
+            autocommit: Optional bool to enable/disable autocommit at connection time
             database: Database name
             user: Username
             password: Password
@@ -74,12 +86,27 @@ class Connection:
         # Extract session_parameters before processing other kwargs
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
+        if autocommit is not None:
+            if not isinstance(autocommit, bool):
+                raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
+
+        if session_params is None:
+            session_params = {}
+        if autocommit is not None:
+            session_params["AUTOCOMMIT"] = str(autocommit).lower()
+
         # Pre-process private_key if present - normalize for Rust core
         if "private_key" in kwargs:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
 
         for key, value in kwargs.items():
-            if isinstance(value, int):
+            # bool check must come before int because bool is a subclass of int in Python
+            if isinstance(value, bool):
+                self.db_api.connection_set_option_int(
+                    ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=int(value))
+                )
+
+            elif isinstance(value, int):
                 self.db_api.connection_set_option_int(
                     ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
@@ -109,7 +136,6 @@ class Connection:
         _sensitive_keys = {"password", "private_key"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
-        self._autocommit = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
@@ -130,23 +156,21 @@ class Connection:
 
     @pep249
     def commit(self) -> None:
-        """
-        Commit any pending transaction to the database.
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("commit is not implemented")
+        """Commit any pending transaction to the database."""
+        cur = self.cursor()
+        try:
+            cur.execute("COMMIT")
+        finally:
+            cur.close()
 
     @pep249
     def rollback(self) -> None:
-        """
-        Roll back to the start of any pending transaction.
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("rollback is not implemented")
+        """Roll back to the start of any pending transaction."""
+        cur = self.cursor()
+        try:
+            cur.execute("ROLLBACK")
+        finally:
+            cur.close()
 
     @pep249
     def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
@@ -160,9 +184,12 @@ class Connection:
         Returns:
             SnowflakeCursorBase: A new cursor object
         """
-        if self._closed:
-            raise InterfaceError("Connection is closed")
+        self._check_not_closed()
         return cursor_class(self)
+
+    def _check_not_closed(self) -> None:
+        if self._closed:
+            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
 
     # Context manager support
     def __enter__(self) -> Connection:
@@ -175,26 +202,18 @@ class Connection:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """
-        Exit the runtime context for the connection.
-
-        If an exception occurred, rollback the transaction.
-        Otherwise, commit the transaction.
-        """
-        if exc_type is None:
-            # No exception, commit
-            try:
-                self.commit()
-            except NotSupportedError:
-                pass  # commit not implemented
-        else:
-            # Exception occurred, rollback
-            try:
-                self.rollback()
-            except NotSupportedError:
-                pass  # rollback not implemented
-
-        self.close()
+        """Exit the runtime context. Commit on success / rollback on exception if autocommit is OFF."""
+        try:
+            if not self._autocommit and not self._closed:
+                if exc_type is None:
+                    self.commit()
+                else:
+                    try:
+                        self.rollback()
+                    except Exception:
+                        logger.warning("Rollback failed during exception handling", exc_info=True)
+        finally:
+            self.close()
 
     # Optional methods that some databases might support
     def cancel(self) -> None:
@@ -218,15 +237,23 @@ class Connection:
         """
         raise NotSupportedError("ping is not implemented")
 
-    def set_autocommit(self, autocommit: bool) -> None:
-        """
-        Set the autocommit mode.
+    @property
+    def _autocommit(self) -> bool:
+        value = self._get_session_parameter("AUTOCOMMIT")
+        return value is not None and value.lower() == "true"
 
-        Args:
-            autocommit (bool): True to enable autocommit, False to disable
-        """
-        # TODO: SNOW-3155976 Lacks full implementation
-        self._autocommit = autocommit
+    def set_autocommit(self, autocommit: bool) -> None:
+        """Set the autocommit mode. Executes ALTER SESSION SET autocommit on the server."""
+        if not isinstance(autocommit, bool):
+            raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
+        cur = self.cursor()
+        try:
+            cur.execute(f"ALTER SESSION SET autocommit={str(autocommit).lower()}")
+        # TODO: Narrow exception handling once proper error propagation is implemented
+        except Error as e:
+            logger.warning("Autocommit feature is not enabled for this connection. Ignored: %s", e)
+        finally:
+            cur.close()
 
     def get_autocommit(self) -> bool:
         """
@@ -235,18 +262,11 @@ class Connection:
         Returns:
             bool: Current autocommit setting
         """
-        # TODO: SNOW-3155976 Lacks full implementation
         return self._autocommit
 
     @pep249
     def autocommit(self, value: bool) -> None:
-        """
-        Set autocommit mode.
-
-        Args:
-            value (bool): Autocommit setting
-        """
-        self._autocommit = value
+        """Set autocommit mode."""
         self.set_autocommit(value)
 
     def is_closed(self) -> bool:

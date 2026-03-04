@@ -369,7 +369,7 @@ fn execute_query_internal<'a>(
             match snowflake_query_with_client(
                 &http_client,
                 query_parameters.clone(),
-                session_token,
+                session_token.reveal(),
                 query_input.clone(),
                 &retry_policy,
                 execution_mode,
