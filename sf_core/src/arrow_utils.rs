@@ -8,13 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
-pub fn create_field(row_type: &RowType) -> Field {
-    create_field_with_type(row_type, None)
-}
-
-/// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
 /// Takes specific_data_type to allow overriding the default type inference for FIXED types based on scale/precision
-pub fn create_field_with_type(row_type: &RowType, specific_data_type: Option<DataType>) -> Field {
+pub fn create_field_with_type(row_type: &RowType, data_type: DataType) -> Field {
     match row_type {
         RowType::Text {
             name,
@@ -24,10 +19,9 @@ pub fn create_field_with_type(row_type: &RowType, specific_data_type: Option<Dat
         } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "TEXT".to_string());
-            metadata.insert("physicalType".to_string(), "LOB".to_string());
             metadata.insert("charLength".to_string(), length.to_string());
             metadata.insert("byteLength".to_string(), byte_length.to_string());
-            Field::new(name, DataType::Utf8, *nullable).with_metadata(metadata)
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
         }
         RowType::Fixed {
             name,
@@ -35,37 +29,26 @@ pub fn create_field_with_type(row_type: &RowType, specific_data_type: Option<Dat
             precision,
             scale,
         } => {
-            let data_type = specific_data_type.unwrap_or({
-                if *scale > 0 {
-                    DataType::Decimal128(*precision as u8, *scale as i8)
-                } else {
-                    DataType::Int64
-                }
-            });
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "FIXED".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
             metadata.insert("precision".to_string(), precision.to_string());
-            metadata.insert(
-                "physicalType".to_string(),
-                physical_type_from_data_type(&data_type),
-            );
             Field::new(name, data_type, *nullable).with_metadata(metadata)
         }
         RowType::Boolean { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "BOOLEAN".to_string());
-            Field::new(name, DataType::Boolean, *nullable).with_metadata(metadata)
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
         }
         RowType::Real { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "REAL".to_string());
-            Field::new(name, DataType::Float64, *nullable).with_metadata(metadata)
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
         }
         RowType::Date { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "DATE".to_string());
-            Field::new(name, DataType::Date32, *nullable).with_metadata(metadata)
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
         }
         RowType::TimestampNtz {
             name,
@@ -84,87 +67,104 @@ pub fn create_field_with_type(row_type: &RowType, specific_data_type: Option<Dat
     }
 }
 
+/// Parses a decimal string like "123.45" into the unscaled i128 representation
+/// that Arrow's Decimal128Array expects. For scale=2, "123.45" becomes 12345i128.
+fn parse_decimal_str(v: &str, scale: u32) -> Result<i128, ArrowUtilsError> {
+    if scale == 0 {
+        return v.parse::<i128>().context(IntegerParsingSnafu {
+            value: v.to_string(),
+        });
+    }
+
+    let (integer_str, frac_str) = match v.split_once('.') {
+        Some((int_part, frac_part)) => (int_part, frac_part),
+        None => (v, ""),
+    };
+
+    let negative = integer_str.starts_with('-');
+    let abs_int: i128 = integer_str
+        .trim_start_matches('-')
+        .parse::<i128>()
+        .context(IntegerParsingSnafu {
+            value: v.to_string(),
+        })?;
+
+    let frac_scaled: i128 = if frac_str.is_empty() {
+        0
+    } else {
+        let scale_usize = scale as usize;
+        // Pad with trailing zeros or truncate to match the target scale
+        let adjusted = if frac_str.len() < scale_usize {
+            format!("{:0<width$}", frac_str, width = scale_usize)
+        } else {
+            frac_str[..scale_usize].to_string()
+        };
+        adjusted.parse::<i128>().context(IntegerParsingSnafu {
+            value: v.to_string(),
+        })?
+    };
+
+    let unscaled = abs_int * 10i128.pow(scale) + frac_scaled;
+    Ok(if negative { -unscaled } else { unscaled })
+}
+
 /// Creates an Arrow array from column values and data type
 fn create_column_array(
     values: Vec<&str>,
     row_type: &RowType,
 ) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError> {
     match row_type {
-        RowType::Text { .. } => Ok((create_field(row_type), Arc::new(StringArray::from(values)))),
-        RowType::Fixed {
-            scale, precision, ..
-        } if *scale > 0 => {
-            let decimal_values: Result<Vec<i128>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| {
-                    v.parse::<i128>().context(IntegerParsingSnafu {
-                        value: v.to_string(),
-                    })
-                })
-                .collect();
-            Ok((
-                create_field_with_type(
-                    row_type,
-                    Some(DataType::Decimal128(*precision as u8, *scale as i8)),
-                ),
-                Arc::new(
-                    arrow::array::Decimal128Array::from(decimal_values?)
-                        .with_precision_and_scale(*precision as u8, *scale as i8)
-                        .expect("valid decimal precision/scale"),
-                ),
-            ))
-        }
+        RowType::Text { .. } => Ok((
+            create_field_with_type(row_type, DataType::Utf8),
+            Arc::new(StringArray::from(values)),
+        )),
         RowType::Fixed {
             scale, precision, ..
         } => {
-            let decimal128_values: Result<Vec<i128>, ArrowUtilsError> = values
+            let decimal_values: Result<Vec<i128>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| {
-                    v.parse::<i128>().context(IntegerParsingSnafu {
-                        value: v.to_string(),
-                    })
-                })
+                .map(|v| parse_decimal_str(v, *scale as u32))
                 .collect();
 
-            let decimal_values = decimal128_values?;
+            let decimal_values = decimal_values?;
             if decimal_values.is_empty() {
                 return Ok((
-                    create_field_with_type(row_type, Some(DataType::Int64)),
+                    create_field_with_type(row_type, DataType::Int64), // TODO is it correct? We have to assume something, but it probably doesn't matter.
                     Arc::new(Int64Array::new_null(0)),
                 ));
             }
-            let min_value: i128 = decimal_values.iter().min().copied().unwrap_or(0);
-            let max_value: i128 = decimal_values.iter().max().copied().unwrap_or(0);
+            let min_value: i128 = decimal_values.iter().min().copied().unwrap();
+            let max_value: i128 = decimal_values.iter().max().copied().unwrap();
 
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
                 let int8_values: Vec<i8> = decimal_values.into_iter().map(|v| v as i8).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int8)),
+                    create_field_with_type(row_type, DataType::Int8),
                     Arc::new(Int8Array::from(int8_values)),
                 ))
             } else if min_value >= i16::MIN as i128 && max_value <= i16::MAX as i128 {
                 let int16_values: Vec<i16> = decimal_values.into_iter().map(|v| v as i16).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int16)),
+                    create_field_with_type(row_type, DataType::Int16),
                     Arc::new(arrow::array::Int16Array::from(int16_values)),
                 ))
             } else if min_value >= i32::MIN as i128 && max_value <= i32::MAX as i128 {
                 let int32_values: Vec<i32> = decimal_values.into_iter().map(|v| v as i32).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int32)),
+                    create_field_with_type(row_type, DataType::Int32),
                     Arc::new(arrow::array::Int32Array::from(int32_values)),
                 ))
             } else if min_value >= i64::MIN as i128 && max_value <= i64::MAX as i128 {
                 let int64_values: Vec<i64> = decimal_values.into_iter().map(|v| v as i64).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int64)),
+                    create_field_with_type(row_type, DataType::Int64),
                     Arc::new(Int64Array::from(int64_values)),
                 ))
             } else {
                 Ok((
                     create_field_with_type(
                         row_type,
-                        Some(DataType::Decimal128(*precision as u8, *scale as i8)),
+                        DataType::Decimal128(*precision as u8, *scale as i8),
                     ),
                     Arc::new(
                         arrow::array::Decimal128Array::from(decimal_values)
@@ -187,7 +187,7 @@ fn create_column_array(
                 })
                 .collect();
             Ok((
-                create_field(row_type),
+                create_field_with_type(row_type, DataType::Boolean),
                 Arc::new(BooleanArray::from(bool_values?)),
             ))
         }
@@ -201,7 +201,7 @@ fn create_column_array(
                 })
                 .collect();
             Ok((
-                create_field(row_type),
+                create_field_with_type(row_type, DataType::Float64),
                 Arc::new(Float64Array::from(float_values?)),
             ))
         }
@@ -215,7 +215,7 @@ fn create_column_array(
                 })
                 .collect();
             Ok((
-                create_field(row_type),
+                create_field_with_type(row_type, DataType::Date32),
                 Arc::new(arrow::array::PrimitiveArray::<Date32Type>::from(
                     day_values?,
                 )),
@@ -228,16 +228,23 @@ fn create_column_array(
             let fraction: Arc<dyn Array> = Arc::new(
                 arrow::array::PrimitiveArray::<Int32Type>::from(Vec::<i32>::new()),
             );
-            let fields = vec![
+            let values = vec![
                 (Arc::new(Field::new("epoch", DataType::Int64, false)), epoch),
                 (
                     Arc::new(Field::new("fraction", DataType::Int32, false)),
                     fraction,
                 ),
             ];
+            let data_type = DataType::Struct(
+                vec![
+                    Field::new("epoch", DataType::Int64, false),
+                    Field::new("fraction", DataType::Int32, false),
+                ]
+                .into(),
+            );
             Ok((
-                create_field(row_type),
-                Arc::new(arrow::array::StructArray::from(fields)),
+                create_field_with_type(row_type, data_type),
+                Arc::new(arrow::array::StructArray::from(values)),
             ))
         }
     }
@@ -269,23 +276,12 @@ pub fn convert_string_rowset_to_arrow_reader(
 }
 
 /// Creates an Arrow Schema from a list of RowType definitions
-pub fn create_schema(row_types: &[RowType]) -> Result<Arc<Schema>, ArrowUtilsError> {
-    let fields: Vec<Field> = row_types.iter().map(create_field).collect();
+pub fn create_schema(row_types: &[(RowType, DataType)]) -> Result<Arc<Schema>, ArrowUtilsError> {
+    let fields: Vec<Field> = row_types
+        .iter()
+        .map(|(r, d)| create_field_with_type(r, d.clone()))
+        .collect();
     Ok(Arc::new(Schema::new(fields)))
-}
-
-/// Heuristic mapping from decimal precision (digits) to signed physical storage type
-fn physical_type_from_data_type(data_type: &DataType) -> String {
-    match data_type {
-        DataType::Int8 => "SB1".to_string(),
-        DataType::Int16 => "SB2".to_string(),
-        DataType::Int32 => "SB4".to_string(),
-        DataType::Int64 => "SB8".to_string(),
-        DataType::Decimal128(_, _) => "SB16".to_string(),
-        _ => {
-            panic!("Unsupported data type for physical type mapping")
-        }
-    }
 }
 
 pub fn boxed_arrow_reader(
@@ -364,7 +360,6 @@ mod tests {
         assert_eq!(format!("{:?}", fields[0].data_type()), "Utf8");
         let meta0 = fields[0].metadata();
         assert_eq!(meta0.get("logicalType"), Some(&"TEXT".to_string()));
-        assert_eq!(meta0.get("physicalType"), Some(&"LOB".to_string()));
         assert_eq!(meta0.get("charLength"), Some(&"16".to_string()));
         assert_eq!(meta0.get("byteLength"), Some(&"64".to_string()));
 
@@ -375,7 +370,6 @@ mod tests {
         assert_eq!(meta1.get("logicalType"), Some(&"FIXED".to_string()));
         assert_eq!(meta1.get("scale"), Some(&"0".to_string()));
         assert_eq!(meta1.get("precision"), Some(&"5".to_string()));
-        assert_eq!(meta1.get("physicalType"), Some(&"SB2".to_string()));
 
         // Validate values
         if let Some(Ok(batch)) = reader.next() {
@@ -439,7 +433,6 @@ mod tests {
         assert_eq!(format!("{:?}", fields[0].data_type()), "Utf8");
         let meta0 = fields[0].metadata();
         assert_eq!(meta0.get("logicalType"), Some(&"TEXT".to_string()));
-        assert_eq!(meta0.get("physicalType"), Some(&"LOB".to_string()));
         assert_eq!(meta0.get("charLength"), Some(&"64".to_string()));
         assert_eq!(meta0.get("byteLength"), Some(&"256".to_string()));
 
@@ -450,7 +443,6 @@ mod tests {
         assert_eq!(meta1.get("logicalType"), Some(&"FIXED".to_string()));
         assert_eq!(meta1.get("scale"), Some(&"0".to_string()));
         assert_eq!(meta1.get("precision"), Some(&"19".to_string()));
-        assert_eq!(meta1.get("physicalType"), Some(&"SB8".to_string()));
 
         // Validate values
         if let Some(Ok(batch)) = reader.next() {
