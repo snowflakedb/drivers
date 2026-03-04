@@ -54,8 +54,8 @@ async fn should_refresh_session_successfully() {
 
     // Then we should get new tokens
     let new_tokens = result.expect("refresh should succeed");
-    assert_eq!(new_tokens.session_token.expose(), "new-session-token");
-    assert_eq!(new_tokens.master_token.expose(), "new-master-token");
+    assert_eq!(new_tokens.session_token.reveal(), "new-session-token");
+    assert_eq!(new_tokens.master_token.reveal(), "new-master-token");
     assert_eq!(new_tokens.session_id, 67890);
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     server.await.unwrap();

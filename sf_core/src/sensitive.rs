@@ -7,7 +7,7 @@ use zeroize::Zeroize;
 /// - `Serialize`/`Deserialize` delegation to the inner type
 /// - `Clone`, `Default`
 ///
-/// Use `.expose()` to access the underlying value.
+/// Use `.reveal()` to access the underlying value.
 ///
 /// # Adding new sensitive types
 ///
@@ -19,7 +19,7 @@ pub struct Sensitive<T: Zeroize>(T);
 pub type SensitiveString = Sensitive<String>;
 
 impl<T: Zeroize> Sensitive<T> {
-    pub fn expose(&self) -> &T {
+    pub fn reveal(&self) -> &T {
         &self.0
     }
 }
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn expose_returns_inner_value() {
         let s = SensitiveString::from("secret_123");
-        assert_eq!(s.expose().as_str(), "secret_123");
+        assert_eq!(s.reveal().as_str(), "secret_123");
     }
 
     #[test]
@@ -103,14 +103,14 @@ mod tests {
     #[test]
     fn default_is_empty() {
         let s = SensitiveString::default();
-        assert_eq!(s.expose().as_str(), "");
+        assert_eq!(s.reveal().as_str(), "");
     }
 
     #[test]
     fn clone_preserves_value() {
         let a = SensitiveString::from("abc");
         let b = a.clone();
-        assert_eq!(b.expose().as_str(), "abc");
+        assert_eq!(b.reveal().as_str(), "abc");
     }
 
     #[test]
@@ -123,13 +123,13 @@ mod tests {
     #[test]
     fn deserialize_wraps_value() {
         let s: SensitiveString = serde_json::from_str(r#""password_abc""#).unwrap();
-        assert_eq!(s.expose().as_str(), "password_abc");
+        assert_eq!(s.reveal().as_str(), "password_abc");
     }
 
     #[test]
     fn generic_works_with_vec_u8() {
         let s = Sensitive::<Vec<u8>>::from(vec![1, 2, 3]);
-        assert_eq!(s.expose(), &vec![1, 2, 3]);
+        assert_eq!(s.reveal(), &vec![1, 2, 3]);
         assert_eq!(format!("{s:?}"), "****");
     }
 }

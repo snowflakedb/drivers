@@ -499,7 +499,7 @@ mod tests {
         match result.unwrap() {
             LoginMethod::Password { username, password } => {
                 assert_eq!(username, "test_user");
-                assert_eq!(password.expose(), "test_password");
+                assert_eq!(password.reveal(), "test_password");
             }
             _ => panic!("Expected Password login method"),
         }

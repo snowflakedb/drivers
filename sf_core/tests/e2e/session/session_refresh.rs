@@ -128,16 +128,16 @@ fn should_refresh_session_proactively() {
 
         // Then we should get new tokens that differ from the original
         assert_ne!(
-            refreshed_tokens.session_token.expose(),
-            original_session_token.expose(),
+            refreshed_tokens.session_token.reveal(),
+            original_session_token.reveal(),
             "Refreshed session token should be different from original"
         );
         assert!(
-            !refreshed_tokens.session_token.expose().is_empty(),
+            !refreshed_tokens.session_token.reveal().is_empty(),
             "New session token should not be empty"
         );
         assert!(
-            !refreshed_tokens.master_token.expose().is_empty(),
+            !refreshed_tokens.master_token.reveal().is_empty(),
             "New master token should not be empty"
         );
     });

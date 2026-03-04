@@ -408,7 +408,7 @@ impl RefreshContext {
                         .context(ConnectionNotInitializedSnafu)?;
 
                     // If another request already refreshed while we waited, use the new token.
-                    if tokens.session_token.expose() != failed_token.expose() {
+                    if tokens.session_token.reveal() != failed_token.reveal() {
                         tracing::debug!("Session already refreshed by another request");
                         return Ok(tokens.session_token.clone());
                     }

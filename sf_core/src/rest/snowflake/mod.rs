@@ -397,7 +397,7 @@ pub async fn refresh_session(
 
     // Build request body per gosnowflake: {"oldSessionToken": "...", "requestType": "RENEW"}
     let body = serde_json::json!({
-        "oldSessionToken": tokens.session_token.expose(),
+        "oldSessionToken": tokens.session_token.reveal(),
         "requestType": "RENEW"
     });
 
@@ -410,7 +410,7 @@ pub async fn refresh_session(
         // Authenticate with master token, not session token
         .header(
             header::AUTHORIZATION,
-            format!("Snowflake Token=\"{}\"", tokens.master_token.expose()),
+            format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
         .header("User-Agent", user_agent(client_info))

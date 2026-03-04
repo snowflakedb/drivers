@@ -20,7 +20,7 @@ rules:
       - Memory zeroization on drop via the `zeroize` crate (OWASP ASVS 8.3.6)
       - Redacted `Debug`/`Display` output (shows `****`)
       - `Serialize`/`Deserialize` support (serializes the real value, safe for HTTP bodies)
-      - Explicit `.expose()` required to access the inner value (`&String`, which auto-derefs to `&str`)
+      - Explicit `.reveal()` required to access the inner value (`&String`, which auto-derefs to `&str`)
       For binary secrets, `Sensitive<Vec<u8>>` can be used the same way.
 
       **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SensitiveString` instead of `String`. Look for fields whose names contain: `password`, `token`, `secret`, `private_key`, `passphrase`, `master_key`, `session_token`, `master_token`, `pat`, `credential`, or `encryption_key`.
@@ -57,7 +57,7 @@ rules:
       ```
 
       **CONSTRUCTION**: Use `SensitiveString::from(value)` or `value.into()` for both `String` and `&str`.
-      **ACCESS**: Use `.expose()` to get `&str`.
+      **ACCESS**: Use `.reveal()` to get `&str`.
 
   - id: ud-sensitive-debug-impl
     rule: |

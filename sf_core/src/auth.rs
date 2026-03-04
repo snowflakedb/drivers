@@ -136,8 +136,8 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             let token = generate_jwt_token(
                 &login_parameters.account_name,
                 username,
-                private_key.expose(),
-                passphrase.as_ref().map(|p| p.expose().as_str()),
+                private_key.reveal(),
+                passphrase.as_ref().map(|p| p.reveal().as_str()),
             )?;
             Ok(Credentials::Jwt {
                 username: username.clone(),
