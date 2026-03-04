@@ -12,13 +12,13 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
+#include "ODBCConfig.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
 #include "put_get_utils.hpp"
 #include "sf_odbc.h"
 #include "test_setup.hpp"
-#include "ODBCConfig.hpp"
 #include "utils.hpp"
 
 using pg_utils::TempTestDir;

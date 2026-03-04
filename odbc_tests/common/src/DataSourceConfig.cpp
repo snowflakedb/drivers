@@ -90,6 +90,9 @@ std::string DataSourceConfig::connection_string() const {
 #endif
   }
   for (const auto& [key, value] : parameters_) {
+    if (key == "Driver") {
+      continue;
+    }
     ss << key << "=" << value << ";";
   }
   return ss.str();

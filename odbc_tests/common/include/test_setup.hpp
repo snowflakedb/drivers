@@ -90,11 +90,11 @@ inline std::string read_private_key(const picojson::object& params) {
 inline void configure_driver_string(std::stringstream& ss) {
   static std::shared_ptr<DriverConfig> driver_config = DriverConfig::Default();
   static ConfigInstallation config_installation = ConfigInstallation::install_driver(driver_config);
-  #ifdef _WIN32
+#ifdef _WIN32
   ss << "DSN=" << driver_config->name() << ";";
-  #else
+#else
   ss << "DRIVER={" << driver_config->name() << "};";
-  #endif
+#endif
 }
 
 inline void read_default_params(std::stringstream& ss, const picojson::object& params) {

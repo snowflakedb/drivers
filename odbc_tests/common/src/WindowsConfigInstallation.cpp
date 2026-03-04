@@ -9,8 +9,8 @@ static const std::string ODBC_INI_REG_KEY = "SOFTWARE\\ODBC\\ODBC.INI";
 
 static void reg_set_sz(HKEY root, const std::string& subkey, const std::string& name, const std::string& value) {
   HKEY hkey;
-  LONG res = RegCreateKeyExA(root, subkey.c_str(), 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hkey,
-                              nullptr);
+  LONG res =
+      RegCreateKeyExA(root, subkey.c_str(), 0, nullptr, REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hkey, nullptr);
   if (res != ERROR_SUCCESS) {
     std::string msg = "Failed to create registry key '" + subkey + "' (error " + std::to_string(res) + ")";
     if (res == ERROR_ACCESS_DENIED) {
@@ -19,7 +19,7 @@ static void reg_set_sz(HKEY root, const std::string& subkey, const std::string& 
     throw std::runtime_error(msg);
   }
   res = RegSetValueExA(hkey, name.c_str(), 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
-                        static_cast<DWORD>(value.size() + 1));
+                       static_cast<DWORD>(value.size() + 1));
   RegCloseKey(hkey);
   if (res != ERROR_SUCCESS) {
     throw std::runtime_error("Failed to set registry value '" + name + "' in key '" + subkey + "'");
@@ -31,8 +31,8 @@ static void cleanup_registry_drivers(const std::set<std::shared_ptr<DriverConfig
     const std::string name = dc->name();
     RegDeleteKeyA(HKEY_CURRENT_USER, (ODBC_INI_REG_KEY + "\\" + name).c_str());
     HKEY hkey;
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, (ODBC_INI_REG_KEY + "\\ODBC Data Sources").c_str(), 0, KEY_SET_VALUE,
-                       &hkey) == ERROR_SUCCESS) {
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, (ODBC_INI_REG_KEY + "\\ODBC Data Sources").c_str(), 0, KEY_SET_VALUE, &hkey) ==
+        ERROR_SUCCESS) {
       RegDeleteValueA(hkey, name.c_str());
       RegCloseKey(hkey);
     }
@@ -44,8 +44,8 @@ static void cleanup_registry_dsns(const std::vector<DataSourceConfig>& data_sour
     const std::string dsn_name = ds.name();
     RegDeleteKeyA(HKEY_CURRENT_USER, (ODBC_INI_REG_KEY + "\\" + dsn_name).c_str());
     HKEY hkey;
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, (ODBC_INI_REG_KEY + "\\ODBC Data Sources").c_str(), 0, KEY_SET_VALUE,
-                       &hkey) == ERROR_SUCCESS) {
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, (ODBC_INI_REG_KEY + "\\ODBC Data Sources").c_str(), 0, KEY_SET_VALUE, &hkey) ==
+        ERROR_SUCCESS) {
       RegDeleteValueA(hkey, dsn_name.c_str());
       RegCloseKey(hkey);
     }
@@ -60,7 +60,8 @@ WindowsConfigInstallation WindowsConfigInstallation::install(const std::vector<D
   return WindowsConfigInstallation(data_sources, {});
 }
 
-WindowsConfigInstallation WindowsConfigInstallation::install_driver(const std::shared_ptr<DriverConfig>& driver_config) {
+WindowsConfigInstallation WindowsConfigInstallation::install_driver(
+    const std::shared_ptr<DriverConfig>& driver_config) {
   return WindowsConfigInstallation({}, {driver_config});
 }
 

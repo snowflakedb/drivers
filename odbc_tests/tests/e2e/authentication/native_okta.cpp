@@ -21,7 +21,6 @@ using namespace Catch::Matchers;
 // Helpers
 // =============================================================================
 
-
 std::string get_okta_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
