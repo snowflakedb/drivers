@@ -18,6 +18,7 @@ pub mod http;
 pub mod logging;
 pub mod query_types;
 pub mod rest;
+pub mod sensitive;
 pub mod tls;
 pub mod token_cache;
 

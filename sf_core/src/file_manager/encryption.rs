@@ -1,7 +1,6 @@
 use super::types::{
     EncryptedFileMetadata, EncryptionMaterial, EncryptionResult, MaterialDescription,
 };
-use secrecy::ExposeSecret;
 use snafu::{Location, ResultExt, Snafu};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
@@ -49,7 +48,7 @@ pub fn encrypt_file_data(
 ) -> Result<EncryptionResult, EncryptionError> {
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE
-        .decode(encryption_material.query_stage_master_key.expose_secret())
+        .decode(encryption_material.query_stage_master_key.expose())
         .context(Base64DecodingSnafu {
             context: "master key",
         })?;
@@ -105,7 +104,7 @@ pub fn decrypt_file_data(
 ) -> Result<Vec<u8>, EncryptionError> {
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE
-        .decode(encryption_material.query_stage_master_key.expose_secret())
+        .decode(encryption_material.query_stage_master_key.expose())
         .context(Base64DecodingSnafu {
             context: "master key",
         })?;

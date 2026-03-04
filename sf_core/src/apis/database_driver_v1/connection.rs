@@ -1,4 +1,3 @@
-use secrecy::ExposeSecret;
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
@@ -383,7 +382,7 @@ impl RefreshContext {
                 let tokens_guard = self.tokens_lock.read().await;
                 let token = tokens_guard
                     .as_ref()
-                    .map(|t| t.session_token.expose_secret().to_string())
+                    .map(|t| t.session_token.expose().to_string())
                     .context(ConnectionNotInitializedSnafu)?;
                 self.state = RefreshState::FirstToken(token.clone());
                 Ok(token)
@@ -408,9 +407,9 @@ impl RefreshContext {
                         .context(ConnectionNotInitializedSnafu)?;
 
                     // If another request already refreshed while we waited, use the new token.
-                    if tokens.session_token.expose_secret() != failed_token {
+                    if tokens.session_token.expose() != failed_token {
                         tracing::debug!("Session already refreshed by another request");
-                        return Ok(tokens.session_token.expose_secret().to_string());
+                        return Ok(tokens.session_token.expose().to_string());
                     }
 
                     // Check if master token is expired
@@ -429,7 +428,7 @@ impl RefreshContext {
                     .await
                     .context(SessionRefreshSnafu)?;
 
-                    let new_session_token = new_tokens.session_token.expose_secret().to_string();
+                    let new_session_token = new_tokens.session_token.expose().to_string();
 
                     // Update tokens
                     *tokens_guard = Some(new_tokens);
@@ -506,7 +505,7 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
                 let tokens_guard = conn.tokens.blocking_read();
                 match tokens_guard.as_ref() {
                     Some(tokens) => (
-                        Some(tokens.session_token.expose_secret().to_string()),
+                        Some(tokens.session_token.expose().to_string()),
                         Some(tokens.session_id),
                     ),
                     None => (None, None),

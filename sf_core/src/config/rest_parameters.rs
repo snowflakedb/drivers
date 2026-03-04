@@ -8,9 +8,9 @@ use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
+use crate::sensitive::SensitiveString;
 use crate::tls::config::TlsConfig;
 use openssl::pkey::PKey;
-use secrecy::SecretString;
 use snafu::OptionExt;
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
@@ -132,7 +132,7 @@ pub struct NativeOktaConfig {
     /// property — useful when the Okta email differs from the Snowflake user.
     pub okta_username: Option<String>,
     /// IdP password (native Okta SSO).
-    pub password: String,
+    pub password: SensitiveString,
     /// Okta authenticator URL endpoint (native Okta SSO).
     pub okta_url: Url,
     /// Disable SAML destination/postback validation (default false; discouraged).
@@ -145,17 +145,17 @@ pub struct NativeOktaConfig {
 pub enum LoginMethod {
     Password {
         username: String,
-        password: SecretString,
+        password: SensitiveString,
     },
     NativeOkta(NativeOktaConfig),
     PrivateKey {
         username: String,
-        private_key: SecretString,
-        passphrase: Option<SecretString>,
+        private_key: SensitiveString,
+        passphrase: Option<SensitiveString>,
     },
     Pat {
         username: String,
-        token: SecretString,
+        token: SensitiveString,
     },
 }
 
@@ -278,7 +278,7 @@ impl LoginMethod {
                 private_key: Self::read_private_key(settings)?.into(),
                 passphrase: settings
                     .get_string("private_key_password")
-                    .map(SecretString::from),
+                    .map(SensitiveString::from),
             });
         }
 
@@ -339,7 +339,7 @@ impl LoginMethod {
                 Ok(Self::NativeOkta(NativeOktaConfig {
                     username,
                     okta_username,
-                    password,
+                    password: password.into(),
                     okta_url,
                     disable_saml_url_check,
                     authentication_timeout_secs,
@@ -359,7 +359,6 @@ impl LoginMethod {
 mod tests {
     use super::*;
     use crate::config::settings::Setting;
-    use secrecy::ExposeSecret;
     use std::collections::HashMap;
 
     fn create_test_settings(options: Vec<(&str, Setting)>) -> HashMap<String, Setting> {
@@ -500,7 +499,7 @@ mod tests {
         match result.unwrap() {
             LoginMethod::Password { username, password } => {
                 assert_eq!(username, "test_user");
-                assert_eq!(password.expose_secret(), "test_password");
+                assert_eq!(password.expose(), "test_password");
             }
             _ => panic!("Expected Password login method"),
         }

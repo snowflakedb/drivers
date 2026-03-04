@@ -12,19 +12,20 @@ allowed_file_extensions:
   - ".rs"
   - ".toml"
 rules:
-  - id: ud-sensitive-data-must-use-secret-string
+  - id: ud-sensitive-data-must-use-sensitive-string
     rule: |
-      **OBJECTIVE**: Ensure all sensitive data (passwords, tokens, private keys, encryption keys, credentials) is wrapped in `SecretString` from the `secrecy` crate — never stored as plain `String`.
+      **OBJECTIVE**: Ensure all sensitive data (passwords, tokens, private keys, encryption keys, credentials) is wrapped in `SensitiveString` from the `crate::sensitive` module — never stored as plain `String`.
 
-      **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SecretString` instead of `String`. This ensures:
-      - Memory is zeroized on drop (OWASP ASVS 8.3.6)
-      - Debug/Display output is redacted (shows `SecretString([REDACTED])` instead of the secret)
-      - Accessing the raw value requires an explicit `.expose_secret()` call, preventing accidental logging
+      `SensitiveString` wraps `secrecy::SecretString` and provides:
+      - Memory zeroization on drop (OWASP ASVS 8.3.6)
+      - Redacted `Debug`/`Display` output (shows `****`)
+      - `Serialize`/`Deserialize` support (serializes the real value, safe for HTTP bodies)
+      - Explicit `.expose()` required to access the raw `&str`
 
-      Look for fields or variables whose names contain: `password`, `token`, `secret`, `private_key`, `passphrase`, `master_key`, `session_token`, `master_token`, `pat`, `credential`, or `encryption_key`. If they are typed as `String` or `Option<String>`, flag them.
+      **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SensitiveString` instead of `String`. Look for fields whose names contain: `password`, `token`, `secret`, `private_key`, `passphrase`, `master_key`, `session_token`, `master_token`, `pat`, `credential`, or `encryption_key`.
 
       **EXCEPTIONS**:
-      - Serde deserialization structs that represent raw JSON responses from Snowflake (e.g., `RefreshSessionData`, `AuthResponse`) may use `String` since they are intermediate — but the values MUST be wrapped in `SecretString` before being stored in long-lived structs.
+      - Serde **deserialization** structs that represent raw JSON responses from Snowflake (e.g., `RefreshSessionData`, `AuthResponse`) may use `String` since they are intermediate — but the values MUST be wrapped in `SensitiveString` before being stored in long-lived structs.
       - Function parameters that receive already-exposed values for immediate use (e.g., passing to HTTP headers or crypto APIs) may use `&str` or `String`.
       - Test code is excluded from this rule.
 
@@ -35,12 +36,6 @@ rules:
           pub master_token: String,
       }
 
-      pub struct Credentials {
-          pub aws_key_id: String,
-          pub aws_secret_key: String,
-          pub aws_token: String,
-      }
-
       pub enum LoginMethod {
           Password { username: String, password: String },
       }
@@ -48,36 +43,28 @@ rules:
 
       ✅ **GOOD:**
       ```rust
-      use secrecy::SecretString;
+      use crate::sensitive::SensitiveString;
 
       pub struct SessionTokens {
-          pub session_token: SecretString,
-          pub master_token: SecretString,
-      }
-
-      pub struct Credentials {
-          pub aws_key_id: String,
-          pub aws_secret_key: SecretString,
-          pub aws_token: SecretString,
+          pub session_token: SensitiveString,
+          pub master_token: SensitiveString,
       }
 
       pub enum LoginMethod {
-          Password { username: String, password: SecretString },
+          Password { username: String, password: SensitiveString },
       }
       ```
 
-      **CONSTRUCTION**: Use `SecretString::from(value)` or `value.into()` when wrapping a `String`. For `&str`, use `SecretString::from(literal)`.
-      **ACCESS**: Use `.expose_secret()` (from the `ExposeSecret` trait) to get `&str`.
+      **CONSTRUCTION**: Use `SensitiveString::from(value)` or `value.into()` for both `String` and `&str`.
+      **ACCESS**: Use `.expose()` to get `&str`.
 
   - id: ud-sensitive-debug-impl
     rule: |
-      **OBJECTIVE**: Structs containing `SecretString` fields must have a `Debug` implementation that redacts the sensitive fields.
+      **OBJECTIVE**: Structs containing sensitive data must not leak secrets via `Debug`.
 
-      **REQUIREMENT**: If a struct contains one or more `SecretString` fields, it MUST either:
-      1. Use `#[derive(Debug)]` — acceptable because `SecretString` already redacts in its `Debug` impl (prints `SecretString([REDACTED])`), OR
-      2. Implement `std::fmt::Debug` manually, printing `"***"` for each sensitive field for cleaner output.
+      **REQUIREMENT**: If a struct contains one or more `SensitiveString` fields, `#[derive(Debug)]` is safe — `SensitiveString` prints `****` in its `Debug` impl.
 
-      Flag only cases where a struct has a plain `String` field that holds sensitive data (based on the field name) AND uses `#[derive(Debug)]`.
+      Flag cases where a struct has a plain `String` field that holds sensitive data (based on the field name) AND uses `#[derive(Debug)]`. The field should either be changed to `SensitiveString`, or the struct needs a manual `Debug` impl.
 
       ❌ **BAD:**
       ```rust
@@ -90,17 +77,9 @@ rules:
 
       ✅ **GOOD:**
       ```rust
+      #[derive(Debug)]
       pub struct Credentials {
           pub aws_key_id: String,
-          pub aws_secret_key: SecretString,
-      }
-
-      impl std::fmt::Debug for Credentials {
-          fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-              f.debug_struct("Credentials")
-                  .field("aws_key_id", &self.aws_key_id)
-                  .field("aws_secret_key", &"***")
-                  .finish()
-          }
+          pub aws_secret_key: SensitiveString,  // Debug shows ****
       }
       ```

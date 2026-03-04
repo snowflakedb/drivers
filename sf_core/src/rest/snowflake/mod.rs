@@ -17,10 +17,10 @@ use crate::rest::snowflake::auth::{
 };
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
+use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
-use secrecy::{ExposeSecret, SecretString};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
@@ -36,9 +36,9 @@ const TOKEN_REQUEST_PATH: &str = "/session/token-request";
 #[derive(Clone)]
 pub struct SessionTokens {
     /// Token used to authenticate API requests
-    pub session_token: SecretString,
+    pub session_token: SensitiveString,
     /// Token used to refresh an expired session token
-    pub master_token: SecretString,
+    pub master_token: SensitiveString,
     /// Server-assigned session ID
     pub session_id: i64,
     /// When the session token expires
@@ -186,7 +186,7 @@ pub async fn auth_request_data(
 
             data.login_name = Some(okta_config.username.clone());
             data.authenticator = Some(okta_config.okta_url.to_string());
-            data.raw_saml_response = Some(saml_html);
+            data.raw_saml_response = Some(saml_html.into());
         }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
             Credentials::Password { username, password } => {
@@ -253,8 +253,9 @@ pub async fn snowflake_login_with_client(
     };
 
     tracing::debug!(
-        "Login request: {}",
-        serde_json::to_string_pretty(&login_request).unwrap()
+        authenticator = ?login_request.data.authenticator,
+        login_name = ?login_request.data.login_name,
+        "Login request prepared (secrets redacted)"
     );
 
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
@@ -408,7 +409,7 @@ pub async fn refresh_session(
 
     // Build request body per gosnowflake: {"oldSessionToken": "...", "requestType": "RENEW"}
     let body = serde_json::json!({
-        "oldSessionToken": tokens.session_token.expose_secret(),
+        "oldSessionToken": tokens.session_token.expose(),
         "requestType": "RENEW"
     });
 
@@ -421,10 +422,7 @@ pub async fn refresh_session(
         // Authenticate with master token, not session token
         .header(
             header::AUTHORIZATION,
-            format!(
-                "Snowflake Token=\"{}\"",
-                tokens.master_token.expose_secret()
-            ),
+            format!("Snowflake Token=\"{}\"", tokens.master_token.expose()),
         )
         .header(header::ACCEPT, "application/json")
         .header("User-Agent", user_agent(client_info))

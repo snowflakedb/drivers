@@ -1,11 +1,11 @@
 use jwt::PKeyWithDigest;
 use jwt::SignWithKey;
 use openssl::hash::MessageDigest;
-use secrecy::ExposeSecret;
 use serde::Serialize;
 use snafu::{Location, ResultExt, Snafu};
 
 use crate::config::rest_parameters::{LoginMethod, LoginParameters};
+use crate::sensitive::SensitiveString;
 
 /// Extracts the account locator from a full account identifier.
 ///
@@ -22,9 +22,18 @@ pub fn extract_account_locator(account: &str) -> String {
 }
 
 pub enum Credentials {
-    Password { username: String, password: String },
-    Jwt { username: String, token: String },
-    Pat { username: String, token: String },
+    Password {
+        username: String,
+        password: SensitiveString,
+    },
+    Jwt {
+        username: String,
+        token: SensitiveString,
+    },
+    Pat {
+        username: String,
+        token: SensitiveString,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -110,7 +119,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
     match &login_parameters.login_method {
         LoginMethod::Password { username, password } => Ok(Credentials::Password {
             username: username.clone(),
-            password: password.expose_secret().to_string(),
+            password: password.clone(),
         }),
         // NativeOkta performs its own multi-step SAML flow in auth_request_data()
         // and never reaches create_credentials(). Return an error rather than panicking
@@ -127,17 +136,17 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             let token = generate_jwt_token(
                 &login_parameters.account_name,
                 username,
-                private_key.expose_secret(),
-                passphrase.as_ref().map(|p| p.expose_secret()),
+                private_key.expose(),
+                passphrase.as_ref().map(|p| p.expose()),
             )?;
             Ok(Credentials::Jwt {
                 username: username.clone(),
-                token,
+                token: token.into(),
             })
         }
         LoginMethod::Pat { username, token } => Ok(Credentials::Pat {
             username: username.clone(),
-            token: token.expose_secret().to_string(),
+            token: token.clone(),
         }),
     }
 }
