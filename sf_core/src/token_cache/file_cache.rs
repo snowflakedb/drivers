@@ -346,6 +346,7 @@ impl FileTokenCache {
     }
 
     /// Creates a file-based credential store using an explicit directory.
+    #[allow(dead_code)]
     pub fn with_directory(cache_dir: PathBuf) -> Self {
         let file_name = resolve_cache_file_name();
         Self {
@@ -356,16 +357,19 @@ impl FileTokenCache {
         }
     }
 
+    #[allow(dead_code)]
     pub fn retry_count(mut self, count: u32) -> Self {
         self.retry_count = count;
         self
     }
 
+    #[allow(dead_code)]
     pub fn retry_delay(mut self, delay: Duration) -> Self {
         self.retry_delay = delay;
         self
     }
 
+    #[allow(dead_code)]
     pub fn stale_lock_timeout(mut self, timeout: Duration) -> Self {
         self.stale_lock_timeout = timeout;
         self
