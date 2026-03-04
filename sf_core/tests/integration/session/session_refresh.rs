@@ -118,7 +118,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
                     let client = reqwest::Client::new();
                     let resp = client
                         .post(format!("http://{}/queries/v1/query-request", query_addr))
-                        .header("Authorization", format!("Snowflake Token=\"{}\"", token))
+                        .header("Authorization", format!("Snowflake Token=\"{}\"", token.expose()))
                         .send()
                         .await
                         .map_err(|e| sf_core::rest::snowflake::RestError::Communication {

@@ -3,9 +3,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A wrapper around `secrecy::SecretString` that provides:
 /// - Zeroization on drop (via `secrecy`)
-/// - Redacted `Debug`/`Display` output
+/// - Redacted `Debug`/`Display` output (`****`)
 /// - Manual `Serialize`/`Deserialize` of the underlying string
 /// - `Default`, `Clone`
+///
+/// `secrecy::SecretString` alone cannot derive `Serialize`/`Deserialize` because its
+/// inner type (`str`) is unsized, and it intentionally omits `Debug`/`Display` to
+/// prevent accidental leaks. This wrapper bridges the gap so `SensitiveString` can
+/// be used seamlessly in structs that derive `Serialize`/`Deserialize`/`Debug`.
 ///
 /// Use `.expose()` to access the underlying `&str`.
 #[derive(Clone)]
