@@ -32,7 +32,7 @@ base64 = "0.22.1"
 arrow = { version = "56.0.0", features = ["ffi"] }
 arrow-ipc = "56.0.0"
 flate2 = "1.1.2"
-openssl = { version = "0.10.73", features = ["vendored"] }
+openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }
 infer = "0.19.0"
 
