@@ -1,66 +1,80 @@
-use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use zeroize::Zeroize;
 
-/// A wrapper around `secrecy::SecretString` that provides:
-/// - Zeroization on drop (via `secrecy`)
+/// A generic wrapper for sensitive values that provides:
+/// - Zeroization on drop (via `zeroize`)
 /// - Redacted `Debug`/`Display` output (`****`)
-/// - Manual `Serialize`/`Deserialize` of the underlying string
-/// - `Default`, `Clone`
+/// - `Serialize`/`Deserialize` delegation to the inner type
+/// - `Clone`, `Default`
 ///
-/// `secrecy::SecretString` alone cannot derive `Serialize`/`Deserialize` because its
-/// inner type (`str`) is unsized, and it intentionally omits `Debug`/`Display` to
-/// prevent accidental leaks. This wrapper bridges the gap so `SensitiveString` can
-/// be used seamlessly in structs that derive `Serialize`/`Deserialize`/`Debug`.
+/// Use `.expose()` to access the underlying value.
 ///
-/// Use `.expose()` to access the underlying `&str`.
-#[derive(Clone)]
-pub struct SensitiveString(SecretString);
+/// # Adding new sensitive types
+///
+/// ```ignore
+/// pub type SensitiveBytes = Sensitive<Vec<u8>>;
+/// ```
+pub struct Sensitive<T: Zeroize>(T);
 
-impl SensitiveString {
-    pub fn expose(&self) -> &str {
-        self.0.expose_secret()
+pub type SensitiveString = Sensitive<String>;
+
+impl<T: Zeroize> Sensitive<T> {
+    pub fn expose(&self) -> &T {
+        &self.0
     }
 }
 
-impl std::fmt::Debug for SensitiveString {
+impl<T: Zeroize> Drop for Sensitive<T> {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl<T: Zeroize + Clone> Clone for Sensitive<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: Zeroize> std::fmt::Debug for Sensitive<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("****")
     }
 }
 
-impl std::fmt::Display for SensitiveString {
+impl<T: Zeroize> std::fmt::Display for Sensitive<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("****")
     }
 }
 
-impl Default for SensitiveString {
+impl<T: Zeroize + Default> Default for Sensitive<T> {
     fn default() -> Self {
-        Self(SecretString::from(""))
+        Self(T::default())
     }
 }
 
-impl From<String> for SensitiveString {
-    fn from(s: String) -> Self {
-        Self(SecretString::from(s))
+impl<T: Zeroize> From<T> for Sensitive<T> {
+    fn from(value: T) -> Self {
+        Self(value)
     }
 }
 
-impl From<&str> for SensitiveString {
+impl From<&str> for Sensitive<String> {
     fn from(s: &str) -> Self {
-        Self(SecretString::from(s))
+        Self(s.to_string())
     }
 }
 
-impl Serialize for SensitiveString {
+impl<T: Zeroize + Serialize> Serialize for Sensitive<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.expose_secret().serialize(serializer)
+        self.0.serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for SensitiveString {
+impl<'de, T: Zeroize + Deserialize<'de>> Deserialize<'de> for Sensitive<T> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(Self::from)
+        T::deserialize(deserializer).map(Self)
     }
 }
 
@@ -71,7 +85,7 @@ mod tests {
     #[test]
     fn expose_returns_inner_value() {
         let s = SensitiveString::from("secret_123");
-        assert_eq!(s.expose(), "secret_123");
+        assert_eq!(s.expose().as_str(), "secret_123");
     }
 
     #[test]
@@ -89,14 +103,14 @@ mod tests {
     #[test]
     fn default_is_empty() {
         let s = SensitiveString::default();
-        assert_eq!(s.expose(), "");
+        assert_eq!(s.expose().as_str(), "");
     }
 
     #[test]
     fn clone_preserves_value() {
         let a = SensitiveString::from("abc");
         let b = a.clone();
-        assert_eq!(b.expose(), "abc");
+        assert_eq!(b.expose().as_str(), "abc");
     }
 
     #[test]
@@ -109,6 +123,13 @@ mod tests {
     #[test]
     fn deserialize_wraps_value() {
         let s: SensitiveString = serde_json::from_str(r#""password_abc""#).unwrap();
-        assert_eq!(s.expose(), "password_abc");
+        assert_eq!(s.expose().as_str(), "password_abc");
+    }
+
+    #[test]
+    fn generic_works_with_vec_u8() {
+        let s = Sensitive::<Vec<u8>>::from(vec![1, 2, 3]);
+        assert_eq!(s.expose(), &vec![1, 2, 3]);
+        assert_eq!(format!("{s:?}"), "****");
     }
 }

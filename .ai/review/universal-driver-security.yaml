@@ -16,11 +16,12 @@ rules:
     rule: |
       **OBJECTIVE**: Ensure all sensitive data (passwords, tokens, private keys, encryption keys, credentials) is wrapped in `SensitiveString` from the `crate::sensitive` module — never stored as plain `String`.
 
-      `SensitiveString` wraps `secrecy::SecretString` and provides:
-      - Memory zeroization on drop (OWASP ASVS 8.3.6)
+      `SensitiveString` is a type alias for `Sensitive<String>` — a generic wrapper that provides:
+      - Memory zeroization on drop via the `zeroize` crate (OWASP ASVS 8.3.6)
       - Redacted `Debug`/`Display` output (shows `****`)
       - `Serialize`/`Deserialize` support (serializes the real value, safe for HTTP bodies)
-      - Explicit `.expose()` required to access the raw `&str`
+      - Explicit `.expose()` required to access the inner value (`&String`, which auto-derefs to `&str`)
+      For binary secrets, `Sensitive<Vec<u8>>` can be used the same way.
 
       **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SensitiveString` instead of `String`. Look for fields whose names contain: `password`, `token`, `secret`, `private_key`, `passphrase`, `master_key`, `session_token`, `master_token`, `pat`, `credential`, or `encryption_key`.
 

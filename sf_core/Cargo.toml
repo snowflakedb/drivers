@@ -69,7 +69,7 @@ chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 html-escape = "0.2"
 urlencoding = "2.1"
-secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1.8"
 hex = "0.4"
 sha2 = "0.10"
 clap = { version = "4.5", features = ["derive"] }

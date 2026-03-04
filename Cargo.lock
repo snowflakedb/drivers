@@ -3761,16 +3761,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "secrecy"
-version = "0.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
-dependencies = [
- "serde",
- "zeroize",
-]
-
-[[package]]
 name = "security-framework"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3924,7 +3914,6 @@ dependencies = [
  "rustls-native-certs 0.8.1",
  "rustls-pemfile 2.2.0",
  "rustls-webpki 0.102.8",
- "secrecy",
  "serde",
  "serde_json",
  "sha2",
@@ -3949,6 +3938,7 @@ dependencies = [
  "wiremock",
  "x509-cert",
  "x509-parser",
+ "zeroize",
  "zstd",
 ]
 

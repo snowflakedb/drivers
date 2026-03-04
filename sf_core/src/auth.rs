@@ -137,7 +137,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
                 &login_parameters.account_name,
                 username,
                 private_key.expose(),
-                passphrase.as_ref().map(|p| p.expose()),
+                passphrase.as_ref().map(|p| p.expose().as_str()),
             )?;
             Ok(Credentials::Jwt {
                 username: username.clone(),
