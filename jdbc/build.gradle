@@ -165,13 +165,6 @@ def configureCommonTestTask = { t ->
                   'libjdbc_bridge.so'
     t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
     t.environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
-
-    if (System.getProperty('os.name').toLowerCase().contains('mac')) {
-        def awsLcPath = fileTree(dir: '../target/debug/build', include: '**/libaws_lc_fips_0_13_8_*.dylib').files.first()?.parentFile?.absolutePath
-        if (awsLcPath != null) {
-            t.environment 'DYLD_LIBRARY_PATH', "${awsLcPath}:${libPath}"
-        }
-    }
 }
 
 test {
