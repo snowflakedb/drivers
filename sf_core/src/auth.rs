@@ -1,6 +1,7 @@
 use jwt::PKeyWithDigest;
 use jwt::SignWithKey;
 use openssl::hash::MessageDigest;
+use secrecy::ExposeSecret;
 use serde::Serialize;
 use snafu::{Location, ResultExt, Snafu};
 
@@ -109,7 +110,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
     match &login_parameters.login_method {
         LoginMethod::Password { username, password } => Ok(Credentials::Password {
             username: username.clone(),
-            password: password.expose().to_string(),
+            password: password.expose_secret().to_string(),
         }),
         // NativeOkta performs its own multi-step SAML flow in auth_request_data()
         // and never reaches create_credentials(). Return an error rather than panicking
@@ -126,8 +127,8 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             let token = generate_jwt_token(
                 &login_parameters.account_name,
                 username,
-                private_key.expose(),
-                passphrase.as_ref().map(|p| p.expose()),
+                private_key.expose_secret(),
+                passphrase.as_ref().map(|p| p.expose_secret()),
             )?;
             Ok(Credentials::Jwt {
                 username: username.clone(),
@@ -136,7 +137,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
         }
         LoginMethod::Pat { username, token } => Ok(Credentials::Pat {
             username: username.clone(),
-            token: token.expose().to_string(),
+            token: token.expose_secret().to_string(),
         }),
     }
 }

@@ -1,9 +1,9 @@
 //! Integration tests for session token refresh functionality.
 
+use secrecy::{ExposeSecret, SecretString};
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::{SessionTokens, refresh_session};
-use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,8 +25,8 @@ fn test_client_info() -> ClientInfo {
 
 fn test_tokens() -> SessionTokens {
     SessionTokens {
-        session_token: SensitiveString::new("old-session-token"),
-        master_token: SensitiveString::new("valid-master-token"),
+        session_token: SecretString::from("old-session-token"),
+        master_token: SecretString::from("valid-master-token"),
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,
@@ -54,8 +54,11 @@ async fn should_refresh_session_successfully() {
 
     // Then we should get new tokens
     let new_tokens = result.expect("refresh should succeed");
-    assert_eq!(new_tokens.session_token.expose(), "new-session-token");
-    assert_eq!(new_tokens.master_token.expose(), "new-master-token");
+    assert_eq!(
+        new_tokens.session_token.expose_secret(),
+        "new-session-token"
+    );
+    assert_eq!(new_tokens.master_token.expose_secret(), "new-master-token");
     assert_eq!(new_tokens.session_id, 67890);
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     server.await.unwrap();

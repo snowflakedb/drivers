@@ -4,10 +4,10 @@ use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::config::{get_parameters, setup_logging};
 use crate::common::private_key_helper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
+use secrecy::{ExposeSecret, SecretString};
 use sf_core::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
-use sf_core::sensitive::SensitiveString;
 use sf_core::tls::client::create_tls_client_with_config;
 use sf_core::tls::config::TlsConfig;
 use std::fs;
@@ -84,7 +84,7 @@ fn should_refresh_session_proactively() {
             tls_config: TlsConfig::insecure(),
         };
 
-        let private_key = SensitiveString::new(
+        let private_key = SecretString::from(
             fs::read_to_string(temp_key_file.path()).expect("Failed to read private key file"),
         );
 
@@ -97,7 +97,7 @@ fn should_refresh_session_proactively() {
                 passphrase: parameters
                     .private_key_password
                     .clone()
-                    .map(SensitiveString::new),
+                    .map(SecretString::from),
             },
             database: parameters.database.clone(),
             schema: parameters.schema.clone(),
@@ -127,18 +127,17 @@ fn should_refresh_session_proactively() {
         .expect("Proactive refresh should succeed");
 
         // Then we should get new tokens that differ from the original
-        assert!(
-            !refreshed_tokens
-                .session_token
-                .same_as(&original_session_token),
+        assert_ne!(
+            refreshed_tokens.session_token.expose_secret(),
+            original_session_token.expose_secret(),
             "Refreshed session token should be different from original"
         );
         assert!(
-            !refreshed_tokens.session_token.is_empty(),
+            !refreshed_tokens.session_token.expose_secret().is_empty(),
             "New session token should not be empty"
         );
         assert!(
-            !refreshed_tokens.master_token.is_empty(),
+            !refreshed_tokens.master_token.expose_secret().is_empty(),
             "New master token should not be empty"
         );
     });

@@ -17,10 +17,10 @@ use crate::rest::snowflake::auth::{
 };
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
-use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
+use secrecy::{ExposeSecret, SecretString};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
@@ -36,9 +36,9 @@ const TOKEN_REQUEST_PATH: &str = "/session/token-request";
 #[derive(Clone)]
 pub struct SessionTokens {
     /// Token used to authenticate API requests
-    pub session_token: SensitiveString,
+    pub session_token: SecretString,
     /// Token used to refresh an expired session token
-    pub master_token: SensitiveString,
+    pub master_token: SecretString,
     /// Server-assigned session ID
     pub session_id: i64,
     /// When the session token expires
@@ -377,8 +377,8 @@ pub async fn snowflake_login_with_client(
     );
     Ok(LoginResult {
         tokens: SessionTokens {
-            session_token: SensitiveString::new(session_token),
-            master_token: SensitiveString::new(master_token),
+            session_token: session_token.into(),
+            master_token: master_token.into(),
             session_id,
             session_expires_at,
             master_expires_at,
@@ -408,7 +408,7 @@ pub async fn refresh_session(
 
     // Build request body per gosnowflake: {"oldSessionToken": "...", "requestType": "RENEW"}
     let body = serde_json::json!({
-        "oldSessionToken": tokens.session_token.expose(),
+        "oldSessionToken": tokens.session_token.expose_secret(),
         "requestType": "RENEW"
     });
 
@@ -421,7 +421,10 @@ pub async fn refresh_session(
         // Authenticate with master token, not session token
         .header(
             header::AUTHORIZATION,
-            format!("Snowflake Token=\"{}\"", tokens.master_token.expose()),
+            format!(
+                "Snowflake Token=\"{}\"",
+                tokens.master_token.expose_secret()
+            ),
         )
         .header(header::ACCEPT, "application/json")
         .header("User-Agent", user_agent(client_info))
@@ -478,8 +481,8 @@ pub async fn refresh_session(
     );
 
     Ok(SessionTokens {
-        session_token: SensitiveString::new(data.session_token),
-        master_token: SensitiveString::new(data.master_token),
+        session_token: data.session_token.into(),
+        master_token: data.master_token.into(),
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,

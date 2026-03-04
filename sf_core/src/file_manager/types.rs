@@ -1,5 +1,5 @@
 use crate::compression_types::CompressionType;
-use crate::sensitive::SensitiveString;
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 // Dedicated file transfer types
@@ -99,8 +99,8 @@ pub struct StageInfo {
 #[derive(Clone)]
 pub struct Credentials {
     pub aws_key_id: String,
-    pub aws_secret_key: SensitiveString,
-    pub aws_token: SensitiveString,
+    pub aws_secret_key: SecretString,
+    pub aws_token: SecretString,
 }
 
 impl std::fmt::Debug for Credentials {
@@ -118,7 +118,7 @@ impl std::fmt::Debug for Credentials {
 /// The master key is sensitive and wrapped to prevent accidental logging.
 #[derive(Clone)]
 pub struct EncryptionMaterial {
-    pub query_stage_master_key: SensitiveString,
+    pub query_stage_master_key: SecretString,
     pub query_id: String,
     pub smk_id: String,
 }

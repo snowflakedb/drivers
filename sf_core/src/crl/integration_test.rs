@@ -4,6 +4,7 @@ mod integration_tests {
     use crate::config::settings::{Setting, Settings};
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
     use crate::rest::snowflake;
+    use secrecy::ExposeSecret;
     use std::collections::HashMap;
 
     /// Mock settings implementation for testing
@@ -106,7 +107,7 @@ mod integration_tests {
         match login_params.login_method {
             LoginMethod::Password { username, password } => {
                 assert_eq!(username, "test_user");
-                assert_eq!(password.expose(), "test_password");
+                assert_eq!(password.expose_secret(), "test_password");
             }
             _ => panic!("Expected password login method"),
         }

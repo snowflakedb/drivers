@@ -8,9 +8,9 @@ use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
-use crate::sensitive::SensitiveString;
 use crate::tls::config::TlsConfig;
 use openssl::pkey::PKey;
+use secrecy::SecretString;
 use snafu::OptionExt;
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
@@ -145,17 +145,17 @@ pub struct NativeOktaConfig {
 pub enum LoginMethod {
     Password {
         username: String,
-        password: SensitiveString,
+        password: SecretString,
     },
     NativeOkta(NativeOktaConfig),
     PrivateKey {
         username: String,
-        private_key: SensitiveString,
-        passphrase: Option<SensitiveString>,
+        private_key: SecretString,
+        passphrase: Option<SecretString>,
     },
     Pat {
         username: String,
-        token: SensitiveString,
+        token: SecretString,
     },
 }
 
@@ -275,10 +275,10 @@ impl LoginMethod {
                 username: settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                private_key: SensitiveString::new(Self::read_private_key(settings)?),
+                private_key: Self::read_private_key(settings)?.into(),
                 passphrase: settings
                     .get_string("private_key_password")
-                    .map(SensitiveString::new),
+                    .map(SecretString::from),
             });
         }
 
@@ -287,23 +287,21 @@ impl LoginMethod {
                 username: settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: SensitiveString::new(
-                    settings
-                        .get_string("password")
-                        .context(MissingParameterSnafu {
-                            parameter: "password",
-                        })?,
-                ),
+                password: settings
+                    .get_string("password")
+                    .context(MissingParameterSnafu {
+                        parameter: "password",
+                    })?
+                    .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                token: SensitiveString::new(
-                    settings
-                        .get_string("token")
-                        .context(MissingParameterSnafu { parameter: "token" })?,
-                ),
+                token: settings
+                    .get_string("token")
+                    .context(MissingParameterSnafu { parameter: "token" })?
+                    .into(),
             }),
             _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
@@ -361,6 +359,7 @@ impl LoginMethod {
 mod tests {
     use super::*;
     use crate::config::settings::Setting;
+    use secrecy::ExposeSecret;
     use std::collections::HashMap;
 
     fn create_test_settings(options: Vec<(&str, Setting)>) -> HashMap<String, Setting> {
@@ -501,7 +500,7 @@ mod tests {
         match result.unwrap() {
             LoginMethod::Password { username, password } => {
                 assert_eq!(username, "test_user");
-                assert_eq!(password.expose(), "test_password");
+                assert_eq!(password.expose_secret(), "test_password");
             }
             _ => panic!("Expected Password login method"),
         }

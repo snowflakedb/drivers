@@ -12,19 +12,19 @@ allowed_file_extensions:
   - ".rs"
   - ".toml"
 rules:
-  - id: ud-sensitive-data-must-use-sensitive-string
+  - id: ud-sensitive-data-must-use-secret-string
     rule: |
-      **OBJECTIVE**: Ensure all sensitive data (passwords, tokens, private keys, encryption keys, credentials) is wrapped in `SensitiveString` from the `crate::sensitive` module — never stored as plain `String`.
+      **OBJECTIVE**: Ensure all sensitive data (passwords, tokens, private keys, encryption keys, credentials) is wrapped in `SecretString` from the `secrecy` crate — never stored as plain `String`.
 
-      **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SensitiveString` instead of `String`. This ensures:
+      **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SecretString` instead of `String`. This ensures:
       - Memory is zeroized on drop (OWASP ASVS 8.3.6)
-      - Debug/Display output is redacted (shows `***` instead of the secret)
-      - Accessing the raw value requires an explicit `.expose()` call, preventing accidental logging
+      - Debug/Display output is redacted (shows `SecretString([REDACTED])` instead of the secret)
+      - Accessing the raw value requires an explicit `.expose_secret()` call, preventing accidental logging
 
       Look for fields or variables whose names contain: `password`, `token`, `secret`, `private_key`, `passphrase`, `master_key`, `session_token`, `master_token`, `pat`, `credential`, or `encryption_key`. If they are typed as `String` or `Option<String>`, flag them.
 
       **EXCEPTIONS**:
-      - Serde deserialization structs that represent raw JSON responses from Snowflake (e.g., `RefreshSessionData`, `AuthResponse`) may use `String` since they are intermediate — but the values MUST be wrapped in `SensitiveString` before being stored in long-lived structs.
+      - Serde deserialization structs that represent raw JSON responses from Snowflake (e.g., `RefreshSessionData`, `AuthResponse`) may use `String` since they are intermediate — but the values MUST be wrapped in `SecretString` before being stored in long-lived structs.
       - Function parameters that receive already-exposed values for immediate use (e.g., passing to HTTP headers or crypto APIs) may use `&str` or `String`.
       - Test code is excluded from this rule.
 
@@ -48,31 +48,36 @@ rules:
 
       ✅ **GOOD:**
       ```rust
-      use crate::sensitive::SensitiveString;
+      use secrecy::SecretString;
 
       pub struct SessionTokens {
-          pub session_token: SensitiveString,
-          pub master_token: SensitiveString,
+          pub session_token: SecretString,
+          pub master_token: SecretString,
       }
 
       pub struct Credentials {
           pub aws_key_id: String,
-          pub aws_secret_key: SensitiveString,
-          pub aws_token: SensitiveString,
+          pub aws_secret_key: SecretString,
+          pub aws_token: SecretString,
       }
 
       pub enum LoginMethod {
-          Password { username: String, password: SensitiveString },
+          Password { username: String, password: SecretString },
       }
       ```
 
+      **CONSTRUCTION**: Use `SecretString::from(value)` or `value.into()` when wrapping a `String`. For `&str`, use `SecretString::from(literal)`.
+      **ACCESS**: Use `.expose_secret()` (from the `ExposeSecret` trait) to get `&str`.
+
   - id: ud-sensitive-debug-impl
     rule: |
-      **OBJECTIVE**: Structs containing `SensitiveString` fields must not derive `Debug` — they need a custom `Debug` implementation that redacts the sensitive fields.
+      **OBJECTIVE**: Structs containing `SecretString` fields must have a `Debug` implementation that redacts the sensitive fields.
 
-      **REQUIREMENT**: If a struct contains one or more `SensitiveString` fields, it MUST NOT use `#[derive(Debug)]`. Instead, it MUST implement `std::fmt::Debug` manually, printing `"***"` for each sensitive field. `SensitiveString` itself already has a redacting `Debug` impl, so if you use `#[derive(Debug)]` it will show `SensitiveString(***)` which is acceptable — but if you want cleaner output (just `"***"`), a manual impl is preferred.
+      **REQUIREMENT**: If a struct contains one or more `SecretString` fields, it MUST either:
+      1. Use `#[derive(Debug)]` — acceptable because `SecretString` already redacts in its `Debug` impl (prints `SecretString([REDACTED])`), OR
+      2. Implement `std::fmt::Debug` manually, printing `"***"` for each sensitive field for cleaner output.
 
-      **EXCEPTION**: If all sensitive fields in the struct are `SensitiveString` (which already redacts in its own `Debug` impl), then `#[derive(Debug)]` is acceptable since it will delegate to `SensitiveString`'s redacting impl. Flag only cases where a struct has a plain `String` field that holds sensitive data AND uses `#[derive(Debug)]`.
+      Flag only cases where a struct has a plain `String` field that holds sensitive data (based on the field name) AND uses `#[derive(Debug)]`.
 
       ❌ **BAD:**
       ```rust
@@ -87,7 +92,7 @@ rules:
       ```rust
       pub struct Credentials {
           pub aws_key_id: String,
-          pub aws_secret_key: SensitiveString,
+          pub aws_secret_key: SecretString,
       }
 
       impl std::fmt::Debug for Credentials {
