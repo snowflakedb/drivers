@@ -33,7 +33,7 @@ pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const TOKEN_REQUEST_PATH: &str = "/session/token-request";
 
 /// Session tokens returned from login, used for authentication and refresh
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SessionTokens {
     /// Token used to authenticate API requests
     pub session_token: SensitiveString,
@@ -45,18 +45,6 @@ pub struct SessionTokens {
     pub session_expires_at: Option<std::time::Instant>,
     /// When the master token expires (after this, full re-auth is needed)
     pub master_expires_at: Option<std::time::Instant>,
-}
-
-impl std::fmt::Debug for SessionTokens {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionTokens")
-            .field("session_token", &"***")
-            .field("master_token", &"***")
-            .field("session_id", &self.session_id)
-            .field("session_expires_at", &self.session_expires_at)
-            .field("master_expires_at", &self.master_expires_at)
-            .finish()
-    }
 }
 
 /// Result of a successful login to Snowflake

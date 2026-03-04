@@ -94,43 +94,19 @@ pub struct StageInfo {
 }
 
 /// AWS credentials for S3 stage access.
-///
-/// Sensitive fields (aws_secret_key, aws_token) are wrapped to prevent accidental logging.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Credentials {
     pub aws_key_id: String,
     pub aws_secret_key: SensitiveString,
     pub aws_token: SensitiveString,
 }
 
-impl std::fmt::Debug for Credentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Credentials")
-            .field("aws_key_id", &self.aws_key_id)
-            .field("aws_secret_key", &"***")
-            .field("aws_token", &"***")
-            .finish()
-    }
-}
-
 /// Encryption material for file transfer.
-///
-/// The master key is sensitive and wrapped to prevent accidental logging.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EncryptionMaterial {
     pub query_stage_master_key: SensitiveString,
     pub query_id: String,
     pub smk_id: String,
-}
-
-impl std::fmt::Debug for EncryptionMaterial {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EncryptionMaterial")
-            .field("query_stage_master_key", &"***")
-            .field("query_id", &self.query_id)
-            .field("smk_id", &self.smk_id)
-            .finish()
-    }
 }
 
 // Result of encryption containing encrypted data and metadata
