@@ -360,49 +360,42 @@ class Connection:
     @property
     def role(self) -> str | None:
         """The current role in use for the session."""
-        return self.kwargs.get("role")  # type: ignore[return-value]
+        return self._get_connection_info().role or None
 
     @property
     def database(self) -> str | None:
         """The current database in use for the session."""
-        # TODO: SNOW-3155976 Read from connection details
-        return self.kwargs.get("database")  # type: ignore[return-value]
+        return self._get_connection_info().database or None
 
     @property
     def schema(self) -> str | None:
         """The current schema in use for the session."""
-        # TODO: SNOW-3155976 Read from connection details
-        return self.kwargs.get("schema")  # type: ignore[return-value]
+        return self._get_connection_info().schema or None
 
     @property
     def account(self) -> str | None:
         """The Snowflake account name used by this connection."""
-        # TODO: SNOW-3155976 Read from connection details
-        return self.kwargs.get("account")  # type: ignore[return-value]
+        return self._get_connection_info().account or None
 
     @property
     def warehouse(self) -> str | None:
         """The current warehouse in use for the session."""
-        # TODO: SNOW-3155976 Read from connection details
-        return self.kwargs.get("warehouse")  # type: ignore[return-value]
+        return self._get_connection_info().warehouse or None
 
     @property
     def user(self) -> str | None:
         """The user name used for authentication."""
-        # TODO: SNOW-3155976 Read from connection details
-        return self.kwargs.get("user")  # type: ignore[return-value]
+        return self._get_connection_info().user or None
 
     @property
     def host(self) -> str | None:
         """The host name of the Snowflake instance."""
-        # TODO: SNOW-3155976 Read from connection details
-        return self.kwargs.get("host")  # type: ignore[return-value]
+        return self._get_connection_info().host or None
 
     @property
     def port(self) -> int | None:
         """The port number of the Snowflake instance."""
-        # TODO: SNOW-3155976 Read from connection details
-        return self.kwargs.get("port")  # type: ignore[return-value]
+        return self._get_connection_info().port or None
 
     @property
     def region(self) -> str | None:
@@ -412,8 +405,10 @@ class Connection:
     @property
     def session_id(self) -> int:
         """The Snowflake session ID for this connection."""
-        # TODO: SNOW-3155976 Read from connection details
-        raise NotImplementedError("session_id is not yet implemented")
+        info = self._get_connection_info()
+        if not info.HasField("session_id"):
+            raise InterfaceError("Session ID is not available; connection may not be initialized")
+        return info.session_id
 
     @property
     def login_timeout(self) -> int | None:

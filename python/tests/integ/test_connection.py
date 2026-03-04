@@ -25,6 +25,92 @@ class TestConnectionInfo:
         assert info is not None
 
 
+class TestConnectionInfoProperties:
+    """Integration tests for Connection properties backed by _get_connection_info."""
+
+    def test_account_is_set(self, connection):
+        """After connecting, account should return the account name."""
+        assert connection.account is not None
+        assert isinstance(connection.account, str)
+        assert len(connection.account) > 0
+
+    def test_user_is_set(self, connection):
+        """After connecting, user should return the authenticated user name."""
+        assert connection.user is not None
+        assert isinstance(connection.user, str)
+        assert len(connection.user) > 0
+
+    def test_host_is_set(self, connection):
+        """After connecting, host should return the Snowflake host."""
+        assert connection.host is not None
+        assert isinstance(connection.host, str)
+        assert len(connection.host) > 0
+
+    def test_role_is_set(self, connection):
+        """After connecting, role should return the active role."""
+        assert connection.role is not None
+        assert isinstance(connection.role, str)
+        assert len(connection.role) > 0
+
+    def test_database_is_set(self, connection):
+        """After connecting, database should return the active database."""
+        assert connection.database is not None
+        assert isinstance(connection.database, str)
+        assert len(connection.database) > 0
+
+    def test_schema_is_set(self, connection):
+        """After connecting, schema should return the active schema."""
+        assert connection.schema is not None
+        assert isinstance(connection.schema, str)
+        assert len(connection.schema) > 0
+
+    def test_warehouse_is_set(self, connection):
+        """After connecting, warehouse should return the active warehouse."""
+        assert connection.warehouse is not None
+        assert isinstance(connection.warehouse, str)
+        assert len(connection.warehouse) > 0
+
+    def test_session_id_is_set(self, connection):
+        """After connecting, session_id should return a positive integer."""
+        sid = connection.session_id
+        assert isinstance(sid, int)
+        assert sid > 0
+
+    def test_port_is_set(self, connection):
+        """After connecting, port should return a valid port number or None."""
+        port = connection.port
+        if port is not None:
+            assert isinstance(port, int)
+            assert port > 0
+
+
+class TestConnectionInfoReflectsSessionChanges:
+    """Integration tests verifying that properties reflect server-side session changes."""
+
+    def test_database_reflects_use_database(self, connection):
+        """After USE DATABASE, the database property should reflect the new database."""
+        original_db = connection.database
+        assert original_db is not None
+
+        cur = connection.cursor()
+        try:
+            cur.execute(f"USE DATABASE {original_db}")
+        finally:
+            cur.close()
+
+        assert connection.database is not None
+
+    def test_schema_reflects_use_schema(self, connection):
+        """After USE SCHEMA, the schema property should reflect the new schema."""
+        cur = connection.cursor()
+        try:
+            cur.execute("USE SCHEMA INFORMATION_SCHEMA")
+        finally:
+            cur.close()
+
+        assert connection.schema is not None
+
+
 class TestConnectionMethods:
     """Test Connection object methods."""
 

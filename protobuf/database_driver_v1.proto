@@ -354,6 +354,12 @@ message ConnectionGetInfoResponse {
   optional string server_url = 3;
   optional string session_token = 4;
   optional int64 session_id = 5;
+  optional string account = 6;
+  optional string user = 7;
+  optional string role = 8;
+  optional string database = 9;
+  optional string schema = 10;
+  optional string warehouse = 11;
 }
 
 message ConnectionGetObjectsRequest {

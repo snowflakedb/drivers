@@ -201,6 +201,12 @@ impl From<ConnectionInfo> for ConnectionGetInfoResponse {
             server_url: info.server_url,
             session_token: info.session_token.map(|t| t.reveal().to_string()),
             session_id: info.session_id,
+            account: info.account,
+            user: info.user,
+            role: info.role,
+            database: info.database,
+            schema: info.schema,
+            warehouse: info.warehouse,
         }
     }
 }
