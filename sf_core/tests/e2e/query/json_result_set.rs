@@ -1,32 +1,21 @@
-use crate::common::arrow_convert_row::ArrowConvertRow;
-use crate::common::arrow_deserialize::RecordBatch;
-use crate::common::arrow_extract_value::{ArrowExtractError, extract_arrow_value};
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
 fn should_return_arrow_even_if_json_result_set_is_returned_for_simple_types() {
-    #[derive(Debug, PartialEq)]
-    struct StringAndInt {
-        str_col: String,
-        int_col: i32,
-    }
-
-    impl ArrowConvertRow for StringAndInt {
-        fn from_arrow_row(batch: &RecordBatch, row_idx: usize) -> Result<Self, ArrowExtractError> {
-            Ok(StringAndInt {
-                str_col: extract_arrow_value::<String>(batch.column(0).as_ref(), row_idx)?,
-                int_col: extract_arrow_value::<i32>(batch.column(1).as_ref(), row_idx)?,
-            })
-        }
-    }
-
     // Given Snowflake client is logged in
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
 
-    // When Query "SELECT 'abc', 123" is executed
-    client.set_sql_query(&stmt, "SELECT 'abc', 123");
+    // When Table json_result_set_simple_types (str_col STRING, tinyint_col TINYINT, smallint_col SMALLINT, int_col INT, bigint_col BIGINT, number_scale_0_col NUMBER(38, 0)) is created
+    client.set_sql_query(&stmt, "CREATE OR REPLACE TABLE json_result_set_simple_types (str_col STRING, tinyint_col TINYINT, smallint_col SMALLINT, int_col INT, bigint_col BIGINT, number_scale_0_col NUMBER(38, 0))");
+    client.execute_statement_query(&stmt);
+    // And Row is inserted with INSERT INTO json_result_set_simple_types VALUES ('abc', 123, 12345, 1234567, 12345678901234567890, 12345678901234567890123456789012345678)
+    client.set_sql_query(&stmt, "INSERT INTO json_result_set_simple_types VALUES ('abc', 123, 12345, 1234567, 12345678901234567890, 12345678901234567890123456789012345678)");
+    client.execute_statement_query(&stmt);
+
+    // Query "SELECT * FROM json_result_set_simple_types" is executed
+    client.set_sql_query(&stmt, "SELECT * FROM json_result_set_simple_types");
     let arrow_result = client.execute_statement_query(&stmt);
 
     // And Query result format is forced to JSON
@@ -37,8 +26,8 @@ fn should_return_arrow_even_if_json_result_set_is_returned_for_simple_types() {
     let result = client.execute_statement_query(&stmt);
     assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
 
-    // And Query "SELECT 'abc', 123" is executed
-    client.set_sql_query(&stmt, "SELECT 'abc', 123");
+    // And Query "SELECT * FROM json_result_set_simple_types" is executed
+    client.set_sql_query(&stmt, "SELECT * FROM json_result_set_simple_types");
     let json_result = client.execute_statement_query(&stmt);
 
     let mut arrow_result_helper = ArrowResultHelper::from_result(arrow_result);
@@ -49,13 +38,11 @@ fn should_return_arrow_even_if_json_result_set_is_returned_for_simple_types() {
     let json_schema = json_result_helper.schema();
     assert_eq!(arrow_schema, json_schema, "Schemas do not match");
 
-    let arrow_records = arrow_result_helper
-        .transform_rows::<StringAndInt>()
-        .unwrap();
-    let json_records = json_result_helper.transform_rows::<StringAndInt>().unwrap();
+    let arrow_columns = arrow_result_helper.next_batch().unwrap();
+    let json_columns = json_result_helper.next_batch().unwrap();
 
     // And the result for both queries should match
-    assert_eq!(arrow_records, json_records, "Records do not match");
+    assert_eq!(arrow_columns, json_columns, "Records do not match");
 
     // And Statement should be released
     client.release_statement(&stmt);
