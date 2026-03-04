@@ -78,16 +78,13 @@ pub fn driver_connect(
             "PRIV_KEY_BASE64",
         ];
         let redacted_map: HashMap<&String, &str> = connection_string_map
-            .keys()
-            .map(|k| {
+            .iter()
+            .map(|(k, v)| {
                 let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
                 let v = if is_sensitive {
                     "****"
                 } else {
-                    connection_string_map
-                        .get(k)
-                        .map(|s| s.as_str())
-                        .unwrap_or("")
+                    v.as_str()
                 };
                 (k, v)
             })
