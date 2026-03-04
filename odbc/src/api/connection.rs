@@ -81,11 +81,7 @@ pub fn driver_connect(
             .iter()
             .map(|(k, v)| {
                 let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
-                let v = if is_sensitive {
-                    "****"
-                } else {
-                    v.as_str()
-                };
+                let v = if is_sensitive { "****" } else { v.as_str() };
                 (k, v)
             })
             .collect();
