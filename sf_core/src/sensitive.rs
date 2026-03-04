@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// A wrapper around `secrecy::SecretString` that provides:
 /// - Zeroization on drop (via `secrecy`)
 /// - Redacted `Debug`/`Display` output
-/// - `Serialize`/`Deserialize` (secrecy 0.10's `SecretString` can't impl these due to `str: !Sized`)
+/// - Manual `Serialize`/`Deserialize` of the underlying string
 /// - `Default`, `Clone`
 ///
 /// Use `.expose()` to access the underlying `&str`.
