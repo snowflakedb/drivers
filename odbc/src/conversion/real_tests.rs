@@ -192,6 +192,56 @@ mod tests {
         assert!(warnings.contains(&Warning::NumericValueTruncated));
     }
 
+    #[test]
+    fn real_explicit_float_overflow_positive() {
+        let sr = make_real();
+        let mut value: f32 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Float, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(1e300, &binding, &mut None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn real_explicit_float_overflow_negative() {
+        let sr = make_real();
+        let mut value: f32 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Float, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(-1e300, &binding, &mut None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn real_explicit_float_max_succeeds() {
+        let sr = make_real();
+        let mut value: f32 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Float, &mut value, &mut str_len);
+
+        let warnings = sr
+            .write_odbc_type(f32::MAX as f64, &binding, &mut None)
+            .unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, f32::MAX);
+    }
+
+    #[test]
+    fn real_explicit_float_just_above_max_fails() {
+        let sr = make_real();
+        let mut value: f32 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Float, &mut value, &mut str_len);
+
+        // f32::MAX as f64 is 3.4028234663852886e+38; a value just above it
+        // is outside the f32 range per the ODBC spec even though IEEE 754
+        // rounding would round it back to FLT_MAX.
+        let just_above = (f32::MAX as f64) * (1.0 + f64::EPSILON);
+        assert!(sr.write_odbc_type(just_above, &binding, &mut None).is_err());
+    }
+
     // ======================================================================
     // Exact integer values — no truncation warning
     // ======================================================================
@@ -388,6 +438,170 @@ mod tests {
             (expected.len() * std::mem::size_of::<u16>()) as sql::Len
         );
         assert_eq!(&buffer[..expected.len()], &expected[..]);
+    }
+
+    // ======================================================================
+    // SQL_C_NUMERIC
+    // ======================================================================
+
+    fn binding_for_numeric(
+        value: &mut sql::Numeric,
+        str_len: &mut sql::Len,
+        precision: Option<i16>,
+        scale: Option<i16>,
+    ) -> Binding {
+        Binding {
+            target_type: CDataType::Numeric,
+            target_value_ptr: value as *mut sql::Numeric as sql::Pointer,
+            buffer_length: 0,
+            str_len_or_ind_ptr: str_len as *mut sql::Len,
+            precision,
+            scale,
+        }
+    }
+
+    #[test]
+    fn real_numeric_positive_integer() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let warnings = sr.write_odbc_type(42.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 1);
+        assert_eq!(value.val[0], 42);
+        for i in 1..16 {
+            assert_eq!(value.val[i], 0);
+        }
+    }
+
+    #[test]
+    fn real_numeric_negative_integer() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let warnings = sr.write_odbc_type(-7.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 0);
+        assert_eq!(value.val[0], 7);
+        for i in 1..16 {
+            assert_eq!(value.val[i], 0);
+        }
+    }
+
+    #[test]
+    fn real_numeric_zero() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let warnings = sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 1);
+        for i in 0..16 {
+            assert_eq!(value.val[i], 0);
+        }
+    }
+
+    #[test]
+    fn real_numeric_fractional_truncates_with_scale_zero() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let warnings = sr.write_odbc_type(123.456, &binding, &mut None).unwrap();
+
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        assert_eq!(value.sign, 1);
+        assert_eq!(value.val[0], 123);
+        for i in 1..16 {
+            assert_eq!(value.val[i], 0);
+        }
+    }
+
+    #[test]
+    fn real_numeric_with_scale() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, Some(10), Some(2));
+
+        let warnings = sr.write_odbc_type(12.5, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 1);
+        assert_eq!(value.scale, 2);
+        let stored = u128::from_le_bytes(value.val);
+        assert_eq!(stored, 1250);
+    }
+
+    #[test]
+    fn real_numeric_large_value() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let warnings = sr.write_odbc_type(1000000.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 1);
+        let stored = u128::from_le_bytes(value.val);
+        assert_eq!(stored, 1000000);
+    }
+
+    #[test]
+    fn real_numeric_overflow_returns_error() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let result = sr.write_odbc_type(1e300, &binding, &mut None);
+        assert!(result.is_err());
     }
 
     // ======================================================================
