@@ -121,7 +121,7 @@ jobs:
               -D DRIVER_TYPE=OLD \
               .
           cmake --build cmake-build -- -j $(($(nproc) * 2))
-          ctest -j $(($(nproc) * 8)) -C Debug --test-dir cmake-build --output-on-failure
+          ctest -j $(($(nproc) * 4)) -C Debug --test-dir cmake-build --output-on-failure
 
       - name: Run Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'

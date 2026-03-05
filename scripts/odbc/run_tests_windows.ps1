@@ -15,7 +15,7 @@ try {
     }
     cmake @cmakeArgs .
     cmake --build cmake-build --config Debug --parallel ($NPROC * 2)
-    $ctestArgs = @("-j", ($NPROC * 8), "-C", "Debug", "--test-dir", "cmake-build", "--output-on-failure")
+    $ctestArgs = @("-j", ($NPROC * 4), "-C", "Debug", "--test-dir", "cmake-build", "--output-on-failure")
     if ($env:CTEST_FILTER) {
         $ctestArgs += @("-R", $env:CTEST_FILTER)
     }
