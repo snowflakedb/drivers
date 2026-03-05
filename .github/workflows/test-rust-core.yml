@@ -132,6 +132,13 @@ jobs:
           restore-keys: |
             windows-11-arm-cargo-
 
+      - name: Install OpenSSL
+        shell: pwsh
+        run: |
+          choco install openssl -y
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\arm64\MD" >> $env:GITHUB_ENV
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
