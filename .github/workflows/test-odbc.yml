@@ -26,18 +26,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-odbc-unit-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-odbc-unit-
-            ${{ runner.os }}-cargo-
-
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -64,10 +52,12 @@ jobs:
           set -x
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev
-          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
-          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
-          sudo rm cmake-4.0.3-linux-x86_64.sh
+
+          # Install CMake 4.x (faster tar extract instead of interactive installer)
+          curl -sL https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.tar.gz | sudo tar -xz -C /usr/local --strip-components=1
           cmake --version
+
+          # Install reference ODBC driver
           REFERENCE_ODBC_VERSION=$(cat ci/reference-odbc-version | tr -d '[:space:]')
           . ci/reference-odbc-checksums
           echo "Installing reference ODBC driver version: $REFERENCE_ODBC_VERSION"
@@ -93,8 +83,8 @@ jobs:
               -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=OLD \
               .
-          cmake --build cmake-build -- -j $(nproc)
-          ctest -j $(($(nproc) * 4)) -C Debug --test-dir cmake-build --output-on-failure
+          cmake --build cmake-build -- -j $(($(nproc) * 2))
+          ctest -j $(($(nproc) * 8)) -C Debug --test-dir cmake-build --output-on-failure
 
   odbc_tests:
     needs: detect-changes
@@ -117,18 +107,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-odbc-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-odbc-
-            ${{ runner.os }}-cargo-
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -169,8 +147,15 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      - name: Build Rust ODBC driver (Unix)
-        if: runner.os != 'Windows'
+      - name: Build Rust ODBC driver (Linux)
+        if: runner.os == 'Linux'
+        # Workaround for Rust 1.89+ linker bug with dylib crates (rust-lang/rust#131292)
+        run: cargo build
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Build Rust ODBC driver (macOS)
+        if: runner.os == 'macOS'
         run: cargo build
 
       - name: Build Rust ODBC driver (Windows)

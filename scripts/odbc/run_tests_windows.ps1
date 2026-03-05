@@ -10,8 +10,8 @@ try {
     
     New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
     cmake -B cmake-build -D DRIVER_TYPE=$env:DRIVER_TYPE .
-    cmake --build cmake-build --config Debug --parallel $NPROC
-    ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
+    cmake --build cmake-build --config Debug --parallel ($NPROC * 2)
+    ctest -j ($NPROC * 8) -C Debug --test-dir cmake-build --output-on-failure
 }
 finally {
     Pop-Location
