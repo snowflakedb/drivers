@@ -191,6 +191,103 @@ TEST_CASE("REAL SQL_C_DEFAULT matches explicit SQL_C_DOUBLE", "[datatype][real][
 }
 
 // ============================================================================
+// Explicit C type conversions from FLOAT columns
+// ============================================================================
+
+TEST_CASE("REAL explicit SQL_C_DOUBLE", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123.456::FLOAT");
+
+  double val = get_data<SQL_C_DOUBLE>(stmt, 1);
+  CHECK(std::abs(val - 123.456) < 1e-9);
+}
+
+TEST_CASE("REAL explicit SQL_C_FLOAT", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123.5::FLOAT");
+
+  float val = get_data<SQL_C_FLOAT>(stmt, 1);
+  CHECK(std::abs(val - 123.5f) < 0.01f);
+}
+
+TEST_CASE("REAL explicit SQL_C_CHAR", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123.456::FLOAT, -99.5::FLOAT, 0::FLOAT");
+
+  std::string s1 = get_data<SQL_C_CHAR>(stmt, 1);
+  std::string s2 = get_data<SQL_C_CHAR>(stmt, 2);
+  std::string s3 = get_data<SQL_C_CHAR>(stmt, 3);
+
+  // Verify the string representations contain the expected value.
+  // Exact format may vary but must parse back to the same double.
+  CHECK(std::stod(s1) == 123.456);
+  CHECK(std::stod(s2) == -99.5);
+  CHECK(std::stod(s3) == 0.0);
+}
+
+TEST_CASE("REAL explicit integer conversions truncate fractional part", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123.789::FLOAT");
+
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_SLONG>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_SHORT>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_SSHORT>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_USHORT>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_TINYINT>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_STINYINT>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_UTINYINT>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_UBIGINT>(stmt, 1) == 123);
+}
+
+TEST_CASE("REAL explicit integer conversions - negative value", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -42.9::FLOAT");
+
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == -42);
+  CHECK(get_data<SQL_C_SLONG>(stmt, 1) == -42);
+  CHECK(get_data<SQL_C_SHORT>(stmt, 1) == -42);
+  CHECK(get_data<SQL_C_SSHORT>(stmt, 1) == -42);
+  CHECK(get_data<SQL_C_TINYINT>(stmt, 1) == -42);
+  CHECK(get_data<SQL_C_STINYINT>(stmt, 1) == -42);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -42);
+}
+
+TEST_CASE("REAL explicit SQL_C_BIT", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 5.5::FLOAT, 0::FLOAT, -1.5::FLOAT");
+
+  CHECK(get_data<SQL_C_BIT>(stmt, 1) == 1);
+  CHECK(get_data<SQL_C_BIT>(stmt, 2) == 0);
+  CHECK(get_data<SQL_C_BIT>(stmt, 3) == 1);
+}
+
+TEST_CASE("REAL explicit SQL_C_SBIGINT with large values", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 9007199254740992::FLOAT");
+
+  // 2^53 = 9007199254740992: largest integer exactly representable as f64
+  SQLBIGINT val = get_data<SQL_C_SBIGINT>(stmt, 1);
+  CHECK(val == 9007199254740992LL);
+}
+
+// ============================================================================
 // Multiple rows
 // ============================================================================
 
@@ -218,8 +315,19 @@ TEST_CASE("REAL default conversion - multiple rows", "[datatype][real][default]"
 }
 
 // ============================================================================
-// Fractional values and zero
+// Precision boundary
 // ============================================================================
+
+TEST_CASE("REAL precision - Snowflake FLOAT has ~15 significant digits", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // 15 significant digits should round-trip exactly
+  auto stmt = conn.execute_fetch("SELECT 1.23456789012345::FLOAT");
+  double val = get_data<SQL_C_DOUBLE>(stmt, 1);
+  // Check at least 14 digits match (allow for last-digit rounding)
+  CHECK(std::abs(val - 1.23456789012345) < 1e-13);
+}
 
 TEST_CASE("REAL default conversion - fractional values", "[datatype][real][default]") {
   Connection conn;
