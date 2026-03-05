@@ -1556,10 +1556,7 @@ mod tests {
             let binding = Binding {
                 target_type: CDataType::Bit,
                 target_value_ptr: &mut value as *mut u8 as sql::Pointer,
-                buffer_length: 0,
-                str_len_or_ind_ptr: std::ptr::null_mut(),
-                precision: None,
-                scale: None,
+                ..Default::default()
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
 

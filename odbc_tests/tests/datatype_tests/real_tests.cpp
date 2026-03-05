@@ -664,10 +664,12 @@ TEST_CASE("REAL SQL_C_CHAR buffer handling", "[datatype][real][char][buffer]") {
     CHECK(std::stod(std::string(buffer, indicator)) == 42.5);
   }
 
-  SECTION("small buffer truncates") {
-    SKIP_OLD_DRIVER("BD#11", "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small buffer");
+  SECTION("fractional-only truncation returns 01004") {
+    SKIP_OLD_DRIVER(
+        "BD#17",
+        "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small SQL_C_CHAR buffer on FLOAT columns");
 
-    auto stmt = conn.execute_fetch("SELECT 123456.789::FLOAT");
+    auto stmt = conn.execute_fetch("SELECT 3.14159::FLOAT");
 
     char small_buffer[4];
     SQLLEN indicator = 0;
@@ -675,6 +677,58 @@ TEST_CASE("REAL SQL_C_CHAR buffer handling", "[datatype][real][char][buffer]") {
 
     CHECK(ret == SQL_SUCCESS_WITH_INFO);
     CHECK(get_sqlstate(stmt) == "01004");
+  }
+
+  SECTION("whole digits lost returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT 123456.789::FLOAT");
+
+    char small_buffer[4];
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
+
+    CHECK(ret == SQL_ERROR);
+    CHECK(get_sqlstate(stmt) == "22003");
+  }
+}
+
+// ============================================================================
+// SQL_C_WCHAR buffer truncation for REAL
+// ============================================================================
+
+TEST_CASE("REAL SQL_C_WCHAR buffer handling", "[datatype][real][wchar][buffer]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("large buffer succeeds") {
+    auto stmt = conn.execute_fetch("SELECT 42.5::FLOAT");
+    auto result = check_wchar_success(stmt, 1);
+    CHECK(!result.empty());
+  }
+
+  SECTION("fractional-only truncation returns 01004") {
+    SKIP_OLD_DRIVER(
+        "BD#17",
+        "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small SQL_C_WCHAR buffer on FLOAT columns");
+
+    auto stmt = conn.execute_fetch("SELECT 3.14159::FLOAT");
+
+    char16_t small_buffer[4];
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, small_buffer, sizeof(small_buffer), &indicator);
+
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+    CHECK(get_sqlstate(stmt) == "01004");
+  }
+
+  SECTION("whole digits lost returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT 123456.789::FLOAT");
+
+    char16_t small_buffer[4];
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, small_buffer, sizeof(small_buffer), &indicator);
+
+    CHECK(ret == SQL_ERROR);
+    CHECK(get_sqlstate(stmt) == "22003");
   }
 }
 
@@ -902,6 +956,128 @@ TEST_CASE("REAL SQL_C_FLOAT overflow returns 22003", "[datatype][real][22003]") 
     auto val = check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT 1e38::FLOAT"), 1);
     CHECK(val == 1e38f);
   }
+}
+
+// ============================================================================
+// SQL_C_BINARY conversion from REAL
+// Per ODBC spec, SQL_C_BINARY for SQL_REAL/SQL_FLOAT/SQL_DOUBLE writes the
+// value as SQL_NUMERIC_STRUCT into the buffer.
+// ============================================================================
+
+inline SQL_NUMERIC_STRUCT get_real_binary_as_numeric(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+}
+
+inline SQL_NUMERIC_STRUCT get_real_binary_as_numeric_with_truncation(const StatementHandleWrapper& stmt,
+                                                                     SQLUSMALLINT col) {
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  auto records = get_diag_rec(stmt);
+  CHECK(records.size() == 1);
+  CHECK(records[0].sqlState == "01S07");
+  return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+}
+
+inline void check_real_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int start) {
+  for (int i = start; i < 16; ++i) {
+    INFO("val[" << i << "] should be 0");
+    CHECK(numeric.val[i] == 0);
+  }
+}
+
+inline unsigned long long real_numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
+  unsigned long long result = 0;
+  for (int i = 7; i >= 0; --i) {
+    result = (result << 8) | n.val[i];
+  }
+  return result;
+}
+
+TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
+  SKIP_OLD_DRIVER("BD#16",
+                  "Old driver returns raw f64 bytes instead of SQL_NUMERIC_STRUCT for SQL_C_BINARY on FLOAT columns");
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("positive integer value") {
+    auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 42.0::FLOAT"), 1);
+    CHECK(num.sign == 1);
+    CHECK(num.val[0] == 42);
+    check_real_numeric_val_zero_from(num, 1);
+  }
+
+  SECTION("negative integer value") {
+    auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT -7.0::FLOAT"), 1);
+    CHECK(num.sign == 0);
+    CHECK(num.val[0] == 7);
+    check_real_numeric_val_zero_from(num, 1);
+  }
+
+  SECTION("zero") {
+    auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 0.0::FLOAT"), 1);
+    CHECK(num.sign == 1);
+    check_real_numeric_val_zero_from(num, 0);
+  }
+
+  SECTION("fractional value truncates with 01S07") {
+    auto num = get_real_binary_as_numeric_with_truncation(conn.execute_fetch("SELECT 123.456::FLOAT"), 1);
+    CHECK(num.sign == 1);
+    CHECK(num.scale == 0);
+    CHECK(real_numeric_val_to_ull(num) == 123);
+  }
+
+  SECTION("large integer value") {
+    auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 1000000.0::FLOAT"), 1);
+    CHECK(num.sign == 1);
+    CHECK(real_numeric_val_to_ull(num) == 1000000);
+  }
+
+  SECTION("negative fractional truncates with 01S07") {
+    auto num = get_real_binary_as_numeric_with_truncation(conn.execute_fetch("SELECT -99.9::FLOAT"), 1);
+    CHECK(num.sign == 0);
+    CHECK(real_numeric_val_to_ull(num) == 99);
+  }
+
+  SECTION("value 255 uses single byte") {
+    auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 255.0::FLOAT"), 1);
+    CHECK(num.sign == 1);
+    CHECK(num.val[0] == 255);
+    check_real_numeric_val_zero_from(num, 1);
+  }
+
+  SECTION("value 256 spans two bytes") {
+    auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 256.0::FLOAT"), 1);
+    CHECK(num.sign == 1);
+    CHECK(num.val[0] == 0);
+    CHECK(num.val[1] == 1);
+    check_real_numeric_val_zero_from(num, 2);
+  }
+
+  SECTION("NULL returns SQL_NULL_DATA") {
+    check_null_via_get_data(conn.execute_fetch("SELECT NULL::FLOAT"), 1, SQL_C_BINARY);
+  }
+}
+
+TEST_CASE("REAL SQL_C_BINARY buffer too small returns 22003", "[datatype][real][binary][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42.0::FLOAT");
+
+  char tiny_buffer[4];
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, tiny_buffer, sizeof(tiny_buffer), &indicator);
+
+  CHECK(ret == SQL_ERROR);
+  CHECK(get_sqlstate(stmt) == "22003");
 }
 
 TEST_CASE("REAL explicit SQL_C_CHAR for special values", "[datatype][real][char][edge]") {
