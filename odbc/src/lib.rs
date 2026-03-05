@@ -2,6 +2,7 @@ mod api;
 pub mod c_api;
 mod cdata_types;
 mod conversion;
+#[allow(dead_code)]
 mod write_arrow;
 mod write_json;
 

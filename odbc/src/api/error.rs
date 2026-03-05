@@ -246,6 +246,7 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[allow(dead_code)]
     #[snafu(display("Error binding arrow parameters: {source:?}"))]
     ArrowBinding {
         source: ArrowBindingError,

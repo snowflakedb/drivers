@@ -147,9 +147,9 @@ fn snowflake_type_from_sql_type(
         | sql::SqlDataType::EXT_W_VARCHAR
         | sql::SqlDataType::EXT_W_LONG_VARCHAR => Ok(SF_TYPE_TEXT),
 
-        sql::SqlDataType::REAL
-        | sql::SqlDataType::FLOAT
-        | sql::SqlDataType::DOUBLE => Ok(SF_TYPE_REAL),
+        sql::SqlDataType::REAL | sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => {
+            Ok(SF_TYPE_REAL)
+        }
 
         sql::SqlDataType::EXT_BIT => Ok(SF_TYPE_BOOLEAN),
 
@@ -203,7 +203,11 @@ fn buffer_data_len(binding: &ParameterBinding) -> usize {
         let indicated_len = unsafe { *binding.str_len_or_ind_ptr };
         if indicated_len >= 0 {
             let indicated = indicated_len as usize;
-            return if max_len > 0 { indicated.min(max_len) } else { indicated };
+            return if max_len > 0 {
+                indicated.min(max_len)
+            } else {
+                indicated
+            };
         }
     }
 

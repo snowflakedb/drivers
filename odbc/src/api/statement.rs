@@ -53,8 +53,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
                 query: statement_text.to_string(),
             })?;
 
-            let (bindings, _json_owner) =
-                apply_parameter_bindings(&stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
@@ -208,8 +207,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) =
-                apply_parameter_bindings(&stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
@@ -300,8 +298,7 @@ fn apply_parameter_bindings(
         parameter_bindings.len()
     );
 
-    let json_string =
-        odbc_bindings_to_json(parameter_bindings).context(JsonBindingSnafu {})?;
+    let json_string = odbc_bindings_to_json(parameter_bindings).context(JsonBindingSnafu {})?;
 
     let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
     let json_data_len = json_string.len();
