@@ -105,7 +105,6 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
     try (Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("select 1")) {
         assertTrue(rs.next());
-        assertThrows(SQLFeatureNotSupportedException.class, () -> rs.getDate(1));
         assertThrows(SQLFeatureNotSupportedException.class, () -> rs.getTime(1));
         assertThrows(SQLFeatureNotSupportedException.class, () -> rs.getTimestamp(1));
       }

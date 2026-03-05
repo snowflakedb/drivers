@@ -163,8 +163,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public Date getDate(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException(
-        "getDate not supported"); // TODO: Will be handled later
+    return convertColumn(columnIndex, (converter, idx) -> converter.toDate(idx, null, false));
   }
 
   @Override
