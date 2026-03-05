@@ -45,6 +45,21 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
+      - name: Set up ARM64 MSVC environment
+        if: runner.arch == 'ARM64'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: aarch64
+
+      - name: Install OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install openssl -y
+          $arch = if ($env:RUNNER_ARCH -eq "ARM64") { "arm64" } else { "x64" }
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\$arch\MD" >> $env:GITHUB_ENV
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
