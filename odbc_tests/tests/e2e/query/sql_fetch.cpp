@@ -1,6 +1,7 @@
 #include <cstring>
 
 #include <catch2/catch_test_macros.hpp>
+#include <sqltypes.h>
 
 #include "Connection.hpp"
 #include "Schema.hpp"
@@ -54,7 +55,7 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
 
   // When SQLSetStmtAttr is called with SQL_ATTR_CURSOR_TYPE to set the cursor type
   // And SQLGetStmtAttr is called to get the current cursor type
-  SQLSMALLINT cursor_type = -1;
+  SQLULEN cursor_type = -1;
   SQLINTEGER length = 0;
 
   // Then default cursor type is SQL_CURSOR_FORWARD_ONLY
