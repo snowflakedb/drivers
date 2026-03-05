@@ -1174,3 +1174,115 @@ TEST_CASE("REAL explicit SQL_C_CHAR for special values", "[datatype][real][char]
     CHECK(parsed > 9e299);
   }
 }
+
+// ============================================================================
+// Negative fractional values to unsigned integer types
+// Values like -0.1 truncate to -0.0 (IEEE 754).
+// ============================================================================
+
+TEST_CASE("REAL negative fraction to unsigned integer types", "[datatype][real][unsigned][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("SQL_C_UTINYINT with -0.1") {
+    auto stmt = conn.execute_fetch("SELECT -0.1::FLOAT");
+    typename MetaOfSqlCType<SQL_C_UTINYINT>::type value{};
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_UTINYINT, &value, sizeof(value), &indicator);
+    INFO("ret=" << ret << " value=" << (int)value << " indicator=" << indicator);
+    if (ret == SQL_SUCCESS_WITH_INFO) {
+      CHECK(value == 0);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "01S07");
+    } else {
+      REQUIRE(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "22003");
+    }
+  }
+
+  SECTION("SQL_C_USHORT with -0.1") {
+    auto stmt = conn.execute_fetch("SELECT -0.1::FLOAT");
+    typename MetaOfSqlCType<SQL_C_USHORT>::type value{};
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_USHORT, &value, sizeof(value), &indicator);
+    INFO("ret=" << ret << " value=" << value << " indicator=" << indicator);
+    if (ret == SQL_SUCCESS_WITH_INFO) {
+      CHECK(value == 0);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "01S07");
+    } else {
+      REQUIRE(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "22003");
+    }
+  }
+
+  SECTION("SQL_C_ULONG with -0.1") {
+    auto stmt = conn.execute_fetch("SELECT -0.1::FLOAT");
+    typename MetaOfSqlCType<SQL_C_ULONG>::type value{};
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_ULONG, &value, sizeof(value), &indicator);
+    INFO("ret=" << ret << " value=" << value << " indicator=" << indicator);
+    if (ret == SQL_SUCCESS_WITH_INFO) {
+      CHECK(value == 0);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "01S07");
+    } else {
+      REQUIRE(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "22003");
+    }
+  }
+
+  SECTION("SQL_C_UBIGINT with -0.1") {
+    auto stmt = conn.execute_fetch("SELECT -0.1::FLOAT");
+    typename MetaOfSqlCType<SQL_C_UBIGINT>::type value{};
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_UBIGINT, &value, sizeof(value), &indicator);
+    INFO("ret=" << ret << " value=" << value << " indicator=" << indicator);
+    if (ret == SQL_SUCCESS_WITH_INFO) {
+      CHECK(value == 0);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "01S07");
+    } else {
+      REQUIRE(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "22003");
+    }
+  }
+
+  SECTION("SQL_C_UTINYINT with -0.9") {
+    auto stmt = conn.execute_fetch("SELECT -0.9::FLOAT");
+    typename MetaOfSqlCType<SQL_C_UTINYINT>::type value{};
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_UTINYINT, &value, sizeof(value), &indicator);
+    INFO("ret=" << ret << " value=" << (int)value << " indicator=" << indicator);
+    if (ret == SQL_SUCCESS_WITH_INFO) {
+      CHECK(value == 0);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "01S07");
+    } else {
+      REQUIRE(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "22003");
+    }
+  }
+
+  SECTION("SQL_C_USHORT with -0.9") {
+    auto stmt = conn.execute_fetch("SELECT -0.9::FLOAT");
+    typename MetaOfSqlCType<SQL_C_USHORT>::type value{};
+    SQLLEN indicator = -999;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_USHORT, &value, sizeof(value), &indicator);
+    INFO("ret=" << ret << " value=" << value << " indicator=" << indicator);
+    if (ret == SQL_SUCCESS_WITH_INFO) {
+      CHECK(value == 0);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "01S07");
+    } else {
+      REQUIRE(ret == SQL_ERROR);
+      auto records = get_diag_rec(stmt);
+      CHECK(records[0].sqlState == "22003");
+    }
+  }
+}
