@@ -1132,6 +1132,50 @@ mod tests {
     }
 
     #[test]
+    fn interval_second_sub_microsecond_truncation_warns() {
+        use crate::conversion::warning::Warning;
+        let sn = make_decimal(9, 15); // scale=9, so 45_123456789 → 45.123456789
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn
+            .write_odbc_type(45_123_456_789i128, &binding, &mut None)
+            .unwrap();
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 123_456);
+    }
+
+    #[test]
+    fn interval_second_exact_microsecond_no_warning() {
+        let sn = make_decimal(9, 15); // scale=9, so 45_123456000 → 45.123456000
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn
+            .write_odbc_type(45_123_456_000i128, &binding, &mut None)
+            .unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 123_456);
+    }
+
+    #[test]
+    fn interval_second_high_scale_no_overflow() {
+        use crate::conversion::warning::Warning;
+        let sn = make_decimal(35, 38); // scale=35: remainder * 1_000_000 would overflow u128
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let scale_factor = 10i128.pow(35);
+        let raw = scale_factor + 1; // represents 1.00...001 (sub-microsecond trailing digit)
+        let warnings = sn.write_odbc_type(raw, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 1);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
     fn interval_year_at_u32_max() {
         let sn = make_decimal(0, 38);
         let mut value = zero_interval();

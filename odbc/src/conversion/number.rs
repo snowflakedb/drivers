@@ -420,12 +420,17 @@ impl WriteODBCType for SnowflakeNumber {
                     .fail();
                 }
                 let second_val = abs_int as u32;
-                let frac_value = if self.scale > 0 {
+                let (frac_value, frac_truncated) = if self.scale > 0 {
                     let remainder = snowflake_value.unsigned_abs() % (scale_factor as u128);
-                    let microseconds = remainder * 1_000_000 / (scale_factor as u128);
-                    microseconds as u32
+                    if self.scale > 6 {
+                        let divisor = 10u128.pow(self.scale - 6);
+                        ((remainder / divisor) as u32, remainder % divisor != 0)
+                    } else {
+                        let multiplier = 10u128.pow(6 - self.scale);
+                        ((remainder * multiplier) as u32, false)
+                    }
                 } else {
-                    0
+                    (0, false)
                 };
                 let is_negative = snowflake_value < 0 && (second_val > 0 || frac_value > 0);
                 let interval = sql::IntervalStruct {
@@ -442,7 +447,11 @@ impl WriteODBCType for SnowflakeNumber {
                     },
                 };
                 binding.write_fixed(interval);
-                Ok(vec![])
+                Ok(if frac_truncated {
+                    vec![Warning::NumericValueTruncated]
+                } else {
+                    vec![]
+                })
             }
             CDataType::IntervalYearToMonth
             | CDataType::IntervalDayToHour

@@ -1341,6 +1341,66 @@ TEST_CASE("NUMBER to interval - fractional truncation returns 01S07", "[datatype
   }
 }
 
+TEST_CASE("NUMBER to interval - sub-microsecond truncation returns 01S07", "[datatype][number][interval][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("SQL_C_INTERVAL_SECOND - scale 9, sub-microsecond digits truncated") {
+    auto stmt = conn.execute_fetch("SELECT 45.123456789::DECIMAL(12,9)");
+    auto interval = check_fractional_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_SECOND);
+    CHECK(interval.intval.day_second.second == 45);
+    CHECK(interval.intval.day_second.fraction == 123456);
+  }
+
+  SECTION("SQL_C_INTERVAL_SECOND - scale 9, exact microseconds, no warning") {
+    auto stmt = conn.execute_fetch("SELECT 45.123456000::DECIMAL(12,9)");
+    auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_SECOND);
+    CHECK(interval.intval.day_second.second == 45);
+    CHECK(interval.intval.day_second.fraction == 123456);
+  }
+}
+
+TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval][edge]") {
+  SKIP_OLD_DRIVER("BD#19", "Old driver produces negative zero for interval types");
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("SQL_C_INTERVAL_YEAR - negative fraction truncated to zero") {
+    auto stmt = conn.execute_fetch("SELECT -0.5::DECIMAL(10,1)");
+    auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_YEAR);
+    CHECK(interval.interval_sign == SQL_FALSE);
+    CHECK(interval.intval.year_month.year == 0);
+  }
+
+  SECTION("SQL_C_INTERVAL_MONTH - negative fraction truncated to zero") {
+    auto stmt = conn.execute_fetch("SELECT -0.3::DECIMAL(10,1)");
+    auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_MONTH);
+    CHECK(interval.interval_sign == SQL_FALSE);
+    CHECK(interval.intval.year_month.month == 0);
+  }
+
+  SECTION("SQL_C_INTERVAL_DAY - negative fraction truncated to zero") {
+    auto stmt = conn.execute_fetch("SELECT -0.9::DECIMAL(10,1)");
+    auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_DAY);
+    CHECK(interval.interval_sign == SQL_FALSE);
+    CHECK(interval.intval.day_second.day == 0);
+  }
+
+  SECTION("SQL_C_INTERVAL_SECOND - negative fraction keeps sign when fraction nonzero") {
+    auto stmt = conn.execute_fetch("SELECT -0.5::DECIMAL(10,1)");
+    auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_SECOND);
+    CHECK(interval.interval_sign == SQL_TRUE);
+    CHECK(interval.intval.day_second.second == 0);
+    CHECK(interval.intval.day_second.fraction == 500000);
+  }
+}
+
 TEST_CASE("NUMBER to multi-field interval returns 22015", "[datatype][number][interval][22015]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
