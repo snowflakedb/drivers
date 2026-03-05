@@ -20,13 +20,21 @@ jobs:
   jdbc_tests:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
-    name: JDBC Tests (full suite)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        java-version: ['8']
+        os: [ubuntu-latest, windows-11-arm]
+        java-version: ['8', '11', '17', '21']
+        exclude:
+          # Temurin only provides Java 21+ for Windows ARM64
+          - os: windows-11-arm
+            java-version: '8'
+          - os: windows-11-arm
+            java-version: '11'
+          - os: windows-11-arm
+            java-version: '17'
     runs-on: ${{ matrix.os }}
+    name: jdbc_tests (${{ matrix.os }}, Java ${{ matrix.java-version }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,22 +49,35 @@ jobs:
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
 
       - name: Build Rust components
         run: |
           cargo build --package sf_core
           cargo build --package jdbc_bridge
 
-      - name: Make gradlew executable
+      - name: Make gradlew executable (Linux)
+        if: runner.os == 'Linux'
         run: chmod +x jdbc/gradlew
 
-      - name: Run JDBC tests
+      - name: Run JDBC tests (Linux)
+        if: runner.os == 'Linux'
         run: |
           ls -l target/debug/
           export PARAMETER_PATH=$(pwd)/parameters.json
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
           cd jdbc
-          ./gradlew test jacocoTestReport --stacktrace
+          ./gradlew test --stacktrace
+
+      - name: Run JDBC tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-ChildItem target\debug\
+          $env:PARAMETER_PATH = "${{ github.workspace }}\parameters.json"
+          $env:CORE_PATH = "${{ github.workspace }}\target\debug\jdbc_bridge.dll"
+          cd jdbc
+          .\gradlew.bat test --stacktrace
 
   jdbc_tests_reference:
     needs: detect-changes
