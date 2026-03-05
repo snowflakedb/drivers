@@ -156,87 +156,145 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
       u"SELECT '日本語' AS japanese, 'Привет' AS russian, '你好' AS chinese, "
       u"'émoji: 😀' AS emoji, 'café' AS french, 'Ñoño' AS spanish, '𝄞' AS clef");
 
-  // Then Japanese '日本語' should convert to UTF-8 bytes (3 chars × 3 bytes each = 9 bytes)
+  // Then Japanese '日本語' should convert to raw bytes
   {
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
     CHECK_ODBC(ret, stmt);
-    CHECK(indicator == 9);  // 3 Japanese characters × 3 bytes each
-    // '日' = E6 97 A5
-    CHECK(buffer[0] == 0xE6);
-    CHECK(buffer[1] == 0x97);
-    CHECK(buffer[2] == 0xA5);
-    // '本' = E6 9C AC
-    CHECK(buffer[3] == 0xE6);
-    CHECK(buffer[4] == 0x9C);
-    CHECK(buffer[5] == 0xAC);
-    // '語' = E8 AA 9E
-    CHECK(buffer[6] == 0xE8);
-    CHECK(buffer[7] == 0xAA);
-    CHECK(buffer[8] == 0x9E);
+    WINDOWS_ONLY {
+      CHECK(indicator == 19);
+      // UTF-8 bytes [E6 97 A5 E6 9C AC E8 AA 9E] reinterpreted as Win-1252:
+      // E6→æ(C3 A6), 97→—(E2 80 94), A5→¥(C2 A5), ...
+      CHECK(buffer[0] == 0xC3);
+      CHECK(buffer[1] == 0xA6);  // '日' first byte E6 → Win-1252 'æ'
+      CHECK(buffer[2] == 0xE2);
+      CHECK(buffer[3] == 0x80);
+      CHECK(buffer[4] == 0x94);  // '日' second byte 97 → Win-1252 '—'
+    }
+    UNIX_ONLY {
+      CHECK(indicator == 9);  // 3 chars × 3 bytes each (UTF-8)
+      CHECK(buffer[0] == 0xE6);
+      CHECK(buffer[1] == 0x97);
+      CHECK(buffer[2] == 0xA5);  // '日'
+      CHECK(buffer[3] == 0xE6);
+      CHECK(buffer[4] == 0x9C);
+      CHECK(buffer[5] == 0xAC);  // '本'
+      CHECK(buffer[6] == 0xE8);
+      CHECK(buffer[7] == 0xAA);
+      CHECK(buffer[8] == 0x9E);  // '語'
+    }
   }
 
-  // And Russian 'Привет' should convert to UTF-8 bytes (6 chars × 2 bytes each = 12 bytes)
+  // And Russian 'Привет' should convert to raw bytes
   {
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
     CHECK_ODBC(ret, stmt);
-    CHECK(indicator == 12);  // 6 Cyrillic characters × 2 bytes each
-    // 'П' = D0 9F
-    CHECK(buffer[0] == 0xD0);
-    CHECK(buffer[1] == 0x9F);
+    WINDOWS_ONLY {
+      CHECK(indicator == 26);
+      // UTF-8 bytes reinterpreted as Win-1252 and re-encoded to UTF-8
+      CHECK(buffer[0] == 0xC3);
+      CHECK(buffer[1] == 0x90);  // 'П' first byte D0 → Win-1252 'Ð'
+    }
+    UNIX_ONLY {
+      CHECK(indicator == 12);  // 6 Cyrillic chars × 2 bytes each (UTF-8)
+      CHECK(buffer[0] == 0xD0);
+      CHECK(buffer[1] == 0x9F);  // 'П'
+    }
   }
 
-  // And Chinese '你好' should convert to UTF-8 bytes (2 chars × 3 bytes each = 6 bytes)
+  // And Chinese '你好' should convert to raw bytes
   {
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
     CHECK_ODBC(ret, stmt);
-    CHECK(indicator == 6);  // 2 Chinese characters × 3 bytes each
-    // '你' = E4 BD A0
-    CHECK(buffer[0] == 0xE4);
-    CHECK(buffer[1] == 0xBD);
-    CHECK(buffer[2] == 0xA0);
-    // '好' = E5 A5 BD
-    CHECK(buffer[3] == 0xE5);
-    CHECK(buffer[4] == 0xA5);
-    CHECK(buffer[5] == 0xBD);
+    WINDOWS_ONLY {
+      CHECK(indicator == 12);
+      // UTF-8 bytes [E4 BD A0 E5 A5 BD] reinterpreted as Win-1252
+      CHECK(buffer[0] == 0xC3);
+      CHECK(buffer[1] == 0xA4);  // E4 → Win-1252 'ä'
+      CHECK(buffer[2] == 0xC2);
+      CHECK(buffer[3] == 0xBD);  // BD → Win-1252 '½'
+      CHECK(buffer[4] == 0xC2);
+      CHECK(buffer[5] == 0xA0);  // A0 → Win-1252 NBSP
+      CHECK(buffer[6] == 0xC3);
+      CHECK(buffer[7] == 0xA5);  // E5 → Win-1252 'å'
+      CHECK(buffer[8] == 0xC2);
+      CHECK(buffer[9] == 0xA5);  // A5 → Win-1252 '¥'
+      CHECK(buffer[10] == 0xC2);
+      CHECK(buffer[11] == 0xBD);  // BD → Win-1252 '½'
+    }
+    UNIX_ONLY {
+      CHECK(indicator == 6);  // 2 chars × 3 bytes each (UTF-8)
+      CHECK(buffer[0] == 0xE4);
+      CHECK(buffer[1] == 0xBD);
+      CHECK(buffer[2] == 0xA0);  // '你'
+      CHECK(buffer[3] == 0xE5);
+      CHECK(buffer[4] == 0xA5);
+      CHECK(buffer[5] == 0xBD);  // '好'
+    }
   }
 
-  // And emoji string 'émoji: 😀' should include 4-byte emoji
+  // And emoji string 'émoji: 😀' should include multi-byte emoji
   {
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 4, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
     CHECK_ODBC(ret, stmt);
-    // 'é' (2 bytes) + 'm' + 'o' + 'j' + 'i' + ':' + ' ' (6 bytes) + '😀' (4 bytes) = 12 bytes
-    CHECK(indicator == 12);
-    // 'é' = C3 A9
-    CHECK(buffer[0] == 0xC3);
-    CHECK(buffer[1] == 0xA9);
-    // '😀' = F0 9F 98 80 (at end)
-    CHECK(buffer[8] == 0xF0);
-    CHECK(buffer[9] == 0x9F);
-    CHECK(buffer[10] == 0x98);
-    CHECK(buffer[11] == 0x80);
+    WINDOWS_ONLY {
+      CHECK(indicator == 19);
+      // UTF-8 bytes reinterpreted as Win-1252: é→[C3 A9]→[C3 83 C2 A9],
+      // ASCII 'moji: ' kept as-is, 😀→[F0 9F 98 80]→[C3 B0 C5 B8 CB 9C E2 82 AC]
+      CHECK(buffer[0] == 0xC3);
+      CHECK(buffer[1] == 0x83);  // C3 → Win-1252 'Ã'
+      CHECK(buffer[2] == 0xC2);
+      CHECK(buffer[3] == 0xA9);  // A9 → Win-1252 '©'
+      CHECK(buffer[4] == 'm');
+      CHECK(buffer[9] == 0x20);  // space before emoji
+      CHECK(buffer[16] == 0xE2);
+      CHECK(buffer[17] == 0x82);
+      CHECK(buffer[18] == 0xAC);  // last byte 80 → Win-1252 '€' (E2 82 AC)
+    }
+    UNIX_ONLY {
+      // 'é' (2 bytes) + 'moji: ' (6 bytes) + '😀' (4 bytes) = 12 bytes
+      CHECK(indicator == 12);
+      CHECK(buffer[0] == 0xC3);
+      CHECK(buffer[1] == 0xA9);  // 'é'
+      CHECK(buffer[8] == 0xF0);
+      CHECK(buffer[9] == 0x9F);
+      CHECK(buffer[10] == 0x98);
+      CHECK(buffer[11] == 0x80);  // '😀'
+    }
   }
 
-  // And French 'café' should convert correctly (4 chars, 5 bytes due to 'é')
+  // And French 'café' should convert correctly
   {
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 5, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
     CHECK_ODBC(ret, stmt);
-    CHECK(indicator == 5);  // 'c' + 'a' + 'f' + 'é' (2 bytes)
-    CHECK(buffer[0] == 'c');
-    CHECK(buffer[1] == 'a');
-    CHECK(buffer[2] == 'f');
-    // 'é' = C3 A9
-    CHECK(buffer[3] == 0xC3);
-    CHECK(buffer[4] == 0xA9);
+    WINDOWS_ONLY {
+      CHECK(indicator == 7);
+      // ASCII 'caf' kept, then é UTF-8 [C3 A9] → Win-1252 [Ã ©] → UTF-8 [C3 83 C2 A9]
+      CHECK(buffer[0] == 'c');
+      CHECK(buffer[1] == 'a');
+      CHECK(buffer[2] == 'f');
+      CHECK(buffer[3] == 0xC3);
+      CHECK(buffer[4] == 0x83);  // C3 → Win-1252 'Ã'
+      CHECK(buffer[5] == 0xC2);
+      CHECK(buffer[6] == 0xA9);  // A9 → Win-1252 '©'
+    }
+    UNIX_ONLY {
+      CHECK(indicator == 5);  // 'c' + 'a' + 'f' + 'é' (2 bytes UTF-8)
+      CHECK(buffer[0] == 'c');
+      CHECK(buffer[1] == 'a');
+      CHECK(buffer[2] == 'f');
+      CHECK(buffer[3] == 0xC3);
+      CHECK(buffer[4] == 0xA9);  // 'é'
+    }
   }
 
   // And Spanish 'Ñoño' should convert correctly
@@ -245,29 +303,60 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 6, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
     CHECK_ODBC(ret, stmt);
-    CHECK(indicator == 6);  // 'Ñ' (2 bytes) + 'o' + 'ñ' (2 bytes) + 'o'
-    // 'Ñ' = C3 91
-    CHECK(buffer[0] == 0xC3);
-    CHECK(buffer[1] == 0x91);
-    CHECK(buffer[2] == 'o');
-    // 'ñ' = C3 B1
-    CHECK(buffer[3] == 0xC3);
-    CHECK(buffer[4] == 0xB1);
-    CHECK(buffer[5] == 'o');
+    WINDOWS_ONLY {
+      CHECK(indicator == 11);
+      // Ñ UTF-8 [C3 91] → Win-1252 [Ã '] → UTF-8 [C3 83 E2 80 98]
+      CHECK(buffer[0] == 0xC3);
+      CHECK(buffer[1] == 0x83);  // C3 → Win-1252 'Ã'
+      CHECK(buffer[2] == 0xE2);
+      CHECK(buffer[3] == 0x80);
+      CHECK(buffer[4] == 0x98);  // 91 → Win-1252 ''' (U+2018)
+      CHECK(buffer[5] == 'o');
+      // ñ UTF-8 [C3 B1] → Win-1252 [Ã ±] → UTF-8 [C3 83 C2 B1]
+      CHECK(buffer[6] == 0xC3);
+      CHECK(buffer[7] == 0x83);
+      CHECK(buffer[8] == 0xC2);
+      CHECK(buffer[9] == 0xB1);  // B1 → Win-1252 '±'
+      CHECK(buffer[10] == 'o');
+    }
+    UNIX_ONLY {
+      CHECK(indicator == 6);  // 'Ñ' (2 bytes) + 'o' + 'ñ' (2 bytes) + 'o' (UTF-8)
+      CHECK(buffer[0] == 0xC3);
+      CHECK(buffer[1] == 0x91);  // 'Ñ'
+      CHECK(buffer[2] == 'o');
+      CHECK(buffer[3] == 0xC3);
+      CHECK(buffer[4] == 0xB1);  // 'ñ'
+      CHECK(buffer[5] == 'o');
+    }
   }
 
-  // And musical symbol '𝄞' should convert correctly
+  // And musical symbol '𝄞' (U+1D11E) should convert correctly
   {
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 7, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
     CHECK_ODBC(ret, stmt);
-    CHECK(indicator == 4);
-    // UTF-8 encoding of '𝄞' is F0 9D 84 9E
-    CHECK(to_unsigned_int(buffer[0]) == 0xF0);
-    CHECK(to_unsigned_int(buffer[1]) == 0x9D);
-    CHECK(to_unsigned_int(buffer[2]) == 0x84);
-    CHECK(to_unsigned_int(buffer[3]) == 0x9E);
+    WINDOWS_ONLY {
+      CHECK(indicator == 9);
+      // UTF-8 [F0 9D 84 9E] → Win-1252 [ð <9D> „ ž] → UTF-8 [C3 B0 C2 9D E2 80 9E C5 BE]
+      CHECK(to_unsigned_int(buffer[0]) == 0xC3);
+      CHECK(to_unsigned_int(buffer[1]) == 0xB0);  // F0 → Win-1252 'ð'
+      CHECK(to_unsigned_int(buffer[2]) == 0xC2);
+      CHECK(to_unsigned_int(buffer[3]) == 0x9D);  // 9D → Win-1252 U+009D
+      CHECK(to_unsigned_int(buffer[4]) == 0xE2);
+      CHECK(to_unsigned_int(buffer[5]) == 0x80);
+      CHECK(to_unsigned_int(buffer[6]) == 0x9E);  // 84 → Win-1252 '„' (U+201E)
+      CHECK(to_unsigned_int(buffer[7]) == 0xC5);
+      CHECK(to_unsigned_int(buffer[8]) == 0xBE);  // 9E → Win-1252 'ž' (U+017E)
+    }
+    UNIX_ONLY {
+      CHECK(indicator == 4);
+      // UTF-8: F0 9D 84 9E
+      CHECK(to_unsigned_int(buffer[0]) == 0xF0);
+      CHECK(to_unsigned_int(buffer[1]) == 0x9D);
+      CHECK(to_unsigned_int(buffer[2]) == 0x84);
+      CHECK(to_unsigned_int(buffer[3]) == 0x9E);
+    }
   }
 }
 

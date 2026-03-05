@@ -51,7 +51,7 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
         conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT");
 
     // Then Target compression has correct type and all PUT results are correct
-    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
+    CHECK(extract_filename(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX)) == filename);
 
     if (comp == "DEFLATE") {
       CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
@@ -82,7 +82,7 @@ TEST_CASE("should upload compressed files with SOURCE_COMPRESSION set to explici
     auto stmt = conn.execute_fetch(put_sql);
 
     // Then Target compression has correct type and all PUT results are correct
-    CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
+    CHECK(extract_filename(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX)) == filename);
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
     compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), comp);
     compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), comp);
@@ -104,7 +104,7 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
                                  " SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE");
 
   // Then File is not compressed
-  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
+  CHECK(extract_filename(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX)) == filename);
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "NONE");
@@ -124,7 +124,7 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to NONE and AUTO
                                  " SOURCE_COMPRESSION=NONE AUTO_COMPRESS=FALSE");
 
   // Then File is not compressed
-  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
+  CHECK(extract_filename(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX)) == filename);
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "NONE");
@@ -145,7 +145,7 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to AUTO
                                  " SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=TRUE");
 
   // Then Target compression has GZIP type and all PUT results are correct
-  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
+  CHECK(extract_filename(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX)) == filename);
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
@@ -166,7 +166,7 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
                                  " SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE");
 
   // Then Target compression has GZIP type and all PUT results are correct
-  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
+  CHECK(extract_filename(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX)) == filename);
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_COMPRESSION_IDX), "NONE");
   compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");

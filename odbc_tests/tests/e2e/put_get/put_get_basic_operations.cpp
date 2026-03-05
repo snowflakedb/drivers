@@ -101,7 +101,7 @@ TEST_CASE("should return correct rowset for PUT", "[put_get]") {
   auto stmt = conn.execute_fetch(put_sql);
 
   // Then Rowset for PUT command should be correct
-  CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
+  CHECK(extract_filename(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX)) == filename);
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename + ".gz");
   CHECK(get_data<SQL_C_LONG>(stmt, PUT_ROW_SOURCE_SIZE_IDX) == 6);
 

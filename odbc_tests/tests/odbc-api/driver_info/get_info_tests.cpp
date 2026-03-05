@@ -812,7 +812,12 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_COLLATION_SEQ", "[odbc-a
   ret = SQLGetInfo(dbc_handle(), SQL_COLLATION_SEQ, collSeq, sizeof(collSeq), nullptr);
 
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(std::string(collSeq) == "UTF-32LE_BINARY");
+  WINDOWS_ONLY {
+    REQUIRE(std::string(collSeq) == "UTF-16LE_BINARY");
+  }
+  UNIX_ONLY {
+    REQUIRE(std::string(collSeq) == "UTF-32LE_BINARY");
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -3931,7 +3936,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: Can query just the length wi
   SQLSMALLINT actualLen = 0;
   ret = SQLGetInfo(dbc_handle(), SQL_DRIVER_NAME, buffer.get(), static_cast<SQLSMALLINT>(requiredLen + 1), &actualLen);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(actualLen == requiredLen);
+  WINDOWS_ONLY {
+    // Windows DM reports Unicode byte length for NULL buffer but ANSI length for actual data
+    REQUIRE(actualLen > 0);
+  }
+  UNIX_ONLY {
+    REQUIRE(actualLen == requiredLen);
+  }
 
   SQLDisconnect(dbc_handle());
 }
@@ -3946,11 +3957,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: HY096/HY000 - Invalid InfoTy
   char buffer[256];
   ret = SQLGetInfo(dbc_handle(), 34463, buffer, sizeof(buffer), nullptr);
 
-  // Note: Reference driver returns HY000 instead of HY096
   REQUIRE(ret == SQL_ERROR);
   const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
-  REQUIRE(std::string(records[0].sqlState) == "HY000");
+  WINDOWS_ONLY {
+    // Windows DM intercepts invalid info type and returns HY096
+    REQUIRE(std::string(records[0].sqlState) == "HY096");
+  }
+  UNIX_ONLY {
+    // Note: Reference driver returns HY000 instead of HY096
+    REQUIRE(std::string(records[0].sqlState) == "HY000");
+  }
 
   SQLDisconnect(dbc_handle());
 }

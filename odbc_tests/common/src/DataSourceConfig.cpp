@@ -24,7 +24,11 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   config.name_ = "Snowflake_" + unique_suffix;
   config.driver_config_ = DriverConfig::Default();
   config.parameters_["Description"] = "Snowflake Test DSN";
+#ifdef _WIN32
+  config.parameters_["Driver"] = DriverConfig::get_driver_path();
+#else
   config.parameters_["Driver"] = config.driver_config_.value()->name();
+#endif
   config.parameters_["Locale"] = "en-US";
   config.parameters_["SERVER"] = get_string(
       params, "SNOWFLAKE_TEST_HOST", get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "") + ".snowflakecomputing.com");

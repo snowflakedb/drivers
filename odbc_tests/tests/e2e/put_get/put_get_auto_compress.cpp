@@ -34,7 +34,7 @@ TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS
   std::string src = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_IDX);
   std::string tgt = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_IDX);
   std::string status = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_STATUS_IDX);
-  CHECK(src == filename);
+  CHECK(extract_filename(src) == filename);
   CHECK(tgt == compressed);
   CHECK(status == "UPLOADED");
 
@@ -73,7 +73,7 @@ TEST_CASE("should not compress the file before uploading to stage when AUTO_COMP
   std::string src = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_IDX);
   std::string tgt = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_IDX);
   std::string status = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_STATUS_IDX);
-  CHECK(src == filename);
+  CHECK(extract_filename(src) == filename);
   CHECK(tgt == filename);
   CHECK(status == "UPLOADED");
 
