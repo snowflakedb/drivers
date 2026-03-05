@@ -133,7 +133,9 @@ inline std::filesystem::path write_text_file(const std::filesystem::path& dir, c
 // on Linux it returns just the filename.
 inline std::string expected_put_source(const std::filesystem::path& file_path) {
 #ifdef _WIN32
-  return std::filesystem::absolute(file_path).string();
+  std::string s = std::filesystem::absolute(file_path).string();
+  std::replace(s.begin(), s.end(), '\\', '/');
+  return s;
 #else
   return file_path.filename().string();
 #endif
