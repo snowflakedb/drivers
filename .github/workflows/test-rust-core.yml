@@ -132,6 +132,23 @@ jobs:
           restore-keys: |
             windows-11-arm-cargo-
 
+      - name: Set up ARM64 SDK library paths
+        shell: pwsh
+        run: |
+          # The runner's VS environment defaults to x64 SDK libs even on ARM64.
+          # CMake (used by aws-lc-sys) picks up x64 libs via LIB and linking fails.
+          # Fix: point LIB to arm64 directories directly.
+          $vcTools = $env:VCToolsInstallDir
+          $sdkDir  = $env:WindowsSdkDir
+          $sdkVer  = $env:UCRTVersion
+          $lib = @(
+            "${vcTools}lib\arm64",
+            "${vcTools}ATLMFC\lib\arm64",
+            "${sdkDir}lib\${sdkVer}\ucrt\arm64",
+            "${sdkDir}lib\${sdkVer}\um\arm64"
+          ) -join ";"
+          echo "LIB=$lib" >> $env:GITHUB_ENV
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
