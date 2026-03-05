@@ -6,16 +6,19 @@
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers.hpp>
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "Schema.hpp"
-#include "get_data.hpp"
+#include "TestTable.hpp"
+#include "compatibility.hpp"
+#include "conversion_checks.hpp"
+#include "get_diag_rec.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
 
@@ -23,9 +26,10 @@
 /// Per ODBC spec, SQL_C_DEFAULT for SQL_DOUBLE resolves to SQL_C_DOUBLE.
 inline SQLDOUBLE get_data_default_as_double(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   SQLDOUBLE value = 0.0;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_DEFAULT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(indicator == sizeof(SQLDOUBLE));
   return value;
 }
 
@@ -87,23 +91,23 @@ TEST_CASE("REAL default conversion - extreme values near DBL_MAX", "[datatype][r
 
   SQLRETURN ret;
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  CHECK(ret == SQL_SUCCESS);
   CHECK(get_data_default_as_double(stmt, 1) == 1.7e308);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  CHECK(ret == SQL_SUCCESS);
   CHECK(get_data_default_as_double(stmt, 1) == 1.7976931348623151e308);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  CHECK(ret == SQL_SUCCESS);
   CHECK(get_data_default_as_double(stmt, 1) == -1.7976931348623151e308);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  CHECK(ret == SQL_SUCCESS);
   CHECK(get_data_default_as_double(stmt, 1) == -1.7e308);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  CHECK(ret == SQL_SUCCESS);
   CHECK(get_data_default_as_double(stmt, 1) == -1.7976931348623157e308);
 }
 
@@ -166,11 +170,11 @@ TEST_CASE("REAL SQL_C_DEFAULT matches explicit SQL_C_DOUBLE", "[datatype][real][
   // Fetch with SQL_C_DOUBLE explicitly
   auto stmt_explicit = conn.execute_fetch("SELECT * FROM test_real_default_vs_explicit");
   std::vector<double> explicit_results;
-  explicit_results.push_back(get_data<SQL_C_DOUBLE>(stmt_explicit, 1));
+  explicit_results.push_back(check_no_truncation<SQL_C_DOUBLE>(stmt_explicit, 1));
   for (int i = 1; i < 5; ++i) {
     SQLRETURN ret = SQLFetch(stmt_explicit.getHandle());
-    CHECK_ODBC(ret, stmt_explicit);
-    explicit_results.push_back(get_data<SQL_C_DOUBLE>(stmt_explicit, 1));
+    CHECK(ret == SQL_SUCCESS);
+    explicit_results.push_back(check_no_truncation<SQL_C_DOUBLE>(stmt_explicit, 1));
   }
 
   // Fetch with SQL_C_DEFAULT
@@ -179,7 +183,7 @@ TEST_CASE("REAL SQL_C_DEFAULT matches explicit SQL_C_DOUBLE", "[datatype][real][
   default_results.push_back(get_data_default_as_double(stmt_default, 1));
   for (int i = 1; i < 5; ++i) {
     SQLRETURN ret = SQLFetch(stmt_default.getHandle());
-    CHECK_ODBC(ret, stmt_default);
+    CHECK(ret == SQL_SUCCESS);
     default_results.push_back(get_data_default_as_double(stmt_default, 1));
   }
 
@@ -200,7 +204,7 @@ TEST_CASE("REAL explicit SQL_C_DOUBLE", "[datatype][real]") {
 
   auto stmt = conn.execute_fetch("SELECT 123.456::FLOAT");
 
-  double val = get_data<SQL_C_DOUBLE>(stmt, 1);
+  double val = check_no_truncation<SQL_C_DOUBLE>(stmt, 1);
   CHECK(std::abs(val - 123.456) < 1e-9);
 }
 
@@ -210,7 +214,7 @@ TEST_CASE("REAL explicit SQL_C_FLOAT", "[datatype][real]") {
 
   auto stmt = conn.execute_fetch("SELECT 123.5::FLOAT");
 
-  float val = get_data<SQL_C_FLOAT>(stmt, 1);
+  float val = check_no_truncation<SQL_C_FLOAT>(stmt, 1);
   CHECK(std::abs(val - 123.5f) < 0.01f);
 }
 
@@ -220,12 +224,10 @@ TEST_CASE("REAL explicit SQL_C_CHAR", "[datatype][real]") {
 
   auto stmt = conn.execute_fetch("SELECT 123.456::FLOAT, -99.5::FLOAT, 0::FLOAT");
 
-  std::string s1 = get_data<SQL_C_CHAR>(stmt, 1);
-  std::string s2 = get_data<SQL_C_CHAR>(stmt, 2);
-  std::string s3 = get_data<SQL_C_CHAR>(stmt, 3);
+  std::string s1 = check_char_success(stmt, 1);
+  std::string s2 = check_char_success(stmt, 2);
+  std::string s3 = check_char_success(stmt, 3);
 
-  // Verify the string representations contain the expected value.
-  // Exact format may vary but must parse back to the same double.
   CHECK(std::stod(s1) == 123.456);
   CHECK(std::stod(s2) == -99.5);
   CHECK(std::stod(s3) == 0.0);
@@ -235,45 +237,46 @@ TEST_CASE("REAL explicit integer conversions truncate fractional part", "[dataty
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  auto stmt = conn.execute_fetch("SELECT 123.789::FLOAT");
+  const std::string query = "SELECT 123.789::FLOAT";
 
-  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SLONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SHORT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SSHORT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_USHORT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_STINYINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_UTINYINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_UBIGINT>(stmt, 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_LONG>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_SLONG>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_ULONG>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_SHORT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_SSHORT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_USHORT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_TINYINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_STINYINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_UTINYINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_SBIGINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(check_fractional_truncation<SQL_C_UBIGINT>(conn.execute_fetch(query), 1) == 123);
 }
 
 TEST_CASE("REAL explicit integer conversions - negative value", "[datatype][real]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  auto stmt = conn.execute_fetch("SELECT -42.9::FLOAT");
+  const std::string query = "SELECT -42.9::FLOAT";
 
-  CHECK(get_data<SQL_C_LONG>(stmt, 1) == -42);
-  CHECK(get_data<SQL_C_SLONG>(stmt, 1) == -42);
-  CHECK(get_data<SQL_C_SHORT>(stmt, 1) == -42);
-  CHECK(get_data<SQL_C_SSHORT>(stmt, 1) == -42);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 1) == -42);
-  CHECK(get_data<SQL_C_STINYINT>(stmt, 1) == -42);
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -42);
+  CHECK(check_fractional_truncation<SQL_C_LONG>(conn.execute_fetch(query), 1) == -42);
+  CHECK(check_fractional_truncation<SQL_C_SLONG>(conn.execute_fetch(query), 1) == -42);
+  CHECK(check_fractional_truncation<SQL_C_SHORT>(conn.execute_fetch(query), 1) == -42);
+  CHECK(check_fractional_truncation<SQL_C_SSHORT>(conn.execute_fetch(query), 1) == -42);
+  CHECK(check_fractional_truncation<SQL_C_TINYINT>(conn.execute_fetch(query), 1) == -42);
+  CHECK(check_fractional_truncation<SQL_C_STINYINT>(conn.execute_fetch(query), 1) == -42);
+  CHECK(check_fractional_truncation<SQL_C_SBIGINT>(conn.execute_fetch(query), 1) == -42);
 }
 
-TEST_CASE("REAL explicit SQL_C_BIT", "[datatype][real]") {
+TEST_CASE("REAL explicit SQL_C_BIT - basic", "[datatype][real]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  auto stmt = conn.execute_fetch("SELECT 5.5::FLOAT, 0::FLOAT, -1.5::FLOAT");
-
-  CHECK(get_data<SQL_C_BIT>(stmt, 1) == 1);
-  CHECK(get_data<SQL_C_BIT>(stmt, 2) == 0);
-  CHECK(get_data<SQL_C_BIT>(stmt, 3) == 1);
+  CHECK(check_no_truncation<SQL_C_BIT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0);
+  CHECK(check_no_truncation<SQL_C_BIT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1);
+  CHECK(check_fractional_truncation<SQL_C_BIT>(conn.execute_fetch("SELECT 0.5::FLOAT"), 1) == 0);
+  CHECK(check_fractional_truncation<SQL_C_BIT>(conn.execute_fetch("SELECT 1.5::FLOAT"), 1) == 1);
+  check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT 5.5::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT -1.5::FLOAT"), 1);
 }
 
 TEST_CASE("REAL explicit SQL_C_SBIGINT with large values", "[datatype][real]") {
@@ -283,8 +286,7 @@ TEST_CASE("REAL explicit SQL_C_SBIGINT with large values", "[datatype][real]") {
   auto stmt = conn.execute_fetch("SELECT 9007199254740992::FLOAT");
 
   // 2^53 = 9007199254740992: largest integer exactly representable as f64
-  SQLBIGINT val = get_data<SQL_C_SBIGINT>(stmt, 1);
-  CHECK(val == 9007199254740992LL);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 9007199254740992LL);
 }
 
 // ============================================================================
@@ -308,7 +310,7 @@ TEST_CASE("REAL default conversion - multiple rows", "[datatype][real][default]"
   CHECK(get_data_default_as_double(stmt, 1) == expected[0]);
   for (size_t i = 1; i < expected.size(); ++i) {
     SQLRETURN ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    CHECK(ret == SQL_SUCCESS);
     INFO("Row " << i);
     CHECK(get_data_default_as_double(stmt, 1) == expected[i]);
   }
@@ -322,10 +324,8 @@ TEST_CASE("REAL precision - Snowflake FLOAT has ~15 significant digits", "[datat
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // 15 significant digits should round-trip exactly
   auto stmt = conn.execute_fetch("SELECT 1.23456789012345::FLOAT");
-  double val = get_data<SQL_C_DOUBLE>(stmt, 1);
-  // Check at least 14 digits match (allow for last-digit rounding)
+  double val = check_no_truncation<SQL_C_DOUBLE>(stmt, 1);
   CHECK(std::abs(val - 1.23456789012345) < 1e-13);
 }
 
@@ -352,4 +352,362 @@ TEST_CASE("REAL zero is exactly zero", "[datatype][real][default]") {
 
   double val = get_data_default_as_double(stmt, 1);
   CHECK(val == 0.0);
+}
+
+// ============================================================================
+// ODBC Spec: SQLSTATE 01S07 — Fractional truncation warning
+// Converting a FLOAT value with fractional digits to an integer C type
+// should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07.
+// ============================================================================
+
+TEST_CASE("REAL fractional truncation returns 01S07", "[datatype][real][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("SQL_C_LONG") {
+    auto stmt = conn.execute_fetch("SELECT 123.45::FLOAT");
+    auto value = check_fractional_truncation<SQL_C_LONG>(stmt, 1);
+    CHECK(value == 123);
+  }
+
+  SECTION("SQL_C_SHORT") {
+    auto stmt = conn.execute_fetch("SELECT 9.99::FLOAT");
+    auto value = check_fractional_truncation<SQL_C_SHORT>(stmt, 1);
+    CHECK(value == 9);
+  }
+
+  SECTION("SQL_C_STINYINT") {
+    auto stmt = conn.execute_fetch("SELECT 1.5::FLOAT");
+    auto value = check_fractional_truncation<SQL_C_STINYINT>(stmt, 1);
+    CHECK(value == 1);
+  }
+
+  SECTION("SQL_C_SBIGINT") {
+    auto stmt = conn.execute_fetch("SELECT 999.001::FLOAT");
+    auto value = check_fractional_truncation<SQL_C_SBIGINT>(stmt, 1);
+    CHECK(value == 999);
+  }
+
+  SECTION("exact integer does NOT produce 01S07") {
+    auto stmt = conn.execute_fetch("SELECT 100.0::FLOAT");
+    auto value = check_no_truncation<SQL_C_LONG>(stmt, 1);
+    CHECK(value == 100);
+  }
+
+  SECTION("negative fractional truncates toward zero") {
+    auto stmt = conn.execute_fetch("SELECT -42.9::FLOAT");
+    auto value = check_fractional_truncation<SQL_C_LONG>(stmt, 1);
+    CHECK(value == -42);
+  }
+}
+
+// ============================================================================
+// ODBC Spec: SQLSTATE 22003 — Numeric value out of range (integer overflow)
+// When a FLOAT value exceeds the target integer C type range, the driver
+// should return SQL_ERROR with SQLSTATE 22003.
+// ============================================================================
+
+TEST_CASE("REAL overflow returns 22003", "[datatype][real][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("SQL_C_STINYINT - above i8 max") {
+    auto stmt = conn.execute_fetch("SELECT 128.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_STINYINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_STINYINT - below i8 min") {
+    auto stmt = conn.execute_fetch("SELECT -129.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_STINYINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_UTINYINT - negative") {
+    auto stmt = conn.execute_fetch("SELECT -1.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_UTINYINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_UTINYINT - above u8 max") {
+    auto stmt = conn.execute_fetch("SELECT 256.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_UTINYINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_SHORT - above i16 max") {
+    auto stmt = conn.execute_fetch("SELECT 32768.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_SHORT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_USHORT - negative") {
+    auto stmt = conn.execute_fetch("SELECT -1.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_USHORT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_LONG - above i32 max") {
+    auto stmt = conn.execute_fetch("SELECT 2147483648.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_LONG>(stmt, 1);
+  }
+
+  SECTION("SQL_C_ULONG - negative") {
+    auto stmt = conn.execute_fetch("SELECT -1.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_ULONG>(stmt, 1);
+  }
+}
+
+// ============================================================================
+// ODBC Spec: SQL_C_BIT — full spec-compliant behavior for FLOAT source
+// Per ODBC spec for SQL_C_BIT:
+//   Exact 0 or 1                    -> SQL_SUCCESS
+//   Value > 0, < 2, != 1 (fraction) -> SQL_SUCCESS_WITH_INFO, 01S07
+//   Value < 0 or >= 2               -> SQL_ERROR, 22003
+// ============================================================================
+
+TEST_CASE("REAL SQL_C_BIT spec compliance", "[datatype][real][bit]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("0.0 and 1.0 succeed") {
+    auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT, 1.0::FLOAT");
+    CHECK(check_no_truncation<SQL_C_BIT>(stmt, 1) == 0);
+    CHECK(check_no_truncation<SQL_C_BIT>(stmt, 2) == 1);
+  }
+
+  SECTION("value 2 returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT 2.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_BIT>(stmt, 1);
+  }
+
+  SECTION("negative value returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT -1.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_BIT>(stmt, 1);
+  }
+
+  SECTION("fractional 0.5 truncates to 0 with 01S07") {
+    auto stmt = conn.execute_fetch("SELECT 0.5::FLOAT");
+    auto value = check_fractional_truncation<SQL_C_BIT>(stmt, 1);
+    CHECK(value == 0);
+  }
+
+  SECTION("fractional 1.5 truncates to 1 with 01S07") {
+    auto stmt = conn.execute_fetch("SELECT 1.5::FLOAT");
+    auto value = check_fractional_truncation<SQL_C_BIT>(stmt, 1);
+    CHECK(value == 1);
+  }
+
+  SECTION("large positive value returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT 100.0::FLOAT");
+    check_numeric_out_of_range<SQL_C_BIT>(stmt, 1);
+  }
+}
+
+// ============================================================================
+// NULL handling for REAL/FLOAT columns
+// ============================================================================
+
+TEST_CASE("REAL NULL handling", "[datatype][real][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("SQL_C_DOUBLE returns SQL_NULL_DATA") {
+    auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
+    check_null_via_get_data(stmt, 1, SQL_C_DOUBLE);
+  }
+
+  SECTION("SQL_C_FLOAT returns SQL_NULL_DATA") {
+    auto stmt = conn.execute_fetch("SELECT NULL::DOUBLE");
+    check_null_via_get_data(stmt, 1, SQL_C_FLOAT);
+  }
+
+  SECTION("SQL_C_LONG returns SQL_NULL_DATA") {
+    auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
+    check_null_via_get_data(stmt, 1, SQL_C_LONG);
+  }
+
+  SECTION("SQL_C_CHAR returns SQL_NULL_DATA") {
+    auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
+    check_null_via_get_data(stmt, 1, SQL_C_CHAR);
+  }
+
+  SECTION("SQL_C_DEFAULT returns SQL_NULL_DATA") {
+    auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
+    check_null_via_get_data(stmt, 1, SQL_C_DEFAULT);
+  }
+
+  SECTION("SQL_C_BIT returns SQL_NULL_DATA") {
+    auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
+    check_null_via_get_data(stmt, 1, SQL_C_BIT);
+  }
+
+  SECTION("SQL_C_SBIGINT returns SQL_NULL_DATA") {
+    auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
+    check_null_via_get_data(stmt, 1, SQL_C_SBIGINT);
+  }
+}
+
+TEST_CASE("REAL NULL mixed with non-NULL in multiple rows", "[datatype][real][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  TestTable table(conn, "test_real_null", "val FLOAT", "(1.5), (NULL), (-2.75), (NULL), (0.0)");
+
+  auto stmt = conn.execute_fetch("SELECT * FROM " + table.name());
+
+  std::vector<std::optional<double>> expected = {1.5, std::nullopt, -2.75, std::nullopt, 0.0};
+  SQLDOUBLE value = 0;
+  SQLLEN indicator = 0;
+
+  for (size_t row = 0; row < expected.size(); ++row) {
+    if (row > 0) {
+      SQLRETURN ret = SQLFetch(stmt.getHandle());
+      CHECK(ret == SQL_SUCCESS);
+    }
+    INFO("Row " << row);
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &value, sizeof(value), &indicator);
+    CHECK(ret == SQL_SUCCESS);
+    if (expected[row].has_value()) {
+      CHECK(indicator != SQL_NULL_DATA);
+      CHECK(value == expected[row].value());
+    } else {
+      CHECK(indicator == SQL_NULL_DATA);
+    }
+  }
+}
+
+TEST_CASE("REAL SQLGetData NULL without indicator returns 22002", "[datatype][real][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
+
+  SQLDOUBLE value = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &value, sizeof(value), nullptr);
+  CHECK(ret == SQL_ERROR);
+  CHECK(get_sqlstate(stmt) == "22002");
+}
+
+// ============================================================================
+// SQL_C_WCHAR (wide character) conversion for REAL
+// ============================================================================
+
+TEST_CASE("REAL to SQL_C_WCHAR", "[datatype][real][wchar]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("basic values") {
+    auto stmt = conn.execute_fetch("SELECT 123.456::FLOAT, -99.5::FLOAT, 0.0::FLOAT");
+    auto s1 = check_wchar_success(stmt, 1);
+    auto s2 = check_wchar_success(stmt, 2);
+    auto s3 = check_wchar_success(stmt, 3);
+
+    CHECK(!s1.empty());
+    CHECK(!s2.empty());
+    CHECK(!s3.empty());
+  }
+
+  SECTION("matches SQL_C_CHAR") {
+    const std::string query = "SELECT 3.125::FLOAT";
+    auto char_str = check_char_success(conn.execute_fetch(query), 1);
+    auto wchar_str = check_wchar_success(conn.execute_fetch(query), 1);
+    std::u16string expected_wchar(char_str.begin(), char_str.end());
+    CHECK(wchar_str == expected_wchar);
+  }
+}
+
+// ============================================================================
+// Unsigned integer conversions from FLOAT
+// ============================================================================
+
+TEST_CASE("REAL explicit unsigned integer conversions", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  const std::string q_exact = "SELECT 42.0::FLOAT";
+  const std::string q_frac = "SELECT 42.9::FLOAT";
+  const std::string q_zero = "SELECT 0.0::FLOAT";
+
+  SECTION("positive value to unsigned types") {
+    CHECK(check_no_truncation<SQL_C_ULONG>(conn.execute_fetch(q_exact), 1) == 42u);
+    CHECK(check_no_truncation<SQL_C_USHORT>(conn.execute_fetch(q_exact), 1) == 42u);
+    CHECK(check_no_truncation<SQL_C_UTINYINT>(conn.execute_fetch(q_exact), 1) == 42u);
+    CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch(q_exact), 1) == 42u);
+  }
+
+  SECTION("fractional value to unsigned types truncates with 01S07") {
+    CHECK(check_fractional_truncation<SQL_C_ULONG>(conn.execute_fetch(q_frac), 1) == 42u);
+    CHECK(check_fractional_truncation<SQL_C_USHORT>(conn.execute_fetch(q_frac), 1) == 42u);
+    CHECK(check_fractional_truncation<SQL_C_UTINYINT>(conn.execute_fetch(q_frac), 1) == 42u);
+    CHECK(check_fractional_truncation<SQL_C_UBIGINT>(conn.execute_fetch(q_frac), 1) == 42u);
+  }
+
+  SECTION("zero to unsigned types") {
+    CHECK(check_no_truncation<SQL_C_ULONG>(conn.execute_fetch(q_zero), 1) == 0u);
+    CHECK(check_no_truncation<SQL_C_USHORT>(conn.execute_fetch(q_zero), 1) == 0u);
+    CHECK(check_no_truncation<SQL_C_UTINYINT>(conn.execute_fetch(q_zero), 1) == 0u);
+    CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch(q_zero), 1) == 0u);
+  }
+}
+
+// ============================================================================
+// SQL_C_CHAR buffer truncation for REAL
+// ============================================================================
+
+TEST_CASE("REAL SQL_C_CHAR buffer handling", "[datatype][real][char][buffer]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("large buffer succeeds") {
+    auto stmt = conn.execute_fetch("SELECT 42.5::FLOAT");
+
+    char buffer[100];
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+    CHECK(ret == SQL_SUCCESS);
+    CHECK(indicator > 0);
+    CHECK(std::stod(std::string(buffer, indicator)) == 42.5);
+  }
+
+  SECTION("small buffer truncates") {
+    SKIP_OLD_DRIVER("BD#11", "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small buffer");
+
+    auto stmt = conn.execute_fetch("SELECT 123456.789::FLOAT");
+
+    char small_buffer[4];
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
+
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  }
+}
+
+// ============================================================================
+// Table-based tests with FLOAT column types
+// ============================================================================
+
+TEST_CASE("REAL table column conversions", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  TestTable table(conn, "test_real_conversions", "f FLOAT, d DOUBLE, r REAL", "(1.5, -2.75, 100.0)");
+
+  SECTION("SQL_C_DOUBLE from all column types") {
+    auto stmt = conn.execute_fetch("SELECT * FROM " + table.name());
+    CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 1) == 1.5);
+    CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 2) == -2.75);
+    CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 3) == 100.0);
+  }
+
+  SECTION("SQL_C_LONG truncates fractional with 01S07") {
+    auto stmt = conn.execute_fetch("SELECT * FROM " + table.name());
+    CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 1) == 1);
+    CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 2) == -2);
+    CHECK(check_no_truncation<SQL_C_LONG>(stmt, 3) == 100);
+  }
+
+  SECTION("SQL_C_CHAR returns string representation") {
+    auto stmt = conn.execute_fetch("SELECT * FROM " + table.name());
+    std::string s1 = check_char_success(stmt, 1);
+    std::string s2 = check_char_success(stmt, 2);
+    std::string s3 = check_char_success(stmt, 3);
+    CHECK(std::stod(s1) == 1.5);
+    CHECK(std::stod(s2) == -2.75);
+    CHECK(std::stod(s3) == 100.0);
+  }
 }

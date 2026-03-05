@@ -4,6 +4,7 @@ mod tests {
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
     use crate::conversion::traits::Binding;
+    use crate::conversion::warning::Warning;
     use odbc_sys as sql;
 
     fn binding_for_value<T>(
@@ -36,9 +37,28 @@ mod tests {
         }
     }
 
+    fn binding_for_wchar_buffer(
+        target_type: CDataType,
+        buffer: &mut [u16],
+        str_len: &mut sql::Len,
+    ) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: (buffer.len() * 2) as sql::Len,
+            str_len_or_ind_ptr: str_len as *mut sql::Len,
+            precision: None,
+            scale: None,
+        }
+    }
+
     fn make_real() -> SnowflakeReal {
         SnowflakeReal
     }
+
+    // ======================================================================
+    // Default (SQL_C_DOUBLE) tests
+    // ======================================================================
 
     #[test]
     fn real_default_writes_positive_f64() {
@@ -103,7 +123,7 @@ mod tests {
     }
 
     // ======================================================================
-    // Explicit C types
+    // Explicit C types — basic
     // ======================================================================
 
     #[test]
@@ -125,9 +145,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = binding_for_value(CDataType::SLong, &mut value, &mut str_len);
 
-        sr.write_odbc_type(42.7, &binding, &mut None).unwrap();
+        let warnings = sr.write_odbc_type(42.7, &binding, &mut None).unwrap();
 
         assert_eq!(value, 42);
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
     }
 
     #[test]
@@ -137,10 +158,12 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = binding_for_value(CDataType::SBigInt, &mut value, &mut str_len);
 
-        sr.write_odbc_type(123456789.9, &binding, &mut None)
+        let warnings = sr
+            .write_odbc_type(123456789.9, &binding, &mut None)
             .unwrap();
 
         assert_eq!(value, 123456789i64);
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
     }
 
     #[test]
@@ -150,9 +173,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = binding_for_value(CDataType::SShort, &mut value, &mut str_len);
 
-        sr.write_odbc_type(100.9, &binding, &mut None).unwrap();
+        let warnings = sr.write_odbc_type(100.9, &binding, &mut None).unwrap();
 
         assert_eq!(value, 100);
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
     }
 
     #[test]
@@ -162,34 +186,143 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = binding_for_value(CDataType::STinyInt, &mut value, &mut str_len);
 
-        sr.write_odbc_type(42.9, &binding, &mut None).unwrap();
+        let warnings = sr.write_odbc_type(42.9, &binding, &mut None).unwrap();
 
         assert_eq!(value, 42);
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+    }
+
+    // ======================================================================
+    // Exact integer values — no truncation warning
+    // ======================================================================
+
+    #[test]
+    fn real_exact_integer_no_warning() {
+        let sr = make_real();
+        let mut value: i32 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::SLong, &mut value, &mut str_len);
+
+        let warnings = sr.write_odbc_type(42.0, &binding, &mut None).unwrap();
+
+        assert_eq!(value, 42);
+        assert!(warnings.is_empty());
+    }
+
+    // ======================================================================
+    // SQL_C_BIT — full spec compliance
+    // ======================================================================
+
+    #[test]
+    fn real_explicit_bit_zero_succeeds() {
+        let sr = make_real();
+        let mut value: u8 = 99;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
+
+        let warnings = sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
+
+        assert_eq!(value, 0);
+        assert!(warnings.is_empty());
     }
 
     #[test]
-    fn real_explicit_bit_writes_one_for_nonzero() {
+    fn real_explicit_bit_one_succeeds() {
         let sr = make_real();
         let mut value: u8 = 0;
         let mut str_len: sql::Len = 0;
         let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
 
-        sr.write_odbc_type(5.5, &binding, &mut None).unwrap();
+        let warnings = sr.write_odbc_type(1.0, &binding, &mut None).unwrap();
 
         assert_eq!(value, 1);
+        assert!(warnings.is_empty());
     }
 
     #[test]
-    fn real_explicit_bit_writes_zero_for_zero() {
+    fn real_explicit_bit_fractional_truncates() {
         let sr = make_real();
-        let mut value: u8 = 1;
+        let mut value: u8 = 99;
         let mut str_len: sql::Len = 0;
         let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
 
-        sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
+        let warnings = sr.write_odbc_type(0.5, &binding, &mut None).unwrap();
 
         assert_eq!(value, 0);
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
     }
+
+    #[test]
+    fn real_explicit_bit_above_range_errors() {
+        let sr = make_real();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(5.5, &binding, &mut None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn real_explicit_bit_negative_errors() {
+        let sr = make_real();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(-1.5, &binding, &mut None);
+        assert!(result.is_err());
+    }
+
+    // ======================================================================
+    // Overflow errors (22003)
+    // ======================================================================
+
+    #[test]
+    fn real_overflow_stinyint() {
+        let sr = make_real();
+        let mut value: i8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::STinyInt, &mut value, &mut str_len);
+
+        assert!(sr.write_odbc_type(128.0, &binding, &mut None).is_err());
+        assert!(sr.write_odbc_type(-129.0, &binding, &mut None).is_err());
+    }
+
+    #[test]
+    fn real_overflow_utinyint_negative() {
+        let sr = make_real();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::UTinyInt, &mut value, &mut str_len);
+
+        assert!(sr.write_odbc_type(-1.0, &binding, &mut None).is_err());
+        assert!(sr.write_odbc_type(256.0, &binding, &mut None).is_err());
+    }
+
+    #[test]
+    fn real_overflow_sshort() {
+        let sr = make_real();
+        let mut value: i16 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::SShort, &mut value, &mut str_len);
+
+        assert!(sr.write_odbc_type(32768.0, &binding, &mut None).is_err());
+    }
+
+    #[test]
+    fn real_overflow_ulong_negative() {
+        let sr = make_real();
+        let mut value: u32 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::ULong, &mut value, &mut str_len);
+
+        assert!(sr.write_odbc_type(-1.0, &binding, &mut None).is_err());
+    }
+
+    // ======================================================================
+    // SQL_C_CHAR
+    // ======================================================================
 
     #[test]
     fn real_explicit_char_writes_string() {
@@ -235,6 +368,31 @@ mod tests {
         assert_eq!(&buffer[..expected.len()], expected);
         assert_eq!(buffer[expected.len()], 0);
     }
+
+    // ======================================================================
+    // SQL_C_WCHAR
+    // ======================================================================
+
+    #[test]
+    fn real_explicit_wchar_writes_string() {
+        let sr = make_real();
+        let mut buffer = vec![0u16; 32];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_wchar_buffer(CDataType::WChar, &mut buffer, &mut str_len);
+
+        sr.write_odbc_type(3.125, &binding, &mut None).unwrap();
+
+        let expected: Vec<u16> = "3.125".encode_utf16().collect();
+        assert_eq!(
+            str_len,
+            (expected.len() * std::mem::size_of::<u16>()) as sql::Len
+        );
+        assert_eq!(&buffer[..expected.len()], &expected[..]);
+    }
+
+    // ======================================================================
+    // Unsupported type
+    // ======================================================================
 
     #[test]
     fn real_unsupported_type_returns_error() {

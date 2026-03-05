@@ -1532,7 +1532,7 @@ mod tests {
 
         #[test]
         fn reads_float64_as_bit() {
-            let array = Float64Array::from(vec![5.5]);
+            let array = Float64Array::from(vec![1.0]);
             let field = field_with_real_meta();
             let mut value: u8 = 0;
 
@@ -1545,6 +1545,25 @@ mod tests {
 
             assert!(result.is_ok());
             assert_eq!(value, 1);
+        }
+
+        #[test]
+        fn reads_float64_as_bit_out_of_range() {
+            let array = Float64Array::from(vec![5.5]);
+            let field = field_with_real_meta();
+            let mut value: u8 = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Bit,
+                target_value_ptr: &mut value as *mut u8 as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_err());
         }
 
         #[test]
