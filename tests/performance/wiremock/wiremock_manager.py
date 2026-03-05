@@ -226,7 +226,6 @@ class WiremockManager:
         self.container = container
         
         self.container.start()
-        logger.info("WireMock container started with memory configuration")
         
         try:
             self._wait_for_wiremock()
@@ -436,7 +435,7 @@ class WiremockManager:
                 raise RuntimeError(f"Failed to read CA cert from container (exit {exit_code})")
             
             target_path.write_bytes(output)
-            logger.info(f"✓ Exported WireMock CA cert to {target_path}")
+            logger.debug(f"Exported WireMock CA cert to {target_path}")
             return target_path
         except Exception as e:
             logger.error(f"Failed to export WireMock CA cert: {e}")
@@ -459,12 +458,39 @@ class WiremockManager:
         except Exception as e:
             logger.debug(f"Could not verify JVM config: {e}")
     
+    def flush_stats(self):
+        """
+        Trigger the ResponseTimeExtension to write collected metrics to disk.
+        """
+        if not self.port:
+            logger.warning("Cannot flush stats — WireMock not running")
+            return
+
+        flush_mapping = {
+            "request": {
+                "method": "GET",
+                "urlPath": "/__perf/flush-stats",
+            },
+            "response": {
+                "status": 200,
+                "body": "flushed",
+            },
+            "priority": 1,
+            "persistent": False,
+        }
+        base = f"http://{self.host}:{self.port}"
+        requests.post(f"{base}/__admin/mappings", json=flush_mapping).raise_for_status()
+        requests.get(f"{base}/__perf/flush-stats", timeout=10).raise_for_status()
+        time.sleep(0.5)
+
     def get_request_metrics(self) -> dict:
         """
         Retrieve request metrics from WireMock custom extension.
         
-        Uses lightweight ResponseTimeExtension which tracks only timing data
-        (not full request/response bodies). Reads stats from file written by extension.
+        Triggers a stats flush first (via ``flush_stats``), then reads the
+        resulting JSON file from the volume-mounted mappings directory.
+        
+        Must be called while the WireMock container is still running.
         
         Returns:
             Dictionary containing response time statistics:
@@ -472,23 +498,14 @@ class WiremockManager:
             - response_times: List of individual response times in milliseconds
             - metrics_enabled: Always True (metrics always collected)
         """
+        self.flush_stats()
+
         suffix = f"-{self.driver_label}" if getattr(self, "driver_label", None) else ""
         stats_file = self.mappings_dir / f"response-time-stats{suffix}.json"
         
-        max_wait = 10  # seconds
-        wait_interval = 0.5
-        waited = 0
-        
-        while not stats_file.exists() and waited < max_wait:
-            time.sleep(wait_interval)
-            waited += wait_interval
-        
         if not stats_file.exists():
-            logger.warning(f"Stats file not created after {max_wait}s: {stats_file}")
+            logger.warning(f"Stats file not found after flush: {stats_file}")
             return {"total_requests": 0, "response_times": [], "metrics_enabled": True}
-        
-        # Time for flush of the final write
-        time.sleep(1)
         
         try:
             with open(stats_file, 'r') as f:

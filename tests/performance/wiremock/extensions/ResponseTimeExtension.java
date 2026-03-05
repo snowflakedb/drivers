@@ -8,19 +8,27 @@ import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.List;
 import java.util.ArrayList;
-import java.util.Map;
-import java.util.HashMap;
+import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 
 /**
  * Lightweight WireMock extension that tracks only response times.
  * All calculations (avg, percentiles, etc.) are done in Python.
+ *
+ * No file I/O happens per-request for maximum replay performance.
+ * Python triggers a single flush by sending a request to the
+ * {@value #FLUSH_PATH} stub after the test run finishes;
+ * {@link #afterComplete} detects it and calls {@link #writeStatsToFile()}.
  */
 public class ResponseTimeExtension implements ServeEventListener, Extension {
     private static final ConcurrentLinkedQueue<Long> responseTimes = new ConcurrentLinkedQueue<>();
     /** Maximum acceptable response time (5 minutes). Responses exceeding this are discarded as outliers. */
     private static final long MAX_RESPONSE_TIME_MS = 300_000;
+
+    static final String FLUSH_PATH = "/__perf/flush-stats";
 
     private static final String STATS_FILE;
     static {
@@ -30,10 +38,6 @@ public class ResponseTimeExtension implements ServeEventListener, Extension {
             : "/wiremock/response-time-stats-" + suffix + ".json";
     }
     
-    public ResponseTimeExtension() {
-        // Extension initialized
-    }
-    
     @Override
     public String getName() {
         return "response-time-tracker";
@@ -41,87 +45,67 @@ public class ResponseTimeExtension implements ServeEventListener, Extension {
     
     @Override
     public void beforeMatch(ServeEvent serveEvent, Parameters parameters) {
-        // Not needed for response time tracking
     }
     
     @Override
     public void afterMatch(ServeEvent serveEvent, Parameters parameters) {
-        // Not needed for response time tracking  
     }
     
     @Override
     public void beforeResponseSent(ServeEvent serveEvent, Parameters parameters) {
-        // Not needed for response time tracking
     }
     
     @Override
     public void afterComplete(ServeEvent serveEvent, Parameters parameters) {
-        long responseTime = 0;
-        
+        String url = serveEvent.getRequest().getUrl();
+        if (url != null && url.startsWith(FLUSH_PATH)) {
+            writeStatsToFile();
+            return;
+        }
+
+        long responseTime;
         try {
-            // Calculate actual response time from request timestamp
             long requestTime = serveEvent.getRequest().getLoggedDate().getTime();
-            long currentTime = System.currentTimeMillis();
-            responseTime = currentTime - requestTime;
+            responseTime = System.currentTimeMillis() - requestTime;
         } catch (Exception e) {
-            // Silently skip requests with timing errors
             return;
         }
-        
-        // Validate response time
-        if (responseTime < 0) {
-            return; // Skip negative times
-        }
-        
-        if (responseTime == 0) {
-            // This happens when request timestamp equals current time (same millisecond)
-            // Use 1ms as minimum to avoid division by zero and indicate request was processed
-            responseTime = 1;
-        }
-        
-        if (responseTime > MAX_RESPONSE_TIME_MS) {
+
+        if (responseTime < 0 || responseTime > MAX_RESPONSE_TIME_MS) {
             return;
         }
-        
-        responseTimes.add(responseTime);
-        writeStatsToFile();
+
+        responseTimes.add(Math.max(responseTime, 1));
     }
     
     /**
-     * Get all response times (calculations done in Python)
+     * Write statistics to file atomically (temp file + rename) to avoid partial reads.
+     * Triggered by a request to {@value #FLUSH_PATH} or from {@link #reset()}.
      */
-    public static Map<String, Object> getStats() {
-        Map<String, Object> stats = new HashMap<>();
-        
-        List<Long> times = new ArrayList<>(responseTimes);
-        stats.put("response_times", times);
-        stats.put("total_requests", times.size());
-        
-        return stats;
-    }
-    
-    /**
-     * Write statistics to file for external access
-     */
-    private static void writeStatsToFile() {
-        try (FileWriter writer = new FileWriter(STATS_FILE)) {
-            Map<String, Object> stats = getStats();
-            // Simple JSON writing (no external dependencies)
+    static synchronized void writeStatsToFile() {
+        File target = new File(STATS_FILE);
+        File tmp = new File(STATS_FILE + ".tmp");
+        try (FileWriter writer = new FileWriter(tmp)) {
+            List<Long> times = new ArrayList<>(responseTimes);
             writer.write("{\n");
-            writer.write("  \"total_requests\": " + stats.get("total_requests") + ",\n");
+            writer.write("  \"total_requests\": " + times.size() + ",\n");
             writer.write("  \"response_times\": [");
-            
-            @SuppressWarnings("unchecked")
-            List<Long> times = (List<Long>) stats.get("response_times");
+
             for (int i = 0; i < times.size(); i++) {
                 if (i > 0) writer.write(", ");
                 writer.write(times.get(i).toString());
             }
-            
+
             writer.write("]\n}\n");
             writer.flush();
         } catch (IOException e) {
             System.err.println("ResponseTimeExtension: Error writing stats file to " + STATS_FILE + ": " + e.getMessage());
+            return;
+        }
+        try {
+            Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            System.err.println("ResponseTimeExtension: Error renaming tmp stats file: " + e.getMessage());
         }
     }
     

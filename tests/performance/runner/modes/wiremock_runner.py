@@ -180,14 +180,13 @@ def run_wiremock_performance_test(
                 wiremock_manager=wiremock,
             )
             
-            # Collect and display WireMock response time metrics
+            # Collect metrics while WireMock is still running (triggers flush to disk)
             logger.info("")
             logger.info("Collecting response time metrics...")
             metrics = wiremock.get_request_metrics()
             _log_wiremock_metrics(metrics, warmup_iterations=warmup_iterations, iterations=iterations)
             
         finally:
-            # Stop and cleanup
             cleanup_step = 4 if skip_recording else 8
             logger.info("")
             logger.info(f"Step {cleanup_step}: Cleanup...")
@@ -552,7 +551,11 @@ def _run_test_with_proxy(
             if driver == "odbc" and driver_type == "old":
                 env_vars["WIREMOCK_PROXY_URL"] = proxy_url
         except Exception as e:
-            logger.warning(f"Failed to export WireMock CA cert: {e}")
+            logger.error(
+                "Failed to export WireMock CA cert; skipping this test execution.",
+                exc_info=True,
+            )
+            return
     
     # Execute test with common function
     execute_test(
