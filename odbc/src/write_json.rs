@@ -5,11 +5,11 @@ use std::{
 };
 
 use serde_json::{Map, Value};
+use snafu::Snafu;
 
 use crate::{api::ParameterBinding, cdata_types::CDataType};
 use odbc_sys as sql;
 
-// Snowflake binding type constants
 const SF_TYPE_ANY: &str = "ANY";
 const SF_TYPE_FIXED: &str = "FIXED";
 const SF_TYPE_TEXT: &str = "TEXT";
@@ -20,37 +20,25 @@ const SF_TYPE_DATE: &str = "DATE";
 const SF_TYPE_TIME: &str = "TIME";
 const SF_TYPE_TIMESTAMP_NTZ: &str = "TIMESTAMP_NTZ";
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 pub enum JsonBindingError {
+    #[snafu(display("Parameter bindings must be contiguous and start at 1"))]
     InvalidParameterIndices,
-    UnsupportedParameterType(sql::SqlDataType),
-    UnsupportedCDataType(CDataType),
+
+    #[snafu(display("Unsupported SQL parameter type: {sql_type:?}"))]
+    UnsupportedParameterType { sql_type: sql::SqlDataType },
+
+    #[snafu(display("Unsupported C data type for JSON binding: {c_type:?}"))]
+    UnsupportedCDataType { c_type: CDataType },
+
+    #[snafu(display("Null parameter value pointer encountered"))]
     NullPointer,
+
+    #[snafu(display("Parameter value is not valid UTF-8"))]
     InvalidUtf8,
-}
 
-impl std::error::Error for JsonBindingError {}
-
-impl std::fmt::Display for JsonBindingError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            JsonBindingError::InvalidParameterIndices => {
-                write!(f, "Parameter bindings must be contiguous and start at 1")
-            }
-            JsonBindingError::UnsupportedParameterType(sql_type) => {
-                write!(f, "Unsupported SQL parameter type: {:?}", sql_type)
-            }
-            JsonBindingError::UnsupportedCDataType(c_type) => {
-                write!(f, "Unsupported C data type for JSON binding: {:?}", c_type)
-            }
-            JsonBindingError::NullPointer => {
-                write!(f, "Null parameter value pointer encountered")
-            }
-            JsonBindingError::InvalidUtf8 => {
-                write!(f, "Parameter value is not valid UTF-8")
-            }
-        }
-    }
+    #[snafu(display("Failed to serialize bindings to JSON: {message}"))]
+    Serialization { message: String },
 }
 
 /// Convert ODBC parameter bindings to JSON string format for server-side binding.
@@ -70,11 +58,9 @@ pub fn odbc_bindings_to_json(
 ) -> Result<String, JsonBindingError> {
     let mut json_bindings = Map::new();
 
-    let (min_key, max_key) = bindings
-        .keys()
-        .fold((u16::MAX, 0u16), |(min, max), &k| (min.min(k), max.max(k)));
+    let max_key = bindings.keys().copied().max().unwrap_or(0);
 
-    for param_num in min_key..=max_key {
+    for param_num in 1..=max_key {
         let binding = bindings.get(&param_num).ok_or_else(|| {
             tracing::error!(
                 "odbc_bindings_to_json: parameter #{param_num} not found. \
@@ -105,8 +91,9 @@ pub fn odbc_bindings_to_json(
 
     serde_json::to_string(&Value::Object(json_bindings)).map_err(|e| {
         tracing::error!("Failed to serialize bindings to JSON: {}", e);
-        // This should never happen with well-formed Value objects, but handle it gracefully
-        JsonBindingError::InvalidUtf8
+        JsonBindingError::Serialization {
+            message: e.to_string(),
+        }
     })
 }
 
@@ -132,7 +119,9 @@ fn convert_binding_to_json_value(
                 "Unsupported C data type for JSON binding: {:?}",
                 binding.value_type
             );
-            Err(JsonBindingError::UnsupportedCDataType(binding.value_type))
+            Err(JsonBindingError::UnsupportedCDataType {
+                c_type: binding.value_type,
+            })
         }
     }?;
 
@@ -147,7 +136,9 @@ fn snowflake_type_from_sql_type(
         sql::SqlDataType::INTEGER
         | sql::SqlDataType::SMALLINT
         | sql::SqlDataType::EXT_BIG_INT
-        | sql::SqlDataType::EXT_TINY_INT => Ok(SF_TYPE_FIXED),
+        | sql::SqlDataType::EXT_TINY_INT
+        | sql::SqlDataType::DECIMAL
+        | sql::SqlDataType::NUMERIC => Ok(SF_TYPE_FIXED),
 
         sql::SqlDataType::VARCHAR
         | sql::SqlDataType::CHAR
@@ -158,9 +149,7 @@ fn snowflake_type_from_sql_type(
 
         sql::SqlDataType::REAL
         | sql::SqlDataType::FLOAT
-        | sql::SqlDataType::DOUBLE
-        | sql::SqlDataType::DECIMAL
-        | sql::SqlDataType::NUMERIC => Ok(SF_TYPE_REAL),
+        | sql::SqlDataType::DOUBLE => Ok(SF_TYPE_REAL),
 
         sql::SqlDataType::EXT_BIT => Ok(SF_TYPE_BOOLEAN),
 
@@ -174,7 +163,9 @@ fn snowflake_type_from_sql_type(
 
         _ => {
             tracing::error!("Unsupported SQL data type for JSON binding: {:?}", sql_type);
-            Err(JsonBindingError::UnsupportedParameterType(*sql_type))
+            Err(JsonBindingError::UnsupportedParameterType {
+                sql_type: *sql_type,
+            })
         }
     }
 }
@@ -198,14 +189,25 @@ fn read_numeric<T: std::fmt::Display>(
 
 /// Determine the actual byte length of buffer data, using the length/indicator
 /// pointer if available, falling back to `buffer_length`.
+///
+/// Negative `buffer_length` values (e.g. `SQL_NTS`) are treated as zero.
+/// Indicated length is clamped to `buffer_length` to prevent over-reads.
 fn buffer_data_len(binding: &ParameterBinding) -> usize {
+    let max_len = if binding.buffer_length < 0 {
+        0
+    } else {
+        binding.buffer_length as usize
+    };
+
     if !binding.str_len_or_ind_ptr.is_null() {
         let indicated_len = unsafe { *binding.str_len_or_ind_ptr };
         if indicated_len >= 0 {
-            return indicated_len as usize;
+            let indicated = indicated_len as usize;
+            return if max_len > 0 { indicated.min(max_len) } else { indicated };
         }
     }
-    binding.buffer_length as usize
+
+    max_len
 }
 
 /// Read a SQL_C_CHAR value as a UTF-8 string.

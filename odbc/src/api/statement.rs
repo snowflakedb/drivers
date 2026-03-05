@@ -14,7 +14,7 @@ use odbc_sys as sql;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConnectionGetParameterRequest, ConnectionHandle,
-    QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse, StatementHandle,
+    QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
     StatementPrepareRequest, StatementSetSqlQueryRequest, query_bindings,
 };
 use snafu::ResultExt;
