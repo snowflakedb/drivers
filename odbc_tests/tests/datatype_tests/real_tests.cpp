@@ -1286,3 +1286,64 @@ TEST_CASE("REAL negative fraction to unsigned integer types", "[datatype][real][
     }
   }
 }
+
+// ============================================================================
+// NaN handling for integer, bit, numeric, and binary targets
+// NaN must not silently convert to 0. Per ODBC spec, NaN should produce
+// SQL_ERROR with SQLSTATE 22003 for integer/bit/numeric/binary targets.
+// For CHAR/WCHAR targets, NaN should produce the string "NaN".
+// ============================================================================
+
+TEST_CASE("REAL NaN to integer types returns error", "[datatype][real][nan][edge]") {
+  SKIP_OLD_DRIVER("BD#18", "Old driver silently converts NaN to 0 for integer targets");
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("SQL_C_SLONG") { check_numeric_out_of_range<SQL_C_SLONG>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1); }
+
+  SECTION("SQL_C_ULONG") { check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1); }
+
+  SECTION("SQL_C_SHORT") { check_numeric_out_of_range<SQL_C_SHORT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1); }
+
+  SECTION("SQL_C_USHORT") { check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1); }
+
+  SECTION("SQL_C_STINYINT") {
+    check_numeric_out_of_range<SQL_C_STINYINT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
+  }
+
+  SECTION("SQL_C_UTINYINT") {
+    check_numeric_out_of_range<SQL_C_UTINYINT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
+  }
+
+  SECTION("SQL_C_SBIGINT") { check_numeric_out_of_range<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1); }
+
+  SECTION("SQL_C_UBIGINT") { check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1); }
+}
+
+TEST_CASE("REAL NaN to BIT returns error", "[datatype][real][nan][edge]") {
+  SKIP_OLD_DRIVER("BD#18", "Old driver silently converts NaN to 0 for BIT target");
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
+}
+
+TEST_CASE("REAL NaN to NUMERIC returns error", "[datatype][real][nan][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
+}
+
+TEST_CASE("REAL NaN to CHAR produces NaN string", "[datatype][real][nan][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 'NaN'::FLOAT");
+  char buf[64] = {};
+  SQLLEN indicator = -999;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf, sizeof(buf), &indicator);
+  CHECK(ret == SQL_SUCCESS);
+  std::string result(buf);
+  CHECK(result == "NaN");
+}

@@ -141,3 +141,22 @@ behavior_differences:
       DECIMAL/NUMERIC columns where the old driver returns SQL_SUCCESS (too lenient)
       rather than SQL_ERROR (too strict as seen here for FLOAT).
       TODO: To be fixed in old driver
+
+  18:
+    name: "NaN FLOAT value silently converts to 0 for integer and BIT targets instead of returning 22003"
+    description: |
+      OLD driver: When SQLGetData is called on a FLOAT/DOUBLE column containing NaN
+      with an integer target type (SQL_C_SLONG, SQL_C_ULONG, SQL_C_SHORT, SQL_C_USHORT,
+      SQL_C_STINYINT, SQL_C_UTINYINT, SQL_C_SBIGINT, SQL_C_UBIGINT) or SQL_C_BIT,
+      the old driver returns SQL_SUCCESS_WITH_INFO and silently writes 0 to the output
+      buffer. This happens because NaN comparisons always return false, so range checks
+      pass, and the cast produces 0.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range).
+      NaN is not a representable numeric value and cannot be meaningfully converted to
+      any integer or BIT type.
+      Note: Both drivers correctly reject NaN for SQL_C_NUMERIC (returning 22003) and
+      both correctly produce the string "NaN" for SQL_C_CHAR. The discrepancy is limited
+      to integer and BIT targets.
+      Impact: Applications that previously received 0 for NaN inputs to integer types
+      will now receive an error. This is a spec-compliance improvement.
+      TODO: To be fixed in old driver
