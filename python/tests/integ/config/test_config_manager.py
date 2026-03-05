@@ -334,7 +334,7 @@ class TestConfigManager:
         # Then The default value should be returned
         assert value == "default_value"
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver ConfigManager has no clear_cache method")
     def test_clear_cache(self):
         """Test that clear_cache resets caches."""
         # Given A ConfigManager with cached config

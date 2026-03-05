@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from ...conftest import with_paramstyle
 from .utils import assert_connection_is_open, assert_datetime_type, assert_sequential_values, batch_insert
 
@@ -186,7 +184,6 @@ class TestTimestampLtzTable:
 
 
 @with_paramstyle("qmark")
-@pytest.mark.skip_reference
 class TestTimestampLtzBinding:
     """Tests for TIMESTAMP_LTZ type using parameter binding.
 
