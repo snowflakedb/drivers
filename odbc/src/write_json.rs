@@ -4,8 +4,9 @@ use std::{
     slice, str,
 };
 
+use error_trace::ErrorTrace;
 use serde_json::{Map, Value};
-use snafu::Snafu;
+use snafu::{Location, ResultExt, Snafu};
 
 use crate::{api::ParameterBinding, cdata_types::CDataType};
 use odbc_sys as sql;
@@ -20,25 +21,47 @@ const SF_TYPE_DATE: &str = "DATE";
 const SF_TYPE_TIME: &str = "TIME";
 const SF_TYPE_TIMESTAMP_NTZ: &str = "TIMESTAMP_NTZ";
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, ErrorTrace)]
 pub enum JsonBindingError {
     #[snafu(display("Parameter bindings must be contiguous and start at 1"))]
-    InvalidParameterIndices,
+    InvalidParameterIndices {
+        #[snafu(implicit)]
+        location: Location,
+    },
 
     #[snafu(display("Unsupported SQL parameter type: {sql_type:?}"))]
-    UnsupportedParameterType { sql_type: sql::SqlDataType },
+    UnsupportedParameterType {
+        sql_type: sql::SqlDataType,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
     #[snafu(display("Unsupported C data type for JSON binding: {c_type:?}"))]
-    UnsupportedCDataType { c_type: CDataType },
+    UnsupportedCDataType {
+        c_type: CDataType,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
     #[snafu(display("Null parameter value pointer encountered"))]
-    NullPointer,
+    NullPointer {
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[snafu(display("Parameter value is not valid UTF-8"))]
-    InvalidUtf8,
+    #[snafu(display("Parameter value is not valid UTF-8: {source}"))]
+    InvalidUtf8 {
+        source: str::Utf8Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[snafu(display("Failed to serialize bindings to JSON: {message}"))]
-    Serialization { message: String },
+    #[snafu(display("Failed to serialize bindings to JSON: {source}"))]
+    Serialization {
+        source: serde_json::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 /// Convert ODBC parameter bindings to JSON string format for server-side binding.
@@ -66,7 +89,7 @@ pub fn odbc_bindings_to_json(
                 "odbc_bindings_to_json: parameter #{param_num} not found. \
                  Parameter bindings must be contiguous and start at 1.",
             );
-            JsonBindingError::InvalidParameterIndices
+            InvalidParameterIndicesSnafu.build()
         })?;
 
         // Check for NULL value
@@ -89,12 +112,7 @@ pub fn odbc_bindings_to_json(
         json_bindings.insert(param_num.to_string(), Value::Object(binding_obj));
     }
 
-    serde_json::to_string(&Value::Object(json_bindings)).map_err(|e| {
-        tracing::error!("Failed to serialize bindings to JSON: {}", e);
-        JsonBindingError::Serialization {
-            message: e.to_string(),
-        }
-    })
+    serde_json::to_string(&Value::Object(json_bindings)).context(SerializationSnafu)
 }
 
 /// Convert a single parameter binding to a Snowflake type and JSON value.
@@ -119,9 +137,10 @@ fn convert_binding_to_json_value(
                 "Unsupported C data type for JSON binding: {:?}",
                 binding.value_type
             );
-            Err(JsonBindingError::UnsupportedCDataType {
+            UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
-            })
+            }
+            .fail()
         }
     }?;
 
@@ -163,16 +182,17 @@ fn snowflake_type_from_sql_type(
 
         _ => {
             tracing::error!("Unsupported SQL data type for JSON binding: {:?}", sql_type);
-            Err(JsonBindingError::UnsupportedParameterType {
+            UnsupportedParameterTypeSnafu {
                 sql_type: *sql_type,
-            })
+            }
+            .fail()
         }
     }
 }
 
 fn check_not_null(binding: &ParameterBinding) -> Result<(), JsonBindingError> {
     if binding.parameter_value_ptr.is_null() {
-        return Err(JsonBindingError::NullPointer);
+        return NullPointerSnafu.fail();
     }
     Ok(())
 }
@@ -225,9 +245,7 @@ fn read_char_value(binding: &ParameterBinding) -> Result<Value, JsonBindingError
     } else {
         let len = buffer_data_len(binding);
         let bytes = unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len) };
-        str::from_utf8(bytes)
-            .map_err(|_| JsonBindingError::InvalidUtf8)?
-            .to_string()
+        str::from_utf8(bytes).context(InvalidUtf8Snafu)?.to_string()
     };
 
     Ok(Value::String(value_str))
