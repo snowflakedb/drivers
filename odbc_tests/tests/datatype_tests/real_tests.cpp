@@ -1111,6 +1111,7 @@ TEST_CASE("REAL SQL_C_BIT rejects negative fractions", "[datatype][real][bit][ed
 // ============================================================================
 
 TEST_CASE("REAL SQL_C_NUMERIC no negative zero", "[datatype][real][numeric][edge]") {
+  SKIP_OLD_DRIVER("BD#19", "Old driver produces negative zero in SQL_NUMERIC_STRUCT for negative fractional values");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
