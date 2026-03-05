@@ -132,13 +132,18 @@ jobs:
           restore-keys: |
             windows-11-arm-cargo-
 
+      - name: Install ARM64 OpenSSL via vcpkg
+        shell: cmd
+        run: |
+          :: Build native ARM64 OpenSSL. Pre-installed OpenSSL is x64-only.
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows
+
       - name: Configure OpenSSL
         shell: pwsh
         run: |
-          # The pre-installed OpenSSL on windows-11-arm is x64. Link statically
-          # so the ARM64 binary doesn't need x64 OpenSSL DLLs at runtime.
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
-          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
