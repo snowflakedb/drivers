@@ -11,8 +11,8 @@ fn should_bind_single_parameter_to_statement() {
 
     // When Query with single parameter is executed
     client.set_sql_query(&stmt, "SELECT ? as value");
-    let (_json_owner, bindings) = client.bind_int_parameters(&[42]);
-    let result = client.execute_statement_query_with_bindings(&stmt, Some(bindings));
+    let json = client.bind_int_parameters_json(&[42]);
+    let result = client.execute_statement_query_with_bindings(&stmt, Some(&json));
 
     // Then Query execution should return the bound parameter value
     let mut arrow_helper = ArrowResultHelper::from_result(result);
@@ -32,8 +32,8 @@ fn should_bind_multiple_parameters_to_statement() {
 
     // When Query with multiple parameters is executed
     client.set_sql_query(&stmt, "SELECT ?, ? as value");
-    let (_json_owner, bindings) = client.bind_int_parameters(&[42, 1]);
-    let result = client.execute_statement_query_with_bindings(&stmt, Some(bindings));
+    let json = client.bind_int_parameters_json(&[42, 1]);
+    let result = client.execute_statement_query_with_bindings(&stmt, Some(&json));
 
     // Then Query execution should return the bound parameter values
     let mut arrow_helper = ArrowResultHelper::from_result(result);

@@ -143,8 +143,17 @@ impl SnowflakeTestClient {
     pub fn execute_statement_query_with_bindings(
         &self,
         stmt: &StatementHandle,
-        bindings: Option<QueryBindings>,
+        json_bindings: Option<&str>,
     ) -> ExecuteResult {
+        let bindings = json_bindings.map(|json| {
+            let ptr = json.as_bytes().as_ptr() as u64;
+            QueryBindings {
+                binding_type: Some(query_bindings::BindingType::Json(BinaryDataPtr {
+                    value: ptr.to_le_bytes().to_vec(),
+                    length: json.len() as i64,
+                })),
+            }
+        });
         DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
             stmt_handle: Some(*stmt),
             bindings,
@@ -162,8 +171,8 @@ impl SnowflakeTestClient {
         .unwrap();
     }
 
-    /// Binds integer parameters to a statement using JSON bindings.
-    pub fn bind_int_parameters(&self, params: &[i32]) -> (String, QueryBindings) {
+    /// Builds a JSON bindings string for integer parameters.
+    pub fn bind_int_parameters_json(&self, params: &[i32]) -> String {
         let mut bindings = serde_json::Map::new();
         for (i, value) in params.iter().enumerate() {
             let mut entry = serde_json::Map::new();
@@ -177,17 +186,7 @@ impl SnowflakeTestClient {
             );
             bindings.insert((i + 1).to_string(), serde_json::Value::Object(entry));
         }
-        let json_string = serde_json::to_string(&bindings).unwrap();
-        let ptr = json_string.as_bytes().as_ptr() as usize;
-        let len = json_string.len();
-        let binary_data_ptr = BinaryDataPtr {
-            value: ptr.to_le_bytes().to_vec(),
-            length: len as i64,
-        };
-        let query_bindings = QueryBindings {
-            binding_type: Some(query_bindings::BindingType::Json(binary_data_ptr)),
-        };
-        (json_string, query_bindings)
+        serde_json::to_string(&bindings).unwrap()
     }
 
     pub fn release_statement(&self, stmt: &StatementHandle) {
