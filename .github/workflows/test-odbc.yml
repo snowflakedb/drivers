@@ -69,12 +69,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
 
-          Invoke-Checked "choco install cmake" { choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y }
-          Invoke-Checked "choco install openssl" { choco install openssl -y }
-          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
+          Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
           cmake --version
-          # GPG is pre-installed on Windows GitHub runners
-          gpg --version
+
+          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
+
           $referenceOdbcVersion = (Get-Content "ci/reference-odbc-version" -Raw).Trim()
           $snowflakeOdbcMsi = "snowflake64_odbc-$referenceOdbcVersion.msi"
           $snowflakeOdbcUrl = "https://sfc-repo.snowflakecomputing.com/odbc/win64/$referenceOdbcVersion/$snowflakeOdbcMsi"
@@ -90,7 +89,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev
 
-          # Install CMake 4.x (faster tar extract instead of interactive installer)
           curl -sL https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.tar.gz | sudo tar -xz -C /usr/local --strip-components=1
           cmake --version
 
@@ -189,14 +187,15 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
 
-          Invoke-Checked "choco install cmake" { choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y }
-          Invoke-Checked "choco install openssl" { choco install openssl -y }
-          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
+          Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
           cmake --version
-          # GPG is pre-installed on Windows GitHub runners
-          gpg --version
-          # Set OpenSSL environment variables for Rust build
-          # Chocolatey OpenSSL uses MSVC lib structure
+
+          if (!(Test-Path "C:\Program Files\OpenSSL\lib\VC\x64\MD")) {
+            Invoke-Checked "choco install openssl" { choco install openssl -y --no-progress }
+          }
+
+          Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
+
           echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\x64\MD" >> $env:GITHUB_ENV
 
