@@ -359,7 +359,6 @@ impl WriteODBCType for SnowflakeNumber {
             | CDataType::IntervalDay
             | CDataType::IntervalHour
             | CDataType::IntervalMinute => {
-                let is_negative = snowflake_value < 0;
                 let abs_int = int_value.unsigned_abs();
                 if abs_int > u32::MAX as u128 {
                     return IntervalFieldOverflowSnafu {
@@ -368,6 +367,7 @@ impl WriteODBCType for SnowflakeNumber {
                     .fail();
                 }
                 let field_val = abs_int as u32;
+                let is_negative = snowflake_value < 0 && field_val > 0;
                 let mut interval = sql::IntervalStruct {
                     interval_type: 0,
                     interval_sign: if is_negative { 1 } else { 0 },
@@ -412,7 +412,6 @@ impl WriteODBCType for SnowflakeNumber {
                 Ok(Self::fractional_warning(has_fractional))
             }
             CDataType::IntervalSecond => {
-                let is_negative = snowflake_value < 0;
                 let abs_int = int_value.unsigned_abs();
                 if abs_int > u32::MAX as u128 {
                     return IntervalFieldOverflowSnafu {
@@ -420,6 +419,7 @@ impl WriteODBCType for SnowflakeNumber {
                     }
                     .fail();
                 }
+                let second_val = abs_int as u32;
                 let frac_value = if self.scale > 0 {
                     let remainder = snowflake_value.unsigned_abs() % (scale_factor as u128);
                     let microseconds = remainder * 1_000_000 / (scale_factor as u128);
@@ -427,6 +427,7 @@ impl WriteODBCType for SnowflakeNumber {
                 } else {
                     0
                 };
+                let is_negative = snowflake_value < 0 && (second_val > 0 || frac_value > 0);
                 let interval = sql::IntervalStruct {
                     interval_type: sql::Interval::Second as i32,
                     interval_sign: if is_negative { 1 } else { 0 },
@@ -435,7 +436,7 @@ impl WriteODBCType for SnowflakeNumber {
                             day: 0,
                             hour: 0,
                             minute: 0,
-                            second: abs_int as u32,
+                            second: second_val,
                             fraction: frac_value,
                         },
                     },

@@ -1346,31 +1346,38 @@ TEST_CASE("NUMBER to multi-field interval returns 22015", "[datatype][number][in
   auto random_schema = Schema::use_random_schema(conn);
 
   SECTION("SQL_C_INTERVAL_YEAR_TO_MONTH") {
-    check_interval_precision_lost<SQL_C_INTERVAL_YEAR_TO_MONTH>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
   }
 
   SECTION("SQL_C_INTERVAL_DAY_TO_HOUR") {
-    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_HOUR>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
   }
 
   SECTION("SQL_C_INTERVAL_DAY_TO_MINUTE") {
-    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_MINUTE>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_MINUTE>(stmt, 1);
   }
 
   SECTION("SQL_C_INTERVAL_DAY_TO_SECOND") {
-    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_SECOND>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 1);
   }
 
   SECTION("SQL_C_INTERVAL_HOUR_TO_MINUTE") {
-    check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_MINUTE>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 1);
   }
 
   SECTION("SQL_C_INTERVAL_HOUR_TO_SECOND") {
-    check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_SECOND>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 1);
   }
 
   SECTION("SQL_C_INTERVAL_MINUTE_TO_SECOND") {
-    check_interval_precision_lost<SQL_C_INTERVAL_MINUTE_TO_SECOND>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
+    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 1);
   }
 }
 

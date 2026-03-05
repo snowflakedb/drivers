@@ -888,7 +888,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Interval conversions — single-field (SQLSTATE 01S07 for fractional)
+    // Interval conversions -- single-field (SQLSTATE 01S07 for fractional)
     // ========================================================================
 
     fn binding_for_interval(
@@ -1050,8 +1050,116 @@ mod tests {
         assert_eq!(unsafe { value.interval_value.day_second.fraction }, 250_000);
     }
 
+    #[test]
+    fn interval_second_negative_integer() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-45i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_type, sql::Interval::Second as i32);
+        assert_eq!(value.interval_sign, 1);
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn interval_year_no_negative_zero() {
+        let sn = make_decimal(1, 10); // scale=1, so -5 represents -0.5
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-5i128, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&crate::conversion::warning::Warning::NumericValueTruncated));
+        assert_eq!(value.interval_sign, 0);
+        assert_eq!(unsafe { value.interval_value.year_month.year }, 0);
+    }
+
+    #[test]
+    fn interval_month_no_negative_zero() {
+        let sn = make_decimal(1, 10); // scale=1, so -3 represents -0.3
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalMonth, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-3i128, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&crate::conversion::warning::Warning::NumericValueTruncated));
+        assert_eq!(value.interval_sign, 0);
+        assert_eq!(unsafe { value.interval_value.year_month.month }, 0);
+    }
+
+    #[test]
+    fn interval_day_no_negative_zero() {
+        let sn = make_decimal(1, 10); // scale=1, so -9 represents -0.9
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalDay, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-9i128, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&crate::conversion::warning::Warning::NumericValueTruncated));
+        assert_eq!(value.interval_sign, 0);
+        assert_eq!(unsafe { value.interval_value.day_second.day }, 0);
+    }
+
+    #[test]
+    fn interval_second_no_negative_zero() {
+        let sn = make_decimal(4, 10); // scale=4, so -1 represents -0.0001
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-1i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        let second = unsafe { value.interval_value.day_second.second };
+        let fraction = unsafe { value.interval_value.day_second.fraction };
+        if fraction > 0 {
+            assert_eq!(value.interval_sign, 1);
+        } else {
+            assert_eq!(value.interval_sign, 0);
+        }
+        assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn interval_second_negative_fraction_keeps_sign() {
+        let sn = make_decimal(1, 10); // scale=1, so -5 represents -0.5
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(-5i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.interval_sign, 1);
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 0);
+        assert_eq!(unsafe { value.interval_value.day_second.fraction }, 500_000);
+    }
+
+    #[test]
+    fn interval_year_at_u32_max() {
+        let sn = make_decimal(0, 38);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let warnings = sn
+            .write_odbc_type(u32::MAX as i128, &binding, &mut None)
+            .unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.year_month.year }, u32::MAX);
+    }
+
+    #[test]
+    fn interval_year_at_u32_max_plus_one_overflows() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 38);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let result = sn.write_odbc_type(u32::MAX as i128 + 1, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
     // ========================================================================
-    // Interval overflow — single-field (SQLSTATE 22015)
+    // Interval overflow -- single-field (SQLSTATE 22015)
     // ========================================================================
 
     #[test]
@@ -1083,7 +1191,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Multi-field intervals — always 22015
+    // Multi-field intervals -- always 22015
     // ========================================================================
 
     macro_rules! interval_multi_field_error_tests {
