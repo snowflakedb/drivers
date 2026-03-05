@@ -6,12 +6,16 @@ pub mod warning;
 
 mod binary;
 mod boolean;
+#[cfg(test)]
+mod boolean_tests;
 mod date;
 mod nullable;
 mod number;
 #[cfg(test)]
 mod number_tests;
 mod real;
+#[cfg(test)]
+mod test_utils;
 mod timestamp;
 mod varchar;
 

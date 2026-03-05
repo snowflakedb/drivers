@@ -3,6 +3,9 @@ mod tests {
     use crate::cdata_types::CDataType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::number::{NumericSettings, NumericSqlType, SnowflakeNumber};
+    use crate::conversion::test_utils::helpers::{
+        binding_for_char_buffer, binding_for_value, binding_for_wchar_buffer,
+    };
     use crate::conversion::traits::Binding;
     use odbc_sys as sql;
 
@@ -25,36 +28,6 @@ mod tests {
         treat_decimal_as_int: false,
         treat_big_number_as_string: true,
     };
-
-    fn binding_for_value<T>(
-        target_type: CDataType,
-        value: &mut T,
-        str_len: &mut sql::Len,
-    ) -> Binding {
-        Binding {
-            target_type,
-            target_value_ptr: value as *mut T as sql::Pointer,
-            buffer_length: 0,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
-            ..Default::default()
-        }
-    }
-
-    fn binding_for_char_buffer(
-        target_type: CDataType,
-        buffer: &mut [u8],
-        str_len: &mut sql::Len,
-    ) -> Binding {
-        Binding {
-            target_type,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-            buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
-            ..Default::default()
-        }
-    }
 
     fn make_decimal(scale: u32, precision: u32) -> SnowflakeNumber {
         SnowflakeNumber {
@@ -468,14 +441,7 @@ mod tests {
                     let sn = make_decimal($scale, $precision);
                     let mut buffer = vec![0u16; 128];
                     let mut str_len: sql::Len = 0;
-                    let binding = Binding {
-                        target_type: CDataType::WChar,
-                        target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-                        buffer_length: (buffer.len() * 2) as sql::Len,
-                        octet_length_ptr: &mut str_len as *mut sql::Len,
-                        indicator_ptr: &mut str_len as *mut sql::Len,
-                        ..Default::default()
-                    };
+                    let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
                     sn.write_odbc_type($input, &binding, &mut None).unwrap();
                     let expected_str: &str = $expected;
                     let expected: Vec<u16> = expected_str.encode_utf16().collect();
@@ -808,14 +774,7 @@ mod tests {
         // Buffer of 8 bytes = 4 wide chars. Whole digits (6) >= capacity (4) → 22003.
         let mut buffer = vec![0u16; 4];
         let mut str_len: sql::Len = 0;
-        let binding = Binding {
-            target_type: CDataType::WChar,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-            buffer_length: (buffer.len() * 2) as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
-            ..Default::default()
-        };
+        let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         assert!(sn.write_odbc_type(123456i128, &binding, &mut None).is_err());
     }
 
@@ -827,14 +786,7 @@ mod tests {
         // Buffer of 4 wide chars. Whole digits (2) < capacity (4) → 01004.
         let mut buffer = vec![0u16; 4];
         let mut str_len: sql::Len = 0;
-        let binding = Binding {
-            target_type: CDataType::WChar,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
-            buffer_length: (buffer.len() * 2) as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
-            ..Default::default()
-        };
+        let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
         let warnings = sn.write_odbc_type(12345i128, &binding, &mut None).unwrap();
         assert!(
             warnings
