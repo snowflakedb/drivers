@@ -130,9 +130,13 @@ inline std::filesystem::path write_text_file(const std::filesystem::path& dir, c
 }
 
 // On Windows, the reference driver returns a full absolute path for the PUT source column;
-// on Linux it returns just the filename. This normalizes to just the filename for comparison.
-inline std::string extract_filename(const std::string& path_or_filename) {
-  return std::filesystem::path(path_or_filename).filename().string();
+// on Linux it returns just the filename.
+inline std::string expected_put_source(const std::filesystem::path& file_path) {
+#ifdef _WIN32
+  return std::filesystem::absolute(file_path).string();
+#else
+  return file_path.filename().string();
+#endif
 }
 
 // Convert a path into a URI-safe string for Snowflake file:// usage
