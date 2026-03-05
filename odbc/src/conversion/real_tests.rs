@@ -942,6 +942,53 @@ mod tests {
         assert_eq!(u128::from_le_bytes(numeric.val), 1000000);
     }
 
+    #[test]
+    fn real_binary_large_positive_beyond_i64() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let large = 1e19_f64;
+        let warnings = sr.write_odbc_type(large, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
+        assert_eq!(numeric.sign, 1);
+        assert_eq!(u128::from_le_bytes(numeric.val), large as u128);
+    }
+
+    #[test]
+    fn real_binary_large_negative_beyond_i64() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let large_neg = -1e19_f64;
+        let warnings = sr.write_odbc_type(large_neg, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
+        assert_eq!(numeric.sign, 0);
+        assert_eq!(u128::from_le_bytes(numeric.val), large_neg.abs() as u128);
+    }
+
+    #[test]
+    fn real_binary_overflow_returns_error() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let result = sr.write_odbc_type(f64::MAX, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::NumericValueOutOfRange { .. }
+        ));
+    }
+
     // ======================================================================
     // Multiple row indices
     // ======================================================================
