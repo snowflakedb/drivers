@@ -4,10 +4,10 @@ use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::{
-    QUERY_REQUEST_PATH, apply_json_content_type, apply_query_headers, query_request, query_response,
+    QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_request,
+    query_response,
 };
 use reqwest::{Method, StatusCode};
-use serde_json::value::RawValue;
 use snafu::Location;
 use std::panic::Location as StdLocation;
 use std::time::{Duration, Instant};
@@ -107,19 +107,16 @@ pub struct SubmitOk {
     pub response: query_response::Response,
 }
 
-fn build_async_query_request(
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
-) -> query_request::Request<'_> {
+fn build_async_query_request<'a>(query_input: &QueryInput<'a>) -> query_request::Request<'a> {
     query_request::Request {
-        sql_text: sql,
+        sql_text: query_input.sql.clone(),
         async_exec: true,
         sequence_id: QUERY_SEQUENCE_ID,
         query_submission_time: current_epoch_millis(),
         is_internal: false,
-        describe_only: None,
+        describe_only: query_input.describe_only,
         parameters: None,
-        bindings: parameter_bindings,
+        bindings: query_input.bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
     }
@@ -189,19 +186,18 @@ fn current_epoch_millis() -> i64 {
         .as_millis() as i64
 }
 
-pub async fn submit_statement_async(
+pub async fn submit_statement_async<'a>(
     client: &reqwest::Client,
     params: &QueryParameters,
     session_token: &str,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<SubmitOk, SfError> {
     let server_url = &params.server_url;
     let client_info = &params.client_info;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
-    let request_body = build_async_query_request(sql, parameter_bindings);
+    let request_body = build_async_query_request(query_input);
     let submit_request = || {
         build_submit_request(
             client,
@@ -262,12 +258,11 @@ pub async fn poll_query_status(
     Ok(parsed)
 }
 
-pub async fn execute_blocking_with_async(
+pub async fn execute_blocking_with_async<'a>(
     client: &reqwest::Client,
     params: &QueryParameters,
     session_token: &str,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
@@ -278,8 +273,7 @@ pub async fn execute_blocking_with_async(
         client,
         params,
         session_token,
-        sql,
-        parameter_bindings,
+        query_input,
         request_id,
         policy,
     )

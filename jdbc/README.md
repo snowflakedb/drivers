@@ -54,3 +54,9 @@ python3 ci/reference_tests/extract_coverage.py \
 - Gradle 6.0+
 - Built Rust components: `sf_core` and `jdbc_bridge`
 - Parameters: `parameters.json` (see main [README.md](../README.md) for setup instructions)
+
+### Lombok
+
+`jdbc` uses Lombok in production and test sources via Gradle annotation processors.
+
+If your IDE shows unresolved Lombok symbols, enable annotation processing for the project and refresh Gradle.

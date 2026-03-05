@@ -193,6 +193,16 @@ public interface DatabaseDriverService {
      */
     DatabaseDriverV1.StatementReadPartitionResponse statementReadPartition(DatabaseDriverV1.StatementReadPartitionRequest request) throws ServiceException, TransportException;
 
+    /**
+     * Method: configLoadAllSections
+     */
+    DatabaseDriverV1.ConfigLoadAllSectionsResponse configLoadAllSections(DatabaseDriverV1.ConfigLoadAllSectionsRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: configGetPaths
+     */
+    DatabaseDriverV1.ConfigGetPathsResponse configGetPaths(DatabaseDriverV1.ConfigGetPathsRequest request) throws ServiceException, TransportException;
+
 
     class ServiceException extends RuntimeException {
         public final DatabaseDriverV1.DriverException error;

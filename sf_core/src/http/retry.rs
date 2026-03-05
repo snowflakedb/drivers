@@ -39,7 +39,7 @@ impl HttpContext {
     }
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum HttpError {
     #[snafu(display("transport error"))]
     Transport {

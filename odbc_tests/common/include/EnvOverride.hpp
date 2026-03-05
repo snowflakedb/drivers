@@ -1,11 +1,22 @@
 #ifndef ENV_OVERRIDE_HPP
 #define ENV_OVERRIDE_HPP
 
+#include <cstdlib>
 #include <optional>
 #include <string>
 
+#include <catch2/catch_test_macros.hpp>
+
+#ifdef _WIN32
+#include <stdlib.h>
+inline void portable_setenv(const char* name, const char* value) { _putenv_s(name, value); }
+inline void portable_unsetenv(const char* name) { _putenv_s(name, ""); }
+#else
+inline void portable_setenv(const char* name, const char* value) { setenv(name, value, 1); }
+inline void portable_unsetenv(const char* name) { unsetenv(name); }
+#endif
+
 // RAII class for temporarily overriding environment variables
-// TODO: Unix-only (uses setenv/unsetenv). Windows requires _putenv_s/_putenv("VAR=")
 class EnvOverride {
  public:
   // Sets the environment variable to the new value, saving the original.
@@ -15,7 +26,7 @@ class EnvOverride {
       original_value_ = std::string(original);
     }
     // Set new value
-    setenv(name.c_str(), value.c_str(), 1);
+    portable_setenv(name.c_str(), value.c_str());
   }
 
   // Unsets the environment variable, saving the original.
@@ -25,16 +36,16 @@ class EnvOverride {
       original_value_ = std::string(original);
     }
     // Unset the variable
-    unsetenv(name.c_str());
+    portable_unsetenv(name.c_str());
   }
 
   ~EnvOverride() {
     if (original_value_.has_value()) {
       // Restore original value
-      setenv(name_.c_str(), original_value_->c_str(), 1);
+      portable_setenv(name_.c_str(), original_value_->c_str());
     } else {
       // Variable was not set originally, unset it
-      unsetenv(name_.c_str());
+      portable_unsetenv(name_.c_str());
     }
   }
 
@@ -53,9 +64,9 @@ class EnvOverride {
       // Restore our original value before taking on new responsibility
       if (!name_.empty()) {
         if (original_value_.has_value()) {
-          setenv(name_.c_str(), original_value_->c_str(), 1);
+          portable_setenv(name_.c_str(), original_value_->c_str());
         } else {
-          unsetenv(name_.c_str());
+          portable_unsetenv(name_.c_str());
         }
       }
       name_ = std::move(other.name_);

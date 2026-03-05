@@ -131,25 +131,35 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
   }
 }
 
-TEST_CASE("should select large result set from table for int and synonyms", "[int]") {
+TEST_CASE("should handle server-side Arrow memory optimization for int columns on multiple chunks", "[int]") {
+  constexpr int total_rows = 50000;
+  constexpr int64_t expected_col1 = 100;
+  constexpr int64_t expected_col2 = 30000;
+  constexpr int64_t expected_col3 = 2000000000;
+  constexpr int64_t expected_col4 = 9000000000000000000LL;
+
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // And Table with <type> column exists with 50000 sequential values
-  conn.execute("DROP TABLE IF EXISTS int_large_table");
-  conn.execute("CREATE TABLE int_large_table (col BIGINT)");
-  conn.execute("INSERT INTO int_large_table SELECT seq8() FROM TABLE(GENERATOR(ROWCOUNT => 50000))");
+  // And Table with four INT columns exists
+  conn.execute("CREATE TABLE int_different_column_sizes (col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)");
 
-  // When Query "SELECT * FROM <table> ORDER BY col" is executed
+  // And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
+  conn.execute(
+      "INSERT INTO int_different_column_sizes "
+      "SELECT 100, 30000, 2000000000, 9000000000000000000 "
+      "FROM TABLE(GENERATOR(ROWCOUNT => " +
+      std::to_string(total_rows) + "))");
+
+  // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
-  const auto sql = "SELECT * FROM int_large_table ORDER BY col";
+  const auto sql = "SELECT * FROM int_different_column_sizes";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
+  // Then Result should contain 50000 rows
   int row_count = 0;
-  int64_t expected_value = 0;
 
   while (true) {
     ret = SQLFetch(stmt.getHandle());
@@ -158,14 +168,24 @@ TEST_CASE("should select large result set from table for int and synonyms", "[in
     }
     CHECK_ODBC(ret, stmt);
 
-    SQLBIGINT result = 0;
-    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, sizeof(result), NULL);
+    SQLBIGINT col1, col2, col3, col4;
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &col1, sizeof(col1), NULL);
+    CHECK_ODBC(ret, stmt);
+    ret = SQLGetData(stmt.getHandle(), 2, SQL_C_SBIGINT, &col2, sizeof(col2), NULL);
+    CHECK_ODBC(ret, stmt);
+    ret = SQLGetData(stmt.getHandle(), 3, SQL_C_SBIGINT, &col3, sizeof(col3), NULL);
+    CHECK_ODBC(ret, stmt);
+    ret = SQLGetData(stmt.getHandle(), 4, SQL_C_SBIGINT, &col4, sizeof(col4), NULL);
     CHECK_ODBC(ret, stmt);
 
-    REQUIRE(result == expected_value);
-    expected_value++;
+    // And All values should be equal to expected data
+    REQUIRE(col1 == expected_col1);
+    REQUIRE(col2 == expected_col2);
+    REQUIRE(col3 == expected_col3);
+    REQUIRE(col4 == expected_col4);
+
     row_count++;
   }
 
-  REQUIRE(row_count == 50000);
+  REQUIRE(row_count == total_rows);
 }

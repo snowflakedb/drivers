@@ -37,13 +37,6 @@ static long long numeric_val_to_int(const SQL_NUMERIC_STRUCT& num) {
 
 static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>((unsigned char)c); }
 
-// Helper to get raw data with error checking for expected failures
-template <typename T>
-static SQLRETURN get_data_raw(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type, T* value,
-                              SQLLEN* indicator) {
-  return SQLGetData(stmt.getHandle(), col, target_type, value, sizeof(*value), indicator);
-}
-
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to Floating Point Types
 // ============================================================================

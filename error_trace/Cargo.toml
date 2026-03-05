@@ -1,0 +1,8 @@
+[package]
+name = "error_trace"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+snafu = "0.8.7"
+error_trace_derive = { path = "../error_trace_derive" }

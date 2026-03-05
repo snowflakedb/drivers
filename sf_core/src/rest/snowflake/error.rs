@@ -3,7 +3,7 @@ use snafu::{Location, Snafu};
 use std::time::Duration;
 use url::ParseError;
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum SfError {
     #[snafu(display("Transport error communicating with Snowflake"))]

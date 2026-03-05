@@ -1,4 +1,5 @@
 pub mod api_utils;
+pub mod bitmask;
 pub mod connection;
 pub mod data;
 pub mod descriptor;

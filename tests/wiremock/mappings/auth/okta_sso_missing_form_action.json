@@ -1,0 +1,14 @@
+{
+  "name": "Okta SSO SAML HTML without form action",
+  "request": {
+    "urlPathPattern": "/app/sso/saml.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "text/html"
+    },
+    "body": "<html><body><form method=\"post\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"AAAA\" /></form></body></html>"
+  }
+}

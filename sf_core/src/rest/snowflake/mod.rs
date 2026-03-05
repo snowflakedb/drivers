@@ -2,6 +2,7 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+mod native_okta;
 pub mod query_request;
 pub mod query_response;
 
@@ -9,12 +10,14 @@ use std::collections::HashMap;
 
 use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
-use crate::config::rest_parameters::{LoginParameters, QueryParameters};
+use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
+use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
@@ -33,9 +36,9 @@ const TOKEN_REQUEST_PATH: &str = "/session/token-request";
 #[derive(Debug, Clone)]
 pub struct SessionTokens {
     /// Token used to authenticate API requests
-    pub session_token: String,
+    pub session_token: SensitiveString,
     /// Token used to refresh an expired session token
-    pub master_token: String,
+    pub master_token: SensitiveString,
     /// Server-assigned session ID
     pub session_id: i64,
     /// When the session token expires
@@ -112,6 +115,13 @@ pub enum QueryExecutionMode {
     Async,
 }
 
+#[derive(Clone)]
+pub struct QueryInput<'a> {
+    pub sql: String,
+    pub bindings: Option<&'a RawValue>,
+    pub describe_only: Option<bool>,
+}
+
 pub fn user_agent(client_info: &ClientInfo) -> String {
     format!(
         "{}/{} ({}) CPython/3.11.6",
@@ -121,11 +131,8 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
     )
 }
 
-pub fn auth_request_data(
-    login_parameters: &LoginParameters,
-    session_parameters: Option<&HashMap<String, String>>,
-) -> Result<AuthRequestData, RestError> {
-    let mut data = AuthRequestData {
+fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
+    AuthRequestData {
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.application.clone(),
         client_app_version: login_parameters.client_info.version.clone(),
@@ -139,9 +146,16 @@ pub fn auth_request_data(
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
         },
         ..Default::default()
-    };
+    }
+}
 
-    // Convert session_parameters to JSON values for the auth request
+pub async fn auth_request_data(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<AuthRequestData, RestError> {
+    let mut data = base_auth_request_data(login_parameters);
+
     if let Some(params) = session_parameters {
         let json_params = params
             .iter()
@@ -150,22 +164,35 @@ pub fn auth_request_data(
         data.session_parameters = Some(json_params);
     }
 
-    match create_credentials(login_parameters).context(AuthenticationSnafu)? {
-        Credentials::Password { username, password } => {
-            data.login_name = Some(username);
-            data.password = Some(password);
-            data.authenticator = Some("SNOWFLAKE".to_string());
+    match &login_parameters.login_method {
+        LoginMethod::NativeOkta(okta_config) => {
+            let retry_policy = RetryPolicy::default();
+            let saml_html =
+                fetch_native_okta_saml(client, login_parameters, &retry_policy, okta_config)
+                    .await
+                    .context(NativeOktaSnafu)?;
+
+            data.login_name = Some(okta_config.username.clone());
+            data.authenticator = Some(okta_config.okta_url.to_string());
+            data.raw_saml_response = Some(saml_html.into());
         }
-        Credentials::Jwt { username, token } => {
-            data.login_name = Some(username);
-            data.token = Some(token);
-            data.authenticator = Some("SNOWFLAKE_JWT".to_string());
-        }
-        Credentials::Pat { username, token } => {
-            data.login_name = Some(username);
-            data.token = Some(token);
-            data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
-        }
+        _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
+            Credentials::Password { username, password } => {
+                data.login_name = Some(username);
+                data.password = Some(password);
+                data.authenticator = Some("SNOWFLAKE".to_string());
+            }
+            Credentials::Jwt { username, token } => {
+                data.login_name = Some(username);
+                data.token = Some(token);
+                data.authenticator = Some("SNOWFLAKE_JWT".to_string());
+            }
+            Credentials::Pat { username, token } => {
+                data.login_name = Some(username);
+                data.token = Some(token);
+                data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+            }
+        },
     }
     Ok(data)
 }
@@ -206,16 +233,17 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
-    // Build the login request
-    let auth_request_data = auth_request_data(login_parameters, session_parameters)?;
+    // Build the login request data (handles all auth methods including Okta SAML exchange)
+    let auth_request_data = auth_request_data(client, login_parameters, session_parameters).await?;
     tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
         data: auth_request_data,
     };
 
     tracing::debug!(
-        "Login request: {}",
-        serde_json::to_string_pretty(&login_request).unwrap()
+        authenticator = ?login_request.data.authenticator,
+        login_name = ?login_request.data.login_name,
+        "Login request prepared (secrets redacted)"
     );
 
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
@@ -338,8 +366,8 @@ pub async fn snowflake_login_with_client(
     );
     Ok(LoginResult {
         tokens: SessionTokens {
-            session_token,
-            master_token,
+            session_token: session_token.into(),
+            master_token: master_token.into(),
             session_id,
             session_expires_at,
             master_expires_at,
@@ -369,7 +397,7 @@ pub async fn refresh_session(
 
     // Build request body per gosnowflake: {"oldSessionToken": "...", "requestType": "RENEW"}
     let body = serde_json::json!({
-        "oldSessionToken": tokens.session_token,
+        "oldSessionToken": tokens.session_token.reveal(),
         "requestType": "RENEW"
     });
 
@@ -382,7 +410,7 @@ pub async fn refresh_session(
         // Authenticate with master token, not session token
         .header(
             header::AUTHORIZATION,
-            format!("Snowflake Token=\"{}\"", tokens.master_token),
+            format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
         .header("User-Agent", user_agent(client_info))
@@ -439,20 +467,19 @@ pub async fn refresh_session(
     );
 
     Ok(SessionTokens {
-        session_token: data.session_token,
-        master_token: data.master_token,
+        session_token: data.session_token.into(),
+        master_token: data.master_token.into(),
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
     })
 }
 
-#[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
-pub async fn snowflake_query(
+#[tracing::instrument(skip(query_parameters, session_token, query_input), fields(sql))]
+pub async fn snowflake_query<'a>(
     query_parameters: QueryParameters,
-    session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    session_token: impl AsRef<str>,
+    query_input: QueryInput<'a>,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info)?;
@@ -461,8 +488,7 @@ pub async fn snowflake_query(
         &client,
         query_parameters,
         session_token,
-        sql,
-        parameter_bindings,
+        query_input,
         &policy,
         execution_mode,
     )
@@ -470,26 +496,26 @@ pub async fn snowflake_query(
 }
 
 #[tracing::instrument(
-    skip(client, query_parameters, session_token, parameter_bindings),
+    skip(client, query_parameters, session_token, query_input),
     fields(sql)
 )]
-pub async fn snowflake_query_with_client(
+pub async fn snowflake_query_with_client<'a>(
     client: &reqwest::Client,
     query_parameters: QueryParameters,
-    session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    session_token: impl AsRef<str>,
+    query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
+    let session_token = session_token.as_ref();
+
     // Async mode path (legacy, opt-in)
     if matches!(execution_mode, QueryExecutionMode::Async) {
         return execute_async_with_fallback(
             client,
             &query_parameters,
             session_token,
-            sql,
-            parameter_bindings,
+            query_input,
             retry_policy,
         )
         .await;
@@ -499,29 +525,26 @@ pub async fn snowflake_query_with_client(
     execute_sync_with_retry(
         client,
         &query_parameters,
-        &session_token,
-        sql,
-        parameter_bindings,
+        session_token,
+        &query_input,
         retry_policy,
     )
     .await
 }
 
 /// Execute query in async mode with fallback to sync for error 612.
-async fn execute_async_with_fallback(
+async fn execute_async_with_fallback<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
-    session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    session_token: &str,
+    query_input: QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     match snowflake_query_async_style(
         client,
         query_parameters,
-        session_token.clone(),
-        sql.clone(),
-        parameter_bindings,
+        session_token,
+        &query_input,
         retry_policy,
     )
     .await
@@ -548,7 +571,7 @@ async fn execute_async_with_fallback(
             },
         ) => {
             tracing::error!(
-                sql_prefix = sql.chars().take(50).collect::<String>(),
+                sql_prefix = query_input.sql.chars().take(50).collect::<String>(),
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -560,9 +583,8 @@ async fn execute_async_with_fallback(
     let response = execute_sync_with_retry(
         client,
         query_parameters,
-        &session_token,
-        sql,
-        parameter_bindings,
+        session_token,
+        &query_input,
         retry_policy,
     )
     .await?;
@@ -594,17 +616,16 @@ async fn execute_async_with_fallback(
 /// On connection errors (network timeout, connection reset), the query is retried
 /// with the same `requestId` and `retry=true`. Snowflake uses requestId for
 /// idempotency - if the original query completed, the retry returns the existing result.
-async fn execute_sync_with_retry(
+async fn execute_sync_with_retry<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
-    let sql_prefix = sql.chars().take(50).collect::<String>();
+    let sql_prefix = query_input.sql.chars().take(50).collect::<String>();
 
     tracing::debug!(
         request_id = %request_id,
@@ -617,8 +638,7 @@ async fn execute_sync_with_retry(
         client,
         query_parameters,
         session_token,
-        &sql,
-        parameter_bindings,
+        query_input,
         request_id,
         false, // not a retry
     )
@@ -664,8 +684,7 @@ async fn execute_sync_with_retry(
             client,
             query_parameters,
             session_token,
-            &sql,
-            parameter_bindings,
+            query_input,
             request_id,
             true, // is retry
         )
@@ -705,17 +724,16 @@ async fn execute_sync_with_retry(
 }
 
 /// Execute a single sync query request.
-async fn execute_sync_query(
+async fn execute_sync_query<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
     session_token: &str,
-    sql: &str,
-    parameter_bindings: Option<&RawValue>,
+    query_input: &QueryInput<'a>,
     request_id: uuid::Uuid,
     is_retry: bool,
 ) -> Result<query_response::Response, RestError> {
     let query_request = query_request::Request {
-        sql_text: sql.to_owned(),
+        sql_text: query_input.sql.clone(),
         async_exec: false,
         sequence_id: 1,
         query_submission_time: SystemTime::now()
@@ -723,9 +741,9 @@ async fn execute_sync_query(
             .unwrap()
             .as_millis() as i64,
         is_internal: false,
-        describe_only: None,
+        describe_only: query_input.describe_only,
         parameters: None,
-        bindings: parameter_bindings,
+        bindings: query_input.bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
     };
@@ -777,31 +795,39 @@ async fn execute_sync_query(
         let message = query_response
             .message
             .unwrap_or_else(|| "Unknown error".to_owned());
-        return QueryFailedSnafu { message }.fail();
+        let code = query_response
+            .code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok());
+        let sql_state = query_response.data.sql_state.clone();
+        return QueryFailedSnafu {
+            message,
+            code,
+            sql_state,
+        }
+        .fail();
     }
     Ok(query_response)
 }
 
 /// New blocking facade that uses the async engine under the hood.
 #[tracing::instrument(
-    skip(client, query_parameters, session_token, parameter_bindings),
+    skip(client, query_parameters, session_token, query_input),
     fields(sql)
 )]
-pub async fn snowflake_query_async_style(
+pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
-    session_token: String,
-    sql: String,
-    parameter_bindings: Option<&RawValue>,
+    session_token: S,
+    query_input: &QueryInput<'a>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
     crate::rest::snowflake::async_exec::execute_blocking_with_async(
         client,
         query_parameters,
-        &session_token,
-        sql,
-        parameter_bindings,
+        session_token.as_ref(),
+        query_input,
         request_id,
         retry_policy,
     )
@@ -865,11 +891,17 @@ pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwe
     builder.header(header::CONTENT_TYPE, json_header_value())
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum RestError {
     #[snafu(display("Authentication failed"))]
     Authentication {
         source: AuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Native Okta SSO failed"))]
+    NativeOkta {
+        source: native_okta::NativeOktaError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -941,11 +973,15 @@ pub enum RestError {
     #[snafu(display("Query failed: {message}"))]
     QueryFailed {
         message: String,
+        /// Snowflake server error code (e.g. 1003 for syntax error).
+        code: Option<i32>,
+        /// ANSI SQL state code (e.g. "42000" for syntax error).
+        sql_state: Option<String>,
         #[snafu(implicit)]
         location: Location,
     },
 }
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
     #[snafu(display("Failed to parse Snowflake response"))]
     ResponseFormat {

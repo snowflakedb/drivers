@@ -6,16 +6,9 @@ from decimal import Decimal
 
 import pytest
 
+from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import NotSupportedError, ProgrammingError
-from tests.compatibility import IS_UNIVERSAL_DRIVER
 from tests.e2e.types.utils import assert_sequential_values
-
-
-if IS_UNIVERSAL_DRIVER:
-    from snowflake.connector import SnowflakeCursor
-    from snowflake.connector.cursor import SnowflakeCursorBase
-else:
-    from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
 
 
 class TestCursorSfqid:
@@ -86,6 +79,145 @@ class TestCursorSfqid:
 
         # Then sfqid should still be the same
         assert cursor.sfqid == sfqid_before
+
+
+class TestCursorQuery:
+    """Integration tests for Cursor.query property."""
+
+    def test_query_is_none_before_execute(self, connection):
+        """Test that query returns None before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing query before execute
+        result = cursor.query
+
+        # Then it should be None
+        assert result is None
+
+    def test_query_returns_sql_text_after_execute(self, cursor):
+        """Test that query returns the SQL text after execute."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+
+        # When accessing query
+        result = cursor.query
+
+        # Then it should return a non-empty string
+        assert result is not None
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_query_contains_executed_sql(self, cursor):
+        """Test that query contains the SQL that was executed."""
+        # Given a specific SQL statement
+        sql = "SELECT 42 AS answer"
+
+        # When executing the SQL
+        cursor.execute(sql)
+
+        # Then query should contain the executed SQL
+        assert cursor.query is not None
+        assert "42" in cursor.query
+
+    def test_query_changes_with_each_query(self, cursor):
+        """Test that query changes with each executed query."""
+        # Given a cursor that executes multiple queries
+        cursor.execute("SELECT 1")
+        first_query = cursor.query
+
+        cursor.execute("SELECT 'hello'")
+        second_query = cursor.query
+
+        cursor.execute("SELECT 1, 2, 3")
+        third_query = cursor.query
+
+        # Then each query should have a different query text
+        assert first_query is not None
+        assert second_query is not None
+        assert third_query is not None
+        assert first_query != second_query
+        assert second_query != third_query
+
+    def test_query_persists_after_fetchall(self, cursor):
+        """Test that query remains accessible after fetching all results."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1, 2, 3")
+        query_before = cursor.query
+
+        # When fetching all results
+        cursor.fetchall()
+
+        # Then query should still be the same
+        assert cursor.query == query_before
+
+    def test_query_persists_after_fetchone(self, cursor):
+        """Test that query remains accessible after fetching one result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+        query_before = cursor.query
+
+        # When fetching one result
+        cursor.fetchone()
+
+        # Then query should still be the same
+        assert cursor.query == query_before
+
+    def test_query_with_ddl_statement(self, cursor, tmp_schema):
+        """Test that query works with DDL statements."""
+        # Given a DDL statement
+        sql = f"CREATE TABLE {tmp_schema}.test_query_ddl (id INTEGER)"
+
+        # When executing the DDL
+        cursor.execute(sql)
+
+        # Then query should return the DDL text
+        assert cursor.query is not None
+        assert "CREATE TABLE" in cursor.query.upper()
+
+    def test_query_with_dml_statement(self, cursor, tmp_schema):
+        """Test that query works with DML statements."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_query_dml (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_query_dml VALUES (1)")
+
+        # When accessing query after the INSERT
+        result = cursor.query
+
+        # Then it should reflect the INSERT statement
+        assert result is not None
+        assert "INSERT" in result.upper()
+
+    def test_query_updates_after_new_execute(self, cursor):
+        """Test that query updates to reflect the most recent execute."""
+        # Given a cursor that executes a SELECT
+        cursor.execute("SELECT 1 AS first")
+        first_query = cursor.query
+
+        # When executing a different query
+        cursor.execute("SELECT 2 AS second")
+
+        # Then query should reflect the new SQL
+        assert cursor.query is not None
+        assert cursor.query != first_query
+
+    def test_query_with_multiline_sql(self, cursor):
+        """Test that query works with multiline SQL statements."""
+        # Given a multiline SQL statement
+        sql = """
+            SELECT
+                1 AS col1,
+                2 AS col2,
+                3 AS col3
+        """
+
+        # When executing the multiline SQL
+        cursor.execute(sql)
+
+        # Then query should return the SQL text
+        assert cursor.query is not None
+        assert isinstance(cursor.query, str)
+        assert len(cursor.query) > 0
 
 
 class TestCursorDescription:
@@ -432,6 +564,319 @@ class TestCursorRowcount:
         assert cursor.rowcount == 1
 
 
+class TestCursorRownumber:
+    """Integration tests for Cursor.rownumber property."""
+
+    def test_rownumber_is_none_before_fetch(self, cursor):
+        """Test that rownumber is None after execute but before any fetch."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT * FROM VALUES (1), (2)")
+
+        # When accessing rownumber before fetching
+        result = cursor.rownumber
+
+        # Then it should be None (no rows fetched yet)
+        assert result is None
+
+    def test_rownumber_starts_at_zero_after_first_fetch(self, cursor):
+        """Test that rownumber is 0 after the first fetchone."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT * FROM VALUES (1), (2)")
+
+        # When fetching the first row
+        cursor.fetchone()
+
+        # Then rownumber should be 0 (0-based index)
+        assert cursor.rownumber == 0
+
+    def test_rownumber_increments_with_fetchone(self, cursor):
+        """Test that rownumber increments with each fetchone call."""
+        # Given a cursor that executes a query with multiple rows
+        cursor.execute("SELECT * FROM VALUES (1), (2), (3)")
+
+        # When fetching rows one by one
+        cursor.fetchone()
+        assert cursor.rownumber == 0
+
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        cursor.fetchone()
+        assert cursor.rownumber == 2
+
+    def test_rownumber_does_not_increment_past_end(self, cursor):
+        """Test that rownumber does not increment when fetchone returns None."""
+        # Given a cursor with a single row
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        assert cursor.rownumber == 0
+
+        # When fetching past the end
+        cursor.fetchone()
+
+        # Then rownumber should stay at last value
+        assert cursor.rownumber == 0
+
+    def test_rownumber_resets_with_new_execute(self, cursor):
+        """Test that rownumber resets when a new query is executed."""
+        # Given a cursor that has fetched rows
+        cursor.execute("SELECT * FROM VALUES (1), (2), (3)")
+        cursor.fetchone()
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        # When executing a new query
+        cursor.execute("SELECT * FROM VALUES (10), (20)")
+
+        # Then rownumber should be reset to None (no rows fetched yet)
+        assert cursor.rownumber is None
+
+    def test_rownumber_increments_with_fetchmany(self, cursor):
+        """Test that rownumber increments correctly with fetchmany."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching multiple rows at once
+        cursor.fetchmany(3)
+
+        # Then rownumber should reflect the last row fetched (0-based)
+        assert cursor.rownumber == 2
+
+    def test_rownumber_updated_by_fetchall(self, cursor):
+        """Test that rownumber reflects total rows fetched after fetchall."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching all rows at once
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 4
+
+    def test_rownumber_updated_by_fetchall_after_partial_fetchone(self, cursor):
+        """Test that rownumber is correct when fetchall follows partial fetchone."""
+        # Given a cursor with multiple rows, partially consumed
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        cursor.fetchone()
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        # When fetching remaining rows
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 4
+
+    def test_rownumber_fetchall_on_empty_result(self, cursor):
+        """Test that rownumber stays None when fetchall returns no rows."""
+        # Given a cursor with an empty result set
+        cursor.execute("SELECT 1 WHERE FALSE")
+
+        # When fetching all (no rows)
+        cursor.fetchall()
+
+        # Then rownumber should remain None
+        assert cursor.rownumber is None
+
+    def test_rownumber_fetchmany_then_fetchall(self, cursor):
+        """Test rownumber is correct after fetchmany followed by fetchall."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching some rows with fetchmany, then the rest with fetchall
+        cursor.fetchmany(3)
+        assert cursor.rownumber == 2
+
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 9
+
+
+class TestCursorSqlstate:
+    """Integration tests for Cursor.sqlstate property."""
+
+    def test_sqlstate_is_none_before_execute(self, connection):
+        """Test that sqlstate returns None before any query is executed."""
+        cursor = connection.cursor()
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_none_after_successful_select(self, cursor):
+        """Successful queries set sqlstate to None (00000 is normalized)."""
+        cursor.execute("SELECT 1")
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_none_after_dml(self, cursor):
+        """Successful DDL/DML statements set sqlstate to None."""
+        cursor.execute("CREATE TEMPORARY TABLE test_sqlstate_dml (id INT)")
+        assert cursor.sqlstate is None
+
+        cursor.execute("INSERT INTO test_sqlstate_dml VALUES (1)")
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_stays_none_across_executes(self, cursor):
+        """sqlstate is refreshed on every execute call."""
+        cursor.execute("SELECT 1")
+        first = cursor.sqlstate
+
+        cursor.execute("SELECT 2")
+        second = cursor.sqlstate
+
+        assert first is None
+        assert second is None
+
+    def test_sqlstate_persists_after_fetchall(self, cursor):
+        """sqlstate is not cleared by fetching results."""
+        cursor.execute("SELECT 1, 2, 3")
+        cursor.fetchall()
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_persists_after_fetchone(self, cursor):
+        """sqlstate is not cleared by fetching results."""
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_set_on_failed_execute(self, cursor):
+        """sqlstate is captured from the error when a query fails."""
+        with pytest.raises(ProgrammingError):
+            cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+
+        assert cursor.sqlstate == "42S02"
+
+    def test_sqlstate_transitions_across_success_and_failure(self, cursor):
+        """sqlstate updates correctly through None -> error -> None."""
+        cursor.execute("SELECT 1")
+        assert cursor.sqlstate is None
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+        assert cursor.sqlstate == "42S02"
+
+        cursor.execute("SELECT 2")
+        assert cursor.sqlstate is None
+
+
+class TestCursorStatementLifecycle:
+    """Integration tests for statement handle lifecycle (create/release)."""
+
+    def test_sequential_executes_do_not_leak(self, cursor):
+        """Test that many sequential execute calls work without resource exhaustion."""
+        # Given a cursor that executes many queries in sequence
+        for i in range(50):
+            cursor.execute(f"SELECT {i}")
+            row = cursor.fetchone()
+            assert row[0] == i
+
+    def test_cursor_context_manager_cleanup(self, connection):
+        """Test that cursor context manager properly cleans up resources."""
+        # Given a cursor used as a context manager
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1")
+            result = cur.fetchone()
+            assert result == (1,)
+
+        # When the context manager exits, the cursor should be closed
+        assert cur.is_closed()
+
+    def test_cursor_usable_after_close_and_reopen(self, connection):
+        """Test that closing a cursor and creating a new one works."""
+        # Given a cursor that executes and is then closed
+        cursor1 = connection.cursor()
+        cursor1.execute("SELECT 1")
+        cursor1.fetchone()
+        cursor1.close()
+        assert cursor1.is_closed()
+
+        # When creating a new cursor
+        cursor2 = connection.cursor()
+        cursor2.execute("SELECT 2")
+        result = cursor2.fetchone()
+
+        # Then the new cursor should work normally
+        assert result == (2,)
+        cursor2.close()
+
+    def test_execute_after_previous_execute(self, cursor):
+        """Test that a second execute properly replaces the first result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 'first'")
+        assert cursor.fetchone()[0] == "first"
+
+        # When executing a second query on the same cursor
+        cursor.execute("SELECT 'second'")
+
+        # Then the second result should be available
+        assert cursor.fetchone()[0] == "second"
+
+    def test_multiple_cursors_independent(self, connection):
+        """Test that multiple cursors operate independently."""
+        cursor1 = connection.cursor()
+        cursor2 = connection.cursor()
+
+        cursor1.execute("SELECT 1")
+        cursor2.execute("SELECT 2")
+
+        assert cursor1.fetchone() == (1,)
+        assert cursor2.fetchone() == (2,)
+
+        cursor1.close()
+        cursor2.close()
+
+    def test_close_is_idempotent(self, cursor):
+        """Test that calling close() multiple times is safe."""
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+
+        # First close
+        cursor.close()
+        assert cursor.is_closed()
+
+        # Second close should not raise an error
+        cursor.close()
+        assert cursor.is_closed()
+
+    def test_statement_cleanup_on_execute_failure(self, cursor):
+        """Test that statement handles are cleaned up even if execute fails."""
+        # Execute a successful query first
+        cursor.execute("SELECT 1")
+        assert cursor.fetchone() == (1,)
+
+        # Try to execute an invalid query
+        try:
+            cursor.execute("SELECT * FROM nonexistent_table_xyz")
+        except Exception:
+            pass  # Expected to fail
+
+        # Should be able to execute a new valid query after failure
+        cursor.execute("SELECT 2")
+        assert cursor.fetchone() == (2,)
+
+
 class TestCursorMethods:
     """Test Cursor object methods."""
 
@@ -574,7 +1019,6 @@ class TestCursorFetch:
         result = cursor.fetchall()
         assert result == [(1, "hello", Decimal("3.14"))]
 
-    @pytest.mark.skip("TODO: Known issue, SNOW-2997744")
     def test_fetchall_empty_result(self, cursor):
         """Test fetchall with empty result."""
         cursor.execute("SELECT 1 WHERE FALSE")
@@ -920,20 +1364,15 @@ class TestDictCursorCreation:
 
     def test_create_dict_cursor(self, connection):
         """Test that DictCursor can be created via connection.cursor()."""
-        if IS_UNIVERSAL_DRIVER:
-            from snowflake.connector import DictCursor
-        else:
-            from snowflake.connector.cursor import DictCursor
+        from snowflake.connector.cursor import DictCursor
 
         with connection.cursor(DictCursor) as cur:
             assert isinstance(cur, DictCursor)
 
+    @pytest.mark.skip_reference
     def test_dict_cursor_is_base_cursor_subclass(self):
         """Test that DictCursor is a subclass of BaseCursor."""
-        if IS_UNIVERSAL_DRIVER:
-            from snowflake.connector import DictCursor
-        else:
-            from snowflake.connector.cursor import DictCursor
+        from snowflake.connector.cursor import DictCursor, SnowflakeCursorBase
 
         assert issubclass(DictCursor, SnowflakeCursorBase)
 

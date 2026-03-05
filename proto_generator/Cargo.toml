@@ -19,5 +19,9 @@ log = "0.4.28"
 env_logger="0.11.8"
 walkdir = "2.5"
 
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(feature, values("arbitrary"))']
+
 [dev-dependencies]
 tempfile = "3.0"

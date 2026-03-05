@@ -22,6 +22,13 @@
 using pg_utils::TempTestDir;
 
 std::string get_private_key_path_for_auth(picojson::object& params, const TempTestDir& tmp) {
+  // First check if a private key file path is provided
+  auto private_key_file_path = get_private_key_file_path(params);
+  if (!private_key_file_path.empty()) {
+    return private_key_file_path;
+  }
+
+  // Otherwise, create a temporary file from contents
   auto private_key = read_private_key(params);
   auto path = tmp.path() / "rsa_key_auth.p8";
   std::ofstream file(path, std::ios::out | std::ios::trunc);
@@ -97,9 +104,10 @@ void assert_login_error(ConnectionHandleWrapper& dbc) {
 TEST_CASE("should authenticate using private file with password", "[private_key_auth]") {
   // Given Authentication is set to JWT and private file with password is provided
   TempTestDir tmp("e2e_auth_pwd_");
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_with_private_key(tmp);
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
-  std::string connection_string = get_jwt_connection_string_with_private_key(tmp);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -112,9 +120,10 @@ TEST_CASE("should authenticate using private file with password", "[private_key_
 
 TEST_CASE("should fail JWT authentication when invalid private key provided", "[private_key_auth]") {
   // Given Authentication is set to JWT and invalid private key file is provided
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_with_invalid_private_key();
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
-  std::string connection_string = get_jwt_connection_string_with_invalid_private_key();
 
   // When Trying to Connect
   attempt_connection_expect_error(dbc, connection_string);
@@ -127,8 +136,6 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   // Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
   TempTestDir tmp("e2e_auth_unenc_");
   auto params = get_test_parameters("testconnection");
-  auto env = setup_environment();
-  auto dbc = get_connection_handle(env);
 
   // Decrypt the test key to produce an unencrypted PEM file.
   std::string encrypted_pem = read_private_key(params);
@@ -142,11 +149,15 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   test_utils::decrypt_pem_key_to_file(encrypted_pem, password, unencrypted_path);
 
   // Build connection string without PRIV_KEY_FILE_PWD
+  /* TODO: Explicit config installation */
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_FILE=" << unencrypted_path.string() << ";";
   std::string connection_string = ss.str();
+
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -164,20 +175,22 @@ TEST_CASE("should authenticate using private_key as base64 string", "[private_ke
 
   // Given Authentication is set to JWT and private key is provided as base64-encoded string
   auto params = get_test_parameters("testconnection");
-  auto env = setup_environment();
-  auto dbc = get_connection_handle(env);
 
   // Base64-encode the PEM private key
   std::string private_key_pem = read_private_key(params);
   std::string private_key_b64 = test_utils::base64_encode(private_key_pem);
 
   // Build connection string with PRIV_KEY_BASE64 (key is encrypted, so include password)
+  /* TODO: Explicit config installation */
   std::stringstream ss;
   read_default_params(ss, params);
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_BASE64=" << private_key_b64 << ";";
   std::string connection_string = ss.str();
+
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -203,20 +216,22 @@ TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key passw
   }
 
   TempTestDir tmp("e2e_auth_pwd_alias_");
-  auto env = setup_environment();
-  auto dbc = get_connection_handle(env);
 
   // Write encrypted key to file
   std::string key_path = get_private_key_path_for_auth(params, tmp);
   std::string password = pwd_it->second.get<std::string>();
 
   // Use PRIV_KEY_PWD instead of PRIV_KEY_FILE_PWD
+  /* TODO: Explicit config installation */
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_FILE=" << key_path << ";";
   ss << "PRIV_KEY_PWD=" << password << ";";
   std::string connection_string = ss.str();
+
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);

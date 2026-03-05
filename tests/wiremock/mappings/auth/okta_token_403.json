@@ -1,0 +1,17 @@
+{
+  "name": "Okta token 403 Forbidden",
+  "request": {
+    "urlPathPattern": "/api/v1/authn.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 403,
+    "jsonBody": {
+      "errorCode": "E0000006",
+      "errorSummary": "You do not have permission to perform the requested action",
+      "errorLink": "E0000006",
+      "errorId": "oaeWq9j-VQ1v3cP2_VkAg",
+      "errorCauses": []
+    }
+  }
+}

@@ -7,6 +7,7 @@ plugins {
     id 'jacoco'
     id 'checkstyle'
     id 'com.diffplug.spotless' version '6.13.0' // latest version supporting Java 8
+    id 'com.adarshr.test-logger' version '4.0.0'
 }
 
 // ====================
@@ -14,6 +15,7 @@ plugins {
 // ====================
 def oldJdbcVersion = '4.0.1'
 def slf4jVersion = '2.0.9'
+def lombokVersion = '1.18.42'
 
 group = 'com.snowflake'
 version = '0.1.0'
@@ -34,7 +36,10 @@ configurations {
 dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testImplementation 'org.mockito:mockito-core:4.6.1'
-    testImplementation 'org.json:json:20231013'
+    testCompileOnly "org.projectlombok:lombok:${lombokVersion}"
+    testAnnotationProcessor "org.projectlombok:lombok:${lombokVersion}"
+
+    implementation 'org.json:json:20251224'
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "org.slf4j:slf4j-simple:${slf4jVersion}"
     implementation 'javax.annotation:javax.annotation-api:1.3.2'
@@ -44,8 +49,11 @@ dependencies {
     implementation 'org.apache.arrow:arrow-memory-netty:17.0.0'
     implementation 'org.apache.arrow:arrow-c-data:17.0.0'
     implementation 'com.google.protobuf:protobuf-java:4.32.1'
+    compileOnly "org.projectlombok:lombok:${lombokVersion}"
+    annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 
     referenceTestsOldDriver "net.snowflake:snowflake-jdbc:${oldJdbcVersion}"
+    referenceTestsOldDriver 'org.json:json:20251224'
     // Old JDBC reference run needs SLF4J at runtime, but it is not guaranteed by old artifact metadata.
     referenceTestsOldDriver "org.slf4j:slf4j-api:${slf4jVersion}"
     referenceTestsOldDriver "org.slf4j:slf4j-simple:${slf4jVersion}"
@@ -57,7 +65,7 @@ dependencies {
 spotless {
     java {
         removeUnusedImports()
-        googleJavaFormat('1.15.0')
+        googleJavaFormat('1.7')
         target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
         targetExclude 'src/**/protobuf_gen/**/*.java'
     }
@@ -139,6 +147,8 @@ publishing {
 // ====================
 def configureCommonTestTask = { t ->
     t.useJUnitPlatform()
+    t.minHeapSize = '1g'
+    t.maxHeapSize = '4g'
 
     if (JavaVersion.current().isJava9Compatible()) {
         t.jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
@@ -148,15 +158,6 @@ def configureCommonTestTask = { t ->
     }
 
     t.outputs.upToDateWhen { false }
-    t.testLogging {
-        showStandardStreams = true
-        showExceptions true
-        showCauses true
-        showStackTraces true
-    }
-    t.afterTest { desc, result ->
-        println "TEST ${desc.className}.${desc.name}: ${result.resultType}"
-    }
 
     def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'
     def libName = System.getProperty('os.name').toLowerCase().contains('mac') ? 'libjdbc_bridge.dylib' :
@@ -164,13 +165,6 @@ def configureCommonTestTask = { t ->
                   'libjdbc_bridge.so'
     t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
     t.environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
-
-    if (System.getProperty('os.name').toLowerCase().contains('mac')) {
-        def awsLcPath = fileTree(dir: '../target/debug/build', include: '**/libaws_lc_fips_0_13_8_*.dylib').files.first()?.parentFile?.absolutePath
-        if (awsLcPath != null) {
-            t.environment 'DYLD_LIBRARY_PATH', "${awsLcPath}:${libPath}"
-        }
-    }
 }
 
 test {
@@ -181,6 +175,7 @@ tasks.register('referenceTest', Test) {
     configureCommonTestTask(delegate)
     testClassesDirs = sourceSets.test.output.classesDirs
     include 'net/snowflake/client/api/**'
+    include 'net/snowflake/jdbc/**'
     // Isolate old-driver reference tests from this module's main runtime deps.
     // Keep only test output/resources + test-only runtime deps + old JDBC driver deps.
     classpath = sourceSets.test.output +

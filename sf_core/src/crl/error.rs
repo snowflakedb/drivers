@@ -1,6 +1,6 @@
 use snafu::{Location, Snafu};
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum CrlError {
     #[snafu(display("Failed to download CRL from URL: {url}"))]

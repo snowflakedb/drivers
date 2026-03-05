@@ -1,6 +1,8 @@
+use crate::api::InfoType;
+use crate::api::bitmask::Bitmask;
 use crate::api::error::Required;
 use crate::api::{
-    ConnectionState, OdbcResult, api_utils, conn_from_handle,
+    ConnectionState, GetDataExtensions, OdbcResult, api_utils, conn_from_handle,
     error::{
         AttributeCannotBeSetNowSnafu, InvalidPortSnafu, UnknownAttributeSnafu,
         UnsupportedAttributeSnafu,
@@ -9,13 +11,41 @@ use crate::api::{
 };
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::*;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
 
 const SQL_AUTOCOMMIT_ON: sql::ULen = 1;
+
+/// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
+/// Used as the Okta SAML retry budget when neither the connection string nor
+/// SQLSetConnectAttr provides a value.
+const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
+
+/// Maps ODBC connection string parameter names to their sf_core equivalents.
+/// Parameters listed here are forwarded as-is via `connection_set_option_string`.
+/// Parameters that need special handling (type conversion, conditional skipping,
+/// side-effects) are handled separately in `driver_connect`.
+const PARAM_MAPPINGS: &[(&str, &str)] = &[
+    ("ACCOUNT", "account"),
+    ("SERVER", "host"),
+    ("PWD", "password"),
+    ("UID", "user"),
+    ("PROTOCOL", "protocol"),
+    ("DATABASE", "database"),
+    ("WAREHOUSE", "warehouse"),
+    ("ROLE", "role"),
+    ("SCHEMA", "schema"),
+    ("AUTHENTICATOR", "authenticator"),
+    ("TOKEN", "token"),
+    ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
+    ("DISABLE_SAML_URL_CHECK", "disable_saml_url_check"),
+    ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
+    ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
+    ("CRL_ENABLED", "crl_enabled"),
+];
 
 /// Parse connection string into key-value pairs
 fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
@@ -39,10 +69,24 @@ pub fn driver_connect(
     let connection_string =
         api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
     let connection_string_map = parse_connection_string(&connection_string);
-    tracing::info!(
-        "driver_connect: connection_string={:?}",
-        connection_string_map
-    );
+    {
+        const REDACTED_KEYS: &[&str] = &[
+            "PWD",
+            "TOKEN",
+            "PRIV_KEY_FILE_PWD",
+            "PRIV_KEY_PWD",
+            "PRIV_KEY_BASE64",
+        ];
+        let redacted_map: HashMap<&String, &str> = connection_string_map
+            .iter()
+            .map(|(k, v)| {
+                let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
+                let v = if is_sensitive { "****" } else { v.as_str() };
+                (k, v)
+            })
+            .collect();
+        tracing::info!("driver_connect: connection_string={:?}", redacted_map);
+    }
 
     let connection = conn_from_handle(connection_handle);
     let db_handle = DatabaseDriverClient::database_new(DatabaseNewRequest {})?
@@ -62,48 +106,27 @@ pub fn driver_connect(
             .pre_connection_attrs
             .contains_key(&ConnectionAttribute::PrivKeyBase64);
 
+    let mut login_timeout_set = false;
+
     for (key, value) in connection_string_map {
+        if key == "DRIVER" {
+            continue;
+        }
+
+        if let Some(core_key) = PARAM_MAPPINGS
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| *v)
+        {
+            DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: core_key.to_owned(),
+                value,
+            })?;
+            continue;
+        }
+
         match key.as_str() {
-            // TODO: Do it more generically
-            "DRIVER" => {
-                // ignore
-            }
-            "ACCOUNT" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "account".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "SERVER" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "host".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "PWD" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "password".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "UID" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "user".to_owned(),
-                        value,
-                    },
-                )?;
-            }
             "PORT" => {
                 let port_int: i64 = value.parse().context(InvalidPortSnafu {
                     port: value.clone(),
@@ -114,47 +137,21 @@ pub fn driver_connect(
                     value: port_int,
                 })?;
             }
-            "PROTOCOL" => {
+            "CRL_MODE" => {
                 DatabaseDriverClient::connection_set_option_string(
                     ConnectionSetOptionStringRequest {
                         conn_handle: Some(conn_handle),
-                        key: "protocol".to_owned(),
-                        value,
+                        key: "crl_mode".to_owned(),
+                        value: value.to_uppercase(),
                     },
                 )?;
             }
-            "DATABASE" => {
+            "LOGIN_TIMEOUT" => {
+                login_timeout_set = true;
                 DatabaseDriverClient::connection_set_option_string(
                     ConnectionSetOptionStringRequest {
                         conn_handle: Some(conn_handle),
-                        key: "database".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "WAREHOUSE" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "warehouse".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "ROLE" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "role".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "SCHEMA" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "schema".to_owned(),
+                        key: "authentication_timeout".to_owned(),
                         value,
                     },
                 )?;
@@ -169,34 +166,6 @@ pub fn driver_connect(
                         ConnectionSetOptionStringRequest {
                             conn_handle: Some(conn_handle),
                             key: "private_key_file".to_owned(),
-                            value,
-                        },
-                    )?;
-                }
-            }
-            "AUTHENTICATOR" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "authenticator".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
-                if connection
-                    .pre_connection_attrs
-                    .contains_key(&ConnectionAttribute::PrivKeyPassword)
-                {
-                    tracing::debug!(
-                        "driver_connect: skipping {} — attribute-based password takes priority",
-                        key
-                    );
-                } else {
-                    DatabaseDriverClient::connection_set_option_string(
-                        ConnectionSetOptionStringRequest {
-                            conn_handle: Some(conn_handle),
-                            key: "private_key_password".to_owned(),
                             value,
                         },
                     )?;
@@ -217,60 +186,24 @@ pub fn driver_connect(
                     )?;
                 }
             }
-            "TOKEN" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "token".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "TLS_CUSTOM_ROOT_STORE_PATH" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "custom_root_store_path".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "TLS_VERIFY_HOSTNAME" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "verify_hostname".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "TLS_VERIFY_CERTIFICATES" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "verify_certificates".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            // CRL settings via options
-            "CRL_ENABLED" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "crl_enabled".to_owned(),
-                        value,
-                    },
-                )?;
-            }
-            "CRL_MODE" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "crl_mode".to_owned(),
-                        value: value.to_uppercase(),
-                    },
-                )?;
+            "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
+                if connection
+                    .pre_connection_attrs
+                    .contains_key(&ConnectionAttribute::PrivKeyPassword)
+                {
+                    tracing::debug!(
+                        "driver_connect: skipping {} — attribute-based password takes priority",
+                        key
+                    );
+                } else {
+                    DatabaseDriverClient::connection_set_option_string(
+                        ConnectionSetOptionStringRequest {
+                            conn_handle: Some(conn_handle),
+                            key: "private_key_password".to_owned(),
+                            value,
+                        },
+                    )?;
+                }
             }
             _ => {
                 tracing::warn!("driver_connect: unknown connection string key: {:?}", key);
@@ -279,7 +212,24 @@ pub fn driver_connect(
     }
 
     // Apply SQLSetConnectAttr values (override connection string parameters).
-    apply_pre_connection_attrs(connection, conn_handle)?;
+    let login_timeout_from_attr = apply_pre_connection_attrs(connection, conn_handle)?;
+
+    // Old driver defaults LOGIN_TIMEOUT to 300 s (S_DEFAULT_LOGIN_TIMEOUT).
+    // If neither the connection string nor SQLSetConnectAttr provided a value,
+    // apply the same default so sf_core's Okta SAML retry budget matches.
+    if !login_timeout_set && !login_timeout_from_attr {
+        DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
+            conn_handle: Some(conn_handle),
+            key: "authentication_timeout".to_owned(),
+            value: DEFAULT_LOGIN_TIMEOUT_SECS.to_owned(),
+        })?;
+    }
+
+    DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
+        conn_handle: Some(conn_handle),
+        key: "client_app_id".to_owned(),
+        value: "ODBC".to_owned(),
+    })?;
 
     DatabaseDriverClient::connection_init(ConnectionInitRequest {
         conn_handle: Some(conn_handle),
@@ -296,10 +246,11 @@ pub fn driver_connect(
 
 /// Apply pre-connection attributes to sf_core. SQLSetConnectAttr values override
 /// connection string parameters. PrivKeyContent takes priority over PrivKeyBase64.
+/// Returns `true` if LoginTimeout was set via attributes.
 fn apply_pre_connection_attrs(
     connection: &mut crate::api::Connection,
     conn_handle: ConnectionHandle,
-) -> OdbcResult<()> {
+) -> OdbcResult<bool> {
     let attrs = &connection.pre_connection_attrs;
 
     if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
@@ -338,7 +289,17 @@ fn apply_pre_connection_attrs(
         })?;
     }
 
-    Ok(())
+    // LoginTimeout -> authentication_timeout (matches old driver: used as Okta SAML budget)
+    if let Some(timeout) = attrs.get(&ConnectionAttribute::LoginTimeout) {
+        DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
+            conn_handle: Some(conn_handle),
+            key: "authentication_timeout".to_owned(),
+            value: timeout.clone(),
+        })?;
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 /// Simple connect function (SQLConnect) - currently a placeholder
@@ -392,7 +353,20 @@ pub fn set_connect_attr(
     match attr {
         // Standard ODBC attributes
         ConnectionAttribute::LoginTimeout => {
-            tracing::debug!("set_connect_attr: LoginTimeout (ignored)");
+            // Matches old driver: LOGIN_TIMEOUT is reused as the Okta SAML retry budget.
+            // SQL_ATTR_LOGIN_TIMEOUT is an integer attribute: the value is passed as
+            // (SQLPOINTER)(uintptr_t)seconds, not as a string pointer.
+            if matches!(connection.state, ConnectionState::Connected { .. }) {
+                return AttributeCannotBeSetNowSnafu {
+                    attribute: attr.as_raw(),
+                }
+                .fail();
+            }
+            let seconds = value_ptr as usize;
+            tracing::debug!("set_connect_attr: LoginTimeout={}", seconds);
+            connection
+                .pre_connection_attrs
+                .insert(attr, seconds.to_string());
             Ok(())
         }
         ConnectionAttribute::ConnectionTimeout => {
@@ -483,8 +457,32 @@ pub fn get_connect_attr(
             }
             Ok(())
         }
-        ConnectionAttribute::LoginTimeout | ConnectionAttribute::ConnectionTimeout => {
-            // These are accepted but not stored; return 0
+        ConnectionAttribute::LoginTimeout => {
+            let timeout: sql::ULen = match connection.pre_connection_attrs.get(&attr) {
+                Some(s) => s.parse().unwrap_or_else(|_| {
+                    tracing::warn!(
+                        "get_connect_attr: LoginTimeout value {:?} is not a valid integer, \
+                         returning default {}",
+                        s,
+                        DEFAULT_LOGIN_TIMEOUT_SECS,
+                    );
+                    DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap()
+                }),
+                None => DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap(),
+            };
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = timeout;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::ConnectionTimeout => {
             if !value_ptr.is_null() {
                 unsafe {
                     *(value_ptr as *mut sql::ULen) = 0;
@@ -496,5 +494,42 @@ pub fn get_connect_attr(
             attribute: attr.as_raw(),
         }
         .fail(),
+    }
+}
+
+/// Retrieve general information about the driver and data source (SQLGetInfo).
+pub fn get_info(
+    connection_handle: sql::Handle,
+    info_type: sql::USmallInt,
+    info_value_ptr: sql::Pointer,
+    _buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
+
+    let _conn = conn_from_handle(connection_handle);
+
+    let info_type = InfoType::try_from(info_type)?;
+
+    match info_type {
+        InfoType::GetDataExtensions => {
+            let extensions = [
+                GetDataExtensions::AnyColumn,
+                GetDataExtensions::AnyOrder,
+                GetDataExtensions::Bound,
+            ];
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = extensions.bitmask();
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+
+            Ok(())
+        }
     }
 }

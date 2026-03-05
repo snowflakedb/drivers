@@ -46,6 +46,7 @@ class EnvFixture {
 
   [[nodiscard]] SQLHENV env_handle() const { return env_wrapper->getHandle(); }
   [[nodiscard]] std::string dsn_name() const { return config.value().dsn_name(); }
+  [[nodiscard]] std::string connection_string() const { return config.value().connection_string(); }
 
  protected:
   [[nodiscard]] ConnectionHandleWrapper create_connection_handle() { return env_wrapper->createConnectionHandle(); }
@@ -136,6 +137,40 @@ class StmtFixture : public DbcFixture {
 class StmtDefaultDSNFixture : public StmtFixture {
  public:
   StmtDefaultDSNFixture() : StmtFixture(DataSourceConfig::Snowflake()) {}
+};
+
+// ============================================================================
+// Two-Statement Fixture (same connection, two independent statement handles)
+// ============================================================================
+
+class TwoStmtFixture : public StmtFixture {
+  SQLHSTMT stmt2 = SQL_NULL_HSTMT;
+
+ public:
+  explicit TwoStmtFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt)
+      : StmtFixture(std::move(dsn_config)) {
+    const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt2);
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+
+  ~TwoStmtFixture() {
+    if (stmt2 != SQL_NULL_HSTMT) {
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt2);
+    }
+  }
+
+  // Disable copy and move (RAII resource management)
+  TwoStmtFixture(const TwoStmtFixture&) = delete;
+  TwoStmtFixture& operator=(const TwoStmtFixture&) = delete;
+  TwoStmtFixture(TwoStmtFixture&&) = delete;
+  TwoStmtFixture& operator=(TwoStmtFixture&&) = delete;
+
+  [[nodiscard]] SQLHSTMT stmt2_handle() const { return stmt2; }
+};
+
+class TwoStmtDefaultDSNFixture : public TwoStmtFixture {
+ public:
+  TwoStmtDefaultDSNFixture() : TwoStmtFixture(DataSourceConfig::Snowflake()) {}
 };
 
 #endif  // ODBCFIXTURES_HPP

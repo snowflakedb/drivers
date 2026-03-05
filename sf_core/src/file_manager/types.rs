@@ -1,4 +1,5 @@
 use crate::compression_types::CompressionType;
+use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Serialize};
 
 // Dedicated file transfer types
@@ -87,18 +88,23 @@ pub struct StageInfo {
     pub key_prefix: String,
     pub region: String,
     pub creds: Credentials,
+    /// S3 endpoint provided by Snowflake (e.g. for FIPS or regional routing).
+    /// When present, the S3 client uses this instead of the SDK default.
+    pub end_point: Option<String>,
 }
 
+/// AWS credentials for S3 stage access.
 #[derive(Debug, Clone)]
 pub struct Credentials {
     pub aws_key_id: String,
-    pub aws_secret_key: String,
-    pub aws_token: String,
+    pub aws_secret_key: SensitiveString,
+    pub aws_token: SensitiveString,
 }
 
+/// Encryption material for file transfer.
 #[derive(Debug, Clone)]
 pub struct EncryptionMaterial {
-    pub query_stage_master_key: String,
+    pub query_stage_master_key: SensitiveString,
     pub query_id: String,
     pub smk_id: String,
 }

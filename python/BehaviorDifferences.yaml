@@ -1,18 +1,39 @@
 behavior_differences:
   1:
     name: "Header of a gzip-compressed file does not contain filename"
-  
+
   2:
     name: "DEFLATE compression type option is now correctly auto-detected"
-  
+
   3:
     name: "BROTLI compression type option is now supported"
-  
-  4:
-    name: "Error structure changed"
-  
+
   5:
     name: "Private key password parameter name changed"
     description: |
       NEW driver: `private_key_password`
       OLD driver: `private_key_file_pwd`
+
+  11:
+    name: "CONFIG_PARSER deprecated alias removed"
+    description: |
+      NEW driver: CONFIG_PARSER module attribute no longer exists; accessing it raises AttributeError.
+      OLD driver: CONFIG_PARSER is a deprecated alias for CONFIG_MANAGER that emits DeprecationWarning.
+
+  12:
+    name: "Deprecated add_subparser method and _sub_parsers property removed"
+    description: |
+      NEW driver: add_subparser() and _sub_parsers are removed; accessing them raises AttributeError.
+      OLD driver: add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.
+
+  13:
+    name: "Empty connections.toml preserves config.toml connections"
+    description: |
+      NEW driver: When connections.toml exists but is empty, connections from config.toml are preserved.
+      OLD driver: When connections.toml exists but is empty, it replaces config.toml connections with an empty set.
+
+  14:
+    name: "ConfigManager without file_path returns MissingConfigOptionError on option retrieval"
+    description: |
+      NEW driver: Retrieving an option from a ConfigManager with no file_path returns an empty config and raises MissingConfigOptionError.
+      OLD driver: Retrieving an option from a ConfigManager with no file_path raises ConfigManagerError about missing file_path.

@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_close_cursor_tests close_cursor_tests.cpp)
+add_odbc_test(odbc_api_free_stmt_tests free_stmt_tests.cpp)
+add_odbc_test(odbc_api_end_tran_tests end_tran_tests.cpp)
+add_odbc_test(odbc_api_cancel_tests cancel_tests.cpp)
+add_odbc_test(odbc_api_cancel_handle_tests cancel_handle_tests.cpp)

@@ -228,18 +228,9 @@ class TestEdgeCases:
 
         # When Query with 3 placeholders is executed with 1 argument
         # Then Error should be raised for too few arguments
-        from ...compatibility import IS_UNIVERSAL_DRIVER
+        from snowflake.connector import DatabaseError
 
-        if IS_UNIVERSAL_DRIVER:
-            from snowflake.connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
-
-            expected_error = ProtoApplicationException
-        else:
-            from snowflake.connector import DatabaseError
-
-            expected_error = DatabaseError
-
-        with pytest.raises(expected_error):
+        with pytest.raises(DatabaseError):
             cursor.execute("SELECT ?, ?, ?", (1,))
 
 

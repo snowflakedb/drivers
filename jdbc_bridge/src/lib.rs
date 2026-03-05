@@ -2,7 +2,7 @@ use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jobject};
 use proto_utils::ProtoError;
-use sf_core::protobuf_apis::call_proto;
+use sf_core::protobuf::apis::call_proto;
 
 mod slf4j_layer;
 

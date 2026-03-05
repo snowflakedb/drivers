@@ -1322,9 +1322,18 @@ tests:
     ud_tests: []
   jdbc.ConnectStringParseTest.java:
   - test_name: testParseAccountName
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#buildConnectionOptionsUsesParsedParamsAndDerivesAccount
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectStringKeepsSchemeWhenSslOnOverridesUrlSslOffForJdbcCompatibility
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectionStringDecodesEscapedValuesAndForcesHttpWhenSslOff
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectionStringInterpretsBooleanSslByValue
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectionStringRetainsValueSuffixAndKeepsLegacyInvalidPairBehavior
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveDoesNotOverrideTypedValuesWhenKeyAlreadyExists
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveSkipsBlankQueryParameterKeys
   - test_name: testParseWithIllegalUriCharacters
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testConnectRejectsMalformedSnowflakeUrl
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
   jdbc.ConnectionAlreadyClosedIT.java:
   - test_name: testClosedConnection
     ud_tests: []
@@ -2526,7 +2535,11 @@ tests:
     ud_tests: []
   jdbc.SnowflakeConnectionV1Test.java:
   - test_name: testMergeProperties
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectStringKeepsSchemeWhenSslOnOverridesUrlSslOffForJdbcCompatibility
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#buildConnectionOptionsUsesParsedParamsAndDerivesAccount
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveDoesNotOverrideTypedValuesWhenKeyAlreadyExists
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveSkipsBlankQueryParameterKeys
   jdbc.SnowflakeDriverIT.java:
   - test_name: testAutocommit
     ud_tests: []
@@ -2693,7 +2706,9 @@ tests:
     ud_tests: []
   jdbc.SnowflakeDriverTest.java:
   - test_name: testAcceptUrls
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsValidURL
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
   - test_name: testConnectWithMissingAccountIdentifier
     ud_tests: []
   - test_name: testGetParentLogger
@@ -2701,15 +2716,19 @@ tests:
   - test_name: testGetVersion
     ud_tests: []
   - test_name: testInvalidNullConnect
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
   - test_name: testJDBCCompliant
     ud_tests: []
   - test_name: testMain
     ud_tests: []
   - test_name: testParseConnectStringException
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testConnectRejectsMalformedSnowflakeUrl
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testAcceptsInvalidURL
   - test_name: testReturnsNullForOtherJdbcConnectString
-    ud_tests: []
+    ud_tests:
+    - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testConnectReturnsNullForNonSnowflakePrefix
   - test_name: testSuppressIllegalReflectiveAccessWarning
     ud_tests: []
   jdbc.SnowflakeFileTransferConfigTest.java:

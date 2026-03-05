@@ -7,6 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionHandle,
+    StatementHandle,
+)
 from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
 from snowflake.connector.errors import ProgrammingError
 
@@ -431,6 +435,178 @@ class TestFetchmany:
         assert result[1][3] is True
 
 
+class TestStatementLifecycle:
+    """Unit tests for statement handle lifecycle (create/release).
+
+    Each execute() creates a statement handle, runs the query, then
+    releases the handle immediately — the Arrow stream returned by
+    execute is fully owned and does not reference the handle.
+    """
+
+    @pytest.fixture
+    def mock_connection(self):
+        """Create a mock connection with db_api stubs for execute flow."""
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        handle_counter = 0
+
+        def new_handle(*_args, **_kwargs):
+            nonlocal handle_counter
+            handle_counter += 1
+            resp = MagicMock()
+            resp.stmt_handle = StatementHandle(id=handle_counter)
+            return resp
+
+        conn.db_api.statement_new.side_effect = new_handle
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        conn.db_api.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        """Create a cursor with the mocked connection."""
+        return SnowflakeCursor(mock_connection)
+
+    def test_execute_releases_handle_immediately(self, cursor, mock_connection):
+        """A single execute must release its statement handle before returning."""
+        cursor.execute("SELECT 1")
+
+        mock_connection.db_api.statement_release.assert_called_once()
+        released_id = mock_connection.db_api.statement_release.call_args.args[0].stmt_handle.id
+        assert released_id == 1
+
+    def test_sequential_executes_release_all_handles(self, cursor, mock_connection):
+        """Every execute creates and releases its own handle — nothing leaks."""
+        n = 5
+        for i in range(n):
+            cursor.execute(f"SELECT {i}")
+
+        release = mock_connection.db_api.statement_release
+        assert release.call_count == n
+
+        released_ids = [call.args[0].stmt_handle.id for call in release.call_args_list]
+        assert released_ids == list(range(1, n + 1))
+
+    def test_close_without_execute_does_not_release(self, cursor, mock_connection):
+        """Closing a cursor that never executed should not call release."""
+        cursor.close()
+
+        mock_connection.db_api.statement_release.assert_not_called()
+
+
+class TestSqlstate:
+    """Unit tests for Cursor.sqlstate property."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_sqlstate_none_before_execute(self, cursor):
+        """sqlstate is None on a fresh cursor."""
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_none_after_successful_execute(self, cursor, mock_connection):
+        """sqlstate is None when server returns '00000' (successful completion)."""
+        result = MagicMock()
+        result.columns = []
+        result.sql_state = "00000"
+        mock_connection.db_api.statement_execute_query.return_value.result = result
+
+        cursor.execute("SELECT 1")
+
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_populated_with_error_code(self, cursor, mock_connection):
+        """sqlstate reflects non-success sql_state from execute result."""
+        result = MagicMock()
+        result.columns = []
+        result.sql_state = "42601"
+        mock_connection.db_api.statement_execute_query.return_value.result = result
+
+        cursor.execute("SELECT 1")
+
+        assert cursor.sqlstate == "42601"
+
+    def test_sqlstate_none_when_field_absent(self, cursor, mock_connection):
+        """sqlstate is None when the server does not return sql_state."""
+        result = MagicMock()
+        result.columns = []
+        result.sql_state = ""
+        mock_connection.db_api.statement_execute_query.return_value.result = result
+
+        cursor.execute("SELECT 1")
+
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_updates_on_subsequent_execute(self, cursor, mock_connection):
+        """sqlstate is refreshed on every execute call."""
+        first_result = MagicMock()
+        first_result.columns = []
+        first_result.sql_state = "42601"
+
+        second_result = MagicMock()
+        second_result.columns = []
+        second_result.sql_state = "00000"
+
+        mock_connection.db_api.statement_execute_query.return_value.result = first_result
+        cursor.execute("SELECT 1")
+        assert cursor.sqlstate == "42601"
+
+        mock_connection.db_api.statement_execute_query.return_value.result = second_result
+        cursor.execute("SELECT 2")
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_set_from_error_on_failed_execute(self, cursor, mock_connection):
+        """sqlstate is captured from PEP 249 Error when execute raises."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.sqlstate == "42601"
+
+    def test_sqlstate_set_to_none_when_error_has_no_sqlstate(self, cursor, mock_connection):
+        """sqlstate is set to None when error carries no sqlstate."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate=None)
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_transitions_across_success_and_failure(self, cursor, mock_connection):
+        """sqlstate updates correctly through None -> error -> None."""
+        success_result = MagicMock()
+        success_result.columns = []
+        success_result.sql_state = "00000"
+
+        mock_connection.db_api.statement_execute_query.return_value.result = success_result
+        mock_connection.db_api.statement_execute_query.side_effect = None
+        cursor.execute("SELECT 1")
+        assert cursor.sqlstate is None
+
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sqlstate="42601")
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+        assert cursor.sqlstate == "42601"
+
+        mock_connection.db_api.statement_execute_query.side_effect = None
+        mock_connection.db_api.statement_execute_query.return_value.result = success_result
+        cursor.execute("SELECT 2")
+        assert cursor.sqlstate is None
+
+
 class TestFetchmanyArraysizeAttribute:
     """Tests for arraysize attribute interaction with fetchmany."""
 
@@ -444,17 +620,19 @@ class TestFetchmanyArraysizeAttribute:
         """Create a cursor with a mock connection."""
         return SnowflakeCursor(mock_connection)
 
-    def test_arraysize_class_attribute_default(self):
-        """Test that Cursor class has default arraysize of 1."""
-        assert SnowflakeCursorBase.arraysize == 1
+    def test_arraysize_default(self, cursor):
+        """Test that cursor has default arraysize of 1."""
+        assert cursor.arraysize == 1
 
-    def test_arraysize_instance_attribute_overrides_class(self, cursor):
-        """Test instance arraysize overrides class attribute."""
+    def test_arraysize_is_property(self):
+        """Test that arraysize is a property on the class."""
+        assert isinstance(SnowflakeCursorBase.__dict__["arraysize"], property)
+
+    def test_arraysize_instance_independent(self, cursor):
+        """Test instance arraysize changes are independent."""
         assert cursor.arraysize == 1
         cursor.arraysize = 10
         assert cursor.arraysize == 10
-        # Class attribute unchanged
-        assert SnowflakeCursorBase.arraysize == 1
 
     def test_fetchmany_uses_instance_arraysize(self, cursor):
         """Test fetchmany uses instance arraysize, not class attribute."""
@@ -466,3 +644,89 @@ class TestFetchmanyArraysizeAttribute:
             result = cursor.fetchmany()
 
         assert len(result) == 5
+
+
+class TestRownumber:
+    """Unit tests for Cursor.rownumber property."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_rownumber_none_before_fetch(self, cursor):
+        """rownumber is None before any rows have been fetched."""
+        assert cursor.rownumber is None
+
+    def test_rownumber_increments_with_fetchone(self, cursor):
+        """rownumber increments by 1 for each fetchone call."""
+        cursor._iterator = iter([(1,), (2,), (3,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            assert cursor.rownumber == 0
+            cursor.fetchone()
+            assert cursor.rownumber == 1
+            cursor.fetchone()
+            assert cursor.rownumber == 2
+
+    def test_rownumber_stays_after_fetchone_exhausted(self, cursor):
+        """rownumber stays at last value when fetchone returns None."""
+        cursor._iterator = iter([(1,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            assert cursor.rownumber == 0
+            cursor.fetchone()  # returns None
+            assert cursor.rownumber == 0
+
+    def test_rownumber_updated_by_fetchall(self, cursor):
+        """rownumber reflects total rows fetched after fetchall."""
+        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchall()
+            assert cursor.rownumber == 4
+
+    def test_rownumber_updated_by_fetchall_after_partial_fetchone(self, cursor):
+        """rownumber is correct when fetchall follows partial fetchone consumption."""
+        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            cursor.fetchone()
+            assert cursor.rownumber == 1
+            cursor.fetchall()
+            assert cursor.rownumber == 4
+
+    def test_rownumber_updated_by_fetchmany(self, cursor):
+        """rownumber increments correctly through fetchmany calls."""
+        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchmany(3)
+            assert cursor.rownumber == 2
+            cursor.fetchmany(2)
+            assert cursor.rownumber == 4
+
+    def test_rownumber_fetchall_on_empty_result(self, cursor):
+        """rownumber stays None when fetchall returns no rows."""
+        cursor._iterator = iter([])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchall()
+            assert cursor.rownumber is None
+
+    def test_rownumber_none_after_execute_resets(self, cursor):
+        """rownumber resets to None after a new execute call."""
+        cursor._iterator = iter([(1,), (2,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            assert cursor.rownumber == 0
+
+        cursor._rownumber = -1  # simulates what execute() does
+        assert cursor.rownumber is None

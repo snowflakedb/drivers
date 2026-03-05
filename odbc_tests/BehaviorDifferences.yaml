@@ -16,7 +16,7 @@ behavior_differences:
   
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
-  
+
   7:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
 
@@ -32,3 +32,80 @@ behavior_differences:
     description: |
       The old driver accepted raw EVP_PKEY* pointers via SQLSetConnectAttr.
       Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
+
+  11:
+    name: "SQL_C_CHAR with small buffer returns SQL_SUCCESS instead of SQL_SUCCESS_WITH_INFO"
+    description: |
+      OLD driver: When SQLGetData is called with a buffer too small to hold the full
+      character representation of a DECIMAL value, the old driver returns SQL_SUCCESS (0)
+      and silently truncates the data without setting a warning.
+      NEW driver: Returns SQL_SUCCESS_WITH_INFO (1) with truncated data in the buffer,
+      a null terminator, and SQL_NO_TOTAL in the indicator, per the ODBC spec
+      for string data right truncation (SQLSTATE 01004).
+      Impact: Applications that check only for SQL_SUCCESS will now also see
+      SQL_SUCCESS_WITH_INFO. The ODBC specification mandates SQL_SUCCESS_WITH_INFO
+      for string truncation, so this is a spec-compliance improvement.
+      Fix for Old Driver is to be merged with SNOW-3120035
+
+  12:
+    name: "SQL_C_BINARY on DECIMAL/NUMERIC columns returns raw internal data size instead of SQL_NUMERIC_STRUCT size"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_BINARY on a SQL_DECIMAL or
+      SQL_NUMERIC column, the old driver returns 68 bytes of raw internal
+      TDWExactNumericType data (the Simba SDK's internal representation). The indicator
+      is set to 68 and the buffer contents are not interpretable by ODBC-compliant
+      applications.
+      NEW driver: Returns a 19-byte SQL_NUMERIC_STRUCT as required by the ODBC
+      specification, with precision, scale (0 — integer part after truncation),
+      sign (1 positive, 0 negative), and val[16] containing the unsigned magnitude
+      in little-endian 128-bit format. The indicator is set to sizeof(SQL_NUMERIC_STRUCT).
+      Impact: Applications requesting SQL_C_BINARY for numeric columns now receive
+      a standards-compliant SQL_NUMERIC_STRUCT. No correct application could have
+      relied on the old 68-byte internal representation.
+      Fix for Old Driver is to be merged with SNOW-3127864
+
+  13:
+    name: "SQL_C_CHAR returns SQL_SUCCESS instead of SQL_ERROR (22003) when whole digits do not fit in buffer"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_CHAR on a DECIMAL/NUMERIC
+      column and the buffer is too small to hold even the whole (non-fractional)
+      digits, the old driver returns SQL_SUCCESS and silently truncates the data.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range),
+      per the ODBC specification which distinguishes between truncation of fractional
+      digits only (01004) and loss of whole digits (22003).
+      Impact: Applications that previously received truncated whole digits silently
+      will now receive an error. This is a spec-compliance improvement — the ODBC
+      specification mandates 22003 when whole digits are lost during numeric-to-char
+      conversion.
+      TODO: To be fixed in old driver
+
+  14:
+    name: "SQL_C_BINARY returns SQL_SUCCESS instead of SQL_ERROR (22003) when buffer is too small for SQL_NUMERIC_STRUCT"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_BINARY on a DECIMAL/NUMERIC
+      column and the buffer is smaller than sizeof(SQL_NUMERIC_STRUCT), the old driver
+      silently writes a partial struct and returns SQL_SUCCESS.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range),
+      per the ODBC specification which states that when byte length of data exceeds
+      BufferLength for SQL_C_BINARY, the result is undefined and SQLSTATE 22003 must
+      be returned.
+      Impact: Applications providing undersized buffers for SQL_C_BINARY will now
+      receive an error instead of corrupted partial data.
+      TODO: To be fixed in old driver
+
+  15:
+    name: "SQL_C_NUMERIC ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField"
+    description: |
+      OLD driver: When SQLSetDescField is used to set SQL_DESC_PRECISION and
+      SQL_DESC_SCALE on the ARD before calling SQLGetData with SQL_C_NUMERIC,
+      the old driver ignores these values and always uses its own defaults
+      (precision=38, scale=0). The resulting SQL_NUMERIC_STRUCT does not reflect
+      the requested precision/scale.
+      NEW driver: Honors SQL_DESC_PRECISION and SQL_DESC_SCALE from the ARD,
+      rescaling the value accordingly. For example, setting scale=2 on a
+      DECIMAL(10,2) column returns val=12345 (unscaled) instead of val=123
+      (truncated to scale=0).
+      Impact: Applications that set descriptor fields for SQL_C_NUMERIC will
+      now see the correct precision and scale in the output struct, matching
+      the ODBC specification behavior.
+      TODO: To be fixed in old driver

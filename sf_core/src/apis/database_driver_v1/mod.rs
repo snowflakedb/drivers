@@ -1,6 +1,6 @@
 #![allow(clippy::result_large_err)]
 mod alter_session_parser;
-mod connection;
+pub mod connection;
 mod database;
 pub(crate) mod error;
 mod global_state;
@@ -11,7 +11,9 @@ mod statement;
 pub use crate::config::settings::Setting;
 pub use crate::handle_manager::Handle;
 pub use connection::Connection;
+pub use connection::ConnectionInfo;
 pub use connection::RefreshContext;
+pub use connection::connection_get_info;
 pub use connection::connection_init;
 pub use connection::connection_new;
 pub use connection::connection_release;
@@ -31,4 +33,4 @@ pub use statement::statement_prepare;
 pub use statement::statement_release;
 pub use statement::statement_set_option;
 pub use statement::statement_set_sql_query;
-pub use statement::{BindingType, DataPtr};
+pub use statement::{BindingType, ColumnMetadata, DataPtr};

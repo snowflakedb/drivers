@@ -7,12 +7,16 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
 import java.util.List;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.api.implementation.resultset.SnowflakeResultSetImpl;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteQueryRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteQueryResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
@@ -26,6 +30,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
  * to native Rust implementation via JNI.
  */
 public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
+  private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeStatementImpl.class);
 
   public final SnowflakeConnectionImpl connection;
   protected boolean closed = false;
@@ -49,6 +54,14 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   @Override
   public ResultSet executeQuery(String sql) throws SQLException {
     checkClosed();
+    return executeQueryWithBindings(sql, null);
+  }
+
+  protected ResultSet executeQueryWithBindings(String sql, QueryBindings bindings)
+      throws SQLException {
+    boolean hasBindings = bindings != null;
+    logger.debug(
+        "Statement executeQueryWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
     StatementSetSqlQueryRequest statementSetSqlQueryRequest =
         StatementSetSqlQueryRequest.newBuilder()
             .setStmtHandle(statementHandle)
@@ -57,18 +70,32 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     try {
       ProtobufApis.databaseDriverV1.statementSetSqlQuery(statementSetSqlQueryRequest);
     } catch (DatabaseDriverService.ServiceException e) {
-      throw new RuntimeException(e);
+      logger.warn("statementSetSqlQuery failed: sql={}, hasBindings={}", sql, hasBindings, e);
+      throw new SnowflakeSQLException("Failed to set SQL query on statement", e);
     }
 
-    StatementExecuteQueryRequest statementExecuteQueryRequest =
-        StatementExecuteQueryRequest.newBuilder().setStmtHandle(statementHandle).build();
+    StatementExecuteQueryRequest.Builder executeQueryRequestBuilder =
+        StatementExecuteQueryRequest.newBuilder().setStmtHandle(statementHandle);
+    if (bindings != null) {
+      executeQueryRequestBuilder.setBindings(bindings);
+    }
+    StatementExecuteQueryRequest executeQueryRequest = executeQueryRequestBuilder.build();
+    logger.debug(
+        "statementExecuteQuery request prepared: hasBindings={}, requestBytes={}",
+        hasBindings,
+        executeQueryRequest.getSerializedSize());
     try {
       StatementExecuteQueryResponse result =
-          ProtobufApis.databaseDriverV1.statementExecuteQuery(statementExecuteQueryRequest);
+          ProtobufApis.databaseDriverV1.statementExecuteQuery(executeQueryRequest);
       ExecuteResult executeResult = result.getResult();
+      logger.debug(
+          "statementExecuteQuery succeeded: hasBindings={}, queryId={}",
+          hasBindings,
+          executeResult.getQueryId());
       return new SnowflakeResultSetImpl(this, executeResult);
     } catch (DatabaseDriverService.ServiceException e) {
-      throw new RuntimeException(e);
+      logger.warn("statementExecuteQuery failed: hasBindings={}", hasBindings, e);
+      throw new SnowflakeSQLException("Failed to execute statement query", e);
     }
   }
 

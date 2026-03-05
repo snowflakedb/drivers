@@ -6,11 +6,10 @@ use super::connection::RefreshContext;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
-use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
 use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
-    rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
+    rest::snowflake::{self, QueryExecutionMode, QueryInput, snowflake_query_with_client},
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -64,9 +63,6 @@ pub enum BindingType<'a> {
     Csv(DataPtr<'a>),
 }
 
-/// Sentinel returned when the server does not report a row count.
-const ROWCOUNT_UNKNOWN: i64 = -1;
-
 /// Column names whose values are summed to compute DML rows-affected (exact match).
 const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
     "number of rows updated",
@@ -102,11 +98,15 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
     }
 }
 
-/// Calculate rows affected based on statement type
+/// Calculate rows affected based on statement type.
+///
+/// Returns `Some(count)` when rows affected is known, `None` when it is not
+/// (when the statement type is unknown).
+///
 /// - For DML: Parse rowset columns to sum affected rows
-/// - For SELECT and DDL: Use total field
-/// - For unknown: Return ROWCOUNT_UNKNOWN (-1)
-fn calculate_rows_affected(data: &Data) -> i64 {
+/// - For SELECT and other queries: Use total field
+/// - For unknown: Return None
+fn calculate_rows_affected(data: &Data) -> Option<i64> {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
         // For DML, parse the rowset to get affected rows
@@ -131,15 +131,15 @@ fn calculate_rows_affected(data: &Data) -> i64 {
                 }
             }
 
-            return affected_rows;
+            return Some(affected_rows);
         }
         // DML with no affected rows
-        return 0;
+        return Some(0);
     }
 
-    // For SELECT and other queries, use total
-    // Return ROWCOUNT_UNKNOWN if total is not available
-    data.total.unwrap_or(ROWCOUNT_UNKNOWN)
+    // For SELECT and other queries, use total field.
+    // Return None if total is not available.
+    data.total
 }
 
 pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {
@@ -196,9 +196,17 @@ pub fn statement_set_sql_query(stmt_handle: Handle, query: String) -> Result<(),
     }
 }
 
-pub fn statement_prepare(_stmt_handle: Handle) -> Result<(), ApiError> {
-    // TODO: Implement statement preparation logic if required.
-    Ok(())
+pub struct PrepareResult {
+    pub stream: Box<FFI_ArrowArrayStream>,
+    pub columns: Vec<ColumnMetadata>,
+}
+
+pub fn statement_prepare(stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
+    let result = execute_query_internal(stmt_handle, None, Some(true))?;
+    Ok(PrepareResult {
+        stream: result.stream,
+        columns: result.columns,
+    })
 }
 
 fn with_statement<T>(
@@ -243,25 +251,43 @@ pub unsafe fn statement_bind(
     })?;
     let record_batch = RecordBatch::from(StructArray::from(array));
     with_statement(stmt_handle, |mut stmt| {
-        stmt.bind_parameters(record_batch).map_err(|_| {
-            InvalidArgumentSnafu {
-                argument: "Failed to bind parameters".to_string(),
-            }
-            .build()
-        })
+        stmt.bind_parameters(record_batch);
+        Ok(())
     })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ColumnMetadata {
+    pub name: String,
+    pub r#type: String,
+    pub precision: Option<i64>,
+    pub scale: Option<i64>,
+    pub length: Option<i64>,
+    pub byte_length: Option<i64>,
+    pub nullable: bool,
 }
 
 pub struct ExecuteResult {
     pub stream: Box<FFI_ArrowArrayStream>,
-    pub rows_affected: i64,
+    pub rows_affected: Option<i64>,
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
+    pub statement_type_id: Option<i64>,
+    pub query: String,
+    pub sql_state: Option<String>,
 }
 
 pub fn statement_execute_query<'a>(
     stmt_handle: Handle,
     bindings: Option<BindingType<'a>>,
+) -> Result<ExecuteResult, ApiError> {
+    execute_query_internal(stmt_handle, bindings, None)
+}
+
+fn execute_query_internal<'a>(
+    stmt_handle: Handle,
+    bindings: Option<BindingType<'a>>,
+    describe_only: Option<bool>,
 ) -> Result<ExecuteResult, ApiError> {
     let handle = stmt_handle;
     let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
@@ -272,7 +298,7 @@ pub fn statement_execute_query<'a>(
     })?;
 
     let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-    let query_str = stmt.query.as_deref().ok_or_else(|| {
+    let query = stmt.query.as_deref().ok_or_else(|| {
         InvalidArgumentSnafu {
             argument: "Query not found".to_string(),
         }
@@ -295,8 +321,7 @@ pub fn statement_execute_query<'a>(
         )
     };
 
-    let execution_mode = stmt.execution_mode(Some(query_str));
-    let query = stmt.query.take().expect("query must be present");
+    let execution_mode = stmt.execution_mode(Some(query));
 
     // Get bindings from request or from statement's Arrow bindings.
     //
@@ -330,6 +355,12 @@ pub fn statement_execute_query<'a>(
         owned_bindings.as_deref()
     };
 
+    let query_input = QueryInput {
+        sql: query.to_string(),
+        bindings: query_bindings,
+        describe_only,
+    };
+
     let response = rt.block_on(async {
         let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
         let mut last_error = None;
@@ -338,9 +369,8 @@ pub fn statement_execute_query<'a>(
             match snowflake_query_with_client(
                 &http_client,
                 query_parameters.clone(),
-                session_token,
-                query.clone(),
-                query_bindings,
+                session_token.reveal(),
+                query_input.clone(),
                 &retry_policy,
                 execution_mode,
             )
@@ -357,14 +387,14 @@ pub fn statement_execute_query<'a>(
             .conn
             .lock()
             .map_err(|_| ConnectionLockingSnafu.build())?;
-        conn.update_session_params_cache(&query, response.data.parameters.as_ref());
+        conn.update_session_params_cache(query, response.data.parameters.as_ref());
     }
 
-    let response_reader = rt
+    let query_result = rt
         .block_on(process_query_response(&response.data, &http_client))
         .context(QueryResponseProcessingSnafu)?;
 
-    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
+    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
 
     // Extract query_id from response
     let query_id = response.data.query_id.clone().unwrap_or_default();
@@ -372,34 +402,44 @@ pub fn statement_execute_query<'a>(
     // Calculate rows_affected based on statement type
     // For DML: Sum of affected rows from rowset columns
     // For SELECT: Total rows in result set
-    // For DDL/Unknown: -1
+    // For DDL/Unknown: None
     let rows_affected = calculate_rows_affected(&response.data);
+    let statement_type_id = response.data.statement_type_id;
 
-    // Extract column metadata from rowtype
-    let columns = response
-        .data
-        .row_type
-        .unwrap_or_default()
-        .iter()
-        .map(|rt| ColumnMetadata {
-            name: rt.name.clone(),
-            r#type: rt.type_.clone(),
-            precision: rt.precision.map(|v| v as i64),
-            scale: rt.scale.map(|v| v as i64),
-            length: rt.length.map(|v| v as i64),
-            byte_length: rt.byte_length.map(|v| v as i64),
-            nullable: rt.nullable,
-        })
-        .collect();
+    // Extract column metadata: prefer synthetic metadata from PUT/GET processing,
+    // fall back to server-provided rowtype for regular queries.
+    let columns = query_result.columns.unwrap_or_else(|| {
+        response
+            .data
+            .row_type
+            .unwrap_or_default()
+            .iter()
+            .map(|rt| ColumnMetadata {
+                name: rt.name.clone(),
+                r#type: rt.type_.clone(),
+                precision: rt.precision.map(|v| v as i64),
+                scale: rt.scale.map(|v| v as i64),
+                length: rt.length.map(|v| v as i64),
+                byte_length: rt.byte_length.map(|v| v as i64),
+                nullable: rt.nullable,
+            })
+            .collect()
+    });
 
-    // Serialize pointer into integer
-    stmt.state = StatementState::Executed;
-    Ok(ExecuteResult {
+    // Extract sql_state from response
+    let sql_state = response.data.sql_state;
+
+    let result = ExecuteResult {
         stream: rowset_stream,
         rows_affected,
         query_id,
         columns,
-    })
+        statement_type_id,
+        query: query.to_string(),
+        sql_state,
+    };
+    stmt.state = StatementState::Executed;
+    Ok(result)
 }
 
 /// Convert Arrow RecordBatch parameter bindings to `Cow::Owned(Box<RawValue>)`.
@@ -497,19 +537,8 @@ impl Statement {
         }
     }
 
-    pub fn bind_parameters(&mut self, record_batch: RecordBatch) -> Result<(), StatementError> {
-        match self.state {
-            StatementState::Initialized => {
-                self.parameter_bindings = Some(record_batch);
-            }
-            _ => {
-                InvalidStateTransitionSnafu {
-                    msg: format!("Cannot bind parameters in state={:?}", self.state),
-                }
-                .fail()?;
-            }
-        }
-        Ok(())
+    pub fn bind_parameters(&mut self, record_batch: RecordBatch) {
+        self.parameter_bindings = Some(record_batch);
     }
 
     pub fn get_query_parameter_bindings(&self) -> Result<Option<Box<RawValue>>, StatementError> {
@@ -609,7 +638,7 @@ fn skip_leading_whitespace_and_comments(s: &str) -> &str {
     s
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum StatementError {
     #[snafu(display("Unsupported bind parameter type: {type_}"))]
     UnsupportedBindParameterType {

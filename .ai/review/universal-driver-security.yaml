@@ -1,0 +1,86 @@
+id: universal-driver-security-rules
+friendly_name: "Universal Driver Security Rules"
+status: enabled
+percentage_of_prs_reviewed: 100
+allowed_folders:
+  - "sf_core/src"
+  - "odbc/src"
+excluded_folders:
+  - "sf_core/src/bin"
+llm_model: "claude-sonnet-4-5"
+allowed_file_extensions:
+  - ".rs"
+  - ".toml"
+rules:
+  - id: ud-sensitive-data-must-use-sensitive-string
+    rule: |
+      **OBJECTIVE**: Ensure all sensitive data (passwords, tokens, private keys, encryption keys, credentials) is wrapped in `SensitiveString` from the `crate::sensitive` module — never stored as plain `String`.
+
+      `SensitiveString` is a type alias for `Sensitive<String>` — a generic wrapper that provides:
+      - Memory zeroization on drop via the `zeroize` crate (OWASP ASVS 8.3.6)
+      - Redacted `Debug`/`Display` output (shows `****`)
+      - `Serialize`/`Deserialize` support (serializes the real value, safe for HTTP bodies)
+      - Explicit `.reveal()` required to access the inner value (`&String`, which auto-derefs to `&str`)
+      For binary secrets, `Sensitive<Vec<u8>>` can be used the same way.
+
+      **REQUIREMENT**: Any struct field, enum variant field, or variable that holds a password, token, private key, passphrase, secret key, or encryption key MUST use `SensitiveString` instead of `String`. Look for fields whose names contain: `password`, `token`, `secret`, `private_key`, `passphrase`, `master_key`, `session_token`, `master_token`, `pat`, `credential`, or `encryption_key`.
+
+      **EXCEPTIONS**:
+      - Serde **deserialization** structs that represent raw JSON responses from Snowflake (e.g., `RefreshSessionData`, `AuthResponse`) may use `String` since they are intermediate — but the values MUST be wrapped in `SensitiveString` before being stored in long-lived structs.
+      - Function parameters that receive already-exposed values for immediate use (e.g., passing to HTTP headers or crypto APIs) may use `&str` or `String`.
+      - Test code is excluded from this rule.
+
+      ❌ **BAD:**
+      ```rust
+      pub struct SessionTokens {
+          pub session_token: String,
+          pub master_token: String,
+      }
+
+      pub enum LoginMethod {
+          Password { username: String, password: String },
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      use crate::sensitive::SensitiveString;
+
+      pub struct SessionTokens {
+          pub session_token: SensitiveString,
+          pub master_token: SensitiveString,
+      }
+
+      pub enum LoginMethod {
+          Password { username: String, password: SensitiveString },
+      }
+      ```
+
+      **CONSTRUCTION**: Use `SensitiveString::from(value)` or `value.into()` for both `String` and `&str`.
+      **ACCESS**: Use `.reveal()` to get `&str`.
+
+  - id: ud-sensitive-debug-impl
+    rule: |
+      **OBJECTIVE**: Structs containing sensitive data must not leak secrets via `Debug`.
+
+      **REQUIREMENT**: If a struct contains one or more `SensitiveString` fields, `#[derive(Debug)]` is safe — `SensitiveString` prints `****` in its `Debug` impl.
+
+      Flag cases where a struct has a plain `String` field that holds sensitive data (based on the field name) AND uses `#[derive(Debug)]`. The field should either be changed to `SensitiveString`, or the struct needs a manual `Debug` impl.
+
+      ❌ **BAD:**
+      ```rust
+      #[derive(Debug)]
+      pub struct Credentials {
+          pub aws_key_id: String,
+          pub aws_secret_key: String,  // sensitive but plain String + derived Debug
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      #[derive(Debug)]
+      pub struct Credentials {
+          pub aws_key_id: String,
+          pub aws_secret_key: SensitiveString,  // Debug shows ****
+      }
+      ```

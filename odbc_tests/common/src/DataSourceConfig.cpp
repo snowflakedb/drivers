@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 
 #include "ODBCConfig.hpp"
@@ -78,6 +79,24 @@ DataSourceConfig& DataSourceConfig::name(const std::string& name) {
 const std::string& DataSourceConfig::name() const { return name_; }
 
 const std::map<std::string, std::string>& DataSourceConfig::parameters() const { return parameters_; }
+
+std::string DataSourceConfig::connection_string() const {
+  std::stringstream ss;
+  if (driver_config_.has_value()) {
+#ifdef _WIN32
+    ss << "DSN=" << driver_config_.value()->name() << ";";
+#else
+    ss << "DRIVER={" << driver_config_.value()->get_driver_path() << "};";
+#endif
+  }
+  for (const auto& [key, value] : parameters_) {
+    if (key == "Driver") {
+      continue;
+    }
+    ss << key << "=" << value << ";";
+  }
+  return ss.str();
+}
 
 std::optional<std::shared_ptr<DriverConfig>> DataSourceConfig::driver_config() const { return driver_config_; }
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "Cython", "setuptools"]
+requires = ["hatchling", "Cython", "setuptools", "mypy-protobuf~=5.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -28,6 +28,7 @@ dependencies = [
     "cryptography>=44.0.1",
     "protobuf>=6.32.1",
     "pytz",
+    "tomlkit>=0.13",
 ]
 
 [project.urls]
@@ -49,12 +50,14 @@ test = [
     "requests",
     "brotli",
     "zstandard",
+    "tomlkit",
 ]
 dev = [
     "ruff",
     "mypy",
     "hatchling",
     "types-pytz",
+    "types-protobuf",
 ]
 
 [tool.hatch.version]
@@ -69,6 +72,10 @@ include = [
     # Rust sources (directory symlinks dereferenced during sdist build)
     "sf_core/",
     "proto_utils/",
+    "proto_generator/",
+    "protobuf/",
+    "error_trace/",
+    "error_trace_derive/",
 ]
 exclude = [
     "__pycache__",
@@ -185,7 +192,7 @@ installer = "uv"
 check = [
     'ruff format --check {args:src/snowflake tests}',
     'ruff check {args:src/snowflake tests}',
-    'mypy --install-types --non-interactive -p snowflake.connector',
+    'mypy -p snowflake.connector',
 ]
 fix = [
     'ruff format src/snowflake tests',
@@ -256,7 +263,7 @@ template = "test"
 # This environment runs with old driver only. UD driver is not installed.
 test = [
     "uv pip uninstall snowflake-connector-python-ud",
-    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
+    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.2.0}",
     "pytest tests/integ tests/e2e {args}"
 ]
 compare = "python ci/reference_tests/compare_reports.py {args}"

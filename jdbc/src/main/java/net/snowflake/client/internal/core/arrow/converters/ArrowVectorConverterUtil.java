@@ -76,6 +76,9 @@ public final class ArrowVectorConverterUtil {
           }
           break;
 
+        case DECFLOAT:
+          return new DecfloatToDecimalConverter(vector, idx, context);
+
         case REAL:
           return new DoubleToRealConverter(vector, idx, context);
 

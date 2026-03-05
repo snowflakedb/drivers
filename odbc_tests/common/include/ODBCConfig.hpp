@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -14,7 +15,15 @@
 // Forward declarations
 class DriverConfig;
 class DataSourceConfig;
-class ConfigInstallation;
+class BaseConfigInstallation;
+
+#ifdef _WIN32
+class WindowsConfigInstallation;
+using ConfigInstallation = WindowsConfigInstallation;
+#else
+class UnixConfigInstallation;
+using ConfigInstallation = UnixConfigInstallation;
+#endif
 
 // ============================================================================
 // DriverConfig - Manages ODBC driver configuration
@@ -31,10 +40,13 @@ class DriverConfig {
 
   // Accessors
   [[nodiscard]] const std::map<std::string, std::string>& parameters() const;
-  [[nodiscard]] static std::string name();
+  [[nodiscard]] const std::string& name() const;
   static std::string get_driver_path();
 
  private:
+  static std::string generate_random_name();
+
+  std::string name_;
   std::map<std::string, std::string> parameters_;
 };
 
@@ -57,6 +69,7 @@ class DataSourceConfig {
   // Accessors
   [[nodiscard]] const std::string& name() const;
   [[nodiscard]] const std::map<std::string, std::string>& parameters() const;
+  [[nodiscard]] std::string connection_string() const;
   [[nodiscard]] std::optional<std::shared_ptr<DriverConfig>> driver_config() const;
 
   // Installation
@@ -74,42 +87,87 @@ class DataSourceConfig {
 };
 
 // ============================================================================
-// ConfigInstallation - RAII class for managing installed ODBC configuration
+// BaseConfigInstallation - Common RAII base for managing installed ODBC config
 // ============================================================================
 
-class ConfigInstallation {
+class BaseConfigInstallation {
  public:
-  // Factory method
-  static ConfigInstallation install(const std::vector<DataSourceConfig>& data_sources);
+  BaseConfigInstallation(const BaseConfigInstallation&) = delete;
+  BaseConfigInstallation& operator=(const BaseConfigInstallation&) = delete;
 
-  // Destructor
-  ~ConfigInstallation();
-
-  // Non-copyable
-  ConfigInstallation(const ConfigInstallation&) = delete;
-  ConfigInstallation& operator=(const ConfigInstallation&) = delete;
-
-  // Movable
-  ConfigInstallation(ConfigInstallation&& other) noexcept;
-  ConfigInstallation& operator=(ConfigInstallation&& other) noexcept;
-
-  // Accessors
   [[nodiscard]] const std::string& config_dir() const;
   [[nodiscard]] std::string dsn_name(size_t index = 0) const;
+  [[nodiscard]] std::string connection_string(size_t index = 0) const;
+
+ protected:
+  explicit BaseConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
+                                  const std::set<std::shared_ptr<DriverConfig>>& driver_configs);
+  ~BaseConfigInstallation() = default;
+
+  BaseConfigInstallation(BaseConfigInstallation&& other) noexcept;
+  BaseConfigInstallation& operator=(BaseConfigInstallation&& other) noexcept;
+
+  void collect_driver_configs();
+
+  std::string config_dir_;
+  std::vector<DataSourceConfig> data_sources_;
+  std::set<std::shared_ptr<DriverConfig>> driver_configs_;
+  std::vector<EnvOverride> env_overrides_;
+};
+
+// ============================================================================
+// WindowsConfigInstallation - Windows registry-based ODBC configuration
+// ============================================================================
+
+#ifdef _WIN32
+
+class WindowsConfigInstallation : public BaseConfigInstallation {
+ public:
+  static WindowsConfigInstallation install(const std::vector<DataSourceConfig>& data_sources);
+  static WindowsConfigInstallation install_driver(const std::shared_ptr<DriverConfig>& driver_config);
+
+  ~WindowsConfigInstallation();
+
+  WindowsConfigInstallation(const WindowsConfigInstallation&) = delete;
+  WindowsConfigInstallation& operator=(const WindowsConfigInstallation&) = delete;
+
+  WindowsConfigInstallation(WindowsConfigInstallation&& other) noexcept;
+  WindowsConfigInstallation& operator=(WindowsConfigInstallation&& other) noexcept;
 
  private:
-  // Private constructor (use factory method)
-  explicit ConfigInstallation(const std::vector<DataSourceConfig>& data_sources);
+  explicit WindowsConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
+                                     const std::set<std::shared_ptr<DriverConfig>>& driver_configs);
+};
 
-  // Helper methods
+#endif
+
+// ============================================================================
+// UnixConfigInstallation - Unix file-based ODBC configuration
+// ============================================================================
+
+#ifndef _WIN32
+
+class UnixConfigInstallation : public BaseConfigInstallation {
+ public:
+  static UnixConfigInstallation install(const std::vector<DataSourceConfig>& data_sources);
+  static UnixConfigInstallation install_driver(const std::shared_ptr<DriverConfig>& driver_config);
+
+  ~UnixConfigInstallation();
+
+  UnixConfigInstallation(const UnixConfigInstallation&) = delete;
+  UnixConfigInstallation& operator=(const UnixConfigInstallation&) = delete;
+
+  UnixConfigInstallation(UnixConfigInstallation&& other) noexcept;
+  UnixConfigInstallation& operator=(UnixConfigInstallation&& other) noexcept;
+
+ private:
+  explicit UnixConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
+                                  const std::set<std::shared_ptr<DriverConfig>>& driver_configs);
   static std::string create_temp_dir();
   void write_odbcinst_ini() const;
   void write_odbc_ini() const;
-
-  // Members
-  std::string config_dir_;
-  std::vector<DataSourceConfig> data_sources_;
-  std::vector<EnvOverride> env_overrides_;
 };
+
+#endif
 
 #endif  // ODBC_CONFIG_HPP

@@ -24,41 +24,40 @@ impl PythonGenerator {
         let proto_file = context.proto_file.to_str().unwrap();
         let include_dir = context.proto_file.parent().unwrap().display();
 
+        let protoc = &context.protoc_path;
+
         // Run protoc with Python output
-        std::process::Command::new("protoc")
+        let python_output = std::process::Command::new(protoc)
             .arg(format!("--python_out={out_dir}"))
             .arg(proto_file)
             .arg(format!("-I={include_dir}"))
-            .status()
-            .whatever_context("Failed to run protoc")?;
+            .output()
+            .whatever_context("Failed to run protoc --python_out")?;
 
-        // Generate .pyi type stubs.
-        // Prefer mypy-protobuf (--mypy_out) for higher-quality stubs that
-        // correctly handle proto3 optional fields, HasField overloads, etc.
-        // Fall back to protoc's built-in --pyi_out if mypy-protobuf is not
-        // installed.
-        let mypy_status = std::process::Command::new("protoc")
+        if !python_output.status.success() {
+            snafu::whatever!(
+                "protoc --python_out failed: {}",
+                String::from_utf8_lossy(&python_output.stderr)
+            );
+        }
+
+        // Generate .pyi type stubs via mypy-protobuf (--mypy_out).
+        // This is required to keep generated typing deterministic between
+        // local and CI environments.
+        let mypy_output = std::process::Command::new(protoc)
             .arg(format!("--mypy_out={out_dir}"))
             .arg(proto_file)
             .arg(format!("-I={include_dir}"))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+            .output()
+            .whatever_context("Failed to run protoc --mypy_out")?;
 
-        match mypy_status {
-            Ok(status) if status.success() => {
-                info!("Generated .pyi stubs using mypy-protobuf");
-            }
-            _ => {
-                info!("mypy-protobuf not available, falling back to protoc --pyi_out");
-                std::process::Command::new("protoc")
-                    .arg(format!("--pyi_out={out_dir}"))
-                    .arg(proto_file)
-                    .arg(format!("-I={include_dir}"))
-                    .status()
-                    .whatever_context("Failed to run protoc --pyi_out")?;
-            }
+        if !mypy_output.status.success() {
+            snafu::whatever!(
+                "protoc --mypy_out failed: {}",
+                String::from_utf8_lossy(&mypy_output.stderr)
+            );
         }
+        info!("Generated .pyi stubs using mypy-protobuf");
 
         let mut result = GenerationResult::new();
 
@@ -89,7 +88,7 @@ impl PythonGenerator {
         &self,
         context: &GeneratorContext,
     ) -> Result<GenerationResult, Whatever> {
-        let descriptor_set = run_protoc(context.proto_file.clone())?;
+        let descriptor_set = run_protoc(context)?;
         let mut result = GenerationResult::new();
 
         for file in descriptor_set.file {
@@ -251,8 +250,21 @@ class ProtoError(Exception):
 
         let mut content = format!(
             r#"class {service_name}Client:
-    def __init__(self, transport):
+    def __init__(self, transport, error_handler=None):
+        """
+        Args:
+            transport: Transport layer that handles message serialization.
+            error_handler: Optional callable that converts a proto-layer exception
+                into a public exception.  Must **return** the converted exception
+                (not raise it); ``_raise_error`` takes care of raising.
+        """
         self._transport = transport
+        self._error_handler = error_handler
+
+    def _raise_error(self, exc):
+        if self._error_handler is not None:
+            raise self._error_handler(exc) from None
+        raise exc
 
 "#
         );
@@ -288,16 +300,11 @@ class ProtoError(Exception):
         elif code == 1:
             error = {error_type}()
             error.ParseFromString(response_bytes)
-            raise ProtoApplicationException(error)
+            self._raise_error(ProtoApplicationException(error))
         elif code == 2:
-            error = str(response_bytes)
-            raise ProtoTransportException(response_bytes)
+            self._raise_error(ProtoTransportException(str(response_bytes)))
         else:
-            raise ProtoTransportException(f"Unknown error code: %s", code)
-
-        response.ParseFromString(self._transport.handle_message('{service_name}', '{name}', request.SerializeToString()))
-        return response
-
+            self._raise_error(ProtoTransportException(f"Unknown error code: %s", code))
 "#
             );
         }

