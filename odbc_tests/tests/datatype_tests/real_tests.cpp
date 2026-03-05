@@ -1080,6 +1080,73 @@ TEST_CASE("REAL SQL_C_BINARY buffer too small returns 22003", "[datatype][real][
   CHECK(get_sqlstate(stmt) == "22003");
 }
 
+// ============================================================================
+// BIT — negative fractional values must return 22003
+// Per ODBC spec, any value < 0 is out of range for SQL_C_BIT.
+// ============================================================================
+
+TEST_CASE("REAL SQL_C_BIT rejects negative fractions", "[datatype][real][bit][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("-0.5 returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT -0.5::FLOAT");
+    check_numeric_out_of_range<SQL_C_BIT>(stmt, 1);
+  }
+
+  SECTION("-0.001 returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT -0.001::FLOAT");
+    check_numeric_out_of_range<SQL_C_BIT>(stmt, 1);
+  }
+
+  SECTION("-0.9999 returns 22003") {
+    auto stmt = conn.execute_fetch("SELECT -0.9999::FLOAT");
+    check_numeric_out_of_range<SQL_C_BIT>(stmt, 1);
+  }
+}
+
+// ============================================================================
+// Numeric / Binary — negative fractional values that truncate to zero
+// must NOT produce negative-zero (sign must be 1/positive when val=0).
+// ============================================================================
+
+TEST_CASE("REAL SQL_C_NUMERIC no negative zero", "[datatype][real][numeric][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  SECTION("-0.5 produces positive zero") {
+    auto stmt = conn.execute_fetch("SELECT -0.5::FLOAT");
+    auto numeric = check_fractional_truncation<SQL_C_NUMERIC>(stmt, 1);
+    CHECK(numeric.sign == 1);
+    CHECK(numeric.val[0] == 0);
+  }
+
+  SECTION("-0.001 produces positive zero") {
+    auto stmt = conn.execute_fetch("SELECT -0.001::FLOAT");
+    auto numeric = check_fractional_truncation<SQL_C_NUMERIC>(stmt, 1);
+    CHECK(numeric.sign == 1);
+    CHECK(numeric.val[0] == 0);
+  }
+}
+
+TEST_CASE("REAL SQL_C_BINARY no negative zero", "[datatype][real][binary][edge]") {
+  SKIP_OLD_DRIVER("BD#12", "SNOW-3127864: Old driver fix to be merged to return the proper size for SQL_NUMERIC");
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -0.5::FLOAT");
+
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(get_sqlstate(stmt) == "01S07");
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  auto* numeric = reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+  CHECK(numeric->sign == 1);
+  CHECK(numeric->val[0] == 0);
+}
+
 TEST_CASE("REAL explicit SQL_C_CHAR for special values", "[datatype][real][char][edge]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

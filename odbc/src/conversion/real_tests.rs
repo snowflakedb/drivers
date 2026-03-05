@@ -1008,6 +1008,225 @@ mod tests {
     }
 
     // ======================================================================
+    // BIT — negative fractional values must error (22003)
+    // ======================================================================
+
+    #[test]
+    fn real_bit_negative_fraction_errors() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(-0.5, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::NumericValueOutOfRange { .. }
+        ));
+    }
+
+    #[test]
+    fn real_bit_negative_tiny_fraction_errors() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(-0.001, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::NumericValueOutOfRange { .. }
+        ));
+    }
+
+    #[test]
+    fn real_bit_nan_errors() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(f64::NAN, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::NumericValueOutOfRange { .. }
+        ));
+    }
+
+    #[test]
+    fn real_bit_infinity_errors() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
+
+        let result = sr.write_odbc_type(f64::INFINITY, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::NumericValueOutOfRange { .. }
+        ));
+    }
+
+    // ======================================================================
+    // NaN — must error for all integer types (22003)
+    // ======================================================================
+
+    macro_rules! nan_integer_error_tests {
+        ($($name:ident: $c_type:expr, $rust_type:ty;)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    use crate::conversion::error::WriteOdbcError;
+                    let sr = make_real();
+                    let mut value: $rust_type = 0;
+                    let mut str_len: sql::Len = 0;
+                    let binding = binding_for_value($c_type, &mut value, &mut str_len);
+                    let result = sr.write_odbc_type(f64::NAN, &binding, &mut None);
+                    assert!(matches!(
+                        result.unwrap_err(),
+                        WriteOdbcError::NumericValueOutOfRange { .. }
+                    ));
+                }
+            )*
+        };
+    }
+
+    nan_integer_error_tests! {
+        nan_to_short_errors:    CDataType::Short,    i16;
+        nan_to_ushort_errors:   CDataType::UShort,   u16;
+        nan_to_tinyint_errors:  CDataType::TinyInt,  i8;
+        nan_to_utinyint_errors: CDataType::UTinyInt,  u8;
+        nan_to_long_errors:     CDataType::Long,     i32;
+        nan_to_ulong_errors:    CDataType::ULong,    u32;
+        nan_to_sbigint_errors:  CDataType::SBigInt,  i64;
+        nan_to_ubigint_errors:  CDataType::UBigInt,  u64;
+    }
+
+    // ======================================================================
+    // NaN — must error for Numeric and Binary (22003)
+    // ======================================================================
+
+    #[test]
+    fn nan_to_numeric_errors() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0u8; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let result = sr.write_odbc_type(f64::NAN, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::NumericValueOutOfRange { .. }
+        ));
+    }
+
+    #[test]
+    fn nan_to_binary_errors() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let result = sr.write_odbc_type(f64::NAN, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::NumericValueOutOfRange { .. }
+        ));
+    }
+
+    // ======================================================================
+    // Negative zero — Numeric and Binary must produce sign=1 (positive)
+    // when magnitude is zero
+    // ======================================================================
+
+    #[test]
+    fn numeric_negative_fraction_no_negative_zero() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0u8; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let warnings = sr.write_odbc_type(-0.5, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        assert_eq!(
+            value.sign, 1,
+            "sign must be positive when magnitude is zero"
+        );
+        assert_eq!(u128::from_le_bytes(value.val), 0);
+    }
+
+    #[test]
+    fn numeric_negative_tiny_fraction_no_negative_zero() {
+        let sr = make_real();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0u8; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_numeric(&mut value, &mut str_len, None, None);
+
+        let warnings = sr.write_odbc_type(-0.001, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        assert_eq!(
+            value.sign, 1,
+            "sign must be positive when magnitude is zero"
+        );
+        assert_eq!(u128::from_le_bytes(value.val), 0);
+    }
+
+    #[test]
+    fn binary_negative_fraction_no_negative_zero() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let warnings = sr.write_odbc_type(-0.5, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
+        assert_eq!(
+            numeric.sign, 1,
+            "sign must be positive when magnitude is zero"
+        );
+        assert_eq!(u128::from_le_bytes(numeric.val), 0);
+    }
+
+    #[test]
+    fn binary_negative_tiny_fraction_no_negative_zero() {
+        let sr = make_real();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_binary(&mut buffer, &mut str_len);
+
+        let warnings = sr.write_odbc_type(-0.001, &binding, &mut None).unwrap();
+        assert!(warnings.contains(&Warning::NumericValueTruncated));
+        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
+        assert_eq!(
+            numeric.sign, 1,
+            "sign must be positive when magnitude is zero"
+        );
+        assert_eq!(u128::from_le_bytes(numeric.val), 0);
+    }
+
+    // ======================================================================
     // Unsupported type
     // ======================================================================
 
