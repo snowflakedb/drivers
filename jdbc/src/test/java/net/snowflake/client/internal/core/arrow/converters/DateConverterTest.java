@@ -161,8 +161,8 @@ public class DateConverterTest extends BaseConverterTest {
 
   @Test
   public void testToShortOverflow() throws Exception {
-    // Epoch day for 2024-01-15 is 19737, which exceeds Short.MAX_VALUE (32767)
-    // but let's use a value that definitely overflows
+    // Epoch day for 2024-01-15 is 19737, which is within Short.MAX_VALUE (32767),
+    // so use a later date whose epoch day definitely overflows a short
     int epochDay = (int) LocalDate.of(2060, 1, 1).toEpochDay(); // ~32873, > Short.MAX_VALUE
     DateDayVector vector = createVector(epochDay);
     try {
