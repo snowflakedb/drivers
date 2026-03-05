@@ -135,16 +135,10 @@ jobs:
       - name: Configure OpenSSL
         shell: pwsh
         run: |
-          # OpenSSL is pre-installed on windows-11-arm runners at C:\Program Files\OpenSSL
-          # Just set the env vars so openssl-sys can find it.
-          if (Test-Path "C:\Program Files\OpenSSL") {
-            echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
-            echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\arm64\MD" >> $env:GITHUB_ENV
-            Write-Host "OpenSSL found at C:\Program Files\OpenSSL"
-          } else {
-            Write-Error "OpenSSL not found at expected location"
-            exit 1
-          }
+          # The pre-installed OpenSSL on windows-11-arm is x64. Link statically
+          # so the ARM64 binary doesn't need x64 OpenSSL DLLs at runtime.
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -165,10 +159,7 @@ jobs:
           :: VSCMD_ARG_TGT_ARCH=arm64 and stops forcing x64 vcvarsall.
           :: Track: https://github.com/rust-lang/cmake-rs/issues
           cargo build --package sf_core
-          :: TODO: Enable tests once ARM64 OpenSSL runtime DLLs are available.
-          :: The pre-installed OpenSSL on the runner is x64; the ARM64 test binary
-          :: cannot load x64 DLLs (error 193: not a valid Win32 application).
-          :: cargo test --package sf_core -- --nocapture
+          cargo test --package sf_core -- --nocapture
 
   rust-core-status:
     needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64]
