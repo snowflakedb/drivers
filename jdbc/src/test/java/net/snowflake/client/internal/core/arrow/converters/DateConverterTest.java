@@ -47,17 +47,19 @@ public class DateConverterTest extends BaseConverterTest {
     int day19991231 = (int) LocalDate.of(1999, 12, 31).toEpochDay();
 
     DateDayVector vector = createVector(day20240115, day19700101, day19991231);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    assertEquals(Date.valueOf("2024-01-15"), converter.toDate(0, null, false));
-    assertEquals(Date.valueOf("1970-01-01"), converter.toDate(1, null, false));
-    assertEquals(Date.valueOf("1999-12-31"), converter.toDate(2, null, false));
+      assertEquals(Date.valueOf("2024-01-15"), converter.toDate(0, null, false));
+      assertEquals(Date.valueOf("1970-01-01"), converter.toDate(1, null, false));
+      assertEquals(Date.valueOf("1999-12-31"), converter.toDate(2, null, false));
 
-    assertEquals("2024-01-15", converter.toString(0));
-    assertEquals("1970-01-01", converter.toString(1));
-    assertEquals("1999-12-31", converter.toString(2));
-
-    vector.close();
+      assertEquals("2024-01-15", converter.toString(0));
+      assertEquals("1970-01-01", converter.toString(1));
+      assertEquals("1999-12-31", converter.toString(2));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
@@ -70,15 +72,17 @@ public class DateConverterTest extends BaseConverterTest {
 
     DateDayVector vector =
         createVector(day00010101, day01000301, day04000229, day15821004, day15821015);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    assertEquals("0001-01-01", converter.toString(0));
-    assertEquals("0100-03-01", converter.toString(1));
-    assertEquals("0400-02-29", converter.toString(2));
-    assertEquals("1582-10-04", converter.toString(3));
-    assertEquals("1582-10-15", converter.toString(4));
-
-    vector.close();
+      assertEquals("0001-01-01", converter.toString(0));
+      assertEquals("0100-03-01", converter.toString(1));
+      assertEquals("0400-02-29", converter.toString(2));
+      assertEquals("1582-10-04", converter.toString(3));
+      assertEquals("1582-10-15", converter.toString(4));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
@@ -90,61 +94,69 @@ public class DateConverterTest extends BaseConverterTest {
     vector.setNull(1);
     vector.setValueCount(2);
 
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    assertEquals(Date.valueOf("2024-01-15"), converter.toDate(0, null, false));
-    assertNull(converter.toDate(1, null, false));
-    assertNull(converter.toString(1));
-    assertNull(converter.toObject(1));
-    assertNull(converter.toTimestamp(1, null));
-    assertNull(converter.toBigDecimal(1));
-    assertEquals(0, converter.toInt(1));
-    assertEquals(0L, converter.toLong(1));
-    assertEquals(0.0f, converter.toFloat(1));
-    assertEquals(0.0, converter.toDouble(1));
-    assertEquals(0, converter.toShort(1));
-
-    vector.close();
+      assertEquals(Date.valueOf("2024-01-15"), converter.toDate(0, null, false));
+      assertNull(converter.toDate(1, null, false));
+      assertNull(converter.toString(1));
+      assertNull(converter.toObject(1));
+      assertNull(converter.toTimestamp(1, null));
+      assertNull(converter.toBigDecimal(1));
+      assertEquals(0, converter.toInt(1));
+      assertEquals(0L, converter.toLong(1));
+      assertEquals(0.0f, converter.toFloat(1));
+      assertEquals(0.0, converter.toDouble(1));
+      assertEquals(0, converter.toShort(1));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
   public void testToObject() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
     DateDayVector vector = createVector(epochDay);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    Object obj = converter.toObject(0);
-    assertInstanceOf(Date.class, obj);
-    assertEquals(Date.valueOf("2024-01-15"), obj);
-
-    vector.close();
+      Object obj = converter.toObject(0);
+      assertInstanceOf(Date.class, obj);
+      assertEquals(Date.valueOf("2024-01-15"), obj);
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
   public void testToTimestamp() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
     DateDayVector vector = createVector(epochDay);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    Timestamp ts = converter.toTimestamp(0, null);
-    assertEquals(Timestamp.valueOf("2024-01-15 00:00:00"), ts);
-
-    vector.close();
+      Timestamp ts = converter.toTimestamp(0, null);
+      assertEquals(Timestamp.valueOf("2024-01-15 00:00:00"), ts);
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
   public void testNumericConversions() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
     DateDayVector vector = createVector(epochDay);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    assertEquals(epochDay, converter.toInt(0));
-    assertEquals((long) epochDay, converter.toLong(0));
-    assertEquals((float) epochDay, converter.toFloat(0));
-    assertEquals((double) epochDay, converter.toDouble(0));
-    assertEquals(BigDecimal.valueOf(epochDay), converter.toBigDecimal(0));
-
-    vector.close();
+      assertEquals(epochDay, converter.toInt(0));
+      assertEquals((long) epochDay, converter.toLong(0));
+      assertEquals((float) epochDay, converter.toFloat(0));
+      assertEquals((double) epochDay, converter.toDouble(0));
+      assertEquals(BigDecimal.valueOf(epochDay), converter.toBigDecimal(0));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
@@ -153,33 +165,39 @@ public class DateConverterTest extends BaseConverterTest {
     // but let's use a value that definitely overflows
     int epochDay = (int) LocalDate.of(2060, 1, 1).toEpochDay(); // ~32873, > Short.MAX_VALUE
     DateDayVector vector = createVector(epochDay);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toShort(0));
-
-    vector.close();
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toShort(0));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
   public void testToShortInRange() throws Exception {
     // Epoch day 100 (1970-04-11) is well within short range
     DateDayVector vector = createVector(100);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    assertEquals((short) 100, converter.toShort(0));
-
-    vector.close();
+      assertEquals((short) 100, converter.toShort(0));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
   public void testToBooleanThrows() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
     DateDayVector vector = createVector(epochDay);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(0));
-
-    vector.close();
+      TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(0));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
@@ -190,38 +208,44 @@ public class DateConverterTest extends BaseConverterTest {
     vector.setSafe(0, (int) LocalDate.of(2024, 1, 15).toEpochDay());
     vector.setValueCount(1);
 
-    ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
-    assertInstanceOf(DateConverter.class, converter);
-    assertEquals(Date.valueOf("2024-01-15"), converter.toDate(0, null, false));
-
-    vector.close();
+    try {
+      ArrowVectorConverter converter = ArrowVectorConverterUtil.initConverter(vector, this, 0);
+      assertInstanceOf(DateConverter.class, converter);
+      assertEquals(Date.valueOf("2024-01-15"), converter.toDate(0, null, false));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
   public void testToStringDefaultFormat() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
     DateDayVector vector = createVector(epochDay);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    assertEquals("2024-01-15", converter.toString(0));
-
-    vector.close();
+      assertEquals("2024-01-15", converter.toString(0));
+    } finally {
+      vector.close();
+    }
   }
 
   @Test
   public void testToDateIgnoresTimezone() throws Exception {
     int epochDay = (int) LocalDate.of(2024, 1, 15).toEpochDay();
     DateDayVector vector = createVector(epochDay);
-    DateConverter converter = new DateConverter(vector, 0, this);
+    try {
+      DateConverter converter = new DateConverter(vector, 0, this);
 
-    // Should return same result regardless of timezone parameter
-    Date date1 = converter.toDate(0, TimeZone.getTimeZone("UTC"), false);
-    Date date2 = converter.toDate(0, TimeZone.getTimeZone("America/Los_Angeles"), true);
-    Date date3 = converter.toDate(0, null, false);
+      // Should return same result regardless of timezone parameter
+      Date date1 = converter.toDate(0, TimeZone.getTimeZone("UTC"), false);
+      Date date2 = converter.toDate(0, TimeZone.getTimeZone("America/Los_Angeles"), true);
+      Date date3 = converter.toDate(0, null, false);
 
-    assertEquals(date1, date2);
-    assertEquals(date2, date3);
-
-    vector.close();
+      assertEquals(date1, date2);
+      assertEquals(date2, date3);
+    } finally {
+      vector.close();
+    }
   }
 }
