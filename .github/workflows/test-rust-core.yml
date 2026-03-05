@@ -132,6 +132,11 @@ jobs:
           restore-keys: |
             windows-11-arm-cargo-
 
+      - name: Set up ARM64 MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: aarch64
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
