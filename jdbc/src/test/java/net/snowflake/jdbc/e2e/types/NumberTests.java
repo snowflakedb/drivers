@@ -1,7 +1,12 @@
 package net.snowflake.jdbc.e2e.types;
 
-import net.snowflake.client.SnowflakeIntegrationTestBase;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -13,14 +18,8 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import net.snowflake.client.SnowflakeIntegrationTestBase;
+import org.junit.jupiter.api.Test;
 
 public class NumberTests extends SnowflakeIntegrationTestBase {
   private static final String NUMBER_TYPE = "NUMBER";
@@ -515,7 +514,8 @@ public class NumberTests extends SnowflakeIntegrationTestBase {
     assertNotNull(stringValue, message + " (getString should not be NULL)");
     assertFalse(stringValue.isEmpty(), message + " (getString should not be empty)");
     assertDoesNotThrow(
-            () -> parseLocaleDecimal(stringValue, message), message + " (getString should be parseable numeric)");
+        () -> parseLocaleDecimal(stringValue, message),
+        message + " (getString should be parseable numeric)");
     assertFalse(resultSet.wasNull(), message + " (getString should not be NULL)");
   }
 
@@ -526,7 +526,8 @@ public class NumberTests extends SnowflakeIntegrationTestBase {
     try {
       return (BigDecimal) df.parse(value);
     } catch (ParseException e) {
-      throw new AssertionError(message + " (getString value '" + value + "' is not a parseable number)", e);
+      throw new AssertionError(
+          message + " (getString value '" + value + "' is not a parseable number)", e);
     }
   }
 
