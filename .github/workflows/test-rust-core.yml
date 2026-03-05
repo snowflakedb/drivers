@@ -132,11 +132,6 @@ jobs:
           restore-keys: |
             windows-11-arm-cargo-
 
-      - name: Set up ARM64 MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: aarch64
-
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
@@ -144,9 +139,13 @@ jobs:
         shell: bash
 
       - name: Build and test
-        shell: pwsh
+        shell: cmd
         run: |
-          $env:PARAMETER_PATH = "${{ github.workspace }}\parameters.json"
+          :: Set up ARM64 MSVC environment: the runner defaults to x64 VS tools.
+          :: aws-lc-sys/aws-lc-fips-sys cmake internally calls vcvarsall x64 unless
+          :: the ARM64 environment is already active. Call vcvarsall arm64 first.
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo build --package sf_core --all-features
           cargo test --package sf_core --all-features -- --nocapture
 
@@ -158,14 +157,14 @@ jobs:
       - name: Check status
         run: |
           echo "=== Rust Core CI Status ==="
-
+          
           # Check if tests were skipped
           if [[ "${{ needs.test.result }}" == "skipped" ]]; then
             echo "✓ Rust Core tests were SKIPPED (no relevant changes detected)"
             echo "  - run_rust_core: ${{ needs.detect-changes.outputs.run_rust_core }}"
             exit 0
           fi
-
+          
           # Check if any job failed or was cancelled
           if [[ "${{ needs.format.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.clippy.result }}" =~ ^(failure|cancelled)$ ]] || \
@@ -180,7 +179,7 @@ jobs:
             echo "  - test_windows_arm64: ${{ needs.test_windows_arm64.result }}"
             exit 1
           fi
-
+          
           # Tests ran and passed
           echo "✓ Rust Core tests were RUN and PASSED"
           exit 0
