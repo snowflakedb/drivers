@@ -1976,9 +1976,7 @@ TEST_CASE("Setting SQL_DESC_COUNT to -1 on the ARD returns an error.", "[query][
   // Then SQLSetDescField should return an error
   CHECK(ret == SQL_ERROR);
   // TODO: Check why this is different on Windows
-  UNIX_ONLY {
-    CHECK(get_sqlstate(SQL_HANDLE_DESC, ard) == "07009");
-  }
+  UNIX_ONLY { CHECK(get_sqlstate(SQL_HANDLE_DESC, ard) == "07009"); }
   WINDOWS_ONLY {
     auto sqlstate = get_sqlstate(SQL_HANDLE_DESC, ard);
     CHECK((sqlstate == "07009" || sqlstate == "HY024"));

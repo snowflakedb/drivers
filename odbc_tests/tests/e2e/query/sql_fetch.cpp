@@ -1,7 +1,8 @@
+#include <sqltypes.h>
+
 #include <cstring>
 
 #include <catch2/catch_test_macros.hpp>
-#include <sqltypes.h>
 
 #include "Connection.hpp"
 #include "Schema.hpp"

@@ -401,9 +401,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - DESC_COUNT set
     // Windows DM returns HY024 (Invalid argument value) for negative DESC_COUNT
     REQUIRE_EXPECTED_ERROR(ret, "HY024", ard, SQL_HANDLE_DESC);
   }
-  UNIX_ONLY {
-    REQUIRE_EXPECTED_ERROR(ret, "07009", ard, SQL_HANDLE_DESC);
-  }
+  UNIX_ONLY { REQUIRE_EXPECTED_ERROR(ret, "07009", ard, SQL_HANDLE_DESC); }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY090 - Negative BufferLength for string field",

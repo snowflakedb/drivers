@@ -449,7 +449,5 @@ TEST_CASE_METHOD(EnvFixture, "SQLCancelHandle: SQL_INVALID_HANDLE for environmen
     // Windows DM returns SQL_ERROR instead of SQL_INVALID_HANDLE for unsupported handle types
     REQUIRE(ret == SQL_ERROR);
   }
-  UNIX_ONLY {
-    REQUIRE(ret == SQL_INVALID_HANDLE);
-  }
+  UNIX_ONLY { REQUIRE(ret == SQL_INVALID_HANDLE); }
 }

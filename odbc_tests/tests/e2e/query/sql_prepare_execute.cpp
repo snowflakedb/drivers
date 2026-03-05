@@ -545,9 +545,7 @@ TEST_CASE("SQLPrepare with empty SQL string returns HY090.", "[query][prepare][e
   // Then it should return SQL_ERROR with SQLSTATE HY090
   REQUIRE(ret == SQL_ERROR);
   // TODO: Check why this is different on Windows
-  UNIX_ONLY {
-    CHECK(get_sqlstate(stmt) == "HY090");
-  }
+  UNIX_ONLY { CHECK(get_sqlstate(stmt) == "HY090"); }
   WINDOWS_ONLY {
     auto sqlstate = get_sqlstate(stmt);
     CHECK((sqlstate == "HY090" || sqlstate == "HY000"));

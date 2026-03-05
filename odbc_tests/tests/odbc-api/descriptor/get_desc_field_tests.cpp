@@ -219,9 +219,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 01004 - String truncat
     // Windows DM reports the Unicode byte length (6 chars * 2 bytes = 12)
     REQUIRE(full_len == 12);
   }
-  UNIX_ONLY {
-    REQUIRE(full_len == 6);
-  }
+  UNIX_ONLY { REQUIRE(full_len == 6); }
 }
 
 // ============================================================================
