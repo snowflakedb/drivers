@@ -92,7 +92,11 @@ class WiremockManager:
         
         # Create and start container
         # For very large datasets (50M rows), use 12GB heap / 16GB container
-        java_opts = "-Xmx12g -Xms4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+        java_opts = (
+            "-Xmx12g -Xms4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 "
+            "--add-opens java.base/sun.security.x509=ALL-UNNAMED "
+            "--add-opens java.base/sun.security.ssl=ALL-UNNAMED"
+        )
         logger.info(f"Container memory limit: 16GB")
         
         # Get host user's UID:GID to run container as non-root
@@ -134,14 +138,20 @@ class WiremockManager:
         logger.info(f"✓ WireMock recording on http://{self.host}:{self.port}{network_info}")
         return self.port
     
-    def start_replay(self) -> int:
+    def start_replay(self, driver_label: str = None) -> int:
         """
         Start WireMock in replay mode (with disableRequestJournal for performance).
+        
+        Args:
+            driver_label: Optional label (e.g. "universal", "old") used to create a
+                          per-driver wiremock stats file so concurrent/sequential runs sharing
+                          the same mappings_dir never collide.
         
         Returns:
             Port number where WireMock is listening
         """
         self.port = self._find_free_port()
+        self.driver_label = driver_label
         
         # Verify mappings exist
         mappings_subdir = self.mappings_dir / "mappings"
@@ -179,8 +189,12 @@ class WiremockManager:
             "-XX:MaxGCPauseMillis=10 "  # Target 10ms max pause (was 200ms)
             "-XX:+ParallelRefProcEnabled "  # Parallel reference processing
             "-XX:InitiatingHeapOccupancyPercent=45 "  # Earlier GC to avoid spikes
-            "-XX:G1ReservePercent=10"  # Reserve for to-space
+            "-XX:G1ReservePercent=10 "  # Reserve for to-space
+            "--add-opens java.base/sun.security.x509=ALL-UNNAMED "
+            "--add-opens java.base/sun.security.ssl=ALL-UNNAMED"
         )
+        if driver_label:
+            java_opts += f" -Dresponse.time.stats.suffix={driver_label}"
         logger.info(f"Configuring WireMock replay with low-latency JVM settings")
         logger.info(f"Container memory limit: 16GB")
         
@@ -397,6 +411,37 @@ class WiremockManager:
         response.raise_for_status()
         logger.debug("Added telemetry mock")
     
+    def export_ca_cert(self, target_dir: Path) -> Path:
+        """
+        Export WireMock's CA certificate (PEM) from the running container.
+        
+        Each driver's Dockerfile appends this cert to the system CA bundle so that
+        drivers trust the dynamically generated MITM certificates.
+        
+        Args:
+            target_dir: Directory to write the CA cert file into
+        
+        Returns:
+            Path to the exported CA cert file on the host
+        """
+        if not self.container:
+            raise RuntimeError("WireMock container not running")
+        
+        target_path = Path(target_dir) / "wiremock-ca.crt"
+        
+        try:
+            wrapped = self.container.get_wrapped_container()
+            exit_code, output = wrapped.exec_run("cat /certs/wiremock.crt")
+            if exit_code != 0:
+                raise RuntimeError(f"Failed to read CA cert from container (exit {exit_code})")
+            
+            target_path.write_bytes(output)
+            logger.info(f"✓ Exported WireMock CA cert to {target_path}")
+            return target_path
+        except Exception as e:
+            logger.error(f"Failed to export WireMock CA cert: {e}")
+            raise
+
     def _verify_jvm_config(self):
         """Verify JVM configuration was applied correctly"""
         try:
@@ -427,11 +472,10 @@ class WiremockManager:
             - response_times: List of individual response times in milliseconds
             - metrics_enabled: Always True (metrics always collected)
         """
-        # Read stats from file written by extension
-        stats_file = self.mappings_dir / "response-time-stats.json"
+        suffix = f"-{self.driver_label}" if getattr(self, "driver_label", None) else ""
+        stats_file = self.mappings_dir / f"response-time-stats{suffix}.json"
         
-        # Wait briefly for file to be created (extension writes after first request)
-        max_wait = 5  # seconds
+        max_wait = 10  # seconds
         wait_interval = 0.5
         waited = 0
         
@@ -439,28 +483,24 @@ class WiremockManager:
             time.sleep(wait_interval)
             waited += wait_interval
         
-        empty_stats = {
-            "total_requests": 0,
-            "response_times": [],
-            "metrics_enabled": True
-        }
+        if not stats_file.exists():
+            logger.warning(f"Stats file not created after {max_wait}s: {stats_file}")
+            return {"total_requests": 0, "response_times": [], "metrics_enabled": True}
+        
+        # Time for flush of the final write
+        time.sleep(1)
         
         try:
-            if stats_file.exists():
-                with open(stats_file, 'r') as f:
-                    stats = json.load(f)
-                stats["metrics_enabled"] = True
-                return stats
-            else:
-                logger.warning(f"Stats file not found: {stats_file}")
-                return empty_stats
-            
+            with open(stats_file, 'r') as f:
+                stats = json.load(f)
+            stats["metrics_enabled"] = True
+            return stats
         except Exception as e:
             logger.warning(f"Failed to read response time metrics from file: {e}")
             if stats_file.exists():
                 try:
                     logger.warning(f"Stats file content (first 200 chars): {stats_file.read_text()[:200]}")
                 except Exception:
-                    pass  # Best-effort diagnostic — don't mask the original error
-            return empty_stats
+                    pass
+            return {"total_requests": 0, "response_times": [], "metrics_enabled": True}
 

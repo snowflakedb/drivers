@@ -19,9 +19,16 @@ import java.io.IOException;
  */
 public class ResponseTimeExtension implements ServeEventListener, Extension {
     private static final ConcurrentLinkedQueue<Long> responseTimes = new ConcurrentLinkedQueue<>();
-    private static final String STATS_FILE = "/wiremock/response-time-stats.json";
     /** Maximum acceptable response time (5 minutes). Responses exceeding this are discarded as outliers. */
     private static final long MAX_RESPONSE_TIME_MS = 300_000;
+
+    private static final String STATS_FILE;
+    static {
+        String suffix = System.getProperty("response.time.stats.suffix", "");
+        STATS_FILE = suffix.isEmpty()
+            ? "/wiremock/response-time-stats.json"
+            : "/wiremock/response-time-stats-" + suffix + ".json";
+    }
     
     public ResponseTimeExtension() {
         // Extension initialized
@@ -76,14 +83,8 @@ public class ResponseTimeExtension implements ServeEventListener, Extension {
             return;
         }
         
-        // Store response time
         responseTimes.add(responseTime);
-        
-        // Write stats to file periodically (every 10 requests for responsiveness)
-        int count = responseTimes.size();
-        if (count % 10 == 0 || count == 1) {
-            writeStatsToFile();
-        }
+        writeStatsToFile();
     }
     
     /**
@@ -92,7 +93,6 @@ public class ResponseTimeExtension implements ServeEventListener, Extension {
     public static Map<String, Object> getStats() {
         Map<String, Object> stats = new HashMap<>();
         
-        // Return all response times for Python to process
         List<Long> times = new ArrayList<>(responseTimes);
         stats.put("response_times", times);
         stats.put("total_requests", times.size());

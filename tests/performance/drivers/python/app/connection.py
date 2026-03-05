@@ -1,21 +1,13 @@
 """Connection management and connector selection."""
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
-import ssl
-import os
 
 
 def create_connection(driver_type, conn_params):
     """Create and return a connection."""
     connector = _get_connector(driver_type)
     driver_version = _get_driver_version(driver_type)
-    
-    # Disable SSL verification for old Python driver when using WireMock proxy
-    if os.getenv("HTTPS_PROXY") and driver_type == "old":
-        _disable_ssl_verification_for_wiremock(connector)
-    
     conn = connector.connect(**conn_params)
-    
     return conn, driver_version
 
 
@@ -95,26 +87,3 @@ def _get_driver_version(driver_type):
         return "UNKNOWN"
 
 
-def _disable_ssl_verification_for_wiremock(connector):
-    """
-    Disable SSL verification for old Python driver when using WireMock proxy.
-    
-    Args:
-        connector: The connector module (loaded from old_driver_src for old driver)
-    """
-    # Import ssl_wrap_socket from the connector package
-    if hasattr(connector, 'ssl_wrap_socket'):
-        ssl_wrap = connector.ssl_wrap_socket
-    else:
-        import importlib
-        module_name = connector.__name__ + '.ssl_wrap_socket'
-        ssl_wrap = importlib.import_module(module_name)
-
-    def no_verify_context(*args, **kwargs):
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        return ctx
-    
-    # Replace the SSL context builder
-    ssl_wrap._build_context_with_partial_chain = no_verify_context

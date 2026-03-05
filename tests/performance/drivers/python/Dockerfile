@@ -71,4 +71,11 @@ RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && python main.py
+CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
+    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+        CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+        export REQUESTS_CA_BUNDLE="$CA_BUNDLE"; \
+        export SSL_CERT_FILE="$CA_BUNDLE"; \
+    fi && \
+    python main.py

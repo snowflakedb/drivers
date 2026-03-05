@@ -74,5 +74,17 @@ ENV ODBCSYSINI=/workdir
 # Default to universal driver (can be overridden with DRIVER_TYPE=old)
 ENV DRIVER_TYPE=universal
 
-CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && /workdir/build/odbc-perf-driver
+CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && \
+    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+        SYS_CA=/etc/ssl/certs/ca-certificates.crt; \
+        printf '\n' >> "$SYS_CA" && cat "$WIREMOCK_CA_CERT" >> "$SYS_CA"; \
+        CACERT=/usr/lib/snowflake/odbc/lib/cacert.pem; \
+        if [ -f "$CACERT" ]; then \
+            printf '\n' >> "$CACERT" && cat "$WIREMOCK_CA_CERT" >> "$CACERT"; \
+            INI=/usr/lib/snowflake/odbc/lib/simba.snowflake.ini; \
+            printf '[Driver]\nCABundleFile=%s\nDisableOCSPCheck=true\nErrorMessagesPath=/usr/lib/snowflake/odbc/ErrorMessages/\nODBCInstLib=libodbcinst.so\n' "$CACERT" > "$INI"; \
+            export SIMBAINI="$INI"; \
+        fi; \
+    fi && \
+    /workdir/build/odbc-perf-driver
 
