@@ -141,13 +141,17 @@ jobs:
       - name: Build and test
         shell: cmd
         run: |
-          :: Set up ARM64 MSVC environment: the runner defaults to x64 VS tools.
-          :: aws-lc-sys/aws-lc-fips-sys cmake internally calls vcvarsall x64 unless
-          :: the ARM64 environment is already active. Call vcvarsall arm64 first.
+          :: Set up ARM64 MSVC environment for aws-lc-sys cmake builds.
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
-          cargo build --package sf_core --all-features
-          cargo test --package sf_core --all-features -- --nocapture
+          :: Skip fips feature: aws-lc-fips-sys cmake crate (v0.1.54) internally
+          :: re-calls vcvarsall x64 in its subprocess, overriding the arm64 env.
+          :: The non-FIPS aws-lc-sys handles ARM64 correctly.
+          :: TODO: Re-add --all-features once the cmake Rust crate respects
+          :: VSCMD_ARG_TGT_ARCH=arm64 and stops forcing x64 vcvarsall.
+          :: Track: https://github.com/rust-lang/cmake-rs/issues
+          cargo build --package sf_core
+          cargo test --package sf_core -- --nocapture
 
   rust-core-status:
     needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64]
