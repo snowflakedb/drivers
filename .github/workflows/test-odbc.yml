@@ -149,6 +149,9 @@ jobs:
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+          - os: windows-11-arm
+            name: Windows ARM64
+            driver_lib: sfodbc.dll
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }})
     steps:
@@ -177,8 +180,8 @@ jobs:
           # Export ODBC paths dynamically (works for both ARM64 and Intel Macs)
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
+      - name: Install dependencies (Windows x64)
+        if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -191,12 +194,40 @@ jobs:
           Invoke-Checked "choco install openssl" { choco install openssl -y }
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
           cmake --version
-          # GPG is pre-installed on Windows GitHub runners
           gpg --version
-          # Set OpenSSL environment variables for Rust build
-          # Chocolatey OpenSSL uses MSVC lib structure
           echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\x64\MD" >> $env:GITHUB_ENV
+
+      - name: Install dependencies (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Invoke-Checked([string]$commandName, [scriptblock]$command) {
+            & $command
+            if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
+          }
+
+          # cmake is pre-installed on ARM64 runners; choco would install x64 MSI which fails
+          cmake --version
+          Invoke-Checked "choco install openssl" { choco install openssl -y }
+          Invoke-Checked "vcpkg install zlib:arm64-windows" { vcpkg install zlib:arm64-windows }
+          gpg --version
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\arm64\MD" >> $env:GITHUB_ENV
+
+          # Fix ARM64 SDK library paths: runner defaults to x64 SDK libs even on ARM64,
+          # which causes cmake (used by aws-lc-sys) to link against wrong architecture.
+          $vcTools = $env:VCToolsInstallDir
+          $sdkDir  = $env:WindowsSdkDir
+          $sdkVer  = $env:UCRTVersion
+          $lib = @(
+            "${vcTools}lib\arm64",
+            "${vcTools}ATLMFC\lib\arm64",
+            "${sdkDir}lib\${sdkVer}\ucrt\arm64",
+            "${sdkDir}lib\${sdkVer}\um\arm64"
+          ) -join ";"
+          echo "LIB=$lib" >> $env:GITHUB_ENV
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
