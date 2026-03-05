@@ -132,12 +132,19 @@ jobs:
           restore-keys: |
             windows-11-arm-cargo-
 
-      - name: Install OpenSSL
+      - name: Configure OpenSSL
         shell: pwsh
         run: |
-          choco install openssl -y
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\arm64\MD" >> $env:GITHUB_ENV
+          # OpenSSL is pre-installed on windows-11-arm runners at C:\Program Files\OpenSSL
+          # Just set the env vars so openssl-sys can find it.
+          if (Test-Path "C:\Program Files\OpenSSL") {
+            echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+            echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\arm64\MD" >> $env:GITHUB_ENV
+            Write-Host "OpenSSL found at C:\Program Files\OpenSSL"
+          } else {
+            Write-Error "OpenSSL not found at expected location"
+            exit 1
+          }
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
