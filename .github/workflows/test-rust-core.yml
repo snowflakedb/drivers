@@ -115,7 +115,7 @@ jobs:
   # aws-lc-fips-sys uses the cmake Rust crate, which internally calls
   # vcvarsall.bat x64 in its build script, overriding our ARM64 MSVC env.
   # This is an upstream issue in cmake-rs / aws-lc-fips-sys.
-  # Track: https://github.com/rust-lang/cmake-rs/issues
+  # No upstream issue filed yet.
   # The test suite is identical with and without fips — no tests are gated
   # behind cfg(feature = "fips"). Only the linked TLS crypto backend differs
   # (aws-lc-sys vs aws-lc-fips-sys).
