@@ -164,6 +164,11 @@ jobs:
           :: VSCMD_ARG_TGT_ARCH=arm64 and stops forcing x64 vcvarsall.
           :: Track: https://github.com/rust-lang/cmake-rs/issues
           cargo build --package sf_core
+          :: Diagnostic: check binary architectures
+          dumpbin /headers target\debug\sf_core.dll 2>nul | findstr "machine" || echo "sf_core.dll not found or dumpbin failed"
+          for %%f in (target\debug\deps\sf_core-*.exe) do dumpbin /headers "%%f" | findstr "machine"
+          dumpbin /dependents target\debug\sf_core.dll 2>nul || echo "dependents check failed"
+          :: Run tests
           cargo test --package sf_core -- --nocapture
 
   rust-core-status:
