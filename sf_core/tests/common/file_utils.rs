@@ -1,7 +1,7 @@
 use flate2::read::GzDecoder;
 use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Decompresses a gzipped file and returns its content as a string
@@ -46,4 +46,20 @@ pub fn shared_test_data_dir() -> PathBuf {
         .join("tests")
         .join("test_data")
         .join("generated_test_data")
+}
+
+/// Convert a path to a string suitable for embedding in Snowflake SQL (PUT/GET).
+///
+/// On Windows, `tempfile::TempDir` can return short (8.3) paths containing `~`
+/// (e.g. `C:\Users\RUNNER~1\AppData\...`). Snowflake's SQL parser rejects `~`,
+/// causing `syntax error ... unexpected '~'`. This function resolves the path to
+/// its long form via `fs::canonicalize` and strips the `\\?\` prefix that Windows
+/// canonicalization adds. Backslashes are converted to forward slashes for SQL.
+///
+/// On non-Windows, this is a simple backslash-to-forward-slash conversion.
+pub fn path_to_sql_uri(path: &Path) -> String {
+    let long_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path_str = long_path.to_string_lossy();
+    let stripped = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+    stripped.replace('\\', "/")
 }
