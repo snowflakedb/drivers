@@ -121,21 +121,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
+      - name: Cache Rust registry only
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: windows-11-arm-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-11-arm-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            windows-11-arm-cargo-
+            windows-11-arm-registry-
 
-      - name: Set up ARM64 MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: aarch64
+      - name: Install ARM64 OpenSSL via vcpkg
+        shell: cmd
+        run: |
+          :: Build native ARM64 OpenSSL from source. The pre-installed OpenSSL is
+          :: x64-only (no static libs, DLLs cause error 193 at runtime).
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows
+
+      - name: Configure OpenSSL
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
+          # Add vcpkg bin to PATH so ARM64 OpenSSL DLLs are found at runtime
+          echo "C:\vcpkg\installed\arm64-windows\bin" >> $env:GITHUB_PATH
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -144,11 +154,21 @@ jobs:
         shell: bash
 
       - name: Build and test
-        shell: pwsh
+        shell: cmd
         run: |
-          $env:PARAMETER_PATH = "${{ github.workspace }}\parameters.json"
-          cargo build --package sf_core --all-features
-          cargo test --package sf_core --all-features -- --nocapture
+          :: Set up ARM64 MSVC environment for aws-lc-sys cmake builds.
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+          :: Skip fips feature: aws-lc-fips-sys cmake crate (v0.1.54) internally
+          :: re-calls vcvarsall x64 in its subprocess, overriding the arm64 env.
+          :: TODO: Re-add --all-features once cmake-rs respects ARM64 vcvarsall.
+          :: Track: https://github.com/rust-lang/cmake-rs/issues
+          cargo build --package sf_core --target aarch64-pc-windows-msvc
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+          :: Copy ARM64 OpenSSL DLLs next to test binaries so Windows finds them
+          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
+          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
+          cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
 
   rust-core-status:
     needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64]
@@ -158,14 +178,14 @@ jobs:
       - name: Check status
         run: |
           echo "=== Rust Core CI Status ==="
-
+          
           # Check if tests were skipped
           if [[ "${{ needs.test.result }}" == "skipped" ]]; then
             echo "✓ Rust Core tests were SKIPPED (no relevant changes detected)"
             echo "  - run_rust_core: ${{ needs.detect-changes.outputs.run_rust_core }}"
             exit 0
           fi
-
+          
           # Check if any job failed or was cancelled
           if [[ "${{ needs.format.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.clippy.result }}" =~ ^(failure|cancelled)$ ]] || \
@@ -180,7 +200,7 @@ jobs:
             echo "  - test_windows_arm64: ${{ needs.test_windows_arm64.result }}"
             exit 1
           fi
-
+          
           # Tests ran and passed
           echo "✓ Rust Core tests were RUN and PASSED"
           exit 0
