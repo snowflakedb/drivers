@@ -47,7 +47,7 @@ JDBC_INTERFACES = [
     "javax.sql.XADataSource",
     "javax.sql.XAConnection",
 ]
-SUMMARY_ORDER = ["implemented", "unsupported_by_design", "not_implemented", "missing"]
+SUMMARY_ORDER = ["implemented", "unsupported_by_design", "not_implemented"]
 CATEGORY_PRIORITY = {"implemented": 3, "unsupported_by_design": 2, "not_implemented": 1, "missing": 0}
 METHOD_RE = re.compile(r"^\s*public\s+.*\s+([A-Za-z_]\w*)\(([^)]*)\).*$")
 GENERIC_RE = re.compile(r"<[^<>]*>")
@@ -331,18 +331,18 @@ def aggregates(method_categories: dict[str, str]) -> tuple[dict[str, int], dict[
     return dict(sorted(totals.items())), {k: dict(sorted(v.items())) for k, v in sorted(by_interface.items())}
 
 
-def present_ifaces(categories: dict[str, str]) -> set[str]:
-    return {k.split("::", 1)[0] for k, v in categories.items() if v != "missing"}
-
-
 def reconcile(baseline_keys: list[str], old_raw: dict[str, str], new_raw: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
-    old_ifaces, new_ifaces = present_ifaces(old_raw), present_ifaces(new_raw)
+    old_ifaces = {k.split("::", 1)[0] for k, v in old_raw.items() if v != "missing"}
+    new_ifaces = {k.split("::", 1)[0] for k, v in new_raw.items() if v != "missing"}
     out_old, out_new = {}, {}
     for key in baseline_keys:
         iface, _ = key.split("::", 1)
-        old_cat = "missing" if iface not in old_ifaces else ("unsupported_by_design" if old_raw.get(key) == "unsupported_by_design" else "implemented")
-        if old_cat == "missing":
-            new_cat = "missing"
+        old_raw_cat = old_raw.get(key, "missing")
+        old_cat = "implemented" if (iface in old_ifaces and old_raw_cat == "implemented") else "unsupported_by_design"
+
+        if old_raw_cat == "missing":
+            # Leadership view: baseline methods missing in old are treated as unsupported_by_design.
+            new_cat = "unsupported_by_design"
         elif iface not in new_ifaces:
             new_cat = "not_implemented"
         elif new_raw.get(key) == "not_implemented":
@@ -369,7 +369,7 @@ def write_csv_table(path: Path, old_categories: dict[str, str], new_categories: 
         writer.writeheader()
         for key in sorted(set(old_categories.keys()).union(new_categories.keys())):
             iface, sig = key.split("::", 1)
-            o, n = old_categories.get(key, "missing"), new_categories.get(key, "missing")
+            o, n = old_categories.get(key, "unsupported_by_design"), new_categories.get(key, "unsupported_by_design")
             writer.writerow({"interface": iface, "method_signature": sig, "old_category": o, "new_category": n, "changed": str(o != n).lower()})
 
 
@@ -393,9 +393,15 @@ def parse_args() -> argparse.Namespace:
 
 def print_summary(report: dict) -> None:
     totals = report["totals"]
+    leadership = leadership_buckets(report)
+    done = leadership["done"]
+    remaining = leadership["remaining"]
     print(f"\n{report['driver_name']}")
     print("-" * len(report["driver_name"]))
     print(f"Total API methods considered: {sum(totals.values())}")
+    print(f"done: {done}")
+    print(f"remaining: {remaining}")
+    print(f"leadership_pct: done {leadership['done_pct']}% | remaining {leadership['remaining_pct']}%")
     for key in SUMMARY_ORDER:
         if key in totals:
             print(f"{key}: {totals[key]}")
@@ -407,6 +413,23 @@ def print_delta(old_report: dict, new_report: dict) -> None:
     old_t, new_t = defaultdict(int, old_report["totals"]), defaultdict(int, new_report["totals"])
     for cat in sorted(set(old_t).union(new_t)):
         print(f"{cat}: {new_t[cat] - old_t[cat]}")
+    print(f"done: {(new_t['implemented'] + new_t['unsupported_by_design']) - (old_t['implemented'] + old_t['unsupported_by_design'])}")
+    print(f"remaining: {new_t['not_implemented'] - old_t['not_implemented']}")
+
+
+def leadership_buckets(report: dict) -> dict[str, float | int]:
+    totals = defaultdict(int, report["totals"])
+    done = totals["implemented"] + totals["unsupported_by_design"]
+    remaining = totals["not_implemented"]
+    total = done + remaining
+    done_pct = round((done / total) * 100, 2) if total else 0.0
+    remaining_pct = round((remaining / total) * 100, 2) if total else 0.0
+    return {
+        "done": done,
+        "remaining": remaining,
+        "done_pct": done_pct,
+        "remaining_pct": remaining_pct,
+    }
 
 
 def main() -> int:
@@ -448,11 +471,15 @@ def main() -> int:
             "new_driver": {
                 "unsupported_by_design_exceptions": ["SQLFeatureNotSupportedException"],
                 "not_implemented_exceptions": ["NotImplementedException"],
-                "alignment_rule": "Baseline = JDBC+net.snowflake.client.api; missing in new becomes not_implemented unless also missing in old",
+                "alignment_rule": "Baseline = JDBC+net.snowflake.client.api; methods missing in old/new are reported as unsupported_by_design",
             },
         },
         "old": old_report,
         "new": new_report,
+        "leadership_buckets": {
+            "old": leadership_buckets(old_report),
+            "new": leadership_buckets(new_report),
+        },
     }
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")

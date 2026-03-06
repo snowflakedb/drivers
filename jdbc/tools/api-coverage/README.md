@@ -23,10 +23,10 @@ Implementation scan includes concrete classes under:
   - new: method throws `SQLFeatureNotSupportedException`
 - `not_implemented` (new only)
   - method throws `NotImplementedException`
-  - or method is absent in new while not `missing` in old
+  - or method is absent in new while present in old baseline
 - `missing`
-  - method is marked `missing` in old baseline
-  - mirrored as `missing` in new (so missing counts are aligned)
+  - not used in leadership view
+  - baseline methods that are missing are folded into `unsupported_by_design`
 
 ## Outputs
 
@@ -40,6 +40,11 @@ CSV columns:
 - `old_category`
 - `new_category`
 - `changed`
+
+Leadership buckets in JSON:
+- `done` = `implemented` + `unsupported_by_design`
+- `remaining` = `not_implemented`
+- `done_pct`, `remaining_pct` (short percentage view for leadership)
 
 ## Setup
 
