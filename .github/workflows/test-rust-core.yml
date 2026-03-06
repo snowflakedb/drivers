@@ -121,16 +121,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
+      - name: Cache Rust registry only
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: windows-11-arm-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-11-arm-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            windows-11-arm-cargo-
+            windows-11-arm-registry-
+
+      - name: Toolchain diagnostics
+        shell: cmd
+        run: |
+          echo === rustup show ===
+          rustup show
+          echo === cargo version ===
+          cargo -vV
+          echo === rustc version ===
+          rustc -vV
+          echo === cargo.exe location and arch ===
+          where cargo
+          for /f "tokens=*" %%i in ('where cargo') do dumpbin /headers "%%i" 2>nul | findstr "machine"
+          echo === rustc.exe location and arch ===
+          where rustc
+          for /f "tokens=*" %%i in ('where rustc') do dumpbin /headers "%%i" 2>nul | findstr "machine"
+          echo === link.exe location ===
+          where link
 
       - name: Install ARM64 OpenSSL via vcpkg
         shell: cmd
@@ -160,36 +177,53 @@ jobs:
           :: Set up ARM64 MSVC environment for aws-lc-sys cmake builds.
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
+
+          :: Verify MSVC env is targeting ARM64
+          echo === VSCMD_ARG_TGT_ARCH ===
+          echo %VSCMD_ARG_TGT_ARCH%
+          echo === LIB (first 500 chars) ===
+          echo %LIB:~0,500%
+
           :: Skip fips feature: aws-lc-fips-sys cmake crate (v0.1.54) internally
           :: re-calls vcvarsall x64 in its subprocess, overriding the arm64 env.
           :: TODO: Re-add --all-features once cmake-rs respects ARM64 vcvarsall.
-          :: Clean cached artifacts — the cargo cache may have stale binaries
-          :: from previous runs with different OpenSSL/env configuration.
-          cargo clean --package sf_core 2>nul
-          cargo build --package sf_core
+          :: Track: https://github.com/rust-lang/cmake-rs/issues
+
+          :: Build with explicit target to guarantee ARM64 output
+          cargo build --package sf_core --target aarch64-pc-windows-msvc
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
+          :: Copy ARM64 OpenSSL DLLs next to the built artifacts
+          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\ 2>nul
+          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\ 2>nul
+          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
+          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
+
           :: Diagnostic: verify architecture of built artifacts
           echo === sf_core.dll architecture ===
-          dumpbin /headers target\debug\sf_core.dll | findstr "machine"
-          echo === test binary architecture ===
-          for %%f in (target\debug\deps\sf_core-*.exe) do dumpbin /headers "%%f" | findstr "machine"
-          echo === sf_core.dll runtime dependencies ===
-          dumpbin /dependents target\debug\sf_core.dll
-          :: Copy ARM64 OpenSSL DLLs next to the test binaries so Windows finds them
-          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\debug\deps\ 2>nul
-          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\debug\deps\ 2>nul
-          copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\debug\ 2>nul
-          copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\debug\ 2>nul
-          echo === PATH check for vcpkg bin ===
-          echo %PATH% | findstr /i "arm64-windows"
-          :: Check test binary architecture
-          echo === test binary architecture ===
-          dumpbin /headers target\debug\deps\sf_core-078df06007e46933.exe | findstr "machine"
-          echo === test binary type ===
-          dumpbin /headers target\debug\deps\sf_core-078df06007e46933.exe | findstr "DLL\|Executable\|machine"
-          echo === try running directly ===
-          target\debug\deps\sf_core-078df06007e46933.exe --list 2>&1 || echo "Direct execution failed with exit code %ERRORLEVEL%"
-          :: Run tests
-          cargo test --package sf_core -- --nocapture
+          dumpbin /headers target\aarch64-pc-windows-msvc\debug\sf_core.dll 2>nul | findstr "machine"
+          echo === test exe architecture ===
+          for %%f in (target\aarch64-pc-windows-msvc\debug\deps\sf_core-*.exe) do (
+            echo --- %%f ---
+            dumpbin /headers "%%f" | findstr "machine"
+            echo --- dependents ---
+            dumpbin /dependents "%%f"
+          )
+          echo === OpenSSL DLLs in target dir ===
+          dir target\aarch64-pc-windows-msvc\debug\libcrypto*.dll target\aarch64-pc-windows-msvc\debug\libssl*.dll 2>nul
+          dir target\aarch64-pc-windows-msvc\debug\deps\libcrypto*.dll target\aarch64-pc-windows-msvc\debug\deps\libssl*.dll 2>nul
+
+          :: Try running the test exe directly first to get a better error message
+          echo === direct exe execution ===
+          set RUST_BACKTRACE=1
+          for %%f in (target\aarch64-pc-windows-msvc\debug\deps\sf_core-*.exe) do (
+            echo --- trying %%f --list ---
+            "%%f" --list 2>&1
+            echo --- exit code: %ERRORLEVEL% ---
+          )
+
+          :: Run actual tests
+          cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
 
   rust-core-status:
     needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64]
