@@ -2,7 +2,6 @@ package net.snowflake.client.internal.api.implementation.resultset;
 
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.List;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
@@ -21,7 +20,7 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public int getColumnCount() throws SQLException {
-    throw new NotImplementedException();
+    return columnNames.length;
   }
 
   @Override
@@ -61,12 +60,13 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public String getColumnLabel(int column) throws SQLException {
-    throw new NotImplementedException();
+    checkColumnIndex(column);
+    return columnNames[column - 1];
   }
 
   @Override
   public String getColumnName(int column) throws SQLException {
-    throw new NotImplementedException();
+    return getColumnLabel(column);
   }
 
   @Override
@@ -96,7 +96,8 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public int getColumnType(int column) throws SQLException {
-    throw new NotImplementedException();
+    checkColumnIndex(column);
+    return columnTypes[column - 1];
   }
 
   @Override
@@ -126,16 +127,15 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (!iface.isInstance(this)) {
-      throw new SQLException(
-          this.getClass().getName() + " not unwrappable from " + iface.getName());
+    if (iface.isAssignableFrom(getClass())) {
+      return iface.cast(this);
     }
-    return (T) this;
+    throw new SQLException("Cannot unwrap to " + iface.getName());
   }
 
   @Override
   public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    return iface.isInstance(this);
+    return iface.isAssignableFrom(getClass());
   }
 
   private void checkColumnIndex(int column) throws SQLException {
@@ -146,22 +146,22 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public String getQueryID() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getQueryID not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public List<String> getColumnNames() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getColumnNames not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public int getColumnIndex(String columnName) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getColumnIndex not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public int getInternalColumnType(int column) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getInternalColumnType not supported");
+    throw new NotImplementedException();
   }
 
   @Override
