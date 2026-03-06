@@ -3,10 +3,10 @@ package net.snowflake.client.internal.api.implementation.resultset;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import java.sql.Types;
 import java.util.List;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
+import net.snowflake.client.internal.util.NotImplementedException;
 
 /** Simple ResultSetMetaData implementation */
 public class SnowflakeResultSetMetaDataImpl
@@ -21,17 +21,17 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public int getColumnCount() throws SQLException {
-    return columnNames.length;
+    throw new NotImplementedException();
   }
 
   @Override
   public boolean isAutoIncrement(int column) throws SQLException {
-    return false;
+    throw new NotImplementedException();
   }
 
   @Override
   public boolean isCaseSensitive(int column) throws SQLException {
-    return false;
+    throw new NotImplementedException();
   }
 
   @Override
@@ -46,84 +46,62 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public int isNullable(int column) throws SQLException {
-    return columnNullable;
+    throw new NotImplementedException();
   }
 
   @Override
   public boolean isSigned(int column) throws SQLException {
-    int type = getColumnType(column);
-    return type == Types.INTEGER
-        || type == Types.BIGINT
-        || type == Types.SMALLINT
-        || type == Types.TINYINT
-        || type == Types.FLOAT
-        || type == Types.DOUBLE
-        || type == Types.DECIMAL
-        || type == Types.NUMERIC;
+    throw new NotImplementedException();
   }
 
   @Override
   public int getColumnDisplaySize(int column) throws SQLException {
-    return 255;
+    throw new NotImplementedException();
   }
 
   @Override
   public String getColumnLabel(int column) throws SQLException {
-    checkColumnIndex(column);
-    return columnNames[column - 1];
+    throw new NotImplementedException();
   }
 
   @Override
   public String getColumnName(int column) throws SQLException {
-    return getColumnLabel(column);
+    throw new NotImplementedException();
   }
 
   @Override
   public String getSchemaName(int column) throws SQLException {
-    return "PUBLIC";
+    throw new NotImplementedException();
   }
 
   @Override
   public int getPrecision(int column) throws SQLException {
-    return 0;
+    throw new NotImplementedException();
   }
 
   @Override
   public int getScale(int column) throws SQLException {
-    return 0;
+    throw new NotImplementedException();
   }
 
   @Override
   public String getTableName(int column) throws SQLException {
-    return "STUB_TABLE";
+    throw new NotImplementedException();
   }
 
   @Override
   public String getCatalogName(int column) throws SQLException {
-    return "STUB_DB";
+    throw new NotImplementedException();
   }
 
   @Override
   public int getColumnType(int column) throws SQLException {
-    checkColumnIndex(column);
-    return columnTypes[column - 1];
+    throw new NotImplementedException();
   }
 
   @Override
   public String getColumnTypeName(int column) throws SQLException {
-    int type = getColumnType(column);
-    switch (type) {
-      case Types.INTEGER:
-        return "INTEGER";
-      case Types.VARCHAR:
-        return "VARCHAR";
-      case Types.DATE:
-        return "DATE";
-      case Types.TIMESTAMP:
-        return "TIMESTAMP";
-      default:
-        return "VARCHAR";
-    }
+    throw new NotImplementedException();
   }
 
   @Override
@@ -143,32 +121,21 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public String getColumnClassName(int column) throws SQLException {
-    int type = getColumnType(column);
-    switch (type) {
-      case Types.INTEGER:
-        return "java.lang.Integer";
-      case Types.VARCHAR:
-        return "java.lang.String";
-      case Types.DATE:
-        return "java.sql.Date";
-      case Types.TIMESTAMP:
-        return "java.sql.Timestamp";
-      default:
-        return "java.lang.String";
-    }
+    throw new NotImplementedException();
   }
 
   @Override
   public <T> T unwrap(Class<T> iface) throws SQLException {
-    if (iface.isAssignableFrom(getClass())) {
-      return iface.cast(this);
+    if (!iface.isInstance(this)) {
+      throw new SQLException(
+          this.getClass().getName() + " not unwrappable from " + iface.getName());
     }
-    throw new SQLException("Cannot unwrap to " + iface.getName());
+    return (T) this;
   }
 
   @Override
   public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    return iface.isAssignableFrom(getClass());
+    return iface.isInstance(this);
   }
 
   private void checkColumnIndex(int column) throws SQLException {
@@ -199,16 +166,16 @@ public class SnowflakeResultSetMetaDataImpl
 
   @Override
   public List<FieldMetadata> getColumnFields(int column) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getColumnFields not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public int getVectorDimension(int column) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getVectorDimension not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public int getVectorDimension(String columnName) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getVectorDimension not supported");
+    throw new NotImplementedException();
   }
 }
