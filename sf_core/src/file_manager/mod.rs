@@ -1,7 +1,8 @@
 mod encryption;
 mod file_transfer;
-
+mod gcs_transfer;
 mod path_expansion;
+mod s3_transfer;
 pub mod types;
 
 pub use self::types::*;
@@ -9,7 +10,9 @@ pub use self::types::*;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
-use file_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
+use file_transfer::{
+    DownloadFileError, UploadFileError, download_from_cloud, upload_to_cloud_or_skip,
+};
 use path_expansion::{PathExpansionError, expand_filenames};
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
@@ -49,14 +52,14 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
 
     let (encryption_result, file_metadata) = preprocess_file_before_upload(file_buffer, &data)?;
 
-    let status = upload_to_s3_or_skip(
+    let status = upload_to_cloud_or_skip(
         encryption_result,
         &data.stage_info,
         file_metadata.target.as_str(),
         data.overwrite,
     )
     .await
-    .context(S3UploadSnafu)?;
+    .context(CloudUploadSnafu)?;
 
     // TODO: Right now empty message is hardcoded, because any error in the upload process will
     // result in an error before this point and an ERROR status is never returned.
@@ -169,11 +172,11 @@ pub async fn download_files(
 pub async fn download_single_file(
     data: SingleDownloadData,
 ) -> Result<DownloadResult, FileManagerError> {
-    // Download encrypted data and metadata from S3
+    // Download encrypted data and metadata from cloud storage
     let (encrypted_data, file_metadata) =
-        download_from_s3(&data.stage_info, data.src_location.as_str())
+        download_from_cloud(&data.stage_info, data.src_location.as_str())
             .await
-            .context(S3DownloadSnafu)?;
+            .context(CloudDownloadSnafu)?;
 
     // Decrypt the data (this gives us the compressed data)
     let compressed_data =
@@ -234,15 +237,17 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to upload file to S3"))]
-    S3Upload {
-        source: UploadFileError,
+    #[snafu(display("Failed to upload file to cloud storage"))]
+    CloudUpload {
+        #[snafu(source(from(UploadFileError, Box::new)))]
+        source: Box<UploadFileError>,
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to download file from S3"))]
-    S3Download {
-        source: DownloadFileError,
+    #[snafu(display("Failed to download file from cloud storage"))]
+    CloudDownload {
+        #[snafu(source(from(DownloadFileError, Box::new)))]
+        source: Box<DownloadFileError>,
         #[snafu(implicit)]
         location: Location,
     },

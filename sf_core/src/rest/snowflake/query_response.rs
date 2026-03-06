@@ -227,23 +227,24 @@ pub struct StageInfo {
     #[serde(rename = "endPoint")]
     end_point: Option<String>,
 
-    // unused fields
     #[serde(rename = "locationType")]
-    _location_type: Option<String>,
+    location_type: Option<String>,
+    #[serde(rename = "presignedUrl")]
+    _presigned_url: Option<String>,
+    #[serde(rename = "useRegionalUrl")]
+    use_regional_url: Option<bool>,
+    #[serde(rename = "useVirtualUrl")]
+    use_virtual_url: Option<bool>,
+
+    // unused fields
     #[serde(rename = "path")]
     _path: Option<String>,
     #[serde(rename = "storageAccount")]
     _storage_account: Option<String>,
     #[serde(rename = "isClientSideEncrypted")]
     _is_client_side_encrypted: Option<bool>,
-    #[serde(rename = "presignedUrl")]
-    _presigned_url: Option<String>,
     #[serde(rename = "useS3RegionalUrl")]
     _use_s3_regional_url: Option<bool>,
-    #[serde(rename = "useRegionalUrl")]
-    _use_regional_url: Option<bool>,
-    #[serde(rename = "useVirtualUrl")]
-    _use_virtual_url: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -255,15 +256,16 @@ pub struct Credentials {
     #[serde(rename = "AWS_TOKEN")]
     aws_token: Option<String>,
 
+    #[serde(rename = "GCS_ACCESS_TOKEN")]
+    gcs_access_token: Option<String>,
+    #[serde(rename = "AZURE_SAS_TOKEN")]
+    azure_sas_token: Option<String>,
+
     // unused fields
     #[serde(rename = "AWS_ID")]
     _aws_id: Option<String>,
     #[serde(rename = "AWS_KEY")]
     _aws_key: Option<String>,
-    #[serde(rename = "AZURE_SAS_TOKEN")]
-    _azure_sas_token: Option<String>,
-    #[serde(rename = "GCS_ACCESS_TOKEN")]
-    _gcs_access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -365,6 +367,7 @@ impl Data {
             auto_compress,
             source_compression,
             overwrite,
+            credential_refresh: None, // Will be set by the caller if needed
         })
     }
 
@@ -598,7 +601,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .clone();
 
         let bucket_separator = location.find('/').context(InvalidFormatSnafu {
-            message: format!("Invalid S3 location format: {location}"),
+            message: format!("Invalid location format: {location}"),
         })?;
 
         let bucket = location[..bucket_separator].to_string();
@@ -607,21 +610,82 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             key_prefix.push('/');
         }
 
-        let region = value
-            .region
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "stage info -> region",
-            })?
-            .clone();
+        // Parse location type, default to S3 for backward compatibility
+        let location_type = match value.location_type.as_deref() {
+            Some("GCS") | Some("gcs") => file_manager::StageLocationType::Gcs,
+            Some("AZURE") | Some("azure") | Some("Azure") => file_manager::StageLocationType::Azure,
+            Some("S3") | Some("s3") | None => file_manager::StageLocationType::S3,
+            Some(other) => InvalidFormatSnafu {
+                message: format!("Unknown location type: {other}"),
+            }
+            .fail()?,
+        };
 
-        let creds: file_manager::Credentials = value
-            .creds
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "stage info -> credentials",
-            })?
-            .try_into()?;
+        // Region is optional for GCS, required for S3
+        let region = value.region.clone();
+
+        // Parse credentials based on location type
+        let creds_data = value.creds.as_ref().context(MissingParameterSnafu {
+            parameter: "stage info -> credentials",
+        })?;
+
+        let creds = match location_type {
+            file_manager::StageLocationType::Gcs => {
+                let access_token = creds_data
+                    .gcs_access_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> GCS_ACCESS_TOKEN",
+                    })?
+                    .clone();
+                file_manager::CloudCredentials::Gcs {
+                    access_token: access_token.into(),
+                }
+            }
+            file_manager::StageLocationType::Azure => {
+                let sas_token = creds_data
+                    .azure_sas_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> AZURE_SAS_TOKEN",
+                    })?
+                    .clone();
+                file_manager::CloudCredentials::Azure {
+                    sas_token: sas_token.into(),
+                }
+            }
+            file_manager::StageLocationType::S3 => {
+                let aws_key_id = creds_data
+                    .aws_key_id
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> AWS_KEY_ID",
+                    })?
+                    .clone();
+
+                let aws_secret_key = creds_data
+                    .aws_secret_key
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> AWS_SECRET_KEY",
+                    })?
+                    .clone();
+
+                let aws_token = creds_data
+                    .aws_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> AWS_TOKEN",
+                    })?
+                    .clone();
+
+                file_manager::CloudCredentials::Aws {
+                    key_id: aws_key_id,
+                    secret_key: aws_secret_key.into(),
+                    token: aws_token.into(),
+                }
+            }
+        };
 
         let end_point = value
             .end_point
@@ -629,51 +693,23 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .filter(|ep| !ep.is_empty())
             .cloned();
 
+        let use_regional_url = value.use_regional_url.unwrap_or(false);
+        let use_virtual_url = value.use_virtual_url.unwrap_or(false);
+
         Ok(file_manager::StageInfo {
+            location_type,
             bucket,
             key_prefix,
             region,
             creds,
             end_point,
+            use_regional_url,
+            use_virtual_url,
         })
     }
 }
 
-impl TryFrom<&Credentials> for file_manager::Credentials {
-    type Error = QueryResponseError;
-
-    fn try_from(value: &Credentials) -> Result<Self, Self::Error> {
-        let aws_key_id = value
-            .aws_key_id
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws key id",
-            })?
-            .clone();
-
-        let aws_secret_key = value
-            .aws_secret_key
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws secret key",
-            })?
-            .clone();
-
-        let aws_token = value
-            .aws_token
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws token",
-            })?
-            .clone();
-
-        Ok(file_manager::Credentials {
-            aws_key_id,
-            aws_secret_key: aws_secret_key.into(),
-            aws_token: aws_token.into(),
-        })
-    }
-}
+// Old Credentials conversion removed - now handled directly in StageInfo TryFrom
 
 impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
     fn from(value: &EncryptionMaterial) -> Self {

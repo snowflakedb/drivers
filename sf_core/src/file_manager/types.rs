@@ -1,9 +1,25 @@
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
+
+// Type alias for the credential refresh callback
+/// Callback to re-execute the PUT command and obtain fresh stage credentials.
+/// Returns a new StageInfo with refreshed credentials.
+/// All three existing drivers (JDBC, Python, ODBC) implement this by holding
+/// a reference to the connection/session and re-executing the original command.
+pub type CredentialRefreshFn = Box<
+    dyn Fn() -> Pin<
+            Box<
+                dyn Future<Output = Result<StageInfo, crate::file_manager::FileManagerError>>
+                    + Send,
+            >,
+        > + Send
+        + Sync,
+>;
 
 // Dedicated file transfer types
-#[derive(Debug)]
 pub struct UploadData {
     pub src_location_pattern: String,
     pub stage_info: StageInfo,
@@ -11,6 +27,26 @@ pub struct UploadData {
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
+    /// Optional callback to refresh expired stage credentials.
+    /// When provided, enables automatic retry on 401 (token expired) errors.
+    pub credential_refresh: Option<CredentialRefreshFn>,
+}
+
+impl std::fmt::Debug for UploadData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UploadData")
+            .field("src_location_pattern", &self.src_location_pattern)
+            .field("stage_info", &self.stage_info)
+            .field("encryption_material", &"<redacted>")
+            .field("auto_compress", &self.auto_compress)
+            .field("source_compression", &self.source_compression)
+            .field("overwrite", &self.overwrite)
+            .field(
+                "credential_refresh",
+                &self.credential_refresh.as_ref().map(|_| "<function>"),
+            )
+            .finish()
+    }
 }
 
 pub struct SingleUploadData {
@@ -82,23 +118,41 @@ pub enum SourceCompressionParam {
     AutoDetect,
 }
 
-#[derive(Debug, Clone)]
-pub struct StageInfo {
-    pub bucket: String,
-    pub key_prefix: String,
-    pub region: String,
-    pub creds: Credentials,
-    /// S3 endpoint provided by Snowflake (e.g. for FIPS or regional routing).
-    /// When present, the S3 client uses this instead of the SDK default.
-    pub end_point: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StageLocationType {
+    S3,
+    Gcs,
+    Azure,
 }
 
-/// AWS credentials for S3 stage access.
 #[derive(Debug, Clone)]
-pub struct Credentials {
-    pub aws_key_id: String,
-    pub aws_secret_key: SensitiveString,
-    pub aws_token: SensitiveString,
+pub enum CloudCredentials {
+    Aws {
+        key_id: String,
+        secret_key: SensitiveString,
+        token: SensitiveString,
+    },
+    Gcs {
+        access_token: SensitiveString,
+    },
+    Azure {
+        sas_token: SensitiveString,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct StageInfo {
+    pub location_type: StageLocationType,
+    pub bucket: String,
+    pub key_prefix: String,
+    pub region: Option<String>, // Optional for GCS
+    pub creds: CloudCredentials,
+    /// Cloud storage endpoint provided by Snowflake (e.g. for FIPS, regional routing, or custom GCS endpoints).
+    /// When present, the client uses this instead of the default.
+    pub end_point: Option<String>,
+    // GCS-specific URL routing
+    pub use_regional_url: bool,
+    pub use_virtual_url: bool,
 }
 
 /// Encryption material for file transfer.
@@ -110,14 +164,14 @@ pub struct EncryptionMaterial {
 }
 
 // Result of encryption containing encrypted data and metadata
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EncryptionResult {
     pub data: Vec<u8>,
     pub metadata: EncryptedFileMetadata,
 }
 
 // Encrypted file metadata that gets bundled with the encrypted data
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EncryptedFileMetadata {
     pub encrypted_key: String, // Base64 encoded
     pub iv: String,            // Base64 encoded
@@ -126,7 +180,7 @@ pub struct EncryptedFileMetadata {
 }
 
 // Material description structure for JSON serialization
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialDescription {
     #[serde(rename = "queryId")]
     pub query_id: String,
