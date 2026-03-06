@@ -163,6 +163,9 @@ jobs:
           :: Skip fips feature: aws-lc-fips-sys cmake crate (v0.1.54) internally
           :: re-calls vcvarsall x64 in its subprocess, overriding the arm64 env.
           :: TODO: Re-add --all-features once cmake-rs respects ARM64 vcvarsall.
+          :: Clean cached artifacts — the cargo cache may have stale binaries
+          :: from previous runs with different OpenSSL/env configuration.
+          cargo clean --package sf_core 2>nul
           cargo build --package sf_core
           :: Diagnostic: verify architecture of built artifacts
           echo === sf_core.dll architecture ===
