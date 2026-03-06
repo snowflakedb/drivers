@@ -140,14 +140,10 @@ jobs:
           cargo -vV
           echo === rustc version ===
           rustc -vV
-          echo === cargo.exe location and arch ===
+          echo === cargo.exe location ===
           where cargo
-          for /f "tokens=*" %%i in ('where cargo') do dumpbin /headers "%%i" 2>nul | findstr "machine"
-          echo === rustc.exe location and arch ===
+          echo === rustc.exe location ===
           where rustc
-          for /f "tokens=*" %%i in ('where rustc') do dumpbin /headers "%%i" 2>nul | findstr "machine"
-          echo === link.exe location ===
-          where link
 
       - name: Install ARM64 OpenSSL via vcpkg
         shell: cmd
