@@ -169,12 +169,12 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public Time getTime(int columnIndex) throws SQLException {
-    return null;
+    throw new NotImplementedException();
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
-    return null;
+    throw new NotImplementedException();
   }
 
   @Override
@@ -260,17 +260,17 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public InputStream getAsciiStream(String columnLabel) throws SQLException {
-    return getAsciiStream(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
   }
 
   @Override
   public InputStream getUnicodeStream(String columnLabel) throws SQLException {
-    return getUnicodeStream(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
   }
 
   @Override
   public InputStream getBinaryStream(String columnLabel) throws SQLException {
-    return getBinaryStream(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
   }
 
   @Override
@@ -281,7 +281,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void clearWarnings() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
   }
 
   @Override
@@ -319,7 +319,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public Reader getCharacterStream(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getCharacterStream not supported");
+    throw new NotImplementedException();
   }
 
   @Override
@@ -366,12 +366,12 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void beforeFirst() throws SQLException {
-    throw new NotImplementedException();
+    throw new SQLFeatureNotSupportedException("beforeFirst not supported");
   }
 
   @Override
   public void afterLast() throws SQLException {
-    throw new NotImplementedException();
+    throw new SQLFeatureNotSupportedException("afterLast not supported");
   }
 
   @Override
@@ -451,17 +451,17 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   // Update methods (not supported)
   @Override
   public boolean rowUpdated() throws SQLException {
-    return false;
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public boolean rowInserted() throws SQLException {
-    return false;
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public boolean rowDeleted() throws SQLException {
-    return false;
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -562,99 +562,99 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   // String-based update methods
   @Override
   public void updateNull(String columnLabel) throws SQLException {
-    updateNull(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateBoolean(String columnLabel, boolean x) throws SQLException {
-    updateBoolean(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateByte(String columnLabel, byte x) throws SQLException {
-    updateByte(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateShort(String columnLabel, short x) throws SQLException {
-    updateShort(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateInt(String columnLabel, int x) throws SQLException {
-    updateInt(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateLong(String columnLabel, long x) throws SQLException {
-    updateLong(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateFloat(String columnLabel, float x) throws SQLException {
-    updateFloat(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateDouble(String columnLabel, double x) throws SQLException {
-    updateDouble(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateBigDecimal(String columnLabel, BigDecimal x) throws SQLException {
-    updateBigDecimal(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateString(String columnLabel, String x) throws SQLException {
-    updateString(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateBytes(String columnLabel, byte[] x) throws SQLException {
-    updateBytes(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateDate(String columnLabel, Date x) throws SQLException {
-    updateDate(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateTime(String columnLabel, Time x) throws SQLException {
-    updateTime(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateTimestamp(String columnLabel, Timestamp x) throws SQLException {
-    updateTimestamp(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateAsciiStream(String columnLabel, InputStream x, int length) throws SQLException {
-    updateAsciiStream(findColumn(columnLabel), x, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateBinaryStream(String columnLabel, InputStream x, int length)
       throws SQLException {
-    updateBinaryStream(findColumn(columnLabel), x, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateCharacterStream(String columnLabel, Reader reader, int length)
       throws SQLException {
-    updateCharacterStream(findColumn(columnLabel), reader, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateObject(String columnLabel, Object x, int scaleOrLength) throws SQLException {
-    updateObject(findColumn(columnLabel), x, scaleOrLength);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateObject(String columnLabel, Object x) throws SQLException {
-    updateObject(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -679,7 +679,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void cancelRowUpdates() throws SQLException {
-    throw new SQLFeatureNotSupportedException("cancelRowUpdates not supported");
+    checkClosed();
   }
 
   @Override
@@ -700,7 +700,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public Object getObject(int columnIndex, Map<String, Class<?>> map) throws SQLException {
-    return getObject(columnIndex);
+    throw new SQLFeatureNotSupportedException("getObject not supported");
   }
 
   @Override
@@ -720,32 +720,32 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public Array getArray(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getArray not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public Object getObject(String columnLabel, Map<String, Class<?>> map) throws SQLException {
-    return getObject(findColumn(columnLabel), map);
+    throw new SQLFeatureNotSupportedException("getObject not supported");
   }
 
   @Override
   public Ref getRef(String columnLabel) throws SQLException {
-    return getRef(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getRef not supported");
   }
 
   @Override
   public Blob getBlob(String columnLabel) throws SQLException {
-    return getBlob(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getBlob not supported");
   }
 
   @Override
   public Clob getClob(String columnLabel) throws SQLException {
-    return getClob(findColumn(columnLabel));
+    throw new NotImplementedException();
   }
 
   @Override
   public Array getArray(String columnLabel) throws SQLException {
-    return getArray(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getArray not supported");
   }
 
   @Override
@@ -785,7 +785,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public URL getURL(String columnLabel) throws SQLException {
-    return getURL(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getURL not supported");
   }
 
   @Override
@@ -795,7 +795,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateRef(String columnLabel, Ref x) throws SQLException {
-    updateRef(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -805,7 +805,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateBlob(String columnLabel, Blob x) throws SQLException {
-    updateBlob(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -815,7 +815,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateClob(String columnLabel, Clob x) throws SQLException {
-    updateClob(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -825,7 +825,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateArray(String columnLabel, Array x) throws SQLException {
-    updateArray(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -835,7 +835,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public RowId getRowId(String columnLabel) throws SQLException {
-    return getRowId(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getRowId not supported");
   }
 
   @Override
@@ -845,7 +845,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateRowId(String columnLabel, RowId x) throws SQLException {
-    updateRowId(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -865,7 +865,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateNString(String columnLabel, String nString) throws SQLException {
-    updateNString(findColumn(columnLabel), nString);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -875,7 +875,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateNClob(String columnLabel, NClob nClob) throws SQLException {
-    updateNClob(findColumn(columnLabel), nClob);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -885,7 +885,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public NClob getNClob(String columnLabel) throws SQLException {
-    return getNClob(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getNClob not supported");
   }
 
   @Override
@@ -895,7 +895,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public SQLXML getSQLXML(String columnLabel) throws SQLException {
-    return getSQLXML(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getSQLXML not supported");
   }
 
   @Override
@@ -905,17 +905,17 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateSQLXML(String columnLabel, SQLXML xmlObject) throws SQLException {
-    updateSQLXML(findColumn(columnLabel), xmlObject);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public String getNString(int columnIndex) throws SQLException {
-    return getString(columnIndex);
+    throw new SQLFeatureNotSupportedException("getNString not supported");
   }
 
   @Override
   public String getNString(String columnLabel) throws SQLException {
-    return getString(columnLabel);
+    throw new SQLFeatureNotSupportedException("getNString not supported");
   }
 
   @Override
@@ -925,7 +925,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public Reader getNCharacterStream(String columnLabel) throws SQLException {
-    return getNCharacterStream(findColumn(columnLabel));
+    throw new SQLFeatureNotSupportedException("getNCharacterStream not supported");
   }
 
   @Override
@@ -936,7 +936,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   @Override
   public void updateNCharacterStream(String columnLabel, Reader reader, long length)
       throws SQLException {
-    updateNCharacterStream(findColumn(columnLabel), reader, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -957,19 +957,19 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   @Override
   public void updateAsciiStream(String columnLabel, InputStream x, long length)
       throws SQLException {
-    updateAsciiStream(findColumn(columnLabel), x, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateBinaryStream(String columnLabel, InputStream x, long length)
       throws SQLException {
-    updateBinaryStream(findColumn(columnLabel), x, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateCharacterStream(String columnLabel, Reader reader, long length)
       throws SQLException {
-    updateCharacterStream(findColumn(columnLabel), reader, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -981,7 +981,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
   @Override
   public void updateBlob(String columnLabel, InputStream inputStream, long length)
       throws SQLException {
-    updateBlob(findColumn(columnLabel), inputStream, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -991,7 +991,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateClob(String columnLabel, Reader reader, long length) throws SQLException {
-    updateClob(findColumn(columnLabel), reader, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -1001,7 +1001,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateNClob(String columnLabel, Reader reader, long length) throws SQLException {
-    updateNClob(findColumn(columnLabel), reader, length);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -1011,7 +1011,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateNCharacterStream(String columnLabel, Reader reader) throws SQLException {
-    updateNCharacterStream(findColumn(columnLabel), reader);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -1031,17 +1031,17 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateAsciiStream(String columnLabel, InputStream x) throws SQLException {
-    updateAsciiStream(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateBinaryStream(String columnLabel, InputStream x) throws SQLException {
-    updateBinaryStream(findColumn(columnLabel), x);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
   public void updateCharacterStream(String columnLabel, Reader reader) throws SQLException {
-    updateCharacterStream(findColumn(columnLabel), reader);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -1051,7 +1051,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateBlob(String columnLabel, InputStream inputStream) throws SQLException {
-    updateBlob(findColumn(columnLabel), inputStream);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -1061,7 +1061,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateClob(String columnLabel, Reader reader) throws SQLException {
-    updateClob(findColumn(columnLabel), reader);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -1071,7 +1071,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void updateNClob(String columnLabel, Reader reader) throws SQLException {
-    updateNClob(findColumn(columnLabel), reader);
+    throw new SQLFeatureNotSupportedException("Updates not supported");
   }
 
   @Override
@@ -1157,17 +1157,17 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public <T> T[] getArray(int columnIndex, Class<T> type) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getArray not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public <T> List<T> getList(int columnIndex, Class<T> type) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getList not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public <T> Map<String, T> getMap(int columnIndex, Class<T> type) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getMap not supported");
+    throw new NotImplementedException();
   }
 
   private interface ConverterFunction<T> {
