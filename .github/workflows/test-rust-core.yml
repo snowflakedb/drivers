@@ -116,7 +116,8 @@ jobs:
   # Evidence points to aws-lc-fips-sys Windows build env setup:
   # builder/printenv.bat calls vcvarsall.bat x64, overriding ARM64 toolchain env.
   # Workaround: do not enable fips on this lane.
-  # No upstream issue filed yet.
+  # Upstream issue: https://github.com/aws/aws-lc-rs/issues/1057
+  # Repro job: https://github.com/snowflakedb/universal-driver/actions/runs/22779459689/job/66081199710
   # TODO: re-enable --all-features after fix.
   # The test suite is identical with and without fips — no tests are gated
   # behind cfg(feature = "fips"). Only the linked TLS crypto backend differs
