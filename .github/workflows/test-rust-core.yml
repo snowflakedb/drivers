@@ -181,6 +181,13 @@ jobs:
           copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\debug\ 2>nul
           echo === PATH check for vcpkg bin ===
           echo %PATH% | findstr /i "arm64-windows"
+          :: Check test binary architecture
+          echo === test binary architecture ===
+          dumpbin /headers target\debug\deps\sf_core-078df06007e46933.exe | findstr "machine"
+          echo === test binary type ===
+          dumpbin /headers target\debug\deps\sf_core-078df06007e46933.exe | findstr "DLL\|Executable\|machine"
+          echo === try running directly ===
+          target\debug\deps\sf_core-078df06007e46933.exe --list 2>&1 || echo "Direct execution failed with exit code %ERRORLEVEL%"
           :: Run tests
           cargo test --package sf_core -- --nocapture
 
