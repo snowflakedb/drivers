@@ -37,6 +37,7 @@ import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
+import net.snowflake.client.internal.util.NotImplementedException;
 import org.apache.arrow.c.ArrowArrayStream;
 import org.apache.arrow.c.Data;
 import org.apache.arrow.memory.RootAllocator;
@@ -168,14 +169,12 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public Time getTime(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException(
-        "getTime not supported"); // TODO: Will be handled later
+    return null;
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
-    throw new SQLFeatureNotSupportedException(
-        "getTimestamp not supported"); // TODO: Will be handled later
+    return null;
   }
 
   @Override
@@ -282,8 +281,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public void clearWarnings() throws SQLException {
-    checkClosed();
-    // Stub implementation - no warnings to clear
+    throw new NotImplementedException();
   }
 
   @Override
@@ -363,18 +361,17 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public boolean isLast() throws SQLException {
-    throw new SQLFeatureNotSupportedException(
-        "isLast not supported"); // TODO: See if we can handle it by backend metadata only
+    throw new NotImplementedException();
   }
 
   @Override
   public void beforeFirst() throws SQLException {
-    throw new SQLFeatureNotSupportedException("beforeFirst not supported (forward-only)");
+    throw new NotImplementedException();
   }
 
   @Override
   public void afterLast() throws SQLException {
-    throw new SQLFeatureNotSupportedException("afterLast not supported (forward-only)");
+    throw new NotImplementedException();
   }
 
   @Override
@@ -1149,13 +1146,13 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public String getQueryID() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getQueryID not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public List<SnowflakeResultSetSerializable> getResultSetSerializables(long maxSizeInBytes)
       throws SQLException {
-    throw new SQLFeatureNotSupportedException("getResultSetSerializables not supported");
+    throw new NotImplementedException();
   }
 
   @Override
