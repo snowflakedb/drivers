@@ -30,7 +30,7 @@ public class StringLobTests extends SnowflakeIntegrationTestBase {
     String generated = generateExpectedString(LOB_16MB_SIZE);
     insertGeneratedLiteral(connection, tableName, generated);
 
-    assertLargeLobUsingChunkedReads(connection, tableName, LOB_16MB_SIZE, generated);
+    assertLargeLob(connection, tableName, LOB_16MB_SIZE, generated);
   }
 
   @Test
@@ -47,7 +47,7 @@ public class StringLobTests extends SnowflakeIntegrationTestBase {
     String generated = generateExpectedString(LOB_128MB_SIZE);
     insertGeneratedLiteral(connection, tableName, generated);
 
-    assertLargeLobUsingChunkedReads(connection, tableName, LOB_128MB_SIZE, generated);
+    assertLargeLob(connection, tableName, LOB_128MB_SIZE, generated);
   }
 
   private void insertGeneratedLiteral(Connection connection, String tableName, String generated)
@@ -58,35 +58,20 @@ public class StringLobTests extends SnowflakeIntegrationTestBase {
         "INSERT INTO " + tableName + " SELECT REPEAT('" + CHARS64 + "', " + repeatCount + ")");
   }
 
-  private static void assertLargeLobUsingChunkedReads(
+  private static void assertLargeLob(
       Connection connection, String tableName, int expectedLength, String expectedValue)
       throws Exception {
     try (Statement statement = connection.createStatement();
         ResultSet resultSet =
-            statement.executeQuery("SELECT LENGTH(val) as len FROM " + tableName)) {
+            statement.executeQuery("SELECT val, LENGTH(val) as len FROM " + tableName)) {
       assertTrue(resultSet.next(), "Expected one row for string LOB");
-      assertEquals(expectedLength, resultSet.getLong(1), "Unexpected LOB length");
+      String actualValue = resultSet.getString(1);
+      assertFalse(resultSet.wasNull(), "LOB value should not be NULL");
+      long actualLength = resultSet.getLong(2);
       assertFalse(resultSet.wasNull(), "LOB length should not be NULL");
-      assertFalse(resultSet.next(), "Expected exactly one row for string LOB");
-    }
-
-    int chunkSize = 1_000_000;
-    for (int start = 0; start < expectedLength; start += chunkSize) {
-      int length = Math.min(chunkSize, expectedLength - start);
-      String sql = "SELECT SUBSTR(val, " + (start + 1) + ", " + length + ") FROM " + tableName;
-      String expectedChunk = expectedValue.substring(start, start + length);
-      assertSingleChunk(connection, sql, expectedChunk, start);
-    }
-  }
-
-  private static void assertSingleChunk(
-      Connection connection, String sql, String expectedChunk, int chunkStart) throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for string LOB");
-      String actualChunk = resultSet.getString(1);
-      assertFalse(resultSet.wasNull(), "LOB chunk should not be NULL");
-      assertEquals(expectedChunk, actualChunk, "Chunk mismatch for LOB at index " + chunkStart);
+      assertEquals(expectedLength, actualLength, "Unexpected LOB length");
+      assertEquals(expectedLength, actualValue.length(), "Unexpected fetched LOB value length");
+      assertEquals(expectedValue, actualValue, "Fetched LOB value mismatch");
       assertFalse(resultSet.next(), "Expected exactly one row for string LOB");
     }
   }
