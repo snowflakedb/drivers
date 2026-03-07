@@ -165,6 +165,7 @@ Feature: Session Logout - Python-specific behavior
     And Session is logged out if conditions allow
 
 Scenario: should emit deprecation warning only once when multiple auto-cleanup handlers run during process exit
+  # Phase 1 (doc for: SNOW-2314152) deprecation. Prepares users for explicit close() requirement.
   # Run this scenario in a dedicated Python subprocess to isolate process-global atexit state.
   Given A separate Python subprocess is spawned
   And 10 Snowflake clients are created within with auto_cleanup enabled
