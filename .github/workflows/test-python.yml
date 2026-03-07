@@ -75,14 +75,27 @@ jobs:
         working-directory: ./python
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
+      - name: Install ARM64 OpenSSL via vcpkg
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows
+
+      - name: Configure ARM64 OpenSSL
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
+          echo "C:\vcpkg\installed\arm64-windows\bin" >> $env:GITHUB_PATH
+
       - name: Build python wheel (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         working-directory: ./python
-        shell: pwsh
+        shell: cmd
         run: |
-          # Use Rust LLD linker to avoid MSVC linker finding wrong (x64) libraries
-          # CMAKE_GENERATOR_PLATFORM is set at job level to tell CMake we want ARM64
-          $env:RUSTFLAGS = "-C linker=rust-lld"
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
 
       - name: Inspect wheel (Linux)
