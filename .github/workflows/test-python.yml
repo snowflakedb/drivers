@@ -68,7 +68,11 @@ jobs:
           version: "0.9.28"
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+        # On ARM64 Windows, uv defaults to x86_64 Python ("support for the native
+        # architecture (aarch64) is not yet mature"). This causes Cython extension
+        # linking to fail with unresolved Python C API symbols. Request ARM64 Python
+        # explicitly as uv suggests: cpython-X.Y-windows-aarch64-none
+        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Build python wheel (Linux)
         if: runner.os == 'Linux'
@@ -184,7 +188,8 @@ jobs:
             uv-${{ matrix.os }}-
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+        # See comment in build_wheel job — ARM64 Windows needs explicit arch request
+        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Download Python wheel
         uses: actions/download-artifact@v4
