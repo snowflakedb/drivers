@@ -159,12 +159,18 @@ def configureCommonTestTask = { t ->
 
     t.outputs.upToDateWhen { false }
 
-    def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'
-    def libName = System.getProperty('os.name').toLowerCase().contains('mac') ? 'libjdbc_bridge.dylib' :
-                  System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' :
-                  'libjdbc_bridge.so'
-    t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
-    t.environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
+    // Use CORE_PATH from environment if set (e.g. CI with custom target dir for ARM64),
+    // otherwise fall back to default target/debug or target/release layout.
+    def corePath = System.getenv('CORE_PATH')
+    if (corePath == null) {
+        def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'
+        def libName = System.getProperty('os.name').toLowerCase().contains('mac') ? 'libjdbc_bridge.dylib' :
+                      System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' :
+                      'libjdbc_bridge.so'
+        corePath = file("${libPath}/${libName}").absolutePath
+    }
+    t.environment 'CORE_PATH', corePath
+    t.environment 'PARAMETER_PATH', System.getenv('PARAMETER_PATH') ?: file('../parameters.json').absolutePath
 }
 
 test {
