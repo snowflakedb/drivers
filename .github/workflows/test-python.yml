@@ -134,6 +134,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: python_tests (${{ matrix.os }}, py${{ matrix.py }})
     steps:
+      - name: Set UV cache dir
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "UV_CACHE_DIR=$RUNNER_TEMP/.uv-cache" >> $GITHUB_ENV
+          else
+            echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Install uv
