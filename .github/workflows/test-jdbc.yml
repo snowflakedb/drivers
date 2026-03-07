@@ -93,13 +93,18 @@ jobs:
           cd jdbc
           ./gradlew test --stacktrace
 
-      - name: Run JDBC tests (Windows)
-        if: runner.os == 'Windows'
+      - name: Run JDBC tests (Windows ARM64)
+        if: runner.arch == 'ARM64'
         shell: pwsh
         run: |
-          Get-ChildItem target\debug\
-          $env:PARAMETER_PATH = "${{ github.workspace }}\parameters.json"
-          $env:CORE_PATH = "${{ github.workspace }}\target\debug\jdbc_bridge.dll"
+          # ARM64 build uses --target, output is in target\aarch64-pc-windows-msvc\debug\
+          $targetDir = Join-Path ${{ github.workspace }} "target\aarch64-pc-windows-msvc\debug"
+          Get-ChildItem $targetDir
+          # Copy OpenSSL DLLs next to jdbc_bridge.dll so JNI can load it
+          Copy-Item "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" $targetDir
+          Copy-Item "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" $targetDir
+          $env:PARAMETER_PATH = Join-Path ${{ github.workspace }} "parameters.json"
+          $env:CORE_PATH = Join-Path $targetDir "jdbc_bridge.dll"
           cd jdbc
           .\gradlew.bat test --stacktrace
 
