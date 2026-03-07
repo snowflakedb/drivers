@@ -39,14 +39,20 @@ $perfDir = "tests/performance/parameters"
 if (Test-Path "$perfDir/parameters_perf_aws.json.gpg") {
     Invoke-GpgDecrypt -InputFile "$perfDir/parameters_perf_aws.json.gpg" -OutputFile "$perfDir/parameters_perf_aws.json" -Passphrase $env:PARAMETERS_SECRET
     Write-Host "  ✓ parameters_perf_aws.json"
+} else {
+    Write-Host "  ⊘ parameters_perf_aws.json.gpg not found, skipping"
 }
 if (Test-Path "$perfDir/parameters_perf_azure.json.gpg") {
     Invoke-GpgDecrypt -InputFile "$perfDir/parameters_perf_azure.json.gpg" -OutputFile "$perfDir/parameters_perf_azure.json" -Passphrase $env:PARAMETERS_SECRET
     Write-Host "  ✓ parameters_perf_azure.json"
+} else {
+    Write-Host "  ⊘ parameters_perf_azure.json.gpg not found, skipping"
 }
 if (Test-Path "$perfDir/parameters_perf_gcp.json.gpg") {
     Invoke-GpgDecrypt -InputFile "$perfDir/parameters_perf_gcp.json.gpg" -OutputFile "$perfDir/parameters_perf_gcp.json" -Passphrase $env:PARAMETERS_SECRET
     Write-Host "  ✓ parameters_perf_gcp.json"
+} else {
+    Write-Host "  ⊘ parameters_perf_gcp.json.gpg not found, skipping"
 }
 
 Write-Host "Successfully decoded all secret files"
