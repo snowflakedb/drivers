@@ -206,9 +206,21 @@ jobs:
       - name: Install Hatch
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Install snowflake ud driver from wheel
+      - name: Install snowflake ud driver from wheel (Linux)
+        if: runner.os == 'Linux'
         working-directory: python
         run: hatch run test.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: python
+        shell: pwsh
+        run: |
+          # On Windows, the dist/*.whl glob isn't expanded by the shell.
+          # Resolve the wheel path explicitly and pass via WHEEL_PATH env var.
+          $wheel = (Get-ChildItem dist/*.whl).FullName
+          $env:WHEEL_PATH = $wheel
+          hatch run test.py${{ matrix.py }}:install-wheel
 
       - name: Run all tests with coverage (Linux)
         if: runner.os == 'Linux'
