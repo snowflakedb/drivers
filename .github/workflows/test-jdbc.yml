@@ -45,20 +45,20 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
-      - name: Set up ARM64 MSVC environment
+      - name: Install ARM64 OpenSSL via vcpkg
         if: runner.arch == 'ARM64'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: aarch64
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows
 
-      - name: Install OpenSSL (Windows)
-        if: runner.os == 'Windows'
+      - name: Configure ARM64 OpenSSL
+        if: runner.arch == 'ARM64'
         shell: pwsh
         run: |
-          choco install openssl -y
-          $arch = if ($env:RUNNER_ARCH -eq "ARM64") { "arm64" } else { "x64" }
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\$arch\MD" >> $env:GITHUB_ENV
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
+          echo "C:\vcpkg\installed\arm64-windows\bin" >> $env:GITHUB_PATH
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -66,10 +66,19 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      - name: Build Rust components
+      - name: Build Rust components (Linux)
+        if: runner.os == 'Linux'
         run: |
           cargo build --package sf_core
           cargo build --package jdbc_bridge
+
+      - name: Build Rust components (Windows ARM64)
+        if: runner.arch == 'ARM64'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          cargo build --package sf_core --target aarch64-pc-windows-msvc
+          cargo build --package jdbc_bridge --target aarch64-pc-windows-msvc
 
       - name: Make gradlew executable (Linux)
         if: runner.os == 'Linux'
