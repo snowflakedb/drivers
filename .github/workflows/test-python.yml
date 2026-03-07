@@ -133,8 +133,6 @@ jobs:
     strategy: *matrix
     runs-on: ${{ matrix.os }}
     name: python_tests (${{ matrix.os }}, py${{ matrix.py }})
-    env:
-      UV_CACHE_DIR: ${{ runner.os == 'Windows' && format('{0}\.uv-cache', runner.temp) || '/tmp/.uv-cache' }}
     steps:
       - uses: actions/checkout@v4
 
