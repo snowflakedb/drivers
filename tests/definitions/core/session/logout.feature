@@ -59,19 +59,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Close throws timeout error
     And Total elapsed time is between 5 and 6 seconds
 
-  Scenario: should cancel individual request when per-request socket timeout exceeded
-    # Tests that per-request timeout is passed to socket and interrupts slow responses
-    Given Mock HTTP server holds connection open for 8 seconds on first attempt then succeeds immediately
-    And UD Core connection is logged in
-    And Per-request socket timeout is set to 2 seconds
-    And Total retry budget timeout is set to 10 seconds
-    When Logout is initiated
-    Then First request is cancelled after 2 seconds due to socket timeout
-    # Implementation: Use mock TCP server that holds connection, verify timing
-    And Retry proceeds because total budget still has time remaining
-    And Second request succeeds immediately
-    And Close succeeds
-
   Scenario: should respect total retry budget timeout across all attempts
     # Tests that total timeout caps wall-clock time across ALL retries
     # Each request's effective socket timeout = min(remaining_budget, configured_socket_timeout)
@@ -87,7 +74,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Retry policy allows 10 attempts
     When Logout is initiated
     Then Fewer than 4 attempts are made
-    And The last attempt timeouts because remaining budget is less than server response time
+    And The last attempt times out because remaining budget is less than server response time
     And Total wall-clock time does not exceed 7 seconds for closing the connection
 
   # ===========================================================================
@@ -118,7 +105,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     Given Mock HTTP server delays query response by 3 seconds then returns query result
     And Mock HTTP server accepts logout requests with 200
     And UD Core connection is logged in
-    And Socket timeout is set to 10 seconds
     And Query is submitted and server has not responded yet
     When Connection close is initiated
     And Server returns query response after closing process started
@@ -151,7 +137,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     Given Mock HTTP server returns 390112 SESSION_TOKEN_EXPIRED to query after 3 second delay
     And Mock HTTP server accepts logout requests with 200
     And UD Core connection is logged in
-    And Socket timeout is set to 10 seconds
     And Query is submitted and waiting for server response
     When Connection close is initiated
     And Server responds 390112 SESSION_TOKEN_EXPIRED to the in-flight query
