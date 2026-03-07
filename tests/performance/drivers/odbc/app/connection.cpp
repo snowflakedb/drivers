@@ -180,14 +180,12 @@ std::string get_connection_string() {
   std::string account = params["account"];
   std::string host = params["host"];
   std::string user = params["user"];
-  std::string private_key = params["private_key"];
 
-  if (account.empty() || user.empty() || private_key.empty()) {
+  if (account.empty() || user.empty()) {
     std::cerr << "ERROR: Missing required connection parameters in PARAMETERS_JSON\n";
-    std::cerr << "Required: account, user, private_key\n";
+    std::cerr << "Required: account, user\n";
     std::cerr << "Found: account=" << (account.empty() ? "MISSING" : "OK")
-              << ", user=" << (user.empty() ? "MISSING" : "OK")
-              << ", private_key=" << (private_key.empty() ? "MISSING" : "OK") << "\n";
+              << ", user=" << (user.empty() ? "MISSING" : "OK") << "\n";
     exit(1);
   }
 
@@ -196,8 +194,18 @@ std::string get_connection_string() {
   ss << "UID=" << user << ";";
 
   // Use key-pair authentication
-  // ODBC driver requires private key to be in a file
-  std::string key_file_path = write_private_key_to_file(private_key);
+  // First check if a private key file path is provided, otherwise create from contents
+  std::string key_file_path;
+  if (!params["private_key_file"].empty()) {
+    key_file_path = params["private_key_file"];
+  } else if (!params["private_key"].empty()) {
+    // ODBC driver requires private key to be in a file
+    key_file_path = write_private_key_to_file(params["private_key"]);
+  } else {
+    std::cerr << "ERROR: Neither SNOWFLAKE_TEST_PRIVATE_KEY_FILE nor SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS provided\n";
+    exit(1);
+  }
+
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_FILE=" << key_file_path << ";";
 

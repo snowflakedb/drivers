@@ -52,9 +52,8 @@ pub struct Data {
     #[serde(rename = "chunkHeaders")]
     chunk_headers: Option<HashMap<String, String>>,
 
-    //unused fields
     #[serde(rename = "parameters")]
-    _parameters: Option<Vec<NameValueParameter>>,
+    pub parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "total")]
     pub total: Option<i64>,
     #[serde(rename = "returned")]
@@ -90,7 +89,7 @@ pub struct Data {
     #[serde(rename = "resultTypes")]
     _result_types: Option<String>,
     #[serde(rename = "queryResultFormat")]
-    _query_result_format: Option<String>,
+    query_result_format: Option<String>,
     #[serde(rename = "asyncResult")]
     _async_result: Option<SnowflakeResult>,
     #[serde(rename = "asyncRows")]
@@ -169,14 +168,13 @@ pub struct Stats {
 
 #[derive(Debug, Deserialize)]
 pub struct NameValueParameter {
-    //unused fields
     #[serde(rename = "name")]
-    _name: String,
+    pub name: String,
     #[serde(rename = "value")]
-    _value: serde_json::Value,
+    pub value: serde_json::Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct RowType {
     #[serde(rename = "name")]
     pub name: String,
@@ -198,7 +196,7 @@ pub struct RowType {
     pub _fields: Option<Vec<FieldMetadata>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct FieldMetadata {
     //unused fields
     #[serde(rename = "name")]
@@ -427,16 +425,105 @@ impl Data {
         })
     }
 
-    pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
-        let chunks = self.chunks.as_ref()?;
-        let chunk_headers = self.chunk_headers.as_ref()?;
-        let chunk_download_data = chunks
-            .iter()
-            .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
-            .collect();
-
-        Some(chunk_download_data)
+    pub fn to_rowset_data<'a>(&'a self) -> RowsetData<'a> {
+        match self.query_result_format.as_deref() {
+            Some("arrow") => {
+                match (
+                    self.to_initial_base64_opt(),
+                    self.to_chunk_download_data(),
+                    self.row_type.as_ref(),
+                ) {
+                    (initial_base64_opt, Some(chunk_download_data), _) => {
+                        RowsetData::ArrowMultiChunk {
+                            initial_base64_opt,
+                            chunk_download_data,
+                        }
+                    }
+                    (Some(chunk_base64), None, _) => RowsetData::ArrowSingleChunk { chunk_base64 },
+                    (None, None, Some(rowtype)) => RowsetData::SchemaOnly { rowtype },
+                    _ => {
+                        tracing::error!(
+                            "Initial base64 and/or chunk download data are missing for Arrow result format"
+                        );
+                        RowsetData::NoData
+                    }
+                }
+            }
+            Some("json") => {
+                if let Some((rowset, rowtype)) = self.to_json_rowset() {
+                    RowsetData::JsonRowset { rowset, rowtype }
+                } else {
+                    tracing::error!("Rowset and/or rowtype are missing for JSON result format");
+                    RowsetData::NoData
+                }
+            }
+            Some(other) => {
+                tracing::error!("Unsupported query result format: {other}");
+                RowsetData::NoData
+            }
+            None => RowsetData::NoData,
+        }
     }
+
+    pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
+        match (self.chunks.as_ref(), self.chunk_headers.as_ref()) {
+            (Some(chunks), Some(chunk_headers)) => {
+                let chunk_download_data = chunks
+                    .iter()
+                    .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
+                    .collect();
+                Some(chunk_download_data)
+            }
+            (None, Some(_)) => {
+                tracing::error!("Chunk headers found but chunks are missing");
+                None
+            }
+            (Some(_), None) => {
+                tracing::error!("Chunks found but chunk headers are missing");
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub fn to_initial_base64_opt(&self) -> Option<&str> {
+        let value = self.rowset_base64.as_deref()?;
+        if value.is_empty() { None } else { Some(value) }
+    }
+
+    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<String>>, &Vec<RowType>)> {
+        match (self.rowset.as_ref(), self.row_type.as_ref()) {
+            (Some(rowset), Some(row_type)) => Some((rowset, row_type)),
+            (Some(_), None) => {
+                tracing::error!("Rowset found but rowtype is missing");
+                None
+            }
+            (None, Some(_)) => {
+                tracing::error!("Rowtype found but rowset is missing");
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum RowsetData<'a> {
+    SchemaOnly {
+        rowtype: &'a Vec<RowType>,
+    },
+    ArrowMultiChunk {
+        initial_base64_opt: Option<&'a str>,
+        chunk_download_data: Vec<ChunkDownloadData>,
+    },
+    ArrowSingleChunk {
+        chunk_base64: &'a str,
+    },
+    JsonRowset {
+        rowset: &'a Vec<Vec<String>>,
+        rowtype: &'a Vec<RowType>,
+    },
+    NoData,
 }
 
 impl TryFrom<&RowType> for query_types::RowType {
@@ -480,16 +567,17 @@ impl TryFrom<&RowType> for query_types::RowType {
                     ),
                 })?;
 
-                let row_type = query_types::RowType::fixed(&name, nullable, precision, scale)
-                    .map_err(|e| {
-                        InvalidFormatSnafu {
-                            message: format!("Invalid type for column '{name}': {e}"),
-                        }
-                        .build()
-                    })?;
-
-                Ok(row_type)
+                Ok(query_types::RowType::fixed(
+                    &name, nullable, precision, scale,
+                ))
             }
+            "REAL" => Ok(query_types::RowType::real(&name, nullable)),
+            "DATE" => Ok(query_types::RowType::date(&name, nullable)),
+            "TIMESTAMP_NTZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_ntz(&name, nullable, scale))
+            }
+            "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
@@ -613,7 +701,7 @@ impl<T> OneOrMany<T> {
     }
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum QueryResponseError {
     #[snafu(display("Missing parameter in Snowflake response: {parameter}"))]
     MissingParameter {

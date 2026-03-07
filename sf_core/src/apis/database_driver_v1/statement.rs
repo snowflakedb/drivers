@@ -6,7 +6,6 @@ use super::connection::RefreshContext;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
-use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
 use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
@@ -64,9 +63,6 @@ pub enum BindingType<'a> {
     Csv(DataPtr<'a>),
 }
 
-/// Sentinel returned when the server does not report a row count.
-const ROWCOUNT_UNKNOWN: i64 = -1;
-
 /// Column names whose values are summed to compute DML rows-affected (exact match).
 const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
     "number of rows updated",
@@ -102,11 +98,15 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
     }
 }
 
-/// Calculate rows affected based on statement type
+/// Calculate rows affected based on statement type.
+///
+/// Returns `Some(count)` when rows affected is known, `None` when it is not
+/// (when the statement type is unknown).
+///
 /// - For DML: Parse rowset columns to sum affected rows
-/// - For SELECT and DDL: Use total field
-/// - For unknown: Return ROWCOUNT_UNKNOWN (-1)
-fn calculate_rows_affected(data: &Data) -> i64 {
+/// - For SELECT and other queries: Use total field
+/// - For unknown: Return None
+fn calculate_rows_affected(data: &Data) -> Option<i64> {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
         // For DML, parse the rowset to get affected rows
@@ -131,15 +131,15 @@ fn calculate_rows_affected(data: &Data) -> i64 {
                 }
             }
 
-            return affected_rows;
+            return Some(affected_rows);
         }
         // DML with no affected rows
-        return 0;
+        return Some(0);
     }
 
-    // For SELECT and other queries, use total
-    // Return ROWCOUNT_UNKNOWN if total is not available
-    data.total.unwrap_or(ROWCOUNT_UNKNOWN)
+    // For SELECT and other queries, use total field.
+    // Return None if total is not available.
+    data.total
 }
 
 pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {
@@ -252,11 +252,24 @@ pub unsafe fn statement_bind(
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ColumnMetadata {
+    pub name: String,
+    pub r#type: String,
+    pub precision: Option<i64>,
+    pub scale: Option<i64>,
+    pub length: Option<i64>,
+    pub byte_length: Option<i64>,
+    pub nullable: bool,
+}
+
 pub struct ExecuteResult {
     pub stream: Box<FFI_ArrowArrayStream>,
-    pub rows_affected: i64,
+    pub rows_affected: Option<i64>,
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
+    pub statement_type_id: Option<i64>,
+    pub query: String,
 }
 
 pub fn statement_execute_query<'a>(
@@ -352,11 +365,19 @@ pub fn statement_execute_query<'a>(
         }
     })?;
 
-    let response_reader = rt
+    if response.success {
+        let conn = stmt
+            .conn
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
+        conn.update_session_params_cache(&query, response.data.parameters.as_ref());
+    }
+
+    let query_result = rt
         .block_on(process_query_response(&response.data, &http_client))
         .context(QueryResponseProcessingSnafu)?;
 
-    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
+    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
 
     // Extract query_id from response
     let query_id = response.data.query_id.clone().unwrap_or_default();
@@ -364,33 +385,38 @@ pub fn statement_execute_query<'a>(
     // Calculate rows_affected based on statement type
     // For DML: Sum of affected rows from rowset columns
     // For SELECT: Total rows in result set
-    // For DDL/Unknown: -1
+    // For DDL/Unknown: None
     let rows_affected = calculate_rows_affected(&response.data);
+    let statement_type_id = response.data.statement_type_id;
 
-    // Extract column metadata from rowtype
-    let columns = response
-        .data
-        .row_type
-        .unwrap_or_default()
-        .iter()
-        .map(|rt| ColumnMetadata {
-            name: rt.name.clone(),
-            r#type: rt.type_.clone(),
-            precision: rt.precision.map(|v| v as i64),
-            scale: rt.scale.map(|v| v as i64),
-            length: rt.length.map(|v| v as i64),
-            byte_length: rt.byte_length.map(|v| v as i64),
-            nullable: rt.nullable,
-        })
-        .collect();
+    // Extract column metadata: prefer synthetic metadata from PUT/GET processing,
+    // fall back to server-provided rowtype for regular queries.
+    let columns = query_result.columns.unwrap_or_else(|| {
+        response
+            .data
+            .row_type
+            .unwrap_or_default()
+            .iter()
+            .map(|rt| ColumnMetadata {
+                name: rt.name.clone(),
+                r#type: rt.type_.clone(),
+                precision: rt.precision.map(|v| v as i64),
+                scale: rt.scale.map(|v| v as i64),
+                length: rt.length.map(|v| v as i64),
+                byte_length: rt.byte_length.map(|v| v as i64),
+                nullable: rt.nullable,
+            })
+            .collect()
+    });
 
-    // Serialize pointer into integer
     stmt.state = StatementState::Executed;
     Ok(ExecuteResult {
         stream: rowset_stream,
         rows_affected,
         query_id,
         columns,
+        statement_type_id,
+        query,
     })
 }
 
@@ -601,7 +627,7 @@ fn skip_leading_whitespace_and_comments(s: &str) -> &str {
     s
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum StatementError {
     #[snafu(display("Unsupported bind parameter type: {type_}"))]
     UnsupportedBindParameterType {

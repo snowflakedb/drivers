@@ -94,9 +94,11 @@ Feature: Session Logout - Python-specific behavior
 
   Scenario: should use best-effort error handling strategy by default
     Given Snowflake Python client is created with default parameters
-    And Server will return 500 Internal Server Error on all logout attempts
+    And Server will return 500 Internal Server Error on logout on all attempts
     When Connection is closed
-    Then Error is logged as WARN
+    Then Logout attempts are bounded by the default retry limit
+    And No further requests are sent after retry limit is reached
+    And Error is logged as WARN
     And close() method does not raise exception
     And Connection cleanup succeeds
     And Error handling strategy is best-effort by default
@@ -128,8 +130,20 @@ Feature: Session Logout - Python-specific behavior
   # ===========================================================================
   #                       Auto-cleanup Deprecation
   # ===========================================================================
-  # Phase 1 (doc for: SNOW-2314152) deprecation: Python still registers atexit handlers.
-  # Will be disabled by default in Phase 2, removed in Phase 3.
+  # Approach 4 (doc for: SNOW-2314152): iteratively deprecate auto-cleanup.
+  # UD Core is explicit-only (no process/GC hooks).
+  # Phase 2: keep existing atexit hooks, gated behind auto_cleanup param (default: enabled).
+  #          Log deprecation warning whenever auto-cleanup runs.
+  # Phase 3: flip default so auto_cleanup is off unless explicitly enabled.
+  # Phase 4: remove auto_cleanup and its config entirely.
+
+  Scenario: should have auto_cleanup enabled by default
+    # Phase 2 (doc for: SNOW-2314152): preserve backward compatibility.
+    # Python has legacy atexit auto-cleanup, so it defaults to on.
+    Given Snowflake Python client is created with default parameters
+    When Connection configuration is checked
+    Then auto_cleanup defaults to true
+    And atexit handler is registered at connection init
 
   Scenario: should unregister atexit handler when close called explicitly
     # Old Python driver: line 1185 - prevents double-close
@@ -141,7 +155,7 @@ Feature: Session Logout - Python-specific behavior
 
   Scenario: should call close with retry false from atexit handler
     # Old Python driver: atexit calls close(retry=False) (line 2390)
-    # Phase 1 (doc for: SNOW-2314152) deprecation. Will be disabled by default in Phase 2.
+    # Phase 2 (doc for: SNOW-2314152): auto-cleanup preserved but gated behind param.
     Given Snowflake Python client is created with auto_cleanup enabled
     And Connection was not closed explicitly
     When Process exits
@@ -161,11 +175,12 @@ Scenario: should emit deprecation warning only once when multiple auto-cleanup h
   And Deprecation warning is emitted only once per process
 
   Scenario: should not register atexit handler when auto-cleanup explicitly disabled
-    Given Snowflake Python client is created with auto_cleanup disabled
-    When Client connects
-    Then No atexit handler is registered
-    When Process exits without explicit close
-    Then No automatic close is performed
+    # Phase 2 (doc for: SNOW-2314152): auto_cleanup can be disabled with param.
+    Given Snowflake Python client is created with auto_cleanup set to false
+    And Connection is not explicitly closed
+    When Process exits
+    Then No atexit handler was registered
+    And No automatic close is performed
 
   Scenario: should emit telemetry and WARN when connection leaked at process exit
     Given Snowflake Python client is logged in

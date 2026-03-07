@@ -11,6 +11,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -22,7 +23,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Successfully prepares a sim
                  "[odbc-api][prepare][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 }
 
@@ -30,7 +31,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Prepared statement can be e
                  "[odbc-api][prepare][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLExecute(stmt_handle());
@@ -50,7 +51,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Can be executed multiple ti
                  "[odbc-api][prepare][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 42")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER value = 0;
@@ -81,10 +82,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Replaces previous prepared 
                  "[odbc-api][prepare][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 99")), SQL_NTS);
+  ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 99"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLExecute(stmt_handle());
@@ -105,8 +106,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: With explicit text length i
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto sql = "SELECT 1";
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(sql)),
-                             static_cast<SQLINTEGER>(strlen(sql)));
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(sql), static_cast<SQLINTEGER>(strlen(sql)));
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLExecute(stmt_handle());
@@ -127,7 +127,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Explicit length shorter tha
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Pass length 8 for "SELECT 1 AS col" -> only "SELECT 1" is used
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1 AS col")), 8);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1 AS col"), 8);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT num_cols = 0;
@@ -166,7 +166,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: SQLNumResultCols available 
                  "[odbc-api][prepare][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1, 2, 3")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1, 2, 3"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT num_cols = 0;
@@ -179,7 +179,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Prepares and executes state
                  "[odbc-api][prepare][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT ? AS val")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLINTEGER param_value = 77;
@@ -208,7 +208,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: Prepares and executes state
 TEST_CASE("SQLPrepare: SQL_INVALID_HANDLE for null statement handle", "[odbc-api][prepare][preparing][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const SQLRETURN ret = SQLPrepare(SQL_NULL_HSTMT, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  const SQLRETURN ret = SQLPrepare(SQL_NULL_HSTMT, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
@@ -216,8 +216,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: 42000 for invalid SQL synta
                  "[odbc-api][prepare][preparing][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("THIS IS NOT VALID SQL")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("THIS IS NOT VALID SQL"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "42000", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -235,7 +234,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY090 for empty SQL string"
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: Reference driver treats empty string as invalid buffer length (HY090)
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(""), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -244,7 +243,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY090 for negative TextLeng
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // HY090: Invalid string or buffer length
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), -5);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), -5);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -253,7 +252,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY090 for TextLength of zer
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // HY090: Invalid string or buffer length
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), 0);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -262,10 +261,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: 24000 when cursor is alread
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Open a cursor by executing a query
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // 24000: Invalid cursor state - attempt to prepare while cursor is open
-  ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 2")), SQL_NTS);
+  ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 2"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }

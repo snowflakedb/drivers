@@ -1,0 +1,15 @@
+{
+  "name": "Okta SSO SAML form success",
+  "request": {
+    "urlPathPattern": "/app/sso/saml.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "text/html"
+    },
+    "body": "<html><body><form method=\"post\" action=\"{{SNOWFLAKE_BASE_URL}}/fed/login\"><input type=\"hidden\" name=\"SAMLResponse\" value=\"AAAA\" /></form></body></html>"
+  }
+}
+

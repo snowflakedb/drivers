@@ -7,3 +7,4 @@ pub mod mocks;
 pub mod private_key_helper;
 pub mod put_get_common;
 pub mod snowflake_test_client;
+pub mod tls_proxy;

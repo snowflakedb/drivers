@@ -38,12 +38,28 @@ class FeatureParser:
         return any(line.startswith(p) for p in SCENARIO_PREFIXES)
     
     @staticmethod
+    def _is_scenario_outline(line: str) -> bool:
+        """Check if a trimmed line starts a Scenario Outline or Scenario Template."""
+        return line.startswith("Scenario Outline:") or line.startswith("Scenario Template:")
+    
+    @staticmethod
     def _strip_scenario_prefix(line: str) -> str:
         """Strip the scenario keyword prefix from a line, returning the scenario name."""
         for prefix in SCENARIO_PREFIXES:
             if line.startswith(prefix):
                 return line[len(prefix):].strip()
         return line
+    
+    @staticmethod
+    def _parse_table_row(line: str) -> List[str]:
+        """Parse a Gherkin table row '| a | b | c |' into a list of cell values."""
+        trimmed = line.strip()
+        if trimmed.startswith('|'):
+            trimmed = trimmed[1:]
+        if trimmed.endswith('|'):
+            trimmed = trimmed[:-1]
+        cells = trimmed.split('|')
+        return [cell.strip() for cell in cells]
     
     def get_feature_scenarios(self, feature_path: str) -> List[str]:
         """Extract scenario names from a feature file."""
@@ -116,6 +132,7 @@ class FeatureParser:
                 # Process scenario (Scenario, Scenario Outline, Scenario Template)
                 if self._is_scenario_start(line):
                     scenario_name = self._strip_scenario_prefix(line)
+                    is_outline = self._is_scenario_outline(line)
                     
                     # Behavior Differences detection is now handled by the Rust validator
                     behavior_difference_info = self._extract_behavior_difference_info(current_tags)
@@ -134,16 +151,51 @@ class FeatureParser:
                         'behavior_difference_info': behavior_difference_info,
                         'expected_drivers': scenario_expected_drivers,
                         'feature_level_expected_drivers': feature_level_expected_drivers,
-                        'feature_level_tags': feature_level_tags
+                        'feature_level_tags': feature_level_tags,
+                        'is_outline': is_outline,
+                        'examples': None  # Will be populated below for outlines
                     }
                     
                     scenarios.append(scenario_info)
                     current_tags = []  # Reset tags after processing scenario
                     continue
                 
-                # Skip table rows (Examples tables and step data tables).
+                # Parse Examples tables for Scenario Outlines
+                if line.startswith('Examples:'):
+                    current_tags = []
+                    # Attach examples to the most recent scenario (if it's an outline)
+                    if scenarios and scenarios[-1].get('is_outline'):
+                        examples_headers = None
+                        examples_rows = []
+                        # Read subsequent table rows
+                        for j in range(i + 1, len(lines)):
+                            table_line = lines[j].strip()
+                            if table_line.startswith('|'):
+                                cells = self._parse_table_row(table_line)
+                                if examples_headers is None:
+                                    examples_headers = cells
+                                else:
+                                    examples_rows.append(cells)
+                            elif table_line.startswith('@') or table_line == '' or table_line.startswith('#'):
+                                # Blank lines, comments, or tags before next Examples block — skip
+                                continue
+                            else:
+                                break
+                        if examples_headers and examples_rows:
+                            examples_data = {
+                                'headers': examples_headers,
+                                'rows': examples_rows
+                            }
+                            # Merge with existing examples if multiple Examples blocks
+                            if scenarios[-1]['examples'] is None:
+                                scenarios[-1]['examples'] = examples_data
+                            else:
+                                scenarios[-1]['examples']['rows'].extend(examples_rows)
+                    continue
+                
+                # Skip table rows (already handled above for Examples).
                 # Clear tags so that tags on Examples: blocks don't leak to the next scenario.
-                if line.startswith('Examples:') or line.startswith('|'):
+                if line.startswith('|'):
                     current_tags = []
                     continue
                 

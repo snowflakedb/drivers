@@ -3,8 +3,6 @@ import tempfile
 
 from pathlib import Path
 
-import pytest
-
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
     create_temporary_stage_and_upload_file,
@@ -139,7 +137,6 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[3] == ""
 
 
-@pytest.mark.skip(reason="SNOW-2391324 cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_put(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
@@ -158,25 +155,30 @@ def test_should_return_correct_column_metadata_for_put(connection):
 
         # Then Column metadata for PUT command should be correct
         columns = cursor.description
+        assert columns is not None, "cursor.description should not be None after PUT"
         assert len(columns) == 8, "PUT command should return 8 columns"
         assert upload_result[6] == "UPLOADED"
+
+        # Verify column names and type codes (TEXT=2, FIXED=0)
         expected_columns = [
-            "source",
-            "target",
-            "source_size",
-            "target_size",
-            "source_compression",
-            "target_compression",
-            "status",
-            "message",
+            ("source", 2),
+            ("target", 2),
+            ("source_size", 0),
+            ("target_size", 0),
+            ("source_compression", 2),
+            ("target_compression", 2),
+            ("status", 2),
+            ("message", 2),
         ]
-
-        for i, expected_name in enumerate(expected_columns):
+        for i, (expected_name, expected_type_code) in enumerate(expected_columns):
             actual_name = columns[i][0].lower()
+            actual_type_code = columns[i][1]
             assert actual_name == expected_name, f"Column {i} should be named '{expected_name}', got '{actual_name}'"
+            assert actual_type_code == expected_type_code, (
+                f"Column '{expected_name}' type_code should be {expected_type_code}, got {actual_type_code}"
+            )
 
 
-@pytest.mark.skip(reason="SNOW-2391324 cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_get(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
@@ -198,11 +200,23 @@ def test_should_return_correct_column_metadata_for_get(connection):
 
             # Then Column metadata for GET command should be correct
             columns = cursor.description
+            assert columns is not None, "cursor.description should not be None after GET"
             assert len(columns) == 4, "GET command should return 4 columns"
             assert get_result[2] == "DOWNLOADED"
-            expected_columns = ["file", "size", "status", "message"]
-            for i, expected_name in enumerate(expected_columns):
+
+            # Verify column names and type codes (TEXT=2, FIXED=0)
+            expected_columns = [
+                ("file", 2),
+                ("size", 0),
+                ("status", 2),
+                ("message", 2),
+            ]
+            for i, (expected_name, expected_type_code) in enumerate(expected_columns):
                 actual_name = columns[i][0].lower()
+                actual_type_code = columns[i][1]
                 assert actual_name == expected_name, (
                     f"Column {i} should be named '{expected_name}', got '{actual_name}'"
+                )
+                assert actual_type_code == expected_type_code, (
+                    f"Column '{expected_name}' type_code should be {expected_type_code}, got {actual_type_code}"
                 )

@@ -24,6 +24,10 @@ def dockerSetup() {
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
 }
 
+def installSystemDeps() {
+    sh label: 'Install system dependencies', script: 'yum install -y unzip'
+}
+
 def decodeSecrets() {
     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
         sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
@@ -167,6 +171,7 @@ pipeline {
                                 dockerSetup()
                                 docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                     decodeSecrets()
+                                    installSystemDeps()
                                     
                                     def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
@@ -200,6 +205,7 @@ pipeline {
                                 dockerSetup()
                                 docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                     decodeSecrets()
+                                    installSystemDeps()
                                     
                                     dir('python') {
                                         sh label: 'Build Python Package', script: '''
@@ -249,6 +255,7 @@ pipeline {
                                 dockerSetup()
                                 docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                     decodeSecrets()
+                                    installSystemDeps()
                                     
                                     sh label: 'Build ODBC Driver', script: '''
                                         set +x
@@ -317,6 +324,7 @@ pipeline {
                                 dockerSetup()
                                 docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                     decodeSecrets()
+                                    installSystemDeps()
                                     
                                     sh label: 'Build JDBC Bridge', script: '''
                                         set +x

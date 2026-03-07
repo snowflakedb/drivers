@@ -25,7 +25,7 @@ pub fn decompress_data(input_data: &[u8]) -> Result<Vec<u8>, CompressionError> {
     Ok(decompressed_data)
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum CompressionError {
     #[snafu(display("Failed to write data during compression"))]
     DataWriting {

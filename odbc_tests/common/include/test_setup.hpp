@@ -83,6 +83,14 @@ inline void add_param_optional(std::stringstream& ss, const picojson::object& pa
   }
 }
 
+inline std::string get_private_key_file_path(const picojson::object& params) {
+  auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_FILE");
+  if (it != params.end() && it->second.is<std::string>()) {
+    return it->second.get<std::string>();
+  }
+  return "";
+}
+
 inline std::string read_private_key(const picojson::object& params) {
   auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS");
   if (it == params.end()) {

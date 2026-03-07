@@ -53,9 +53,9 @@ class TestModuleConstants:
 
     def test_paramstyle_constant(self):
         """Test paramstyle constant."""
-        assert paramstyle == "format"
+        assert paramstyle == "pyformat"
         assert hasattr(pep249_dbapi, "paramstyle")
-        assert pep249_dbapi.paramstyle == "format"
+        assert pep249_dbapi.paramstyle == "pyformat"
 
         # Valid paramstyle values according to PEP 249
         valid_paramstyles = ["format", "pyformat", "numeric", "named", "qmark"]

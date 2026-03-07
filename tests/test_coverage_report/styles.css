@@ -225,16 +225,7 @@ tr.feature-row:hover {
 }
 
 .feature-content {
-    transition: max-height 0.3s ease-out, opacity 0.2s ease-out;
-    overflow: hidden;
-    max-height: 500px;
-    opacity: 1;
-}
-
-.feature-content.collapsed {
-    max-height: 0;
-    opacity: 0;
-    transition: max-height 0.3s ease-in, opacity 0.2s ease-in;
+    /* Visibility controlled by JavaScript via style.display */
 }
 
 /* Expand/Collapse All Controls */
@@ -510,13 +501,11 @@ tr.feature-row:hover {
     color: #2196f3;
 }
 .expandable-content {
-    max-height: 0;
-    overflow: hidden;
-    transition: max-height 0.3s ease;
+    display: none;
     background: white;
 }
 .expandable-content.expanded {
-    max-height: 2000px; /* Large enough to accommodate most content */
+    display: block;
 }
 .expandable-inner {
     padding: 20px;
@@ -674,4 +663,68 @@ tr.feature-row:hover {
     font-weight: 500;
     margin-left: 6px;
     vertical-align: middle;
+}
+
+/* Examples table (Scenario Outline) - Overview expandable */
+.examples-row td {
+    padding: 0 !important;
+    border-top: none !important;
+}
+.examples-expandable {
+    cursor: pointer;
+    padding: 4px 16px 4px 40px;
+    color: #6c757d;
+    font-size: 0.85em;
+    user-select: none;
+}
+.examples-expandable:hover {
+    color: #495057;
+    background-color: #f8f9fa;
+}
+.examples-toggle {
+    display: inline-block;
+    width: 12px;
+    font-size: 0.75em;
+    margin-right: 4px;
+    transition: transform 0.2s;
+}
+.examples-label {
+    font-style: italic;
+}
+.examples-table-wrapper {
+    padding: 4px 16px 8px 40px;
+}
+.examples-table {
+    width: auto;
+    border-collapse: collapse;
+    font-size: 0.85em;
+    margin: 0;
+}
+.examples-table th {
+    background-color: #e9ecef;
+    padding: 4px 12px;
+    border: 1px solid #dee2e6;
+    font-weight: 600;
+    color: #495057;
+    white-space: nowrap;
+}
+.examples-table td {
+    padding: 3px 12px;
+    border: 1px solid #dee2e6;
+    color: #495057;
+    white-space: nowrap;
+}
+.examples-table tbody tr:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+/* Examples table - Detailed breakdown (visible by default) */
+.examples-detail {
+    margin: 6px 0 10px 20px;
+}
+.examples-detail-label {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #6c757d;
+    margin-bottom: 4px;
 }

@@ -12,7 +12,7 @@ mod types;
 use test_types::TestType;
 
 type Result<T> = std::result::Result<T, String>;
-use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::protobuf::generated::database_driver_v1::*;
 
 use config::TestConfig;
 use connection::{

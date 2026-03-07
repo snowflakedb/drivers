@@ -100,12 +100,20 @@ message DriverError {
   }
 }
 
+// Single entry in an error trace (analogous to a stack-trace frame)
+message ErrorTraceEntry {
+  string file = 1;
+  uint32 line = 2;
+  uint32 column = 3;
+  string message = 4;
+}
+
 // Driver exception
 message DriverException {
   string message = 1;
   StatusCode status_code = 2;
   DriverError error = 3;
-  string report = 4;
+  repeated ErrorTraceEntry error_trace = 4;
 }
 
 // Column metadata for description
@@ -122,16 +130,18 @@ message ColumnMetadata {
 // Execute result
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
-  int64 rows_affected = 2;
+  optional int64 rows_affected = 2;
   string query_id = 3;
   repeated ColumnMetadata columns = 4;
+  optional int64 statement_type_id = 5;
+  string query = 6;
 }
 
 // Partitioned result
 message PartitionedResult {
   int64 schema = 1;
   repeated bytes partitions = 2;
-  int64 rows_affected = 3;
+  optional int64 rows_affected = 3;
 }
 
 // Database handle
@@ -316,7 +326,11 @@ message ConnectionGetInfoRequest {
 }
 
 message ConnectionGetInfoResponse {
-  bytes info_data = 1;
+  optional string host = 1;
+  optional int64 port = 2;
+  optional string server_url = 3;
+  optional string session_token = 4;
+  optional int64 session_id = 5;
 }
 
 message ConnectionGetObjectsRequest {
@@ -364,6 +378,23 @@ message ConnectionRollbackRequest {
 }
 
 message ConnectionRollbackResponse {
+}
+
+message ConnectionSetSessionParametersRequest {
+  ConnectionHandle conn_handle = 1;
+  map<string, string> parameters = 2;
+}
+
+message ConnectionSetSessionParametersResponse {
+}
+
+message ConnectionGetParameterRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+}
+
+message ConnectionGetParameterResponse {
+  optional string value = 1;
 }
 
 // Statement service requests and responses
@@ -494,6 +525,30 @@ message StatementReadPartitionResponse {
   int64 partition_stream = 1;
 }
 
+// Config setting value (union type)
+message ConfigSetting {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bytes bytes_value = 4;
+  }
+}
+
+// A config section containing key-value settings
+message ConfigSection {
+  map<string, ConfigSetting> settings = 1;
+}
+
+// Config service requests and responses
+
+message ConfigLoadAllSectionsRequest {
+}
+
+message ConfigLoadAllSectionsResponse {
+  map<string, ConfigSection> sections = 1;
+}
+
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
@@ -520,6 +575,12 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  // sets initial session parameters connection should be initialized with
+  // call before opening the connection
+  rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
+  // gets cached session parameter. Cache is updated with subset of connection parameters
+  // (chosen by server, included in HTTP response) after each query
+  rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
@@ -537,4 +598,7 @@ service DatabaseDriver {
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
+
+  // Config operations
+  rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
 }

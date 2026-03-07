@@ -111,6 +111,13 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             username: username.clone(),
             password: password.clone(),
         }),
+        // NativeOkta performs its own multi-step SAML flow in auth_request_data()
+        // and never reaches create_credentials(). Return an error rather than panicking
+        // to avoid a footgun if a future caller invokes this function directly.
+        LoginMethod::NativeOkta(_) => UnsupportedLoginMethodSnafu {
+            method: "NativeOkta",
+        }
+        .fail(),
         LoginMethod::PrivateKey {
             username,
             private_key,
@@ -134,8 +141,16 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
     }
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum AuthError {
+    #[snafu(display(
+        "Login method '{method}' does not use create_credentials — it has its own auth flow"
+    ))]
+    UnsupportedLoginMethod {
+        method: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Invalid private key format"))]
     InvalidPrivateKeyFormat {
         source: openssl::error::ErrorStack,

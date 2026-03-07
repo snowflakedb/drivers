@@ -1,11 +1,12 @@
 use arrow::datatypes::DataType;
+use error_trace::ErrorTrace;
 use snafu::{Location, Snafu};
 
 use crate::{
     cdata_types::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError,
 };
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum ReadArrowError {
     #[snafu(display("Value is null"))]
@@ -15,7 +16,7 @@ pub enum ReadArrowError {
     },
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum WriteOdbcError {
     InvalidValue {
@@ -43,6 +44,12 @@ pub enum WriteOdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Indicator variable required but not supplied"))]
+    IndicatorVariableRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     /// The target ODBC type is not supported for the given Snowflake/Arrow source type.
     #[snafu(display("Target ODBC type '{target_type:?}' is not supported for this conversion"))]
     UnsupportedOdbcType {
@@ -50,10 +57,18 @@ pub enum WriteOdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    /// Indicator variable required but not supplied (SQLSTATE 22002).
+    /// Returned when data is NULL but StrLen_or_IndPtr is a null pointer.
+    #[snafu(display("Indicator variable required but not supplied"))]
+    IndicatorRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 /// Error type for data conversion operations between Arrow, Snowflake, and ODBC types.
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum ConversionError {
     #[snafu(display("Failed to read arrow value"))]

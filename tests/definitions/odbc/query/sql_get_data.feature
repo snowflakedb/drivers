@@ -330,6 +330,12 @@ Feature: ODBC SQLGetData function behavior
     Then SQLGetData with SQL_ARD_TYPE should use the ARD's type
 
   @odbc_e2e
+  Scenario: SQLGetData with SQL_ARD_TYPE returns 07009 error when ARD is unmodified.
+    Given Snowflake client is logged in
+    When a query is executed and fetched without modifying the ARD
+    Then SQLGetData with SQL_ARD_TYPE should return SQL_ERROR with SQLSTATE 07009
+
+  @odbc_e2e
   Scenario: SQLGetData does not modify ARD descriptor fields.
     Given Snowflake client is logged in
     When the ARD descriptor count is checked before SQLGetData
