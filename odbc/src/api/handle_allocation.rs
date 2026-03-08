@@ -6,7 +6,9 @@ use crate::api::{
 };
 use odbc_sys as sql;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf::generated::database_driver_v1::StatementNewRequest;
+use sf_core::protobuf::generated::database_driver_v1::{
+    StatementNewRequest, StatementReleaseRequest,
+};
 use tracing;
 
 /// Allocate a new environment handle
@@ -102,8 +104,12 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing statement handle");
-    unsafe {
-        drop(Box::from_raw(handle as *mut Statement));
+    let stmt = unsafe { Box::from_raw(handle as *mut Statement) };
+
+    if let Err(e) = DatabaseDriverClient::statement_release(StatementReleaseRequest {
+        stmt_handle: Some(stmt.stmt_handle),
+    }) {
+        tracing::warn!("Failed to release server-side statement handle: {:?}", e);
     }
     Ok(())
 }
