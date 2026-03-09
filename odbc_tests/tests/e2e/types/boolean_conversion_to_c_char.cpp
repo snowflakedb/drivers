@@ -6,6 +6,7 @@
 
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
+#include "macros.hpp"
 
 // ============================================================================
 // SQL_C_CHAR
