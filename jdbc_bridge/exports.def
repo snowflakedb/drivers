@@ -1,0 +1,6 @@
+; JDBC bridge JNI export definition file
+LIBRARY jdbc_bridge
+EXPORTS
+    JNI_OnLoad
+    JNI_OnUnload
+    Java_net_snowflake_client_internal_unicore_JNICoreTransport_nativeHandleMessage
