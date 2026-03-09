@@ -4,7 +4,9 @@ use crate::api::error::{
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
     NoMoreDataSnafu, Required,
 };
-use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
+use crate::api::{
+    ConnectionState, OdbcResult, ParameterBinding, Statement, StatementState, stmt_from_handle,
+};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::write_json::odbc_bindings_to_json;
@@ -65,10 +67,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             let response = response?;
 
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
-            stmt.state = create_execute_state(response)?.into();
-            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
-                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
-            }
+            transition_statement_to_executed(stmt, create_execute_state(response)?);
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -230,10 +229,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 return NoMoreDataSnafu.fail();
             }
 
-            stmt.state = execute_state.into();
-            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
-                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
-            }
+            transition_statement_to_executed(stmt, execute_state);
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -363,6 +359,14 @@ pub fn bind_parameter(
         parameter_number
     );
     Ok(())
+}
+
+/// Transition to an executed state and update the IRD column count from the result schema.
+fn transition_statement_to_executed(stmt: &mut Statement, state: StatementState) {
+    stmt.state = state.into();
+    if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
+        stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
+    }
 }
 
 /// Free statement resources based on the option
@@ -542,7 +546,7 @@ pub fn get_stmt_attr(
                 if !string_length_ptr.is_null() {
                     std::ptr::write_unaligned(
                         string_length_ptr,
-                        std::mem::size_of::<sql::ULen>() as sql::Integer,
+                        size_of::<sql::ULen>() as sql::Integer,
                     );
                 }
             }
@@ -552,7 +556,7 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut sql::ULen) = stmt.max_length;
                 if !string_length_ptr.is_null() {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())
@@ -589,7 +593,7 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut sql::ULen) = stmt.ard.array_size as sql::ULen;
                 if !string_length_ptr.is_null() {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())
@@ -610,7 +614,7 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut sql::ULen) = stmt.ard.bind_type;
                 if !string_length_ptr.is_null() {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())

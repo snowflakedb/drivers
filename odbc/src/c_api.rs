@@ -87,7 +87,10 @@ pub unsafe extern "C" fn SQLFreeStmt(
     statement_handle: sql::Handle,
     option: sql::FreeStmtOption,
 ) -> sql::RetCode {
-    api::statement::free_stmt(statement_handle, option).to_sql_code()
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::free_stmt(statement_handle, option);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety

@@ -6,7 +6,6 @@
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
@@ -18,8 +17,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE and re-execute",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -39,8 +36,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE and re-execute",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE without open cursor",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Unlike SQLCloseCursor, SQL_CLOSE does not error when no cursor is open.
   SQLRETURN ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
   REQUIRE(ret == SQL_SUCCESS);
@@ -58,8 +53,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE without open cur
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE preserves prepared statement",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -82,8 +75,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE preserves prepar
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: Fetch after SQL_CLOSE",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -100,8 +91,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: Fetch after SQL_CLOSE",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND unbinds all columns",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER col_val = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &col_val, 0, &indicator);
@@ -127,8 +116,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND unbinds all col
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND without bindings",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLFreeStmt(stmt_handle(), SQL_UNBIND);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -145,8 +132,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND without binding
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND preserves prepared statement",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -170,8 +155,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND preserves prepa
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS resets bound parameters",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -189,8 +172,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS resets bo
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS without parameters",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -207,8 +188,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS without p
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS preserves prepared statement",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -259,8 +238,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeStmt: SQL_DROP frees statement ha
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: All permutations of SQL_CLOSE, SQL_UNBIND, SQL_RESET_PARAMS",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLUSMALLINT options[][3] = {
       {SQL_CLOSE, SQL_UNBIND, SQL_RESET_PARAMS}, {SQL_CLOSE, SQL_RESET_PARAMS, SQL_UNBIND},
       {SQL_UNBIND, SQL_CLOSE, SQL_RESET_PARAMS}, {SQL_UNBIND, SQL_RESET_PARAMS, SQL_CLOSE},
@@ -311,8 +288,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: All permutations of SQL_CL
 
 TEST_CASE("SQLFreeStmt: SQL_INVALID_HANDLE for null statement handle",
           "[odbc-api][freestmt][terminating_statement][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const SQLRETURN ret = SQLFreeStmt(SQL_NULL_HSTMT, SQL_CLOSE);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
