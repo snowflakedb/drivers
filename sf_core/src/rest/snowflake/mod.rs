@@ -332,7 +332,7 @@ pub async fn snowflake_login_with_client(
     let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
 
     // Extract session parameters from auth response
-    let session_params = auth_response.data._parameters.map(|params| {
+    let mut session_params = auth_response.data._parameters.map(|params| {
         params
             .iter()
             .filter_map(|param| {
@@ -356,6 +356,25 @@ pub async fn snowflake_login_with_client(
             })
             .collect::<HashMap<String, String>>()
     });
+
+    // Inject server-echoed session info (finalDatabaseName, etc.) so that
+    // conn.database / conn.schema / conn.warehouse / conn.role return the
+    // canonical names the server resolved, not the raw user input.
+    if let Some(ref info) = auth_response.data.session_info {
+        let params = session_params.get_or_insert_with(HashMap::new);
+        if let Some(db) = &info.database_name {
+            params.insert("DATABASE".into(), db.clone());
+        }
+        if let Some(sc) = &info.schema_name {
+            params.insert("SCHEMA".into(), sc.clone());
+        }
+        if let Some(wh) = &info.warehouse_name {
+            params.insert("WAREHOUSE".into(), wh.clone());
+        }
+        if let Some(rl) = &info.role_name {
+            params.insert("ROLE".into(), rl.clone());
+        }
+    }
 
     tracing::info!(
         session_id,

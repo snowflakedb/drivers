@@ -349,13 +349,20 @@ impl DatabaseDriverV1 {
             }
         })?;
 
-        if response.success {
-            let conn = stmt
-                .conn
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu.build())?;
-            conn.update_session_params_cache(query, response.data.parameters.as_ref());
-        }
+    if response.success {
+        let conn = stmt
+            .conn
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
+        conn.update_session_params_cache(
+            query,
+            response.data.parameters.as_ref(),
+            response.data.final_database_name.as_ref(),
+            response.data.final_schema_name.as_ref(),
+            response.data.final_warehouse_name.as_ref(),
+            response.data.final_role_name.as_ref(),
+        );
+    }
 
         let query_result = rt
             .block_on(process_query_response(&response.data, &http_client))

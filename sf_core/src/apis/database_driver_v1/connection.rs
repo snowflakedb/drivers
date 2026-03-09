@@ -265,6 +265,10 @@ impl Connection {
         response_parameters: Option<
             &Vec<crate::rest::snowflake::query_response::NameValueParameter>,
         >,
+        final_database_name: Option<&String>,
+        final_schema_name: Option<&String>,
+        final_warehouse_name: Option<&String>,
+        final_role_name: Option<&String>,
     ) {
         let mut cache = match self.session_parameters.write() {
             Ok(cache) => cache,
@@ -310,6 +314,21 @@ impl Connection {
                     })
                     .filter(|(k, _)| !k.is_empty()),
             );
+        }
+
+        // 3. Server-echoed final names: update DATABASE/SCHEMA/WAREHOUSE/ROLE so that
+        //    conn.database etc. reflect changes from USE DATABASE, USE SCHEMA, etc.
+        if let Some(db) = final_database_name {
+            cache.insert("DATABASE".into(), db.clone());
+        }
+        if let Some(sc) = final_schema_name {
+            cache.insert("SCHEMA".into(), sc.clone());
+        }
+        if let Some(wh) = final_warehouse_name {
+            cache.insert("WAREHOUSE".into(), wh.clone());
+        }
+        if let Some(rl) = final_role_name {
+            cache.insert("ROLE".into(), rl.clone());
         }
     }
 }

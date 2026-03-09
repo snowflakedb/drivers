@@ -65,13 +65,13 @@ pub struct Data {
     #[serde(rename = "databaseProvider")]
     _database_provider: Option<String>,
     #[serde(rename = "finalDatabaseName")]
-    _final_database_name: Option<String>,
+    pub final_database_name: Option<String>,
     #[serde(rename = "finalSchemaName")]
-    _final_schema_name: Option<String>,
+    pub final_schema_name: Option<String>,
     #[serde(rename = "finalWarehouseName")]
-    _final_warehouse_name: Option<String>,
+    pub final_warehouse_name: Option<String>,
     #[serde(rename = "finalRoleName")]
-    _final_role_name: Option<String>,
+    pub final_role_name: Option<String>,
     #[serde(rename = "numberOfBinds")]
     _number_of_binds: Option<i32>,
     #[serde(rename = "statementTypeId")]
