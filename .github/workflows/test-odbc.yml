@@ -240,7 +240,6 @@ jobs:
           $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
           $env:PARAMETER_PATH = "$PWD\parameters.json"
           $env:DRIVER_TYPE = "NEW"
-          $env:CTEST_FILTER = "e2e_query_basic_execute_query"
           .\scripts\odbc\run_tests_windows.ps1
 
   odbc-status:
