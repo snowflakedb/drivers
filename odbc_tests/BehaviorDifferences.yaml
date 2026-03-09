@@ -162,22 +162,6 @@ behavior_differences:
       TODO: To be fixed in old driver
 
   19:
-    name: "SQL_C_NUMERIC produces negative zero for FLOAT values like -0.5 that truncate to zero magnitude"
-    description: |
-      OLD driver: When SQLGetData is called with SQL_C_NUMERIC on a FLOAT/DOUBLE
-      column containing a negative fractional value whose integer part is zero
-      (e.g. -0.5, -0.001), the old driver returns sign=0 (negative) with val=0.
-      This produces a "negative zero" in the SQL_NUMERIC_STRUCT, which is not a
-      meaningful numeric representation.
-      NEW driver: Returns sign=1 (positive) when the magnitude is zero, regardless
-      of the original float's sign. The sign is derived from the computed magnitude
-      rather than the source value, preventing negative zero.
-      Impact: Applications converting negative fractional FLOAT values to
-      SQL_C_NUMERIC will now receive a well-formed positive zero instead of a
-      semantically invalid negative zero.
-      TODO: To be fixed in old driver
-
-  20:
     name: "On Windows, PUT source column returns filename only instead of full absolute path"
     description: |
       OLD driver: On Windows, the PUT result set source column returns the full

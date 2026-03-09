@@ -1151,7 +1151,7 @@ mod tests {
     // ======================================================================
 
     #[test]
-    fn numeric_negative_fraction_no_negative_zero() {
+    fn numeric_negative_fraction_produces_negative_zero() {
         let sr = make_real();
         let mut value = sql::Numeric {
             precision: 0,
@@ -1164,15 +1164,12 @@ mod tests {
 
         let warnings = sr.write_odbc_type(-0.5, &binding, &mut None).unwrap();
         assert!(warnings.contains(&Warning::NumericValueTruncated));
-        assert_eq!(
-            value.sign, 1,
-            "sign must be positive when magnitude is zero"
-        );
+        assert_eq!(value.sign, 0, "sign preserves source negativity");
         assert_eq!(u128::from_le_bytes(value.val), 0);
     }
 
     #[test]
-    fn numeric_negative_tiny_fraction_no_negative_zero() {
+    fn numeric_negative_tiny_fraction_produces_negative_zero() {
         let sr = make_real();
         let mut value = sql::Numeric {
             precision: 0,
@@ -1185,15 +1182,12 @@ mod tests {
 
         let warnings = sr.write_odbc_type(-0.001, &binding, &mut None).unwrap();
         assert!(warnings.contains(&Warning::NumericValueTruncated));
-        assert_eq!(
-            value.sign, 1,
-            "sign must be positive when magnitude is zero"
-        );
+        assert_eq!(value.sign, 0, "sign preserves source negativity");
         assert_eq!(u128::from_le_bytes(value.val), 0);
     }
 
     #[test]
-    fn binary_negative_fraction_no_negative_zero() {
+    fn binary_negative_fraction_produces_negative_zero() {
         let sr = make_real();
         let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
         let mut str_len: sql::Len = 0;
@@ -1202,15 +1196,12 @@ mod tests {
         let warnings = sr.write_odbc_type(-0.5, &binding, &mut None).unwrap();
         assert!(warnings.contains(&Warning::NumericValueTruncated));
         let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(
-            numeric.sign, 1,
-            "sign must be positive when magnitude is zero"
-        );
+        assert_eq!(numeric.sign, 0, "sign preserves source negativity");
         assert_eq!(u128::from_le_bytes(numeric.val), 0);
     }
 
     #[test]
-    fn binary_negative_tiny_fraction_no_negative_zero() {
+    fn binary_negative_tiny_fraction_produces_negative_zero() {
         let sr = make_real();
         let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
         let mut str_len: sql::Len = 0;
@@ -1219,10 +1210,7 @@ mod tests {
         let warnings = sr.write_odbc_type(-0.001, &binding, &mut None).unwrap();
         assert!(warnings.contains(&Warning::NumericValueTruncated));
         let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
-        assert_eq!(
-            numeric.sign, 1,
-            "sign must be positive when magnitude is zero"
-        );
+        assert_eq!(numeric.sign, 0, "sign preserves source negativity");
         assert_eq!(u128::from_le_bytes(numeric.val), 0);
     }
 
