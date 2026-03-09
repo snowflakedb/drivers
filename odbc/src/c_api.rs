@@ -86,9 +86,16 @@ pub unsafe extern "C" fn SQLFreeHandle(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLFreeStmt(
     statement_handle: sql::Handle,
-    option: sql::FreeStmtOption,
+    option: sql::USmallInt,
 ) -> sql::RetCode {
-    api::statement::free_stmt(statement_handle, option).to_sql_code()
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::FreeStmtOption::try_from(option)
+        .and_then(|opt| api::statement::free_stmt(statement_handle, opt));
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety

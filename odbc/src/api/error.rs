@@ -306,6 +306,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid FreeStmt option: {option}"))]
+    InvalidFreeStmtOption {
+        option: u16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("ODBC runtime error"))]
     OdbcRuntime {
         source: crate::api::runtime::OdbcRuntimeError,
@@ -473,6 +480,7 @@ impl OdbcError {
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
+            OdbcError::InvalidFreeStmtOption { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::OdbcRuntime { .. } => SqlState::FunctionSequenceError,
         }
     }

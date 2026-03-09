@@ -324,6 +324,33 @@ impl TryFrom<u8> for DescriptorKind {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum FreeStmtOption {
+    Close,
+    Unbind,
+    ResetParams,
+}
+
+impl TryFrom<u16> for FreeStmtOption {
+    type Error = OdbcError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(FreeStmtOption::Close),
+            2 => Ok(FreeStmtOption::Unbind),
+            3 => Ok(FreeStmtOption::ResetParams),
+            _ => {
+                tracing::warn!("Invalid FreeStmt option: {value}");
+                Err(OdbcError::InvalidFreeStmtOption {
+                    option: value,
+                    location: snafu::location!(),
+                })
+            }
+        }
+    }
+}
+
 /// Application Row Descriptor (ARD).
 ///
 /// Stores column binding information and block-cursor header fields.
@@ -531,19 +558,25 @@ pub enum StatementState {
     Executed {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
+        /// `true` when originating from `SQLPrepare`+`SQLExecute`, `false`
+        /// from `SQLExecDirect`. Used by `SQLFreeStmt(SQL_CLOSE)` to decide
+        /// whether to transition back to `Prepared` or `Created`.
+        prepared: bool,
     },
     NoResultSet {
         schema: SchemaRef,
+        prepared: bool,
     },
     Fetching {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,
         batch_idx: usize,
         rows_affected: Option<i64>,
+        prepared: bool,
     },
     Done {
-        #[allow(dead_code)]
         schema: SchemaRef,
+        prepared: bool,
     },
     Error,
 }
@@ -561,10 +594,12 @@ impl<T> State<T> {
         }
     }
 
-    /// # Safety
-    /// This function assumes that the state is not None, make sure to call set after taking.
+    /// Invariant: `current_state` is always `Some` between public API calls.
+    /// Every caller must call `set` before returning to restore the invariant.
     fn take(&mut self) -> T {
-        self.current_state.take().unwrap()
+        self.current_state.take().expect(
+            "State::take called on an empty state — set() was not called after a previous take()",
+        )
     }
 
     pub fn set(&mut self, state: T) {

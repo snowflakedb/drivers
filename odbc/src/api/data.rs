@@ -48,6 +48,7 @@ enum RowStatus {
 fn next_non_empty_batch(
     mut reader: ArrowArrayStreamReader,
     rows_affected: Option<i64>,
+    prepared: bool,
 ) -> Result<(StatementState, ()), (StatementState, crate::api::OdbcError)> {
     loop {
         match reader.next() {
@@ -64,6 +65,7 @@ fn next_non_empty_batch(
                         record_batch,
                         batch_idx: 0,
                         rows_affected,
+                        prepared,
                     },
                     (),
                 ));
@@ -72,7 +74,7 @@ fn next_non_empty_batch(
                 let schema = reader.schema();
                 break NoMoreDataSnafu
                     .fail()
-                    .with_state(StatementState::Done { schema });
+                    .with_state(StatementState::Done { schema, prepared });
             }
         }
     }
@@ -83,18 +85,20 @@ fn next_non_empty_batch(
 #[allow(clippy::result_large_err)]
 fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<()> {
     state.transition_or_err(|s| match s {
-        StatementState::NoResultSet { schema } => InvalidCursorStateSnafu
+        StatementState::NoResultSet { schema, prepared } => InvalidCursorStateSnafu
             .fail()
-            .with_state(StatementState::NoResultSet { schema }),
+            .with_state(StatementState::NoResultSet { schema, prepared }),
         StatementState::Executed {
             reader,
             rows_affected,
-        } => next_non_empty_batch(reader, rows_affected),
+            prepared,
+        } => next_non_empty_batch(reader, rows_affected, prepared),
         StatementState::Fetching {
             reader,
             record_batch,
             batch_idx,
             rows_affected,
+            prepared,
         } => {
             let new_idx = batch_idx + 1;
             if new_idx < record_batch.num_rows() {
@@ -104,11 +108,12 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
                         record_batch,
                         batch_idx: new_idx,
                         rows_affected,
+                        prepared,
                     },
                     (),
                 ))
             } else {
-                next_non_empty_batch(reader, rows_affected)
+                next_non_empty_batch(reader, rows_affected, prepared)
             }
         }
         state @ StatementState::Error => StatementErrorStateSnafu.fail().with_state(state),

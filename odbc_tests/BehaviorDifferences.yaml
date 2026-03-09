@@ -193,3 +193,34 @@ behavior_differences:
       NEW driver: Returns the values in proper scientific notation (e.g. "1.2e200").
       Impact: Applications that parse the DECFLOAT values will now receive values in properly formatted scientific notation.
       TODO: To be fixed in old driver (SNOW-3229401)
+
+  24:
+    name: "SQLNumResultCols returns 0 after SQL_CLOSE on prepared statement"
+    description: |
+      OLD driver: After Prepare -> Execute -> SQL_CLOSE, SQLNumResultCols returns 0.
+      The old driver does not preserve prepared statement metadata across SQL_CLOSE.
+      NEW driver: Returns the correct column count (e.g. 3 for "SELECT 1, 2, 3")
+      because SQL_CLOSE transitions the statement back to the Prepared state (S2/S3)
+      where column metadata is available, per the ODBC specification.
+      Spec reference: ODBC Statement Transitions table, SQLFreeStmt row
+      (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/statement-transitions#sqlfreestmt)
+      states that SQL_CLOSE from S4-S7 with [p] (prepared) transitions to S2/S3.
+      SQLNumResultCols is defined to succeed in states S2-S12.
+      Impact: Applications that rely on SQLNumResultCols after SQL_CLOSE on a
+      prepared statement will now receive the correct count.
+
+  25:
+    name: "SQLDescribeCol fails after SQL_CLOSE on prepared statement"
+    description: |
+      OLD driver: After Prepare -> Execute -> SQL_CLOSE, SQLDescribeCol returns
+      SQL_ERROR. The old driver does not preserve prepared statement metadata
+      across SQL_CLOSE.
+      NEW driver: Returns SQL_SUCCESS with correct column name and type because
+      SQL_CLOSE transitions the statement back to the Prepared state (S2/S3)
+      where column metadata is available, per the ODBC specification.
+      Spec reference: ODBC Statement Transitions table, SQLFreeStmt row
+      (https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/statement-transitions#sqlfreestmt)
+      states that SQL_CLOSE from S4-S7 with [p] (prepared) transitions to S2/S3.
+      SQLDescribeCol is defined to succeed in states S2-S12 (prepared or executed).
+      Impact: Applications that call SQLDescribeCol after SQL_CLOSE on a prepared
+      statement will now receive valid metadata instead of an error.

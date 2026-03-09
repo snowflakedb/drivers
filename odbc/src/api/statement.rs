@@ -6,7 +6,8 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, OdbcResult, ParameterBinding, Statement, StatementState, stmt_from_handle,
+    ConnectionState, FreeStmtOption, OdbcResult, ParameterBinding, Statement, StatementState,
+    stmt_from_handle,
 };
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
@@ -62,7 +63,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             let response = response?;
 
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
-            set_state(stmt, create_execute_state(response)?);
+            set_state(stmt, create_execute_state(response, false)?);
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -201,6 +202,12 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         return InvalidCursorStateSnafu.fail();
     }
 
+    let prepared = match stmt.state.as_ref() {
+        StatementState::Prepared { .. } => true,
+        StatementState::NoResultSet { prepared, .. } => *prepared,
+        _ => false,
+    };
+
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -222,16 +229,20 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             let statement_type_id = response.result.as_ref().and_then(|r| r.statement_type_id);
             let rows_affected = response.result.as_ref().and_then(|r| r.rows_affected);
 
-            let execute_state = create_execute_state(response)?;
+            let execute_state = create_execute_state(response, prepared)?;
 
             if is_dml_statement_type(statement_type_id) && Some(0) == rows_affected {
-                let StatementState::Executed { reader, .. } = &execute_state else {
+                let StatementState::Executed {
+                    reader, prepared, ..
+                } = &execute_state
+                else {
                     unreachable!("DML always produces Executed state");
                 };
                 set_state(
                     stmt,
                     StatementState::NoResultSet {
                         schema: reader.schema(),
+                        prepared: *prepared,
                     },
                 );
                 return NoMoreDataSnafu.fail();
@@ -278,7 +289,10 @@ fn set_state(stmt: &mut Statement, state: StatementState) {
     stmt.state = state.into();
 }
 
-fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {
+fn create_execute_state(
+    response: StatementExecuteQueryResponse,
+    prepared: bool,
+) -> OdbcResult<StatementState> {
     tracing::debug!("create_execute_state: response={:?}", response);
     let result = response.result.required("Execute result is required")?;
     let stream = result.stream.required("Stream is required")?;
@@ -289,11 +303,13 @@ fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<S
     {
         return Ok(StatementState::NoResultSet {
             schema: reader.schema(),
+            prepared,
         });
     }
     Ok(StatementState::Executed {
         reader,
         rows_affected,
+        prepared,
     })
 }
 
@@ -381,23 +397,63 @@ pub fn bind_parameter(
 }
 
 /// Free statement resources based on the option
-pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> OdbcResult<()> {
+pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcResult<()> {
     tracing::debug!("free_stmt: statement_handle={statement_handle:?}, option={option:?}");
 
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
     let stmt = stmt_from_handle(statement_handle);
 
     match option {
-        sql::FreeStmtOption::Close => {
+        FreeStmtOption::Close => {
             tracing::info!("free_stmt: Closing cursor");
-            stmt.state = StatementState::Created.into();
-            stmt.get_data_state = None;
-            stmt.used_extended_fetch = false;
+            let transition = match stmt.state.as_ref() {
+                StatementState::Created | StatementState::Prepared { .. } => None,
+                StatementState::Executed {
+                    reader,
+                    prepared: true,
+                    ..
+                }
+                | StatementState::Fetching {
+                    reader,
+                    prepared: true,
+                    ..
+                } => {
+                    let schema = reader.schema();
+                    let desc_count = schema.fields().len() as sql::SmallInt;
+                    Some((StatementState::Prepared { schema }, desc_count))
+                }
+                StatementState::NoResultSet {
+                    schema,
+                    prepared: true,
+                }
+                | StatementState::Done {
+                    schema,
+                    prepared: true,
+                } => {
+                    let desc_count = schema.fields().len() as sql::SmallInt;
+                    Some((
+                        StatementState::Prepared {
+                            schema: schema.clone(),
+                        },
+                        desc_count,
+                    ))
+                }
+                _ => Some((StatementState::Created, 0)),
+            };
+            if let Some((state, desc_count)) = transition {
+                stmt.state.set(state);
+                stmt.ird.desc_count = desc_count;
+                stmt.get_data_state = None;
+                stmt.used_extended_fetch = false;
+            }
         }
-        sql::FreeStmtOption::Unbind => {
+        FreeStmtOption::Unbind => {
             tracing::info!("free_stmt: Unbinding all columns");
             stmt.ard.unbind_all();
         }
-        sql::FreeStmtOption::ResetParams => {
+        FreeStmtOption::ResetParams => {
             tracing::info!("free_stmt: Resetting all parameters");
             stmt.parameter_bindings.clear();
         }
