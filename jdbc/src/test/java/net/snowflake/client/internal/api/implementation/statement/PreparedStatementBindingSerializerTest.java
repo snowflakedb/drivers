@@ -19,8 +19,7 @@ public class PreparedStatementBindingSerializerTest {
 
   @Test
   public void testSerializeEmptyParametersReturnsNullBindings() throws Exception {
-    PreparedStatementBindingSerializer.ParameterValue[] params =
-        new PreparedStatementBindingSerializer.ParameterValue[0];
+    PreparedStatementBinding[] params = new PreparedStatementBinding[0];
 
     try (PreparedStatementBindingSerializer.SerializedBindings serialized =
         PreparedStatementBindingSerializer.serialize(params)) {
@@ -30,9 +29,8 @@ public class PreparedStatementBindingSerializerTest {
 
   @Test
   public void testSerializeMissingParameterFailsWithIndex() {
-    PreparedStatementBindingSerializer.ParameterValue[] params =
-        new PreparedStatementBindingSerializer.ParameterValue[2];
-    params[0] = new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello");
+    PreparedStatementBinding[] params = new PreparedStatementBinding[2];
+    params[0] = PreparedStatementBinding.scalar("TEXT", "hello");
 
     SQLException ex =
         assertThrows(
@@ -44,10 +42,10 @@ public class PreparedStatementBindingSerializerTest {
 
   @Test
   public void testSerializeCreatesJsonBindingsWithExpectedPointerMetadata() throws Exception {
-    PreparedStatementBindingSerializer.ParameterValue[] params =
-        new PreparedStatementBindingSerializer.ParameterValue[] {
-          new PreparedStatementBindingSerializer.ParameterValue("FIXED", "42"),
-          new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello")
+    PreparedStatementBinding[] params =
+        new PreparedStatementBinding[] {
+          PreparedStatementBinding.scalar("FIXED", "42"),
+          PreparedStatementBinding.scalar("TEXT", "hello")
         };
 
     String expectedJson =

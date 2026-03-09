@@ -17,24 +17,6 @@ final class PreparedStatementBindingSerializer {
   private static final SFLogger logger =
       SFLoggerFactory.getLogger(PreparedStatementBindingSerializer.class);
 
-  static final class ParameterValue {
-    private final String bindType;
-    private final Object value;
-
-    ParameterValue(String bindType, Object value) {
-      this.bindType = bindType;
-      this.value = value;
-    }
-
-    String bindType() {
-      return bindType;
-    }
-
-    Object value() {
-      return value;
-    }
-  }
-
   static final class SerializedBindings implements AutoCloseable {
     private final QueryBindings bindings;
     private final NativeBuffer buffer;
@@ -58,7 +40,8 @@ final class PreparedStatementBindingSerializer {
 
   private PreparedStatementBindingSerializer() {}
 
-  static SerializedBindings serialize(ParameterValue[] parameterValues) throws SQLException {
+  static SerializedBindings serialize(PreparedStatementBinding[] parameterValues)
+      throws SQLException {
     if (parameterValues.length == 0) {
       logger.debug("No parameter placeholders found, skipping bindings serialization.");
       return new SerializedBindings(null, null);
@@ -68,7 +51,7 @@ final class PreparedStatementBindingSerializer {
     JSONStringer jsonStringer = new JSONStringer();
     jsonStringer.object();
     for (int i = 0; i < parameterValues.length; i++) {
-      ParameterValue parameterValue = parameterValues[i];
+      PreparedStatementBinding parameterValue = parameterValues[i];
       int parameterIndex = i + 1;
       if (parameterValue == null) {
         logger.warn(
@@ -78,11 +61,7 @@ final class PreparedStatementBindingSerializer {
 
       jsonStringer.key(String.valueOf(parameterIndex)).object();
       jsonStringer.key("type").value(parameterValue.bindType());
-      if (parameterValue.value() == null) {
-        jsonStringer.key("value").value(null);
-      } else {
-        jsonStringer.key("value").value(String.valueOf(parameterValue.value()));
-      }
+      jsonStringer.key("value").value(parameterValue.jsonValue());
       jsonStringer.endObject();
     }
     jsonStringer.endObject();
