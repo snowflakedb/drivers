@@ -47,7 +47,7 @@ function(add_odbc_test name)
   add_executable(${name} ${ARGN})
   target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common Threads::Threads)
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/../odbc/include)
-  catch_discover_tests(${name} TEST_PREFIX "${name}: " PROPERTIES TIMEOUT 600)
+  catch_discover_tests(${name} TEST_PREFIX "${name}: ")
 endfunction()
 
 add_subdirectory(tests)
