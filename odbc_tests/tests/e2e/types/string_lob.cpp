@@ -20,10 +20,10 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
-#include "compatibility.hpp"
 
 // Helper to generate random ASCII string for LOB tests
 static std::string generate_random_ascii_string(std::mt19937& gen, size_t length) {
@@ -48,7 +48,7 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
   // TODO: Reenable this test for the new driver
   // The test is flaky because the driver does not handle async query responses correctly
   // When we insert the string, the driver does not wait for the insert to complete before returning
-  // Tes flakiness occurs more often on Windows
+  // Test flakiness occurs more often on Windows
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   Connection conn;
@@ -111,7 +111,7 @@ TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB s
   // TODO: Reenable this test for the new driver
   // The test is flaky because the driver does not handle async query responses correctly
   // When we insert the string, the driver does not wait for the insert to complete before returning
-  // Tes flakiness occurs more often on Windows
+  // Test flakiness occurs more often on Windows
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

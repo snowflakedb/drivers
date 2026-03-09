@@ -522,19 +522,12 @@ pub fn get_stmt_attr(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
-    buffer_length: sql::Integer,
+    _buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
-    tracing::debug!(
-        "get_stmt_attr: statement_handle={:?}, attribute={}, value_ptr={:?}, buffer_length={}, string_length_ptr={:?}",
-        statement_handle,
-        attribute,
-        value_ptr,
-        buffer_length,
-        string_length_ptr,
-    );
+    tracing::debug!("get_stmt_attr: attribute={}", attribute);
 
     let attr = StmtAttr::try_from(attribute)?;
     let stmt = stmt_from_handle(statement_handle);

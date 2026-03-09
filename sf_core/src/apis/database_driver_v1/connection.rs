@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
-use std::sync::RwLock as AsyncRwLock;
+use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
 use super::Setting;
@@ -210,7 +210,7 @@ impl Connection {
         session_params: HashMap<String, String>,
     ) {
         // Use blocking_write since we're in a sync context during connection_init
-        *self.tokens.write().unwrap() = Some(tokens);
+        *self.tokens.blocking_write() = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
@@ -380,7 +380,7 @@ impl RefreshContext {
         match &self.state {
             // No token issued yet - read the current session token
             RefreshState::Initial => {
-                let tokens_guard = self.tokens_lock.read().unwrap();
+                let tokens_guard = self.tokens_lock.read().await;
                 let token = tokens_guard
                     .as_ref()
                     .map(|t| t.session_token.clone())
@@ -400,7 +400,7 @@ impl RefreshContext {
                     self.state = RefreshState::Refreshed;
 
                     // Acquire write lock - blocks other readers/writers during refresh
-                    let mut tokens_guard = self.tokens_lock.write().unwrap();
+                    let mut tokens_guard = self.tokens_lock.write().await;
 
                     let tokens = tokens_guard
                         .as_ref()
@@ -503,7 +503,7 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
 
             // Get session token and session ID from tokens
             let (session_token, session_id) = {
-                let tokens_guard = conn.tokens.read().unwrap();
+                let tokens_guard = conn.tokens.blocking_read();
                 match tokens_guard.as_ref() {
                     Some(tokens) => (Some(tokens.session_token.clone()), Some(tokens.session_id)),
                     None => (None, None),

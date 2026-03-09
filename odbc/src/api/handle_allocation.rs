@@ -7,7 +7,7 @@ use crate::api::{
 use odbc_sys as sql;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ConnectionReleaseRequest, DatabaseReleaseRequest, StatementNewRequest, StatementReleaseRequest,
+    StatementNewRequest, StatementReleaseRequest,
 };
 use tracing;
 
@@ -93,6 +93,9 @@ pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing connection handle");
+    unsafe {
+        drop(Box::from_raw(handle as *mut Connection));
+    }
     Ok(())
 }
 

@@ -297,9 +297,9 @@ pub fn get_diag_info(
 /// Retrieves diagnostic information associated with a specific handle.
 /// This corresponds to the ODBC SQLGetDiagRec function.
 ///
-/// Returns `Ok(true)` if the message was truncated, `Ok(false)` otherwise.
 /// Per the ODBC spec, `text_length_ptr` always receives the full (untruncated)
 /// message length so the caller can allocate a sufficiently large buffer.
+/// If the message is truncated, a `StringDataTruncated` warning is pushed.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn get_diag_rec(
     handle_type: sql::HandleType,
@@ -310,9 +310,9 @@ pub unsafe fn get_diag_rec(
     message_text: *mut sql::Char,
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
-) -> OdbcResult<bool> {
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
-    tracing::info!("get_diag_rec: diagnostic_info={:?}", diagnostic_info);
     if rec_number <= 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
@@ -338,14 +338,13 @@ pub unsafe fn get_diag_rec(
             std::ptr::write(native_error_ptr, record.native_error);
         }
         if !text_length_ptr.is_null() {
-            std::ptr::write(
-                text_length_ptr,
-                record.message_text.len() as sql::SmallInt,
-            );
+            std::ptr::write(text_length_ptr, record.message_text.len() as sql::SmallInt);
         }
     }
-    let truncated = record.message_text.len() >= buffer_length.max(0) as usize;
-    Ok(truncated)
+    if record.message_text.len() >= buffer_length.max(0) as usize {
+        warnings.push(Warning::StringDataTruncated);
+    }
+    Ok(())
 }
 
 /// Get diagnostic field from handle
@@ -362,7 +361,12 @@ pub fn get_diag_field(
     string_length_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
-    tracing::info!("get_diag_field: diagnostic_info={:?}, handle_type={:?}, handle={:?}, rec_number={}, diag_identifier={:?}, diag_info_ptr={:?}, buffer_length={}, string_length_ptr={:?}", diagnostic_info, handle_type, handle, rec_number, diag_identifier, diag_info_ptr, buffer_length, string_length_ptr);
+    tracing::debug!(
+        "get_diag_field: handle_type={:?}, rec_number={}, diag_identifier={:?}",
+        handle_type,
+        rec_number,
+        diag_identifier
+    );
     if rec_number < 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
