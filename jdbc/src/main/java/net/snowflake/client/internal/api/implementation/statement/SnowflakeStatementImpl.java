@@ -67,7 +67,9 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       throws SQLException {
     boolean hasBindings = bindings != null;
     logger.debug(
-        "Statement executeQueryWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
+        "Statement executeQueryWithBindings start: sqlLength={}, hasBindings={}",
+        sqlLength(sql),
+        hasBindings);
     StatementSetSqlQueryRequest statementSetSqlQueryRequest =
         StatementSetSqlQueryRequest.newBuilder()
             .setStmtHandle(statementHandle)
@@ -76,7 +78,11 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     try {
       ProtobufApis.databaseDriverV1.statementSetSqlQuery(statementSetSqlQueryRequest);
     } catch (DatabaseDriverService.ServiceException e) {
-      logger.warn("statementSetSqlQuery failed: sql={}, hasBindings={}", sql, hasBindings, e);
+      logger.warn(
+          "statementSetSqlQuery failed: sqlLength={}, hasBindings={}",
+          sqlLength(sql),
+          hasBindings,
+          e);
       throw new SnowflakeSQLException("Failed to set SQL query on statement", e);
     }
 
@@ -103,6 +109,10 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       logger.warn("statementExecuteQuery failed: hasBindings={}", hasBindings, e);
       throw new SnowflakeSQLException("Failed to execute statement query", e);
     }
+  }
+
+  private static int sqlLength(String sql) {
+    return sql == null ? -1 : sql.length();
   }
 
   @Override

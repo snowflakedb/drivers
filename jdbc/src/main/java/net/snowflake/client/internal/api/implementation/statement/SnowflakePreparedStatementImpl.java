@@ -565,6 +565,10 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private BatchExecutionResult executeBatchInternal(BatchCountAccumulator countAccumulator)
       throws SQLException {
     boolean arrayBindingEnabled = isArrayBindingEnabled();
+    logger.debug(
+        "Prepared batch execution starting: batchSize={}, arrayBindingEnabled={}",
+        batchState.batchSize(),
+        arrayBindingEnabled);
     try {
       return batchExecutor.executeBatch(
           batchState, arrayBindingEnabled, countAccumulator, this::executeWithPreparedBindings);

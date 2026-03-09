@@ -4,13 +4,19 @@ import java.sql.BatchUpdateException;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 
 abstract class BatchCountAccumulator {
+  private static final SFLogger logger = SFLoggerFactory.getLogger(BatchCountAccumulator.class);
+
   static BatchCountAccumulator forIntCounts(int batchSize) {
+    logger.debug("Using int batch count accumulator: batchSize={}", batchSize);
     return new IntBatchCountAccumulator(batchSize);
   }
 
   static BatchCountAccumulator forLongCounts(int batchSize) {
+    logger.debug("Using long batch count accumulator: batchSize={}", batchSize);
     return new LongBatchCountAccumulator(batchSize);
   }
 
@@ -60,12 +66,17 @@ abstract class BatchCountAccumulator {
         throws SQLException {
       if (rowsAffected == batchSize) {
         Arrays.fill(counts, 1);
+        logger.debug(
+            "Shaped array-bound int batch counts into per-row successes: batchSize={}", batchSize);
         return toResult();
       }
       if (rowsAffected > Integer.MAX_VALUE) {
         throw new SQLException(
             "Batch update count exceeds Integer.MAX_VALUE for array-bound batch: " + rowsAffected);
       }
+      logger.debug(
+          "Shaped array-bound int batch counts into aggregate fallback: rowsAffected={}",
+          rowsAffected);
       return new BatchExecutionResult(new int[] {(int) rowsAffected}, null);
     }
 
@@ -106,8 +117,13 @@ abstract class BatchCountAccumulator {
     BatchExecutionResult shapeArrayBoundCounts(long rowsAffected, int batchSize) {
       if (rowsAffected == batchSize) {
         Arrays.fill(counts, 1L);
+        logger.debug(
+            "Shaped array-bound long batch counts into per-row successes: batchSize={}", batchSize);
         return toResult();
       }
+      logger.debug(
+          "Shaped array-bound long batch counts into aggregate fallback: rowsAffected={}",
+          rowsAffected);
       return new BatchExecutionResult(null, new long[] {rowsAffected});
     }
 

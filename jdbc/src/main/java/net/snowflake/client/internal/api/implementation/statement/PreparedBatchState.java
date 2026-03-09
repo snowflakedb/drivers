@@ -3,8 +3,11 @@ package net.snowflake.client.internal.api.implementation.statement;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 
 final class PreparedBatchState {
+  private static final SFLogger logger = SFLoggerFactory.getLogger(PreparedBatchState.class);
   private final List<PreparedStatementBinding[]> rows = new ArrayList<PreparedStatementBinding[]>();
   private final ColumnBatchState[] columnStates;
 
@@ -21,6 +24,11 @@ final class PreparedBatchState {
       columnStates[col].observe(nextSnapshot[col], col + 1, nextRowNumber);
     }
     rows.add(nextSnapshot);
+    logger.debug(
+        "Prepared batch snapshot appended: rowNumber={}, batchSize={}, parameterCount={}",
+        nextRowNumber,
+        rows.size(),
+        nextSnapshot.length);
   }
 
   PreparedStatementBinding[] toArrayBoundColumns() throws SQLException {
@@ -74,10 +82,15 @@ final class PreparedBatchState {
   }
 
   void reset() {
+    int clearedRows = rows.size();
     rows.clear();
     for (ColumnBatchState columnState : columnStates) {
       columnState.reset();
     }
+    logger.debug(
+        "Prepared batch state reset: clearedRows={}, parameterCount={}",
+        clearedRows,
+        columnStates.length);
   }
 
   private static boolean isAnyType(String bindType) {
