@@ -59,6 +59,12 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   protected ResultSet executeQueryWithBindings(String sql, QueryBindings bindings)
       throws SQLException {
+    ExecuteResult executeResult = executeWithBindings(sql, bindings);
+    return new SnowflakeResultSetImpl(this, executeResult);
+  }
+
+  protected ExecuteResult executeWithBindings(String sql, QueryBindings bindings)
+      throws SQLException {
     boolean hasBindings = bindings != null;
     logger.debug(
         "Statement executeQueryWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
@@ -92,7 +98,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
           "statementExecuteQuery succeeded: hasBindings={}, queryId={}",
           hasBindings,
           executeResult.getQueryId());
-      return new SnowflakeResultSetImpl(this, executeResult);
+      return executeResult;
     } catch (DatabaseDriverService.ServiceException e) {
       logger.warn("statementExecuteQuery failed: hasBindings={}", hasBindings, e);
       throw new SnowflakeSQLException("Failed to execute statement query", e);

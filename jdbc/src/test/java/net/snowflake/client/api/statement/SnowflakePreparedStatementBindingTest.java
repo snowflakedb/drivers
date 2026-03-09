@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.sql.BatchUpdateException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -314,6 +315,237 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
     }
   }
 
+  @Test
+  public void testExecuteBatchInsertsAllRowsAndReturnsCounts() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id) VALUES (?)")) {
+      insert.setInt(1, 1);
+      insert.addBatch();
+      insert.setInt(1, 2);
+      insert.addBatch();
+
+      assertArrayEquals(
+          new int[] {1, 1}, insert.executeBatch(), "Batch update counts should match");
+    }
+
+    try (PreparedStatement verify =
+            conn.prepareStatement("SELECT COUNT(*), SUM(id) FROM " + tableName);
+        ResultSet rs = verify.executeQuery()) {
+      assertTrue(rs.next(), "Verification query should return one row");
+      assertEquals(2, rs.getInt(1), "Exactly two rows should be inserted");
+      assertEquals(3, rs.getInt(2), "Inserted batch values should match");
+    }
+  }
+
+  @Test
+  public void testAddBatchSnapshotsParameterValues() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "txt STRING");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (txt) VALUES (?)")) {
+      insert.setString(1, "first");
+      insert.addBatch();
+      insert.setString(1, "second");
+      insert.addBatch();
+      insert.setString(1, "third");
+
+      assertArrayEquals(
+          new int[] {1, 1}, insert.executeBatch(), "Batch update counts should match");
+    }
+
+    try (PreparedStatement verify =
+            conn.prepareStatement("SELECT COUNT(*), MIN(txt), MAX(txt) FROM " + tableName);
+        ResultSet rs = verify.executeQuery()) {
+      assertTrue(rs.next(), "Verification query should return one row");
+      assertEquals(2, rs.getInt(1), "Exactly two rows should be inserted");
+      assertEquals("first", rs.getString(2), "First batched value should be preserved");
+      assertEquals("second", rs.getString(3), "Second batched value should be preserved");
+    }
+  }
+
+  @Test
+  public void testExecuteBatchReturnsEmptyArrayForEmptyBatch() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id) VALUES (?)")) {
+      assertArrayEquals(
+          new int[0], insert.executeBatch(), "Empty batch should return empty update counts");
+    }
+  }
+
+  @Test
+  public void testExecuteSerializesScalarBindingValuesWithAndWithoutNull() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
+      // Explicitly exercise scalar serialization path for non-null and null values.
+      insert.setInt(1, 1);
+      insert.setString(2, "alpha");
+      insert.executeUpdate();
+
+      insert.clearParameters();
+      insert.setInt(1, 2);
+      insert.setNull(2, Types.VARCHAR);
+      insert.executeUpdate();
+    }
+
+    try (PreparedStatement verify =
+            conn.prepareStatement("SELECT id, txt FROM " + tableName + " ORDER BY id");
+        ResultSet rs = verify.executeQuery()) {
+      assertIdTxtRows(
+          rs, new int[] {1, 2}, new String[] {"alpha", null}, "Only two rows should be present");
+    }
+  }
+
+  @Test
+  public void testExecuteBatchSerializesArrayBindValuesWithoutNulls() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
+      // Explicitly exercise array-value serialization path with all non-null entries.
+      addIdTxtBatchRow(insert, 1, "alpha");
+      addIdTxtBatchRow(insert, 2, "beta");
+      addIdTxtBatchRow(insert, 3, "gamma");
+
+      assertArrayEquals(
+          new int[] {1, 1, 1}, insert.executeBatch(), "Batch update counts should match");
+    }
+
+    try (PreparedStatement verify =
+            conn.prepareStatement("SELECT id, txt FROM " + tableName + " ORDER BY id");
+        ResultSet rs = verify.executeQuery()) {
+      assertIdTxtRows(
+          rs,
+          new int[] {1, 2, 3},
+          new String[] {"alpha", "beta", "gamma"},
+          "Only three rows should be present");
+    }
+  }
+
+  @Test
+  public void testExecuteBatchSerializesArrayBindValuesWithNulls() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
+      // Explicitly exercise batch array-value serialization with mixed string/null entries.
+      addIdTxtBatchRow(insert, 1, "alpha");
+      addIdTxtBatchRow(insert, 2, null);
+      addIdTxtBatchRow(insert, 3, "gamma");
+
+      assertArrayEquals(
+          new int[] {1, 1, 1}, insert.executeBatch(), "Batch update counts should match");
+    }
+
+    try (PreparedStatement verify =
+            conn.prepareStatement("SELECT id, txt FROM " + tableName + " ORDER BY id");
+        ResultSet rs = verify.executeQuery()) {
+      assertIdTxtRows(
+          rs,
+          new int[] {1, 2, 3},
+          new String[] {"alpha", null, "gamma"},
+          "Only three rows should be present");
+    }
+  }
+
+  @Test
+  public void testExecuteBatchFailsFastForMalformedArrayBindRow() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
+      addMalformedIdTxtBatchRows(insert);
+
+      SQLException exception = assertThrows(SQLException.class, insert::executeBatch);
+      assertArrayBindMalformedRowFailure(exception);
+    }
+  }
+
+  @Test
+  public void testExecuteLargeBatchInsertsAllRowsAndReturnsCounts() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id) VALUES (?)")) {
+      insert.setInt(1, 1);
+      insert.addBatch();
+      insert.setInt(1, 2);
+      insert.addBatch();
+
+      assertArrayEquals(
+          new long[] {1L, 1L},
+          insert.executeLargeBatch(),
+          "Large batch update counts should match");
+    }
+
+    try (PreparedStatement verify =
+            conn.prepareStatement("SELECT COUNT(*), SUM(id) FROM " + tableName);
+        ResultSet rs = verify.executeQuery()) {
+      assertTrue(rs.next(), "Verification query should return one row");
+      assertEquals(2, rs.getInt(1), "Exactly two rows should be inserted");
+      assertEquals(3, rs.getInt(2), "Inserted batch values should match");
+    }
+  }
+
+  @Test
+  public void testExecuteLargeBatchFailsFastForMalformedArrayBindRow() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
+      addMalformedIdTxtBatchRows(insert);
+
+      SQLException exception = assertThrows(SQLException.class, insert::executeLargeBatch);
+      assertArrayBindMalformedRowFailure(exception);
+    }
+  }
+
+  @Test
+  public void testAddBatchRejectsMixedTypesAtAddTime() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id) VALUES (?)")) {
+      insert.setInt(1, 1);
+      insert.addBatch();
+
+      insert.setString(1, "bad");
+      assertThrows(SQLException.class, insert::addBatch);
+    }
+  }
+
+  @Test
+  public void testClearBatchResetsCurrentParameterState() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "id INTEGER, txt STRING");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
+      insert.setInt(1, 1);
+      insert.setString(2, "one");
+      insert.addBatch();
+
+      insert.clearBatch();
+      insert.setInt(1, 2);
+      assertThrows(SQLException.class, insert::execute);
+    }
+  }
+
   @FunctionalInterface
   private interface SqlInsertBinder {
     void bind(PreparedStatement insert) throws SQLException;
@@ -331,5 +563,53 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
     String schema;
     SqlInsertBinder binder;
     ResultSetVerifier verifier;
+  }
+
+  private void assertIdTxtRows(
+      ResultSet rs, int[] expectedIds, String[] expectedTexts, String finalRowsMessage)
+      throws SQLException {
+    assertEquals(expectedIds.length, expectedTexts.length, "Expected id/text arrays must align");
+    for (int i = 0; i < expectedIds.length; i++) {
+      assertTrue(rs.next(), "Inserted row " + (i + 1) + " should exist");
+      assertEquals(expectedIds[i], rs.getInt(1), "Row " + (i + 1) + " id should match");
+      if (expectedTexts[i] == null) {
+        assertNull(rs.getString(2), "Row " + (i + 1) + " text should be NULL");
+      } else {
+        assertEquals(expectedTexts[i], rs.getString(2), "Row " + (i + 1) + " text should match");
+      }
+    }
+    assertFalse(rs.next(), finalRowsMessage);
+  }
+
+  private void assertArrayBindMalformedRowFailure(SQLException exception) {
+    if (exception instanceof BatchUpdateException) {
+      return;
+    }
+    String message = exception.getMessage();
+    assertTrue(
+        message != null
+            && (message.contains("Batch size of")
+                || message.contains("Missing value for parameter index")),
+        "Unexpected non-batch exception for prepared batch failure: " + message);
+  }
+
+  private static void addIdTxtBatchRow(PreparedStatement insert, int id, String text)
+      throws SQLException {
+    insert.setInt(1, id);
+    if (text == null) {
+      insert.setNull(2, Types.VARCHAR);
+    } else {
+      insert.setString(2, text);
+    }
+    insert.addBatch();
+  }
+
+  private static void addMalformedIdTxtBatchRows(PreparedStatement insert) throws SQLException {
+    addIdTxtBatchRow(insert, 1, "ok-1");
+    insert.clearParameters();
+    insert.setInt(1, 2);
+    // Intentionally omit parameter 2 for this row to force a per-entry execution failure.
+    insert.addBatch();
+    addIdTxtBatchRow(insert, 3, "ok-3");
   }
 }

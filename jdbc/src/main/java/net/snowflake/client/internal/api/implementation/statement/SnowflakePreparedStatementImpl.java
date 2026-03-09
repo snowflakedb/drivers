@@ -43,7 +43,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       SFLoggerFactory.getLogger(SnowflakePreparedStatementImpl.class);
 
   private final String sql;
-  private final PreparedStatementBindingSerializer.ParameterValue[] parameterValues;
+  private final PreparedStatementBinding[] parameterValues;
+  private final PreparedBatchState batchState;
+  private final PreparedBatchExecutor batchExecutor;
 
   public SnowflakePreparedStatementImpl(SnowflakeConnectionImpl connection, String sql) {
     super(connection);
@@ -51,7 +53,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     // TODO: Align with snowflake-jdbc by deriving bind count from server-side describe metadata
     // rather than counting '?' directly in raw SQL text.
     int paramCount = sql.length() - sql.replace("?", "").length();
-    this.parameterValues = new PreparedStatementBindingSerializer.ParameterValue[paramCount];
+    this.parameterValues = new PreparedStatementBinding[paramCount];
+    this.batchState = new PreparedBatchState(paramCount);
+    this.batchExecutor = new PreparedBatchExecutor();
   }
 
   @Override
@@ -297,7 +301,29 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public void addBatch() throws SQLException {
-    throw new SQLFeatureNotSupportedException("addBatch not supported");
+    checkClosed();
+    PreparedStatementBinding[] snapshot = snapshotParameterValues();
+    validateBatchTypeCompatibility(snapshot);
+  }
+
+  @Override
+  public void clearBatch() throws SQLException {
+    checkClosed();
+    clearBatchState();
+  }
+
+  @Override
+  public int[] executeBatch() throws SQLException {
+    checkClosed();
+    return executeBatchInternal(BatchCountAccumulator.forIntCounts(batchState.batchSize()))
+        .getIntCounts();
+  }
+
+  @Override
+  public long[] executeLargeBatch() throws SQLException {
+    checkClosed();
+    return executeBatchInternal(BatchCountAccumulator.forLongCounts(batchState.batchSize()))
+        .getLongCounts();
   }
 
   @Override
@@ -461,6 +487,10 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   }
 
   private void setParameter(int parameterIndex, String bindType, Object value) throws SQLException {
+    setParameter(parameterIndex, bindType, value == null ? null : String.valueOf(value));
+  }
+
+  private void setParameter(int parameterIndex, String bindType, String value) throws SQLException {
     if (parameterIndex < 1 || parameterIndex > parameterValues.length) {
       logger.warn(
           "Invalid prepared parameter index: index={}, placeholders={}",
@@ -468,8 +498,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
           parameterValues.length);
       throw new SQLException("Invalid parameter index: " + parameterIndex);
     }
-    parameterValues[parameterIndex - 1] =
-        new PreparedStatementBindingSerializer.ParameterValue(bindType, value);
+    parameterValues[parameterIndex - 1] = PreparedStatementBinding.scalar(bindType, value);
     logger.debug(
         "Prepared parameter set: index={}, bindType={}, isNull={}, placeholders={}",
         parameterIndex,
@@ -512,6 +541,51 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
       default:
         return "TEXT";
     }
+  }
+
+  private PreparedStatementBinding[] snapshotParameterValues() {
+    PreparedStatementBinding[] snapshot = new PreparedStatementBinding[parameterValues.length];
+    for (int i = 0; i < parameterValues.length; i++) {
+      PreparedStatementBinding value = parameterValues[i];
+      if (value != null) {
+        snapshot[i] = value.copy();
+      }
+    }
+    return snapshot;
+  }
+
+  private BatchExecutionResult executeBatchInternal(BatchCountAccumulator countAccumulator)
+      throws SQLException {
+    boolean arrayBindingEnabled = isArrayBindingEnabled();
+    try {
+      return batchExecutor.executeBatch(
+          batchState, arrayBindingEnabled, countAccumulator, this::executeWithPreparedBindings);
+    } finally {
+      clearBatchState();
+    }
+  }
+
+  private long executeWithPreparedBindings(PreparedStatementBinding[] bindings)
+      throws SQLException {
+    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
+        PreparedStatementBindingSerializer.serialize(bindings)) {
+      return executeWithBindings(sql, serializedBindings.bindings()).getRowsAffected();
+    }
+  }
+
+  private boolean isArrayBindingEnabled() {
+    // TODO(parity): wire to server describe metadata (isArrayBindSupported).
+    return parameterValues.length > 0;
+  }
+
+  private void validateBatchTypeCompatibility(PreparedStatementBinding[] nextSnapshot)
+      throws SQLException {
+    batchState.appendSnapshot(nextSnapshot);
+  }
+
+  private void clearBatchState() {
+    batchState.reset();
+    Arrays.fill(parameterValues, null);
   }
 
   @Override
