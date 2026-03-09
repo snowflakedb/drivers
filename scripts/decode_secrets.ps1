@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("aws", "gcp")]
+    [ValidateSet("aws", "gcp", "azure")]
     [string]$Cloud = "aws"
 )
 

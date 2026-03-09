@@ -1,8 +1,8 @@
 #!/bin/bash
 CLOUD="${1:-aws}"
 
-if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" ]]; then
-    echo "Usage: $0 [aws|gcp]" >&2
+if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" && "${CLOUD}" != "azure" ]]; then
+    echo "Usage: $0 [aws|gcp|azure]" >&2
     exit 1
 fi
 
