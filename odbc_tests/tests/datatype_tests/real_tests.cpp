@@ -698,6 +698,8 @@ TEST_CASE("REAL SQL_C_WCHAR buffer handling", "[datatype][real][wchar][buffer]")
   }
 
   SECTION("whole digits lost returns 22003") {
+    // TODO: Enable when wide functions are implemented
+    WINDOWS_ONLY { SKIP("Windows manager binds to longer SQL_C_CHAR buffer and performs the conversion"); }
     auto stmt = conn.execute_fetch("SELECT 123456.789::FLOAT");
 
     char16_t small_buffer[4];
