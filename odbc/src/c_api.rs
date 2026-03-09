@@ -221,6 +221,7 @@ pub unsafe extern "C" fn SQLDriverConnect(
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result =
         api::connection::driver_connect(connection_handle, in_connection_string, in_string_length);
+    tracing::info!("SQLDriverConnect: result={:?}", result);
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
 }
@@ -498,8 +499,9 @@ pub unsafe extern "C" fn SQLGetDiagRec(
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    tracing::info!("SQLGetDiagRec: handle_type={:?}, handle={:?}, rec_number={}, sql_state={:?}, native_error_ptr={:?}, message_text={:?}, buffer_length={}, text_length_ptr={:?}", handle_type, handle, rec_number, sql_state, native_error_ptr, message_text, buffer_length, text_length_ptr);
     unsafe {
-        api::diagnostic::get_diag_rec(
+        let result = api::diagnostic::get_diag_rec(
             handle_type,
             handle,
             rec_number,
@@ -508,8 +510,19 @@ pub unsafe extern "C" fn SQLGetDiagRec(
             message_text,
             buffer_length,
             text_length_ptr,
-        )
-        .to_sql_code()
+        );
+        tracing::info!("SQLGetDiagRec: result={:?}", result);
+        match result {
+            Ok(true) => sql::SqlReturn::SUCCESS_WITH_INFO.0,
+            Ok(false) => sql::SqlReturn::SUCCESS.0,
+            Err(ref e) if matches!(e, api::OdbcError::NoMoreData { .. }) => {
+                sql::SqlReturn::NO_DATA.0
+            }
+            Err(ref e) if matches!(e, api::OdbcError::InvalidHandle { .. }) => {
+                sql::SqlReturn::INVALID_HANDLE.0
+            }
+            Err(_) => sql::SqlReturn::ERROR.0,
+        }
     }
 }
 

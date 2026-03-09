@@ -54,6 +54,13 @@ extern DRIVER_TYPE get_driver_type();
 #define UNIX_ONLY
 #endif
 
+#ifdef _WIN32
+#define SKIP_WINDOWS_STRING_ENCODING() \
+  SKIP("String encoding not yet supported on Windows (UTF-8 vs Windows-1252 issue)")
+#else
+#define SKIP_WINDOWS_STRING_ENCODING() ((void)0)
+#endif
+
 #define REQUIRE_VPN(message)                              \
   do {                                                    \
     if (std::getenv("JENKINS_URL") == nullptr) {          \

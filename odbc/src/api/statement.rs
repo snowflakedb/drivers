@@ -522,15 +522,18 @@ pub fn get_stmt_attr(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
-    _buffer_length: sql::Integer,
+    buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
     tracing::debug!(
-        "get_stmt_attr: statement_handle={:?}, attribute={}",
+        "get_stmt_attr: statement_handle={:?}, attribute={}, value_ptr={:?}, buffer_length={}, string_length_ptr={:?}",
         statement_handle,
-        attribute
+        attribute,
+        value_ptr,
+        buffer_length,
+        string_length_ptr,
     );
 
     let attr = StmtAttr::try_from(attribute)?;
@@ -572,6 +575,20 @@ pub fn get_stmt_attr(
             let ird_ptr = &mut stmt.ird as *mut crate::api::IrdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = ird_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::AppParamDesc => {
+            let apd_ptr = &mut stmt.apd as *mut crate::api::ArdDescriptor as sql::Handle;
+            unsafe {
+                *(value_ptr as *mut sql::Handle) = apd_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ImpParamDesc => {
+            let ipd_ptr = &mut stmt.ipd as *mut crate::api::IrdDescriptor as sql::Handle;
+            unsafe {
+                *(value_ptr as *mut sql::Handle) = ipd_ptr;
             }
             Ok(())
         }

@@ -7,7 +7,7 @@ use crate::api::{
 use odbc_sys as sql;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
-    StatementNewRequest, StatementReleaseRequest,
+    ConnectionReleaseRequest, DatabaseReleaseRequest, StatementNewRequest, StatementReleaseRequest,
 };
 use tracing;
 
@@ -56,6 +56,8 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 parameter_bindings: std::collections::HashMap::new(),
                 ard: ArdDescriptor::new(),
                 ird: IrdDescriptor::new(),
+                apd: ArdDescriptor::new_apd(),
+                ipd: IrdDescriptor::new_ipd(),
                 diagnostic_info: DiagnosticInfo::default(),
                 get_data_state: None,
                 cursor_type: crate::api::CursorType::ForwardOnly,
@@ -91,9 +93,6 @@ pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing connection handle");
-    unsafe {
-        drop(Box::from_raw(handle as *mut Connection));
-    }
     Ok(())
 }
 

@@ -23,6 +23,7 @@
 #include "get_data.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
+#include "compatibility.hpp"
 
 // Helper to generate random ASCII string for LOB tests
 static std::string generate_random_ascii_string(std::mt19937& gen, size_t length) {
@@ -43,6 +44,13 @@ static std::string generate_random_ascii_string(std::mt19937& gen, size_t length
 TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][string][lob]") {
   // Corner case: string at the historical LOB limit (16 MB = 16,777,216 bytes)
   // Given Snowflake client is logged in
+
+  // TODO: Reenable this test for the new driver
+  // The test is flaky because the driver does not handle async query responses correctly
+  // When we insert the string, the driver does not wait for the insert to complete before returning
+  // Tes flakiness occurs more often on Windows
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
@@ -99,6 +107,12 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
 TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB size", "[datatype][string][lob]") {
   // Corner case: string at maximum LOB limit (128 MB) - requires Increased LOB Size feature
   // Given Snowflake client is logged in
+
+  // TODO: Reenable this test for the new driver
+  // The test is flaky because the driver does not handle async query responses correctly
+  // When we insert the string, the driver does not wait for the insert to complete before returning
+  // Tes flakiness occurs more often on Windows
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 

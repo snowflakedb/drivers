@@ -102,6 +102,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_BATCH_SUPPORT", "[odbc-a
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetInfo: SQL_DATA_SOURCE_NAME", "[odbc-api][getinfo][driver_info]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED(); // Implemented by DM on Linux, but not on Windows
   SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 

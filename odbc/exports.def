@@ -5,22 +5,34 @@ EXPORTS
     SQLAllocEnv
     SQLAllocConnect
     SQLAllocHandle
+    SQLBindCol
+    SQLBindParameter
+    SQLColAttribute
+    SQLConnect
+    SQLDescribeCol
+    SQLDisconnect
+    SQLDriverConnect
     SQLExecDirect
     SQLExecDirectW
-    SQLFreeHandle
-    SQLConnect
-    SQLSetEnvAttr
-    SQLGetEnvAttr
-    SQLDriverConnect
-    SQLDisconnect
-    SQLFetch
-    SQLExtendedFetch
-    SQLGetData
-    SQLNumResultCols
-    SQLRowCount
-    SQLBindParameter
-    SQLPrepare
     SQLExecute
-    SQLGetDiagRec
+    SQLExtendedFetch
+    SQLFetch
+    SQLFetchScroll
+    SQLFreeHandle
+    SQLFreeStmt
+    SQLGetConnectAttr
+    SQLGetData
+    SQLGetDescField
     SQLGetDiagField
-    SQLBindCol
+    SQLGetDiagRec
+    SQLGetEnvAttr
+    SQLGetInfo
+    SQLGetStmtAttr
+    SQLNumResultCols
+    SQLPrepare
+    SQLPrepareW
+    SQLRowCount
+    SQLSetConnectAttr
+    SQLSetDescField
+    SQLSetEnvAttr
+    SQLSetStmtAttr

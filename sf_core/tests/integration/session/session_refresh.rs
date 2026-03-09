@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock as AsyncRwLock;
+use std::sync::RwLock as AsyncRwLock;
 
 fn test_client_info() -> ClientInfo {
     ClientInfo {

@@ -18,16 +18,20 @@ std::vector<DiagRec> get_diag_rec(const SQLSMALLINT handle_type, const SQLHANDLE
     const SQLRETURN ret = SQLGetDiagRec(handle_type, handle, recNumber, sqlState, &nativeError, messageText,
                                         sizeof(messageText), &textLength);
     if (ret == SQL_NO_DATA) {
+      std::cout << "SQLGetDiagRec: No more data" << std::endl;
       break;  // No more data
     }
 
-    if (ret != SQL_SUCCESS) {
-      // SQLGetDiagRec itself failed - unable to retrieve diagnostic details
-      // This is rare but can occur with invalid handles or driver issues
+    if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
       std::cerr << "Warning: SQLGetDiagRec failed (returned " << ret << ") when retrieving diagnostic record #"
                 << recNumber << std::endl;
       break;
     }
+
+    std::cout << "SQLGetDiagRec: Successfully retrieved diagnostic record #" << recNumber << std::endl;
+    std::cout << "SQLState: " << std::string(reinterpret_cast<char*>(sqlState), 5) << std::endl;
+    std::cout << "Native Error: " << nativeError << std::endl;
+    std::cout << "Message Text: " << std::string(reinterpret_cast<char*>(messageText), textLength) << std::endl;
 
     DiagRec record;
     record.sqlState = std::string(reinterpret_cast<char*>(sqlState), 5);

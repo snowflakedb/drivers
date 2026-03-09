@@ -176,3 +176,12 @@ behavior_differences:
       SQL_C_NUMERIC will now receive a well-formed positive zero instead of a
       semantically invalid negative zero.
       TODO: To be fixed in old driver
+
+  20:
+    name: "On Windows, PUT source column returns filename only instead of full absolute path"
+    description: |
+      OLD driver: On Windows, the PUT result set source column returns the full
+      absolute file path (e.g. C:/Users/.../test_data.csv).
+      NEW driver: Returns just the filename (e.g. test_data.csv), same as on Linux.
+      Impact: Applications that parse the PUT source column for the full path on
+      Windows will now receive only the filename.

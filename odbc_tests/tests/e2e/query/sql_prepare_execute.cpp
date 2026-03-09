@@ -272,6 +272,7 @@ TEST_CASE("SQLPrepareW + SQLExecute basic flow.", "[query][prepare]") {
 }
 
 TEST_CASE("SQLPrepareW with Unicode content in query.", "[query][prepare]") {
+  SKIP_WINDOWS_STRING_ENCODING();
   // Doc: "SQLPrepareW is the Unicode version of SQLPrepare."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function
 

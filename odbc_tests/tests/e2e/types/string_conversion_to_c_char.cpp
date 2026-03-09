@@ -56,6 +56,7 @@ TEST_CASE("should truncate string data when byte length is longer than the buffe
 
 TEST_CASE("should truncate wide string data when byte length is longer than the buffer length",
           "[datatype][string][conversion][wchar]") {
+  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -147,6 +148,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
 // ============================================================================
 
 TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][string][conversion][binary][utf8]") {
+  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

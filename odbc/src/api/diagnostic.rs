@@ -296,6 +296,10 @@ pub fn get_diag_info(
 ///
 /// Retrieves diagnostic information associated with a specific handle.
 /// This corresponds to the ODBC SQLGetDiagRec function.
+///
+/// Returns `Ok(true)` if the message was truncated, `Ok(false)` otherwise.
+/// Per the ODBC spec, `text_length_ptr` always receives the full (untruncated)
+/// message length so the caller can allocate a sufficiently large buffer.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn get_diag_rec(
     handle_type: sql::HandleType,
@@ -306,8 +310,9 @@ pub unsafe fn get_diag_rec(
     message_text: *mut sql::Char,
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
-) -> OdbcResult<()> {
+) -> OdbcResult<bool> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
+    tracing::info!("get_diag_rec: diagnostic_info={:?}", diagnostic_info);
     if rec_number <= 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
@@ -322,7 +327,6 @@ pub unsafe fn get_diag_rec(
         .unwrap();
     let length: sql::Len = 6; // 5 chars + NUL
     unsafe {
-        // Copy only first 5 chars of SQLSTATE and NUL terminate
         let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
         api_utils::string_to_cstr(state, sql_state, length)?;
         api_utils::string_to_cstr(
@@ -330,14 +334,18 @@ pub unsafe fn get_diag_rec(
             message_text,
             buffer_length as sql::Len,
         )?;
-        *native_error_ptr = record.native_error;
-        let max_msg_len = (buffer_length - 1).max(0) as usize;
-        let written = std::cmp::min(record.message_text.len(), max_msg_len);
+        if !native_error_ptr.is_null() {
+            std::ptr::write(native_error_ptr, record.native_error);
+        }
         if !text_length_ptr.is_null() {
-            std::ptr::write(text_length_ptr, written as sql::SmallInt);
+            std::ptr::write(
+                text_length_ptr,
+                record.message_text.len() as sql::SmallInt,
+            );
         }
     }
-    Ok(())
+    let truncated = record.message_text.len() >= buffer_length.max(0) as usize;
+    Ok(truncated)
 }
 
 /// Get diagnostic field from handle
@@ -354,7 +362,7 @@ pub fn get_diag_field(
     string_length_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
-
+    tracing::info!("get_diag_field: diagnostic_info={:?}, handle_type={:?}, handle={:?}, rec_number={}, diag_identifier={:?}, diag_info_ptr={:?}, buffer_length={}, string_length_ptr={:?}", diagnostic_info, handle_type, handle, rec_number, diag_identifier, diag_info_ptr, buffer_length, string_length_ptr);
     if rec_number < 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
@@ -467,19 +475,19 @@ pub fn get_diag_field(
                 }
                 Ok(())
             }
-            DiagIdentifier::ClassOrigin => {
-                let class_origin_str = match record.class_origin {
+            DiagIdentifier::ClassOrigin | DiagIdentifier::SubclassOrigin => {
+                let origin_str = match record.class_origin {
                     ClassOrigin::Odbc3_0 => "ODBC 3.0",
                     ClassOrigin::Iso9075 => "ISO 9075",
                 };
                 unsafe {
                     api_utils::string_to_cstr(
-                        class_origin_str,
+                        origin_str,
                         diag_info_ptr as *mut sql::Char,
                         buffer_length as sql::Len,
                     )?;
                     if !string_length_ptr.is_null() {
-                        std::ptr::write(string_length_ptr, class_origin_str.len() as sql::SmallInt);
+                        std::ptr::write(string_length_ptr, origin_str.len() as sql::SmallInt);
                     }
                 }
                 Ok(())

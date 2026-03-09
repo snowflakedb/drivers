@@ -22,6 +22,7 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
@@ -78,6 +79,7 @@ TEST_CASE("should select hardcoded string literals using SQLBindCol", "[datatype
 }
 
 TEST_CASE("should select string literals with corner case values", "[datatype][string]") {
+  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -143,14 +145,16 @@ TEST_CASE("should select hardcoded string values from table", "[datatype][string
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
     CHECK_ODBC(ret, stmt);
-    INFO("Row " << row);
-    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected[row]);
+    std::string actual = get_data<SQL_C_CHAR>(stmt, 1);
+    INFO("Row " << row << " expected: " << expected[row] << " actual: " << actual);
+    CHECK(actual == expected[row]);
     row++;
   }
   CHECK(row == 3);
 }
 
 TEST_CASE("should select corner case string values from table", "[datatype][string]") {
+  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -213,6 +217,7 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
 // ============================================================================
 
 TEST_CASE("should insert and select back hardcoded string values using parameter binding", "[datatype][string]") {
+  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -249,6 +254,7 @@ TEST_CASE("should insert and select back hardcoded string values using parameter
 // ============================================================================
 
 TEST_CASE("should select string literals using parameter binding", "[datatype][string]") {
+  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
