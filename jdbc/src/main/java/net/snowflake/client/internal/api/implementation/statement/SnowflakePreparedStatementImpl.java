@@ -26,6 +26,7 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Map;
 import java.util.function.Function;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.log.SFLogger;
@@ -41,6 +42,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     implements PreparedStatement, SnowflakePreparedStatement {
   private static final SFLogger logger =
       SFLoggerFactory.getLogger(SnowflakePreparedStatementImpl.class);
+  private static final int SQL_TEXT_PREVIEW_LENGTH = 20;
 
   private final String sql;
   private final PreparedStatementBinding[] parameterValues;
@@ -304,6 +306,12 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     PreparedStatementBinding[] snapshot = snapshotParameterValues();
     validateBatchTypeCompatibility(snapshot);
+  }
+
+  @Override
+  public void addBatch(String sql) throws SQLException {
+    checkClosed();
+    throw SnowflakeSQLException.unsupportedStatementTypeInExecutionApi(truncateSql(sql));
   }
 
   @Override
@@ -586,6 +594,15 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   private void clearBatchState() {
     batchState.reset();
     Arrays.fill(parameterValues, null);
+  }
+
+  private static String truncateSql(String sql) {
+    if (sql == null) {
+      return null;
+    }
+    return sql.length() > SQL_TEXT_PREVIEW_LENGTH
+        ? sql.substring(0, SQL_TEXT_PREVIEW_LENGTH) + "..."
+        : sql;
   }
 
   @Override

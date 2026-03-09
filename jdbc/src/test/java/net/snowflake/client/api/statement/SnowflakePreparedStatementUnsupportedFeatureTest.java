@@ -1,5 +1,6 @@
 package net.snowflake.client.api.statement;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.ByteArrayInputStream;
@@ -7,6 +8,7 @@ import java.io.StringReader;
 import java.sql.PreparedStatement;
 import java.sql.SQLFeatureNotSupportedException;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -188,5 +190,14 @@ public class SnowflakePreparedStatementUnsupportedFeatureTest extends SnowflakeI
   @Test
   public void testSetSqlXmlThrowsFeatureNotSupported() {
     assertThrows(SQLFeatureNotSupportedException.class, () -> preparedStatement.setSQLXML(1, null));
+  }
+
+  @Test
+  public void testAddBatchWithSqlThrowsSnowflakeSQLException() {
+    SnowflakeSQLException ex =
+        assertThrows(SnowflakeSQLException.class, () -> preparedStatement.addBatch("select 1"));
+    assertEquals(200042, ex.getErrorCode());
+    assertEquals("0A000", ex.getSQLState());
+    assertEquals("Statement 'select 1' cannot be executed using current API.", ex.getMessage());
   }
 }
