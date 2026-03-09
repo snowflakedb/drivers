@@ -1218,7 +1218,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("SQL_C_INTERVAL_YEAR - positive integer") {
+  // SQL_C_INTERVAL_YEAR - positive integer
+  {
     auto stmt = conn.execute_fetch("SELECT 5::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -1226,7 +1227,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.year_month.year == 5);
   }
 
-  SECTION("SQL_C_INTERVAL_YEAR - negative value") {
+  // SQL_C_INTERVAL_YEAR - negative value
+  {
     auto stmt = conn.execute_fetch("SELECT -3::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -1234,7 +1236,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.year_month.year == 3);
   }
 
-  SECTION("SQL_C_INTERVAL_YEAR - zero") {
+  // SQL_C_INTERVAL_YEAR - zero
+  {
     auto stmt = conn.execute_fetch("SELECT 0::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -1242,7 +1245,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.year_month.year == 0);
   }
 
-  SECTION("SQL_C_INTERVAL_MONTH - positive integer") {
+  // SQL_C_INTERVAL_MONTH - positive integer
+  {
     auto stmt = conn.execute_fetch("SELECT 10::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_MONTH);
@@ -1250,7 +1254,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.year_month.month == 10);
   }
 
-  SECTION("SQL_C_INTERVAL_DAY - positive integer") {
+  // SQL_C_INTERVAL_DAY - positive integer
+  {
     auto stmt = conn.execute_fetch("SELECT 15::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_DAY);
@@ -1258,7 +1263,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.day_second.day == 15);
   }
 
-  SECTION("SQL_C_INTERVAL_HOUR - positive integer") {
+  // SQL_C_INTERVAL_HOUR - positive integer
+  {
     auto stmt = conn.execute_fetch("SELECT 8::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_HOUR);
@@ -1266,7 +1272,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.day_second.hour == 8);
   }
 
-  SECTION("SQL_C_INTERVAL_MINUTE - positive integer") {
+  // SQL_C_INTERVAL_MINUTE - positive integer
+  {
     auto stmt = conn.execute_fetch("SELECT 30::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_MINUTE);
@@ -1274,7 +1281,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.day_second.minute == 30);
   }
 
-  SECTION("SQL_C_INTERVAL_SECOND - integer, no fraction") {
+  // SQL_C_INTERVAL_SECOND - integer, no fraction
+  {
     auto stmt = conn.execute_fetch("SELECT 45::NUMBER(10,0)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);
@@ -1283,7 +1291,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.day_second.fraction == 0);
   }
 
-  SECTION("SQL_C_INTERVAL_SECOND - with fractional part") {
+  // SQL_C_INTERVAL_SECOND - with fractional part
+  {
     auto stmt = conn.execute_fetch("SELECT 45.500::DECIMAL(10,3)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);
@@ -1291,7 +1300,8 @@ TEST_CASE("NUMBER to single-field interval types", "[datatype][number][interval]
     CHECK(interval.intval.day_second.fraction == 500000);
   }
 
-  SECTION("SQL_C_INTERVAL_SECOND - negative with fraction") {
+  // SQL_C_INTERVAL_SECOND - negative with fraction
+  {
     auto stmt = conn.execute_fetch("SELECT -10.25::DECIMAL(10,2)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);
@@ -1305,35 +1315,40 @@ TEST_CASE("NUMBER to interval - fractional truncation returns 01S07", "[datatype
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("SQL_C_INTERVAL_YEAR with fractional") {
+  // SQL_C_INTERVAL_YEAR with fractional
+  {
     auto stmt = conn.execute_fetch("SELECT 5.7::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
     CHECK(interval.intval.year_month.year == 5);
   }
 
-  SECTION("SQL_C_INTERVAL_MONTH with fractional") {
+  // SQL_C_INTERVAL_MONTH with fractional
+  {
     auto stmt = conn.execute_fetch("SELECT 10.3::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_MONTH);
     CHECK(interval.intval.year_month.month == 10);
   }
 
-  SECTION("SQL_C_INTERVAL_DAY with fractional") {
+  // SQL_C_INTERVAL_DAY with fractional
+  {
     auto stmt = conn.execute_fetch("SELECT 15.9::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_DAY);
     CHECK(interval.intval.day_second.day == 15);
   }
 
-  SECTION("SQL_C_INTERVAL_HOUR with fractional") {
+  // SQL_C_INTERVAL_HOUR with fractional
+  {
     auto stmt = conn.execute_fetch("SELECT 8.5::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_HOUR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_HOUR);
     CHECK(interval.intval.day_second.hour == 8);
   }
 
-  SECTION("SQL_C_INTERVAL_MINUTE with fractional") {
+  // SQL_C_INTERVAL_MINUTE with fractional
+  {
     auto stmt = conn.execute_fetch("SELECT 30.1::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_MINUTE);
@@ -1345,7 +1360,8 @@ TEST_CASE("NUMBER to interval - sub-microsecond truncation returns 01S07", "[dat
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("SQL_C_INTERVAL_SECOND - scale 9, sub-microsecond digits truncated") {
+  // SQL_C_INTERVAL_SECOND - scale 9, sub-microsecond digits truncated
+  {
     auto stmt = conn.execute_fetch("SELECT 45.123456789::DECIMAL(12,9)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);
@@ -1353,7 +1369,8 @@ TEST_CASE("NUMBER to interval - sub-microsecond truncation returns 01S07", "[dat
     CHECK(interval.intval.day_second.fraction == 123456);
   }
 
-  SECTION("SQL_C_INTERVAL_SECOND - scale 9, exact microseconds, no warning") {
+  // SQL_C_INTERVAL_SECOND - scale 9, exact microseconds, no warning
+  {
     auto stmt = conn.execute_fetch("SELECT 45.123456000::DECIMAL(12,9)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);
@@ -1367,7 +1384,8 @@ TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval]
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("SQL_C_INTERVAL_YEAR - negative fraction truncated to zero") {
+  // SQL_C_INTERVAL_YEAR - negative fraction truncated to zero
+  {
     auto stmt = conn.execute_fetch("SELECT -0.5::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -1375,7 +1393,8 @@ TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval]
     CHECK(interval.intval.year_month.year == 0);
   }
 
-  SECTION("SQL_C_INTERVAL_MONTH - negative fraction truncated to zero") {
+  // SQL_C_INTERVAL_MONTH - negative fraction truncated to zero
+  {
     auto stmt = conn.execute_fetch("SELECT -0.3::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_MONTH>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_MONTH);
@@ -1383,7 +1402,8 @@ TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval]
     CHECK(interval.intval.year_month.month == 0);
   }
 
-  SECTION("SQL_C_INTERVAL_DAY - negative fraction truncated to zero") {
+  // SQL_C_INTERVAL_DAY - negative fraction truncated to zero
+  {
     auto stmt = conn.execute_fetch("SELECT -0.9::DECIMAL(10,1)");
     auto interval = check_fractional_truncation<SQL_C_INTERVAL_DAY>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_DAY);
@@ -1391,7 +1411,8 @@ TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval]
     CHECK(interval.intval.day_second.day == 0);
   }
 
-  SECTION("SQL_C_INTERVAL_SECOND - negative fraction keeps sign when fraction nonzero") {
+  // SQL_C_INTERVAL_SECOND - negative fraction keeps sign when fraction nonzero
+  {
     auto stmt = conn.execute_fetch("SELECT -0.5::DECIMAL(10,1)");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_SECOND);
@@ -1405,54 +1426,49 @@ TEST_CASE("NUMBER to multi-field interval returns 22015", "[datatype][number][in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("SQL_C_INTERVAL_YEAR_TO_MONTH") {
-    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
-    check_interval_precision_lost<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
-  }
+  // SQL_C_INTERVAL_YEAR_TO_MONTH
+  check_interval_precision_lost<SQL_C_INTERVAL_YEAR_TO_MONTH>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
 
-  SECTION("SQL_C_INTERVAL_DAY_TO_HOUR") {
-    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
-    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
-  }
+  // SQL_C_INTERVAL_DAY_TO_HOUR
+  check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_HOUR>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
 
-  SECTION("SQL_C_INTERVAL_DAY_TO_MINUTE") {
-    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
-    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_MINUTE>(stmt, 1);
-  }
+  // SQL_C_INTERVAL_DAY_TO_MINUTE
+  check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_MINUTE>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
 
-  SECTION("SQL_C_INTERVAL_DAY_TO_SECOND") {
-    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
-    check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 1);
-  }
+  // SQL_C_INTERVAL_DAY_TO_SECOND
+  check_interval_precision_lost<SQL_C_INTERVAL_DAY_TO_SECOND>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
 
-  SECTION("SQL_C_INTERVAL_HOUR_TO_MINUTE") {
-    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
-    check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 1);
-  }
+  // SQL_C_INTERVAL_HOUR_TO_MINUTE
+  check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_MINUTE>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
 
-  SECTION("SQL_C_INTERVAL_HOUR_TO_SECOND") {
-    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
-    check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 1);
-  }
+  // SQL_C_INTERVAL_HOUR_TO_SECOND
+  check_interval_precision_lost<SQL_C_INTERVAL_HOUR_TO_SECOND>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
 
-  SECTION("SQL_C_INTERVAL_MINUTE_TO_SECOND") {
-    auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
-    check_interval_precision_lost<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 1);
-  }
+  // SQL_C_INTERVAL_MINUTE_TO_SECOND
+  check_interval_precision_lost<SQL_C_INTERVAL_MINUTE_TO_SECOND>(conn.execute_fetch("SELECT 42::NUMBER(10,0)"), 1);
 }
 
 TEST_CASE("NUMBER to interval - NULL returns SQL_NULL_DATA", "[datatype][number][interval][null]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,0)");
+  // SQL_C_INTERVAL_YEAR
+  check_null_via_get_data(conn.execute_fetch("SELECT NULL::NUMBER(10,0)"), 1, SQL_C_INTERVAL_YEAR);
 
-  SECTION("SQL_C_INTERVAL_YEAR") { check_null_via_get_data(stmt, 1, SQL_C_INTERVAL_YEAR); }
-  SECTION("SQL_C_INTERVAL_MONTH") { check_null_via_get_data(stmt, 1, SQL_C_INTERVAL_MONTH); }
-  SECTION("SQL_C_INTERVAL_DAY") { check_null_via_get_data(stmt, 1, SQL_C_INTERVAL_DAY); }
-  SECTION("SQL_C_INTERVAL_HOUR") { check_null_via_get_data(stmt, 1, SQL_C_INTERVAL_HOUR); }
-  SECTION("SQL_C_INTERVAL_MINUTE") { check_null_via_get_data(stmt, 1, SQL_C_INTERVAL_MINUTE); }
-  SECTION("SQL_C_INTERVAL_SECOND") { check_null_via_get_data(stmt, 1, SQL_C_INTERVAL_SECOND); }
+  // SQL_C_INTERVAL_MONTH
+  check_null_via_get_data(conn.execute_fetch("SELECT NULL::NUMBER(10,0)"), 1, SQL_C_INTERVAL_MONTH);
+
+  // SQL_C_INTERVAL_DAY
+  check_null_via_get_data(conn.execute_fetch("SELECT NULL::NUMBER(10,0)"), 1, SQL_C_INTERVAL_DAY);
+
+  // SQL_C_INTERVAL_HOUR
+  check_null_via_get_data(conn.execute_fetch("SELECT NULL::NUMBER(10,0)"), 1, SQL_C_INTERVAL_HOUR);
+
+  // SQL_C_INTERVAL_MINUTE
+  check_null_via_get_data(conn.execute_fetch("SELECT NULL::NUMBER(10,0)"), 1, SQL_C_INTERVAL_MINUTE);
+
+  // SQL_C_INTERVAL_SECOND
+  check_null_via_get_data(conn.execute_fetch("SELECT NULL::NUMBER(10,0)"), 1, SQL_C_INTERVAL_SECOND);
 }
 
 TEST_CASE("Without TREAT_DECIMAL_AS_INT default is SQL_C_CHAR for scale=0",
