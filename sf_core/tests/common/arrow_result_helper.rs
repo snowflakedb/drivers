@@ -4,13 +4,16 @@ extern crate tracing_subscriber;
 
 use super::arrow_deserialize::ArrowDeserialize;
 use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
-use arrow::datatypes::{DataType, Schema};
+use arrow::array::{Array, ArrayRef, AsArray};
+use arrow::compute::kernels::cmp::not_distinct;
+use arrow::datatypes::{DataType, FieldRef, Schema};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::mem::discriminant;
 use std::sync::Arc;
 
 /// Helper for processing Arrow stream results
@@ -117,17 +120,18 @@ impl ArrowResultHelper {
 }
 
 /// Returns metadata keys to exclude from comparison for a given Arrow DataType.
-fn metadata_keys_to_exclude(data_type: &DataType) -> &'static [&'static str] {
-    match data_type {
-        DataType::Utf8 => &["finalType", "precision", "scale"],
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64 => {
-            &["finalType", "charLength", "byteLength"]
-        }
-        DataType::Decimal128(_, _) => &["finalType", "charLength", "byteLength"],
-        DataType::Boolean => &[],
-        DataType::Float64 => &[],
-        DataType::Date32 => &[],
-        DataType::Struct(_) => &[],
+fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
+    match logical_type {
+        "TEXT" => &["finalType", "precision", "scale"],
+        "FIXED" => &["finalType", "charLength", "byteLength"],
+        "TIMESTAMP_NTZ" => &[
+            "finalType",
+            "charLength",
+            "byteLength",
+            "scale",
+            "precision",
+            "physicalType",
+        ],
         _ => &[],
     }
 }
@@ -149,52 +153,80 @@ pub fn assert_schemas_match(arrow_schema: &Schema, json_schema: &Schema) {
         .iter()
         .zip(json_schema.fields().iter())
     {
-        assert_eq!(arrow_field.name(), json_field.name(), "Field name mismatch");
-        assert_eq!(
-            arrow_field.data_type(),
-            json_field.data_type(),
-            "Data type mismatch for field '{}'",
-            arrow_field.name()
-        );
-        assert_eq!(
-            arrow_field.is_nullable(),
-            json_field.is_nullable(),
-            "Nullability mismatch for field '{}'",
-            arrow_field.name()
-        );
+        assert_fields_match(arrow_field, json_field);
+    }
+}
 
-        let excluded = metadata_keys_to_exclude(arrow_field.data_type());
+fn assert_fields_match(arrow_field: &FieldRef, json_field: &FieldRef) {
+    assert_eq!(arrow_field.name(), json_field.name(), "Field name mismatch");
+    assert_eq!(
+        arrow_field.is_nullable(),
+        json_field.is_nullable(),
+        "Nullability mismatch for field '{}'",
+        arrow_field.name()
+    );
+    assert_eq!(
+        discriminant(arrow_field.data_type()),
+        discriminant(json_field.data_type()),
+        "Data type variant mismatch for field '{}'",
+        arrow_field.name()
+    );
+    let logical_type = arrow_field
+        .metadata()
+        .get("logicalType")
+        .unwrap_or_else(|| {
+            panic!(
+                "logicalType metadata key missing for field {}",
+                arrow_field.name()
+            )
+        });
+    let excluded = metadata_keys_to_exclude(logical_type);
 
-        let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
-            metadata
+    let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
+        metadata
+            .iter()
+            .filter(|(k, _)| !excluded.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    };
+
+    let arrow_meta: BTreeMap<String, String> = arrow_field
+        .metadata()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let json_meta: BTreeMap<String, String> = json_field
+        .metadata()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let filtered_arrow = filter_metadata(&arrow_meta);
+    let filtered_json = filter_metadata(&json_meta);
+
+    assert_eq!(
+        filtered_arrow,
+        filtered_json,
+        "Metadata mismatch for field '{}'\n  arrow: {:?}\n  json:  {:?}",
+        arrow_field.name(),
+        filtered_arrow,
+        filtered_json
+    );
+    match (arrow_field.data_type(), json_field.data_type()) {
+        (DataType::Struct(arrow_fields), DataType::Struct(json_fields)) => {
+            arrow_fields
                 .iter()
-                .filter(|(k, _)| !excluded.contains(&k.as_str()))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        };
-
-        let arrow_meta: BTreeMap<String, String> = arrow_field
-            .metadata()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        let json_meta: BTreeMap<String, String> = json_field
-            .metadata()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-
-        let filtered_arrow = filter_metadata(&arrow_meta);
-        let filtered_json = filter_metadata(&json_meta);
-
-        assert_eq!(
-            filtered_arrow,
-            filtered_json,
-            "Metadata mismatch for field '{}'\n  arrow: {:?}\n  json:  {:?}",
-            arrow_field.name(),
-            filtered_arrow,
-            filtered_json
-        );
+                .zip(json_fields.iter())
+                .for_each(|(a, j)| assert_fields_match(a, j));
+        }
+        (arrow_data_type, json_data_type) => {
+            assert_eq!(
+                arrow_data_type,
+                json_data_type,
+                "Data type mismatch for field '{}'",
+                arrow_field.name()
+            );
+        }
     }
 }
 
@@ -217,12 +249,51 @@ pub fn assert_record_batches_match(arrow_batch: &RecordBatch, json_batch: &Recor
     for col_idx in 0..arrow_batch.num_columns() {
         let arrow_col = arrow_batch.column(col_idx);
         let json_col = json_batch.column(col_idx);
-        assert_eq!(
-            arrow_col,
-            json_col,
-            "Column data mismatch at index {} ('{}')",
-            col_idx,
-            arrow_batch.schema().field(col_idx).name()
-        );
+        let schema = arrow_batch.schema();
+        let field_name = schema.field(col_idx).name();
+        assert_arrays_match(arrow_col, json_col, field_name);
+    }
+}
+
+fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
+    match (left.data_type(), right.data_type()) {
+        (DataType::Struct(_), DataType::Struct(_)) => {
+            let left_struct = left.as_struct();
+            let right_struct = right.as_struct();
+            assert_eq!(
+                left_struct.num_columns(),
+                right_struct.num_columns(),
+                "Struct '{field_path}' child count mismatch"
+            );
+            for (i, name) in left_struct.column_names().iter().enumerate() {
+                let child_name = format!("{field_path}.{name}");
+                assert_arrays_match(left_struct.column(i), right_struct.column(i), &child_name);
+            }
+        }
+        _ => {
+            let result = not_distinct(left, right)
+                .unwrap_or_else(|e| panic!("Failed to compare '{field_path}': {e}"));
+
+            let mismatches: Vec<usize> = result
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| v != &Some(true))
+                .map(|(i, _)| i)
+                .collect();
+
+            for idx in mismatches.iter().take(5) {
+                println!(
+                    "Mismatch at idx {:?}, left: {:?}, right: {:?}",
+                    idx,
+                    extract_arrow_value::<String>(left, *idx),
+                    extract_arrow_value::<String>(right, *idx)
+                );
+            }
+
+            assert!(
+                mismatches.is_empty(),
+                "'{field_path}' has mismatched values at rows: {mismatches:?}",
+            );
+        }
     }
 }
