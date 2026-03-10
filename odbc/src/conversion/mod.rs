@@ -180,7 +180,7 @@ impl SnowflakeFieldType {
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => Ok(Self::Binary(binary::SnowflakeBinary)),
             "REAL" => Ok(Self::Real(real::SnowflakeReal)),
-            "OBJECT" | "ARRAY" | "MAP" | "VARIANT" => {
+            "OBJECT" | "ARRAY" | "MAP" => {
                 Ok(Self::Varchar(varchar::SnowflakeVarchar { len: 16_777_216 }))
             }
             lt => IncompatibleFieldMetadataSnafu {
