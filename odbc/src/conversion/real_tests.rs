@@ -1146,7 +1146,7 @@ mod tests {
     }
 
     // ======================================================================
-    // Negative zero — Numeric and Binary must produce sign=1 (positive)
+    // Negative zero — Numeric and Binary must produce sign=0 (negative)
     // when magnitude is zero
     // ======================================================================
 
