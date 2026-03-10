@@ -89,16 +89,21 @@ class TestConnectionInfoReflectsSessionChanges:
 
     def test_database_reflects_use_database(self, connection):
         """After USE DATABASE, the database property should reflect the new database."""
+        import uuid
+
         original_db = connection.database
         assert original_db is not None
 
+        tmp_db = f"TEST_DB_{uuid.uuid4().hex}".upper()
         cur = connection.cursor()
         try:
-            cur.execute(f"USE DATABASE {original_db}")
+            cur.execute(f"CREATE DATABASE {tmp_db}")
+            cur.execute(f"USE DATABASE {tmp_db}")
+            assert connection.database.upper() == tmp_db
         finally:
+            cur.execute(f"USE DATABASE {original_db}")
+            cur.execute(f"DROP DATABASE IF EXISTS {tmp_db}")
             cur.close()
-
-        assert connection.database is not None
 
     def test_schema_reflects_use_schema(self, connection):
         """After USE SCHEMA, the schema property should reflect the new schema."""
@@ -108,7 +113,7 @@ class TestConnectionInfoReflectsSessionChanges:
         finally:
             cur.close()
 
-        assert connection.schema is not None
+        assert connection.schema.upper() == "INFORMATION_SCHEMA"
 
 
 class TestConnectionMethods:

@@ -62,8 +62,7 @@ class TestConnectionPropertyReflectsUse:
         db = connection.database
         assert db is not None
         assert db.lower() == dashed_database.lower(), (
-            f"conn.database did not update after USE DATABASE: "
-            f"expected {dashed_database!r}, got {db!r}"
+            f"conn.database did not update after USE DATABASE: expected {dashed_database!r}, got {db!r}"
         )
 
     def test_schema_updates_after_use(self, connection, dashed_schema):
@@ -74,17 +73,14 @@ class TestConnectionPropertyReflectsUse:
         schema = connection.schema
         assert schema is not None
         assert schema.lower() == dashed_schema.lower(), (
-            f"conn.schema did not update after USE SCHEMA: "
-            f"expected {dashed_schema!r}, got {schema!r}"
+            f"conn.schema did not update after USE SCHEMA: expected {dashed_schema!r}, got {schema!r}"
         )
 
 
 class TestConnectionPropertyIsServerEchoed:
     """conn.database/schema must return server-echoed names, not raw input."""
 
-    def test_database_at_connect_returns_server_name(
-        self, connection_factory, dashed_database, cursor
-    ):
+    def test_database_at_connect_returns_server_name(self, connection_factory, dashed_database, cursor):
         """conn.database returns the server-echoed name, not raw connect() input."""
         cursor.execute(f'USE DATABASE "{dashed_database}"')
 
@@ -92,14 +88,11 @@ class TestConnectionPropertyIsServerEchoed:
             db = conn.database
             assert db is not None
             assert '"' not in db, (
-                f"conn.database contains quotes: {db!r}. "
-                "Expected the server-echoed name without SQL quotes."
+                f"conn.database contains quotes: {db!r}. Expected the server-echoed name without SQL quotes."
             )
             assert db.lower() == dashed_database.lower()
 
-    def test_quoted_database_param_returns_server_name(
-        self, connection_factory, dashed_database, cursor
-    ):
+    def test_quoted_database_param_returns_server_name(self, connection_factory, dashed_database, cursor):
         """When connect() receives a pre-quoted value, conn.database still returns the unquoted server name."""
         cursor.execute(f'USE DATABASE "{dashed_database}"')
 
@@ -124,9 +117,7 @@ class TestConnectionPropertyMatchesServerCase:
             server_db = cur.fetchone()[0]
 
         assert connection.database == server_db, (
-            f"conn.database case mismatch: "
-            f"driver returned {connection.database!r}, "
-            f"server returned {server_db!r}"
+            f"conn.database case mismatch: driver returned {connection.database!r}, server returned {server_db!r}"
         )
 
     def test_schema_case_matches_server(self, connection):
@@ -136,9 +127,7 @@ class TestConnectionPropertyMatchesServerCase:
             server_schema = cur.fetchone()[0]
 
         assert connection.schema == server_schema, (
-            f"conn.schema case mismatch: "
-            f"driver returned {connection.schema!r}, "
-            f"server returned {server_schema!r}"
+            f"conn.schema case mismatch: driver returned {connection.schema!r}, server returned {server_schema!r}"
         )
 
     def test_schema_stable_after_query(self, connection):
@@ -151,8 +140,7 @@ class TestConnectionPropertyMatchesServerCase:
             cur.execute("SELECT 1")
 
         assert connection.schema == schema_before, (
-            f"conn.schema changed after a simple query: "
-            f"was {schema_before!r}, now {connection.schema!r}"
+            f"conn.schema changed after a simple query: was {schema_before!r}, now {connection.schema!r}"
         )
 
 
