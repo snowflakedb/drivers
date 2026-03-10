@@ -49,7 +49,10 @@ def _load_core() -> ctypes.CDLL:
 try:
     core = _load_core()
 except OSError as err:
-    raise RuntimeError("Couldn't load core driver dependency") from err
+    # Include the path and original error so CI logs show what actually failed
+    core_path = _get_core_path()
+    msg = f"Couldn't load core driver dependency: {err} (path={core_path})"
+    raise RuntimeError(msg) from err
 
 LOGGER_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p
