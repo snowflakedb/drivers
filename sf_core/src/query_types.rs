@@ -28,6 +28,10 @@ pub enum RowType {
         nullable: bool,
         scale: u64,
     },
+    Variant {
+        name: String,
+        nullable: bool,
+    },
 }
 
 impl RowType {
@@ -84,6 +88,13 @@ impl RowType {
             name: name.to_string(),
             nullable,
             scale,
+        }
+    }
+
+    pub fn variant(name: &str, nullable: bool) -> Self {
+        RowType::Variant {
+            name: name.to_string(),
+            nullable,
         }
     }
 }

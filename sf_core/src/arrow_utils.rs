@@ -64,6 +64,11 @@ pub fn create_field_with_type(row_type: &RowType, data_type: DataType) -> Field 
             ];
             Field::new(name, DataType::Struct(fields.into()), *nullable).with_metadata(metadata)
         }
+        RowType::Variant { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "VARIANT".to_string());
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
+        }
     }
 }
 
@@ -247,6 +252,10 @@ fn create_column_array(
                 Arc::new(arrow::array::StructArray::from(values)),
             ))
         }
+        RowType::Variant { .. } => Ok((
+            create_field_with_type(row_type, DataType::Utf8),
+            Arc::new(StringArray::from(values)),
+        )),
     }
 }
 

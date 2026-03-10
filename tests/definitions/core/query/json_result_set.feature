@@ -13,6 +13,18 @@ Feature: JSON Result Set
     And the result for both queries should match
     And Statement should be released
 
+  @core_e2e
+  Scenario: should return arrow even if JSON result set is returned for variant
+    Given Snowflake client is logged in
+    When Table json_result_set_variant (var_col VARIANT) is created
+    And Row is inserted with VARIANT data
+    And Query "SELECT * FROM json_result_set_variant" is executed with Arrow format
+    And Query result format is forced to JSON
+    And Query "SELECT * FROM json_result_set_variant" is executed with JSON format
+    Then Schema for both queries should match
+    And the result for both queries should match
+    And Statement should be released
+
   # TODO add a test for larger result set with chunks
 
   # TODO add a test for all possible data types
