@@ -42,6 +42,15 @@ def _load_core() -> ctypes.CDLL:
     # to a temporary location.
     path = _get_core_path()
     with resources.as_file(path) as lib_path:
+        # On Windows, add the _core directory to the DLL search path so that
+        # bundled dependency DLLs (OpenSSL etc.) next to sf_core.dll are found.
+        # Python 3.8+ restricts DLL search; os.add_dll_directory makes the
+        # loader include this directory for transitive dependency resolution.
+        if sys.platform.startswith("win"):
+            import os
+
+            dll_dir = os.fspath(lib_path.parent)
+            os.add_dll_directory(dll_dir)
         core = ctypes.CDLL(str(lib_path))
     return core
 
