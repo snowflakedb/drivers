@@ -124,7 +124,7 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
     match logical_type {
         "TEXT" => &["finalType", "precision", "scale"],
         "FIXED" => &["finalType", "charLength", "byteLength"],
-        "TIMESTAMP_NTZ" => &[
+        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" => &[
             "finalType",
             "charLength",
             "byteLength",

@@ -81,9 +81,19 @@ pub fn create_field_with_type(
             name,
             nullable,
             scale,
+        }
+        | RowType::TimestampLtz {
+            name,
+            nullable,
+            scale,
         } => {
+            let logical_type = match row_type {
+                RowType::TimestampNtz { .. } => "TIMESTAMP_NTZ",
+                RowType::TimestampLtz { .. } => "TIMESTAMP_LTZ",
+                _ => unreachable!(),
+            };
             let mut metadata = HashMap::new();
-            metadata.insert("logicalType".to_string(), "TIMESTAMP_NTZ".to_string());
+            metadata.insert("logicalType".to_string(), logical_type.to_string());
             metadata.insert("scale".to_string(), scale.to_string());
             let data_type = if scale <= &7 {
                 data_type.unwrap_or(DataType::Int64)
@@ -256,7 +266,7 @@ fn create_column_array(
                 )),
             ))
         }
-        RowType::TimestampNtz { scale, .. } => {
+        RowType::TimestampNtz { scale, .. } | RowType::TimestampLtz { scale, .. } => {
             let all_values: Result<Vec<(i64, i32)>, ArrowUtilsError> = values
                 .into_iter()
                 .map(|v| (v, v.split_once(".")))
