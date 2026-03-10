@@ -43,6 +43,10 @@ export class DriverError extends Error {
   }
 }
 
+function drainLogs(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 export async function callProto<
   TReq extends object = Record<string, unknown>,
   TResp = Record<string, unknown>,
@@ -58,6 +62,11 @@ export async function callProto<
     method,
     Buffer.from(requestBytes),
   );
+
+  // Yield to the event loop so that any log callbacks queued by the
+  // native addon's ThreadSafeFunction during the synchronous API call
+  // are delivered before we continue.
+  await drainLogs();
 
   if (result.code === 0) {
     return decodeMessage<TResp>(responseType, result.data);
