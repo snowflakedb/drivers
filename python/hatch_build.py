@@ -369,9 +369,19 @@ class BuildHook(BuildHookInterface):
                 release_dir = Path(temp_dir) / "release"
             if not release_dir.exists():
                 raise Exception("Core binary not present")
-            for file in release_dir.rglob("*"):
+            # Copy only the sf_core shared library from the top-level release
+            # directory.  Do NOT use rglob — release/deps/ contains proc-macro
+            # DLLs compiled for the host architecture that are not needed at
+            # runtime and bloat the wheel.
+            found_core = False
+            for file in release_dir.iterdir():
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
                     shutil.copy2(file, target_dir)
+                    found_core = True
+            if not found_core:
+                raise Exception(
+                    f"No shared library (.dll/.so/.dylib) found in {release_dir}"
+                )
 
             # On Windows, sf_core.dll dynamically links against OpenSSL
             # (libcrypto-3-arm64.dll, libssl-3-arm64.dll). Since Python 3.8+,

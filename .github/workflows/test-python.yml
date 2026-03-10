@@ -235,51 +235,69 @@ jobs:
           $env:WHEEL_PATH = $wheel
           hatch run test.py${{ matrix.py }}:install-wheel
 
-      # Diagnostic for WinError 127 "procedure not found": discovers the _core
-      # directory dynamically (hatch env hash varies) and dumps full import table
-      # plus dependency DLL info to identify which procedure/DLL is missing.
+      # TEMPORARY diagnostic for WinError 127: find sf_core.dll in the installed
+      # package and dump its import table / dependency info.  Uses PowerShell
+      # to robustly locate the file (cmd for /r without wildcards doesn't
+      # check file existence).
       - name: Diagnose installed core DLL (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         continue-on-error: true
-        shell: cmd
+        shell: pwsh
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          echo === Searching for sf_core.dll in hatch envs ===
-          set "DLL_PATH="
-          for /r "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" %%f in (sf_core.dll) do (
-            set "DLL_PATH=%%f"
-            set "DLL_DIR=%%~dpf"
-          )
-          if not defined DLL_PATH (
-            echo ERROR: sf_core.dll not found in any hatch env
-            exit /b 0
-          )
-          echo Found: %DLL_PATH%
-          echo.
-          echo === Files in _core directory ===
-          dir "%DLL_DIR%" 2>nul
-          echo.
-          echo === sf_core.dll machine type ===
-          dumpbin /headers "%DLL_PATH%" 2>nul | findstr /i "machine"
-          echo.
-          echo === sf_core.dll dependency DLLs (imports from) ===
-          dumpbin /dependents "%DLL_PATH%" 2>nul
-          echo.
-          echo === sf_core.dll full import table (which procedures from which DLLs) ===
-          dumpbin /imports "%DLL_PATH%" 2>nul
-          echo.
-          echo === Check each dependency DLL architecture ===
-          for /f "tokens=*" %%d in ('dumpbin /dependents "%DLL_PATH%" 2^>nul ^| findstr /i ".dll"') do (
-            echo --- %%d ---
-            where "%%d" 2>nul
-            for %%p in ("%%d") do dumpbin /headers "%%~$PATH:p" 2>nul | findstr /i "machine"
-          )
-          echo.
-          echo === OpenSSL DLLs on system PATH ===
-          where libcrypto* 2>nul
-          where libssl* 2>nul
-          echo.
-          echo === Done ===
+          $dll = Get-ChildItem -Path "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" -Recurse -Filter "sf_core.dll" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DirectoryName -like '*_core*' } |
+                 Select-Object -First 1
+          if (-not $dll) {
+            Write-Host "ERROR: sf_core.dll not found in any hatch env _core dir"
+            exit 0
+          }
+          $dllPath = $dll.FullName
+          $dllDir  = $dll.DirectoryName
+          Write-Host "=== Found sf_core.dll ==="
+          Write-Host $dllPath
+          Write-Host ""
+          Write-Host "=== Files in _core directory ==="
+          Get-ChildItem $dllDir | Format-Table Name, Length -AutoSize
+          Write-Host ""
+          # Need vcvarsall for dumpbin
+          & cmd /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 >nul 2>&1 && dumpbin /headers `"$dllPath`" | findstr /i `"machine`""
+          Write-Host ""
+          Write-Host "=== sf_core.dll dependency DLLs ==="
+          & cmd /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 >nul 2>&1 && dumpbin /dependents `"$dllPath`""
+          Write-Host ""
+          Write-Host "=== OpenSSL DLLs on PATH ==="
+          where.exe libcrypto* 2>$null
+          where.exe libssl* 2>$null
+          Write-Host ""
+          Write-Host "=== Quick Python DLL load test ==="
+          $pyExe = Get-ChildItem -Path "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" -Recurse -Filter "python.exe" | Select-Object -First 1
+          if ($pyExe) {
+            # Use sys.argv to pass paths — avoids PowerShell variable expansion
+            # mangling Python f-string $ characters in the here-string.
+            & $pyExe.FullName -c "
+          import ctypes, os, sys
+          dll_dir = sys.argv[1]
+          dll_path = sys.argv[2]
+          os.add_dll_directory(dll_dir)
+          for name in os.listdir(dll_dir):
+              if name.endswith('.dll'):
+                  p = os.path.join(dll_dir, name)
+                  try:
+                      ctypes.CDLL(p)
+                      print('  OK: ' + name)
+                  except OSError as e:
+                      print('  FAIL: ' + name + ': ' + str(e))
+          print()
+          for mode_name, kwargs in [('default', {}), ('winmode=0', {'winmode': 0})]:
+              try:
+                  ctypes.CDLL(dll_path, **kwargs)
+                  print('  Load sf_core.dll (' + mode_name + '): OK')
+              except OSError as e:
+                  print('  Load sf_core.dll (' + mode_name + '): FAIL: ' + str(e))
+          " "$dllDir" "$dllPath"
+          }
+          Write-Host ""
+          Write-Host "=== Done ==="
 
       - name: Run all tests with coverage (Linux)
         if: runner.os == 'Linux'

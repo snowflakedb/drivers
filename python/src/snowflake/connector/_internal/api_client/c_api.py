@@ -1,5 +1,6 @@
 import ctypes
 import logging
+import os
 import sys
 
 from enum import Enum
@@ -38,41 +39,35 @@ def _get_core_path() -> Any:
 def _load_core() -> ctypes.CDLL:
     path = _get_core_path()
     with resources.as_file(path) as lib_path:
+        lib_path_str = str(lib_path)
         if sys.platform.startswith("win"):
-            import os
-            import struct
-
             dll_dir = os.fspath(lib_path.parent)
             os.add_dll_directory(dll_dir)
 
-            # --- TEMPORARY DIAGNOSTIC (remove after Windows ARM64 is green) ---
-            # Log the DLL's PE machine type and try pre-loading dependencies
-            # to isolate which import causes WinError 127.
+        try:
+            core = ctypes.CDLL(lib_path_str)
+        except OSError as first_err:
+            if not sys.platform.startswith("win"):
+                raise
+            # --- TEMPORARY FALLBACK (remove after Windows ARM64 is green) ---
+            # Python 3.8+ uses restricted DLL search (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+            # | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR).  On ARM64 Windows this can fail
+            # with WinError 127.  Fall back to the traditional search (winmode=0)
+            # which uses PATH to locate dependency DLLs.
+            _diag = (  # type: ignore[unreachable]
+                f"[sf_core] Restricted DLL load failed: {first_err}\n"
+                f"[sf_core] DLL path: {lib_path_str}\n"
+                f"[sf_core] _core dir contents: {os.listdir(lib_path.parent)}\n"
+                f"[sf_core] Retrying with winmode=0 (traditional DLL search)..."
+            )
+            print(_diag, file=sys.stderr, flush=True)
             try:
-                with open(str(lib_path), "rb") as f:
-                    f.seek(0x3C)
-                    pe_offset = struct.unpack("<I", f.read(4))[0]
-                    f.seek(pe_offset + 4)
-                    machine = struct.unpack("<H", f.read(2))[0]
-                    arch_map = {0x8664: "x86_64", 0xAA64: "ARM64", 0x14C: "x86"}
-                    logging.getLogger(__name__).warning(
-                        "sf_core.dll PE machine: 0x%X (%s)", machine, arch_map.get(machine, "unknown")
-                    )
-            except Exception:
-                pass
-
-            # Try pre-loading known dependencies to find which one fails
-            for dep_name in ["libcrypto-3-arm64.dll", "libssl-3-arm64.dll"]:
-                dep_path = os.path.join(dll_dir, dep_name)
-                if os.path.exists(dep_path):
-                    try:
-                        ctypes.CDLL(dep_path)
-                        logging.getLogger(__name__).warning("Pre-loaded OK: %s", dep_name)
-                    except OSError as dep_err:
-                        logging.getLogger(__name__).warning("Pre-load FAILED: %s: %s", dep_name, dep_err)
-            # --- END TEMPORARY DIAGNOSTIC ---
-
-        core = ctypes.CDLL(str(lib_path))
+                core = ctypes.CDLL(lib_path_str, winmode=0)
+                print("[sf_core] winmode=0 load succeeded", file=sys.stderr, flush=True)
+            except OSError:
+                # Both modes failed — raise the original error
+                raise first_err from None
+            # --- END TEMPORARY FALLBACK ---
     return core
 
 
