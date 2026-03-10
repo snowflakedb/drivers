@@ -320,7 +320,18 @@ class BuildHook(BuildHookInterface):
         # Ensure target directory exists
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build the Rust core library in release mode with optimizations
+        # Build the Rust core library in release mode with optimizations.
+        # On Windows ARM64, the Rust toolchain may be x86_64 running under
+        # emulation (host: x86_64-pc-windows-msvc). Without --target, cargo
+        # builds for the host triple, producing x86_64 code that the ARM64
+        # MSVC linker wraps in an ARM64 PE — causing WinError 127 at load
+        # time. Detect ARM64 Windows and pass --target explicitly.
+        import platform
+
+        rust_target = None
+        if sys.platform == "win32" and platform.machine() == "ARM64":
+            rust_target = "aarch64-pc-windows-msvc"
+
         with TemporaryDirectory() as temp_dir:
             cargo_args = [
                 "cargo",
@@ -333,6 +344,8 @@ class BuildHook(BuildHookInterface):
                 "--target-dir",
                 str(temp_dir),
             ]
+            if rust_target:
+                cargo_args.extend(["--target", rust_target])
 
             try:
                 result = subprocess.run(
@@ -348,8 +361,12 @@ class BuildHook(BuildHookInterface):
                 print(f"stderr: {e.stderr}")
                 raise
 
-            # Copy built artifacts from release directory to _core directory
-            release_dir = Path(temp_dir) / "release"
+            # When --target is used, output goes to <target-dir>/<target>/release/
+            # instead of <target-dir>/release/.
+            if rust_target:
+                release_dir = Path(temp_dir) / rust_target / "release"
+            else:
+                release_dir = Path(temp_dir) / "release"
             if not release_dir.exists():
                 raise Exception("Core binary not present")
             for file in release_dir.rglob("*"):
