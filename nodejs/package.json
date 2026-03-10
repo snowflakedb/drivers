@@ -1,0 +1,28 @@
+{
+  "name": "snowflake-connector-nodejs-ud",
+  "version": "0.1.0",
+  "description": "Minimal Node.js driver for Snowflake using sf_core",
+  "private": true,
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "demo": "ts-node src/__demo.ts",
+    "format": "prettier --write 'src/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts'",
+    "generate": "npm run generate:proto && npm run generate:types && npm run generate:sf-core-client",
+    "generate:proto": "pbjs -t static-module -w commonjs -o src/sf_core_client/generated/proto.js ../protobuf/database_driver_v1.proto",
+    "generate:types": "pbts -o src/sf_core_client/generated/proto.d.ts src/sf_core_client/generated/proto.js",
+    "generate:sf-core-client": "ts-node src/sf_core_client/generate.ts"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0",
+    "protobufjs": "^7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "node-gyp": "^11.0.0",
+    "prettier": "^3.8.1",
+    "protobufjs-cli": "^1.1.3",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.7.0"
+  }
+}
