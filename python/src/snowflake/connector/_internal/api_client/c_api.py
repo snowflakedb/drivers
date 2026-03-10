@@ -36,21 +36,42 @@ def _get_core_path() -> Any:
 
 
 def _load_core() -> ctypes.CDLL:
-    # This context manager is the safe way to get a
-    # file path from importlib.resources. It handles cases
-    # where the file is inside a zip and needs to be extracted
-    # to a temporary location.
     path = _get_core_path()
     with resources.as_file(path) as lib_path:
-        # On Windows, add the _core directory to the DLL search path so that
-        # bundled dependency DLLs (OpenSSL etc.) next to sf_core.dll are found.
-        # Python 3.8+ restricts DLL search; os.add_dll_directory makes the
-        # loader include this directory for transitive dependency resolution.
         if sys.platform.startswith("win"):
             import os
+            import struct
 
             dll_dir = os.fspath(lib_path.parent)
             os.add_dll_directory(dll_dir)
+
+            # --- TEMPORARY DIAGNOSTIC (remove after Windows ARM64 is green) ---
+            # Log the DLL's PE machine type and try pre-loading dependencies
+            # to isolate which import causes WinError 127.
+            try:
+                with open(str(lib_path), "rb") as f:
+                    f.seek(0x3C)
+                    pe_offset = struct.unpack("<I", f.read(4))[0]
+                    f.seek(pe_offset + 4)
+                    machine = struct.unpack("<H", f.read(2))[0]
+                    arch_map = {0x8664: "x86_64", 0xAA64: "ARM64", 0x14C: "x86"}
+                    logging.getLogger(__name__).warning(
+                        "sf_core.dll PE machine: 0x%X (%s)", machine, arch_map.get(machine, "unknown")
+                    )
+            except Exception:
+                pass
+
+            # Try pre-loading known dependencies to find which one fails
+            for dep_name in ["libcrypto-3-arm64.dll", "libssl-3-arm64.dll"]:
+                dep_path = os.path.join(dll_dir, dep_name)
+                if os.path.exists(dep_path):
+                    try:
+                        ctypes.CDLL(dep_path)
+                        logging.getLogger(__name__).warning("Pre-loaded OK: %s", dep_name)
+                    except OSError as dep_err:
+                        logging.getLogger(__name__).warning("Pre-load FAILED: %s: %s", dep_name, dep_err)
+            # --- END TEMPORARY DIAGNOSTIC ---
+
         core = ctypes.CDLL(str(lib_path))
     return core
 
@@ -58,7 +79,6 @@ def _load_core() -> ctypes.CDLL:
 try:
     core = _load_core()
 except OSError as err:
-    # Include the path and original error so CI logs show what actually failed
     core_path = _get_core_path()
     msg = f"Couldn't load core driver dependency: {err} (path={core_path})"
     raise RuntimeError(msg) from err
