@@ -42,3 +42,6 @@ add_odbc_test(e2e_types_string_conversion_to_c_interval types/string_conversion_
 add_odbc_test(e2e_types_string_conversion_to_c_real types/string_conversion_to_c_real.cpp)
 add_odbc_test(e2e_types_string_conversion_to_c_temporal types/string_conversion_to_c_temporal.cpp)
 add_odbc_test(e2e_types_string_lob types/string_lob.cpp)
+add_odbc_test(e2e_types_object types/object.cpp)
+add_odbc_test(e2e_types_array types/array.cpp)
+add_odbc_test(e2e_types_map types/map.cpp)
