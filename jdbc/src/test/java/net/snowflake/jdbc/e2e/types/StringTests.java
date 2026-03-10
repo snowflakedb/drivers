@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Statement;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
@@ -28,87 +27,113 @@ public class StringTests extends SnowflakeIntegrationTestBase {
   @Test
   public void shouldCastStringValuesToAppropriateTypeForStringAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
-    // Then All values should be returned as appropriate type
     Connection connection = getDefaultConnection();
+
+    // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
     String sql =
         String.format(
             "SELECT 'hello'::%1$s, 'Hello World'::%1$s, '%2$s'::%1$s", STRING_TYPE, JAPANESE_TEXT);
-    assertSingleRow(connection, sql, Arrays.asList("hello", "Hello World", JAPANESE_TEXT));
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then All values should be returned as appropriate type
+          assertSingleRow(resultSet, Arrays.asList("hello", "Hello World", JAPANESE_TEXT));
+        });
   }
 
   @Test
   public void shouldSelectHardcodedStringLiterals() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3"
     // is executed
-    // Then the result should contain:
-    Connection connection = getDefaultConnection();
-    assertSingleRow(
+    String sql = "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3";
+    withQueryResult(
         connection,
-        "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3",
-        Arrays.asList("hello", "Hello World", "Snowflake Driver Test"));
+        sql,
+        resultSet -> {
+
+          // Then the result should contain:
+          assertSingleRow(
+              resultSet, Arrays.asList("hello", "Hello World", "Snowflake Driver Test"));
+        });
   }
 
   @Test
   public void shouldSelectStringLiteralsWithCornerCaseValues() throws Exception {
     // Given Snowflake client is logged in
-    // When Query selecting corner case string literals is executed
-    // Then the result should contain expected corner case string values
     Connection connection = getDefaultConnection();
+
+    // When Query selecting corner case string literals is executed
     String sql =
         String.format(
             "SELECT ''::%1$s, 'X'::%1$s, '   '::%1$s, CHAR(9)::%1$s, CHAR(10)::%1$s, '%2$s'::%1$s,"
                 + " '%3$s'::%1$s, ''''::%1$s, CHAR(92)::%1$s, NULL::%1$s, '%4$s'::%1$s, '%5$s'::%1$s",
             STRING_TYPE, SNOWMAN, JAPANESE_TEXT, COMBINING_CHAR_TEXT, SURROGATE_PAIR_TEXT);
-    assertSingleRow(
+    withQueryResult(
         connection,
         sql,
-        Arrays.asList(
-            "",
-            "X",
-            "   ",
-            "\t",
-            "\n",
-            SNOWMAN,
-            JAPANESE_TEXT,
-            "'",
-            "\\",
-            null,
-            COMBINING_CHAR_TEXT,
-            SURROGATE_PAIR_TEXT));
+        resultSet -> {
+
+          // Then the result should contain expected corner case string values
+          assertSingleRow(
+              resultSet,
+              Arrays.asList(
+                  "",
+                  "X",
+                  "   ",
+                  "\t",
+                  "\n",
+                  SNOWMAN,
+                  JAPANESE_TEXT,
+                  "'",
+                  "\\",
+                  null,
+                  COMBINING_CHAR_TEXT,
+                  SURROGATE_PAIR_TEXT));
+        });
   }
 
   @Test
   public void shouldSelectHardcodedStringValuesFromTable() throws Exception {
     // Given Snowflake client is logged in
-    // And A temporary table with VARCHAR column is created
-    // And The table is populated with string values
-    // When Query "SELECT * FROM {table}" is executed
-    // Then the result should contain the inserted hardcoded string values
     Connection connection = getDefaultConnection();
+
+    // And A temporary table with VARCHAR column is created
     String tableName = createTempTable(connection, "ud_string_", "id INT, col " + STRING_TYPE);
+
+    // And The table is populated with string values
     execute(
         connection,
         "INSERT INTO "
             + tableName
             + " VALUES (1, 'hello'), (2, 'Hello World'), (3, 'Snowflake Driver Test')");
 
-    assertRowsInOrder(
+    // When Query "SELECT * FROM {table}" is executed
+    String sql = "SELECT col FROM " + tableName + " ORDER BY id";
+    withQueryResult(
         connection,
-        "SELECT col FROM " + tableName + " ORDER BY id",
-        Arrays.asList("hello", "Hello World", "Snowflake Driver Test"));
+        sql,
+        resultSet -> {
+
+          // Then the result should contain the inserted hardcoded string values
+          assertRowsInOrder(
+              resultSet, Arrays.asList("hello", "Hello World", "Snowflake Driver Test"));
+        });
   }
 
   @Test
   public void shouldSelectCornerCaseStringValuesFromTable() throws Exception {
     // Given Snowflake client is logged in
-    // And A temporary table with VARCHAR column is created
-    // And The table is populated with corner case string values
-    // When Query "SELECT * FROM {table}" is executed
-    // Then the result should contain the inserted corner case string values
     Connection connection = getDefaultConnection();
+
+    // And A temporary table with VARCHAR column is created
     String tableName = createTempTable(connection, "ud_string_", "id INT, col " + STRING_TYPE);
+
+    // And The table is populated with corner case string values
     execute(
         connection,
         "INSERT INTO "
@@ -134,104 +159,128 @@ public class StringTests extends SnowflakeIntegrationTestBase {
             + SURROGATE_PAIR_TEXT
             + "'");
 
-    assertRowsInOrder(
+    // When Query "SELECT * FROM {table}" is executed
+    String sql = "SELECT col FROM " + tableName + " ORDER BY id";
+    withQueryResult(
         connection,
-        "SELECT col FROM " + tableName + " ORDER BY id",
-        Arrays.asList(
-            "",
-            "X",
-            "   ",
-            "\t",
-            "\n",
-            SNOWMAN,
-            JAPANESE_TEXT,
-            "'",
-            "\\",
-            null,
-            COMBINING_CHAR_TEXT,
-            SURROGATE_PAIR_TEXT));
+        sql,
+        resultSet -> {
+
+          // Then the result should contain the inserted corner case string values
+          assertRowsInOrder(
+              resultSet,
+              Arrays.asList(
+                  "",
+                  "X",
+                  "   ",
+                  "\t",
+                  "\n",
+                  SNOWMAN,
+                  JAPANESE_TEXT,
+                  "'",
+                  "\\",
+                  null,
+                  COMBINING_CHAR_TEXT,
+                  SURROGATE_PAIR_TEXT));
+        });
   }
 
   @Test
   public void shouldDownloadStringDataInMultipleChunks() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT
     // => 10000)) v ORDER BY id" is executed
-    // Then there are 10000 rows returned
-    // And all returned string values should match the generated values in order
-    Connection connection = getDefaultConnection();
     String sql =
         "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val "
             + "FROM TABLE(GENERATOR(ROWCOUNT => "
             + LARGE_RESULT_SET_SIZE
             + ")) v ORDER BY id";
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      int expected = 0;
-      while (resultSet.next()) {
-        assertEquals(expected, resultSet.getLong(1), "ID mismatch at row " + expected);
-        assertFalse(resultSet.wasNull(), "ID should not be NULL at row " + expected);
-        assertStringColumn(
-            resultSet,
-            2,
-            String.valueOf(expected),
-            "String value mismatch for " + STRING_TYPE + ", row " + expected);
-        expected++;
-      }
-      assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + STRING_TYPE);
-    }
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then there are 10000 rows returned and all string values should match the
+          // generated values in order
+          int expected = 0;
+          while (resultSet.next()) {
+            assertEquals(expected, resultSet.getLong(1), "ID mismatch at row " + expected);
+            assertFalse(resultSet.wasNull(), "ID should not be NULL at row " + expected);
+            assertStringColumn(
+                resultSet,
+                2,
+                String.valueOf(expected),
+                "String value mismatch for " + STRING_TYPE + ", row " + expected);
+            expected++;
+          }
+          assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + STRING_TYPE);
+        });
   }
 
   @Test
   public void shouldInsertAndSelectBackHardcodedStringValuesUsingParameterBinding()
       throws Exception {
     // Given Snowflake client is logged in
-    // And A temporary table with VARCHAR column is created
-    // When String value 'Test binding value 日本語' is inserted using parameter binding
-    // And Query "SELECT * FROM {table}" is executed
-    // Then the result should contain the bound string value 'Test binding value 日本語'
     Connection connection = getDefaultConnection();
+
+    // And A temporary table with VARCHAR column is created
     String tableName = createTempTable(connection, "ud_string_", "id INT, col " + STRING_TYPE);
+
+    // When String value 'Test binding value 日本語' is inserted using parameter binding
     try (PreparedStatement preparedStatement =
         connection.prepareStatement("INSERT INTO " + tableName + " (id, col) VALUES (?, ?)")) {
       preparedStatement.setInt(1, 1);
       preparedStatement.setString(2, "Test binding value " + JAPANESE_TEXT);
       preparedStatement.execute();
     }
-    assertRowsInOrder(
+
+    // And Query "SELECT * FROM {table}" is executed
+    String sql = "SELECT col FROM " + tableName + " ORDER BY id";
+    withQueryResult(
         connection,
-        "SELECT col FROM " + tableName + " ORDER BY id",
-        Arrays.asList("Test binding value " + JAPANESE_TEXT));
+        sql,
+        resultSet -> {
+
+          // Then the result should contain the bound string value 'Test binding value 日本語'
+          assertRowsInOrder(resultSet, Arrays.asList("Test binding value " + JAPANESE_TEXT));
+        });
   }
 
   @Test
   public void shouldSelectStringLiteralsUsingParameterBinding() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values
     // ['hello', 'Hello World', '日本語テスト']
-    // Then the result should contain:
-    Connection connection = getDefaultConnection();
     String sql = String.format("SELECT ?::%1$s, ?::%1$s, ?::%1$s", STRING_TYPE);
-    try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
-      preparedStatement.setString(1, "hello");
-      preparedStatement.setString(2, "Hello World");
-      preparedStatement.setString(3, JAPANESE_TEXT);
-      try (ResultSet resultSet = preparedStatement.executeQuery()) {
-        assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
-        assertStringColumn(resultSet, 1, "hello", "Column 1 mismatch for " + STRING_TYPE);
-        assertStringColumn(resultSet, 2, "Hello World", "Column 2 mismatch for " + STRING_TYPE);
-        assertStringColumn(resultSet, 3, JAPANESE_TEXT, "Column 3 mismatch for " + STRING_TYPE);
-        assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
-      }
-    }
+    // When
+    withPreparedQueryResult(
+        connection,
+        sql,
+        ps -> {
+          ps.setString(1, "hello");
+          ps.setString(2, "Hello World");
+          ps.setString(3, JAPANESE_TEXT);
+        },
+        resultSet -> {
+          // Then the result should contain:
+          assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
+          assertStringColumn(resultSet, 1, "hello", "Column 1 mismatch for " + STRING_TYPE);
+          assertStringColumn(resultSet, 2, "Hello World", "Column 2 mismatch for " + STRING_TYPE);
+          assertStringColumn(resultSet, 3, JAPANESE_TEXT, "Column 3 mismatch for " + STRING_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
+        });
   }
 
   @Test
   public void shouldSelectCornerCaseStringValuesUsingParameterBinding() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
-    // Then the result should match the bound corner case value
     Connection connection = getDefaultConnection();
+
+    // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
     assertSingleBoundStringValue(connection, "");
     assertSingleBoundStringValue(connection, "X");
     assertSingleBoundStringValue(connection, "   ");
@@ -244,47 +293,39 @@ public class StringTests extends SnowflakeIntegrationTestBase {
     assertSingleBoundStringValue(connection, COMBINING_CHAR_TEXT);
     assertSingleBoundStringValue(connection, SURROGATE_PAIR_TEXT);
 
-    try (PreparedStatement preparedStatement =
-        connection.prepareStatement(String.format("SELECT ?::%1$s", STRING_TYPE))) {
-      preparedStatement.setNull(1, Types.VARCHAR);
-      try (ResultSet resultSet = preparedStatement.executeQuery()) {
-        assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
-        assertStringColumn(resultSet, 1, null, "NULL value mismatch for " + STRING_TYPE);
-        assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
-      }
-    }
+    // Then the result should match the bound corner case value
+    withPreparedQueryResult(
+        connection,
+        String.format("SELECT ?::%1$s", STRING_TYPE),
+        ps -> ps.setNull(1, Types.VARCHAR),
+        resultSet -> {
+          assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
+          assertStringColumn(resultSet, 1, null, "NULL value mismatch for " + STRING_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
+        });
   }
 
-  private static void assertSingleRow(
-      Connection connection, String sql, List<String> expectedValues) throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
-      for (int i = 0; i < expectedValues.size(); i++) {
-        assertStringColumn(
-            resultSet,
-            i + 1,
-            expectedValues.get(i),
-            "Column " + (i + 1) + " mismatch for " + STRING_TYPE);
-      }
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
+  private static void assertSingleRow(ResultSet resultSet, List<String> expectedValues)
+      throws Exception {
+    assertTrue(resultSet.next(), "Expected one row for type: " + STRING_TYPE);
+    for (int i = 0; i < expectedValues.size(); i++) {
+      assertStringColumn(
+          resultSet,
+          i + 1,
+          expectedValues.get(i),
+          "Column " + (i + 1) + " mismatch for " + STRING_TYPE);
     }
+    assertFalse(resultSet.next(), "Expected exactly one row for type: " + STRING_TYPE);
   }
 
-  private static void assertRowsInOrder(
-      Connection connection, String sql, List<String> expectedValues) throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      for (int i = 0; i < expectedValues.size(); i++) {
-        assertTrue(resultSet.next(), "Missing row " + i + " for " + STRING_TYPE);
-        assertStringColumn(
-            resultSet,
-            1,
-            expectedValues.get(i),
-            "Value mismatch for " + STRING_TYPE + ", row " + i);
-      }
-      assertFalse(resultSet.next(), "Unexpected extra rows for " + STRING_TYPE);
+  private static void assertRowsInOrder(ResultSet resultSet, List<String> expectedValues)
+      throws Exception {
+    for (int i = 0; i < expectedValues.size(); i++) {
+      assertTrue(resultSet.next(), "Missing row " + i + " for " + STRING_TYPE);
+      assertStringColumn(
+          resultSet, 1, expectedValues.get(i), "Value mismatch for " + STRING_TYPE + ", row " + i);
     }
+    assertFalse(resultSet.next(), "Unexpected extra rows for " + STRING_TYPE);
   }
 
   private static void assertStringColumn(

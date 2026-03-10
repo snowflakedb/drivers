@@ -19,10 +19,14 @@ TEST_CASE("should cast boolean values to appropriate type", "[boolean]") {
   const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN");
 
   // Then All values should be returned as appropriate type
+  auto col1 = get_data<SQL_C_BIT>(stmt, 1);
+  auto col2 = get_data<SQL_C_BIT>(stmt, 2);
+  auto col3 = get_data<SQL_C_BIT>(stmt, 3);
+
   // And Values should match [TRUE, FALSE, TRUE]
-  REQUIRE(get_data<SQL_C_BIT>(stmt, 1) == 1);
-  REQUIRE(get_data<SQL_C_BIT>(stmt, 2) == 0);
-  REQUIRE(get_data<SQL_C_BIT>(stmt, 3) == 1);
+  REQUIRE(col1 == 1);
+  REQUIRE(col2 == 0);
+  REQUIRE(col3 == 1);
 }
 
 TEST_CASE("should select boolean literals", "[boolean]") {

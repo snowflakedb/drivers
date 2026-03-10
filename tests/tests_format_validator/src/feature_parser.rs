@@ -56,6 +56,38 @@ pub enum StepType {
     But,
 }
 
+impl Scenario {
+    /// Checks that the scenario has at least one When and one Then step.
+    /// Returns a list of error messages for any missing mandatory step types.
+    pub fn validate_mandatory_steps(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        let has_when = self
+            .steps
+            .iter()
+            .any(|s| matches!(s.step_type, StepType::When));
+        let has_then = self
+            .steps
+            .iter()
+            .any(|s| matches!(s.step_type, StepType::Then));
+
+        if !has_when {
+            errors.push(format!(
+                "Scenario '{}' is missing a mandatory 'When' step",
+                self.name
+            ));
+        }
+        if !has_then {
+            errors.push(format!(
+                "Scenario '{}' is missing a mandatory 'Then' step",
+                self.name
+            ));
+        }
+
+        errors
+    }
+}
+
 impl Feature {
     pub fn parse_from_file(path: &Path) -> Result<Feature> {
         let content = std::fs::read_to_string(path)

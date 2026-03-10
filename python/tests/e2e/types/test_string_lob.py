@@ -7,6 +7,9 @@ This module tests large VARCHAR values at the following limits:
 Reference: https://docs.snowflake.com/en/sql-reference/data-types-text
 """
 
+from .utils import assert_connection_is_open
+
+
 # =============================================================================
 # LOB SIZE LIMITS
 # =============================================================================
@@ -40,6 +43,7 @@ class TestStringLob:
         # Corner case: string at the historical LOB limit (16 MB = 16,777,216 bytes)
 
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.lob_16mb_table"
@@ -66,6 +70,7 @@ class TestStringLob:
         # Corner case: string at maximum LOB limit (128 MB) - requires Increased LOB Size feature
 
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.lob_128mb_table"

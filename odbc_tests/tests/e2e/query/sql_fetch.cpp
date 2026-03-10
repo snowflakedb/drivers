@@ -54,8 +54,7 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLSetStmtAttr is called with SQL_ATTR_CURSOR_TYPE to set the cursor type
-  // And SQLGetStmtAttr is called to get the current cursor type
+  // When SQLSetStmtAttr is called with SQL_ATTR_CURSOR_TYPE and SQLGetStmtAttr is called to get the current cursor type
   SQLULEN cursor_type = -1;
   SQLINTEGER length = 0;
 
@@ -1031,12 +1030,10 @@ TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]")
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When SQLExecDirect is called to execute a query that returns 3 rows
+  // When SQLExecDirect is called to execute a query that returns 3 rows with no columns bound
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id", SQL_NTS);
   CHECK_ODBC(ret, stmt);
-
-  // And no columns are bound
 
   // Then SQLFetch should return SQL_SUCCESS for each row
   ret = SQLFetch(stmt.getHandle());
@@ -1056,7 +1053,6 @@ TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]")
   REQUIRE(ret == SQL_NO_DATA);
 
   // And SQLGetData can still retrieve data after moving cursor without bound columns
-  // Reset and test again
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
   CHECK_ODBC(ret, stmt);
 

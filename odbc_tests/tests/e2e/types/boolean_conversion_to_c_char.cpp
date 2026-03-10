@@ -48,6 +48,7 @@ TEST_CASE("should handle NULL boolean with character C types", "[datatype][boole
   // Given Snowflake client is logged in
   Connection conn;
 
+  // When Query "SELECT NULL::BOOLEAN" is executed
   auto check_null = [&](SQLSMALLINT c_type) {
     const auto stmt = conn.execute_fetch("SELECT NULL::BOOLEAN");
     char buffer[100] = {};
@@ -57,7 +58,6 @@ TEST_CASE("should handle NULL boolean with character C types", "[datatype][boole
     REQUIRE(indicator == SQL_NULL_DATA);
   };
 
-  // When Query "SELECT NULL::BOOLEAN" is executed
   // Then SQL_C_CHAR should return SQL_NULL_DATA indicator
   check_null(SQL_C_CHAR);
   // And SQL_C_WCHAR should return SQL_NULL_DATA indicator

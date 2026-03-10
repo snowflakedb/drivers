@@ -50,8 +50,7 @@ Feature: FLOAT type support
   Scenario: should download large result set with multiple chunks from GENERATOR for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
-    Then Result should contain 50000 rows
-    And All values should be returned as appropriate float type
+    Then Result should contain 50000 rows with all values returned as appropriate float type
 
   # =========================================================================== #
   #                             Table operations                                #
@@ -76,8 +75,7 @@ Feature: FLOAT type support
     Given Snowflake client is logged in
     And Table with <type> column exists with boundary values [1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 123456789012345.0]
     When Query "SELECT * FROM <table>" is executed
-    Then Result should contain maximum, minimum, and precision boundary values
-    And All values should be preserved within float precision limits
+    Then Result should contain maximum, minimum, and precision boundary values preserved within float precision limits
 
   @python_e2e @jdbc_e2e
   Scenario: should handle NULL values from table for float and synonyms
@@ -91,8 +89,7 @@ Feature: FLOAT type support
     Given Snowflake client is logged in
     And Table with <type> column exists with 50000 sequential values
     When Query "SELECT * FROM <table>" is executed
-    Then Result should contain 50000 rows
-    And All values should be returned as appropriate float type
+    Then Result should contain 50000 rows with all values returned as appropriate float type
 
   # =========================================================================== #
   #                            Parameter binding                                #

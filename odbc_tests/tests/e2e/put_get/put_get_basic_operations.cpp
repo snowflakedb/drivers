@@ -141,17 +141,3 @@ TEST_CASE("should return correct rowset for GET", "[put_get]") {
   OLD_DRIVER_ONLY("BD#3") { CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_MESSAGE_IDX) == "DECRYPTED"); }
   NEW_DRIVER_ONLY("BD#3") { CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_MESSAGE_IDX) == ""); }
 }
-
-TEST_CASE("should return correct column metadata for PUT", "[put_get]") {
-  SKIP("SNOW-2391324: Metadata check not implemented in new driver (SQLDescribeCol returns IM001)");
-  // Given Snowflake client is logged in
-  // When File is uploaded to stage
-  // Then Column metadata for PUT command should be correct
-}
-
-TEST_CASE("should return correct column metadata for GET", "[put_get]") {
-  SKIP("SNOW-2391324: Metadata check not implemented in new driver (SQLDescribeCol returns IM001)");
-  // Given File is uploaded to stage
-  // When File is downloaded using GET command
-  // Then Column metadata for GET command should be correct
-}

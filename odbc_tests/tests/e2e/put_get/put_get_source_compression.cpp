@@ -174,10 +174,10 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
 }
 
 TEST_CASE("should return error for unsupported compression type", "[put_get]") {
+  // Given Snowflake client is logged in
   Connection conn;
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_UNSUPPORTED"));
 
-  // Given Snowflake client is logged in
   // And File compressed with unsupported format
   auto [filename, file] = test_file("LZMA");
 

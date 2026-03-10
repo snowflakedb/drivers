@@ -21,7 +21,7 @@ from decimal import Decimal
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_sequential_values, assert_type
+from .utils import assert_connection_is_open, assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -75,16 +75,16 @@ class TestNumberTypeCasting:
     @number_type_parametrize
     def test_should_cast_number_values_to_appropriate_type_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 0::<type>(10,0), 123::<type>(10,0), 0.00::<type>(10,2), 123.45::<type>(10,2)" is executed
         sql = f"SELECT 0::{num_type}(10,0), 123::{num_type}(10,0), 0.00::{num_type}(10,2), 123.45::{num_type}(10,2)"
         result = execute_query(sql, single_row=True)
 
-        # Then All values should be returned as appropriate type
+        # Then All values should be returned as appropriate type matching [0, 123, 0.00, 123.45]
         assert_type(result[:2], int)  # scale=0 → int
         assert_type(result[2:], Decimal)  # scale>0 → Decimal
 
-        # And Values should match [0, 123, 0.00, 123.45]
         assert result == (0, 123, Decimal("0.00"), Decimal("123.45"))
 
 
@@ -94,6 +94,7 @@ class TestNumberLiteral:
     @number_type_parametrize
     def test_should_select_number_literals_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 0::<type>(10,0), -456::<type>(10,0), 1.50::<type>(10,2), -123.45::<type>(10,2),
         # 123.456::<type>(15,3), -789.012::<type>(15,3)" is executed
@@ -114,6 +115,7 @@ class TestNumberLiteral:
     @number_type_parametrize
     def test_should_handle_high_precision_values_from_literals_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 12345678901234567890123456789012345678::<type>(38,0),
         # 123456789012345678901234567890123456.78::<type>(38,2),
@@ -141,6 +143,7 @@ class TestNumberLiteral:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 999.99::<type>(5,2), -999.99::<type>(5,2), 99999999::<type>(8,0),
         # -99999999::<type>(8,0)" is executed
@@ -161,6 +164,7 @@ class TestNumberLiteral:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 99999999999999999999999999999999999999::<type>(38,0),
         # -99999999999999999999999999999999999999::<type>(38,0)" is executed
@@ -175,6 +179,7 @@ class TestNumberLiteral:
     @number_type_parametrize
     def test_should_handle_null_values_from_literals_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT NULL::<type>(10,0), 42::<type>(10,0), NULL::<type>(10,2), 42.50::<type>(10,2)" is executed
         sql = f"SELECT NULL::{num_type}(10,0), 42::{num_type}(10,0), NULL::{num_type}(10,2), 42.50::{num_type}(10,2)"
@@ -191,6 +196,7 @@ class TestNumberLiteral:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query
         # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v"
@@ -208,13 +214,13 @@ class TestNumberLiteral:
         )
         rows = execute_query(sql)
 
-        # Then Column 1 should contain sequential integers from 0 to 29999
+        # Then Result should contain 30000 rows with sequential integers in column 1
+        # and sequential decimals starting from 0.12345 in column 2
         col0_values = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col0_values, int)
         assert_sequential_values(col0_values, LARGE_RESULT_SET_SIZE)
 
-        # And Column 2 should contain sequential decimals starting from 0.12345
         col1_values = [row[1] for row in rows]
         # Python: scale>0 -> Decimal
         assert_type(col1_values, Decimal)
@@ -233,6 +239,7 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3), <type>(20,5)) exists
         table_name = f"{tmp_schema}.number_table_{num_type.lower()}"
@@ -244,18 +251,36 @@ class TestNumberTable:
             f"col_scale5 {num_type}(20,5))"
         )
 
-        # And Row (123, 123.45, 123.456, 12345.67890) is inserted
-        # And Row (-456, -67.89, -789.012, -98765.43210) is inserted
-        # And Row (0, 0.00, 0.000, 0.00000) is inserted
-        # And Row (999999, 999.99, 1000.500, 123456.78901) is inserted
         test_data = [
             (123, Decimal("123.45"), Decimal("123.456"), Decimal("12345.67890")),
             (-456, Decimal("-67.89"), Decimal("-789.012"), Decimal("-98765.43210")),
             (0, Decimal("0.00"), Decimal("0.000"), Decimal("0.00000")),
             (999999, Decimal("999.99"), Decimal("1000.500"), Decimal("123456.78901")),
         ]
-        for row in test_data:
-            execute_query(f"INSERT INTO {table_name} VALUES ({row[0]}, {row[1]}, {row[2]}, {row[3]})")
+
+        # And Row (123, 123.45, 123.456, 12345.67890) is inserted
+        execute_query(
+            f"INSERT INTO {table_name} VALUES ("
+            f"{test_data[0][0]}, {test_data[0][1]}, {test_data[0][2]}, {test_data[0][3]})"
+        )
+
+        # And Row (-456, -67.89, -789.012, -98765.43210) is inserted
+        execute_query(
+            f"INSERT INTO {table_name} VALUES ("
+            f"{test_data[1][0]}, {test_data[1][1]}, {test_data[1][2]}, {test_data[1][3]})"
+        )
+
+        # And Row (0, 0.00, 0.000, 0.00000) is inserted
+        execute_query(
+            f"INSERT INTO {table_name} VALUES ("
+            f"{test_data[2][0]}, {test_data[2][1]}, {test_data[2][2]}, {test_data[2][3]})"
+        )
+
+        # And Row (999999, 999.99, 1000.500, 123456.78901) is inserted
+        execute_query(
+            f"INSERT INTO {table_name} VALUES ("
+            f"{test_data[3][0]}, {test_data[3][1]}, {test_data[3][2]}, {test_data[3][3]})"
+        )
 
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -272,6 +297,7 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(38,0), <type>(38,2), <type>(38,10), <type>(38,37)) exists
         table_name = f"{tmp_schema}.precision_table_{num_type.lower()}"
@@ -314,23 +340,26 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(5,2), <type>(8,0)) exists
         table_name = f"{tmp_schema}.boundary_table_{num_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col_5_2 {num_type}(5,2), col_8_0 {num_type}(8,0))")
 
-        # And Row (999.99, 99999999) is inserted
-        # And Row (-999.99, -99999999) is inserted
-        # And Row (123.45, 12345678) is inserted
-        # And Row (0.01, 0) is inserted
         test_data = [
             (NUMBER_5_2_MAX, NUMBER_8_0_MAX),
             (NUMBER_5_2_MIN, NUMBER_8_0_MIN),
             (Decimal("123.45"), 12345678),
             (Decimal("0.01"), 0),
         ]
-        for row in test_data:
-            execute_query(f"INSERT INTO {table_name} VALUES ({row[0]}, {row[1]})")
+        # And Row (999.99, 99999999) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES ({test_data[0][0]}, {test_data[0][1]})")
+        # And Row (-999.99, -99999999) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES ({test_data[1][0]}, {test_data[1][1]})")
+        # And Row (123.45, 12345678) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES ({test_data[2][0]}, {test_data[2][1]})")
+        # And Row (0.01, 0) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES ({test_data[3][0]}, {test_data[3][1]})")
 
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -347,21 +376,23 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(38,0), <type>(38,37)) exists
         table_name = f"{tmp_schema}.high_precision_boundary_table_{num_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_37 {num_type}(38,37))")
 
-        # And Row (99999999999999999999999999999999999999, 1.2345678901234567890123456789012345678) is inserted
-        # And Row (-99999999999999999999999999999999999999, -1.2345678901234567890123456789012345678) is inserted
-        # And Row (12345678901234567890123456789012345678, 0.0000000000000000000000000000000000001) is inserted
         test_data = [
             (NUMBER_38_0_MAX, NUMBER_38_DIGITS_SCALE37),
             (NUMBER_38_0_MIN, -NUMBER_38_DIGITS_SCALE37),
             (NUMBER_38_DIGITS_INT, NUMBER_38_37_MIN_POSITIVE),
         ]
-        for row in test_data:
-            execute_query(f"INSERT INTO {table_name} VALUES ({row[0]}, {row[1]})")
+        # And Row (99999999999999999999999999999999999999, 1.2345678901234567890123456789012345678) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES ({test_data[0][0]}, {test_data[0][1]})")
+        # And Row (-99999999999999999999999999999999999999, -1.2345678901234567890123456789012345678) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES ({test_data[1][0]}, {test_data[1][1]})")
+        # And Row (12345678901234567890123456789012345678, 0.0000000000000000000000000000000000001) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES ({test_data[2][0]}, {test_data[2][1]})")
 
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -378,6 +409,7 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
         table_name = f"{tmp_schema}.null_table_{num_type.lower()}"
@@ -389,12 +421,12 @@ class TestNumberTable:
         )
 
         # And Row (NULL, NULL, NULL) is inserted
+        execute_query(f"INSERT INTO {table_name} VALUES (NULL, NULL, NULL)")
         # And Row (123, 123.45, 123.456) is inserted
-        # And Row (NULL, NULL, NULL) is inserted
-        # And Row (-456, -67.89, -789.012) is inserted
-        execute_query(f"INSERT INTO {table_name} VALUES (NULL, NULL, NULL)")
         execute_query(f"INSERT INTO {table_name} VALUES (123, 123.45, 123.456)")
+        # And Row (NULL, NULL, NULL) is inserted
         execute_query(f"INSERT INTO {table_name} VALUES (NULL, NULL, NULL)")
+        # And Row (-456, -67.89, -789.012) is inserted
         execute_query(f"INSERT INTO {table_name} VALUES (-456, -67.89, -789.012)")
 
         # When Query "SELECT * FROM <table>" is executed
@@ -419,6 +451,7 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows,
         # from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
@@ -439,13 +472,13 @@ class TestNumberTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY 1")
 
-        # Then Column 1 should contain sequential integers from 0 to 29999
+        # Then Result should contain 30000 rows with sequential integers in column 1
+        # and sequential decimals starting from 0.12345 in column 2
         col1 = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col1, int)
         assert_sequential_values(col1, LARGE_RESULT_SET_SIZE)
 
-        # And Column 2 should contain sequential decimals starting from 0.12345
         col2 = [row[1] for row in rows]
         # Python: scale>0 -> Decimal
         assert_type(col2, Decimal)
@@ -463,6 +496,7 @@ class TestNumberBinding:
     @number_type_parametrize
     def test_should_select_number_using_parameter_binding_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::<type>(10,0), ?::<type>(10,0), ?::<type>(10,2), ?::<type>(10,2), ?::<type>(10,0)"
         # is executed with bound values [123, -456, 12.34, -56.78, NULL]
@@ -486,6 +520,7 @@ class TestNumberBinding:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::<type>(38,0), ?::<type>(38,2)" is executed
         # with bound values [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
@@ -507,6 +542,7 @@ class TestNumberBinding:
         self, execute_query, executemany_insert, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(10,0), <type>(10,2)) exists
         table_name = f"{tmp_schema}.number_bind_{num_type.lower()}"
@@ -538,6 +574,7 @@ class TestNumberBinding:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (<type>(38,0), <type>(38,2)) exists
         table_name = f"{tmp_schema}.high_precision_bind_{num_type.lower()}"
