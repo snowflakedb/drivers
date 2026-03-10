@@ -38,17 +38,10 @@ jobs:
     strategy: &matrix
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-11-arm]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-        exclude:
-          # Python 3.9 and 3.10 don't have Windows ARM64 builds
-          - os: windows-11-arm
-            py: "3.9"
-          - os: windows-11-arm
-            py: "3.10"
-          # Python 3.14 doesn't have Windows ARM64 build yet
-          - os: windows-11-arm
-            py: "3.14"
+        # TEMPORARY: ARM64-only to speed up iteration. Revert to include ubuntu-latest
+        # and full Python version set once ARM64 is green.
+        os: [windows-11-arm]
+        py: ["3.12"]
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
