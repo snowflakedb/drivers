@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    ffi::{CStr, c_char},
-    slice, str,
-};
+use std::{collections::HashMap, slice};
 
 use error_trace::ErrorTrace;
 use serde_json::{Map, Value};
@@ -49,9 +45,9 @@ pub enum JsonBindingError {
         location: Location,
     },
 
-    #[snafu(display("Parameter value is not valid UTF-8: {source}"))]
-    InvalidUtf8 {
-        source: str::Utf8Error,
+    #[snafu(display("String encoding error: {source}"))]
+    Encoding {
+        source: crate::encoding::EncodingError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -130,6 +126,7 @@ fn convert_binding_to_json_value(
         CDataType::Float => read_numeric::<f32>(binding),
         CDataType::Double => read_numeric::<f64>(binding),
         CDataType::Char => read_char_value(binding),
+        CDataType::WChar => read_wchar_value(binding),
         CDataType::Bit => read_bit_value(binding),
         CDataType::Binary => read_binary_value(binding),
         _ => {
@@ -234,20 +231,29 @@ fn buffer_data_len(binding: &ParameterBinding) -> usize {
     max_len
 }
 
-/// Read a SQL_C_CHAR value as a UTF-8 string.
+/// Read a SQL_C_CHAR value using the platform's locale encoding.
 fn read_char_value(binding: &ParameterBinding) -> Result<Value, JsonBindingError> {
-    let value_str = if binding.buffer_length == sql::NTS {
-        unsafe {
-            CStr::from_ptr(binding.parameter_value_ptr as *const c_char)
-                .to_string_lossy()
-                .to_string()
-        }
+    let length = if binding.buffer_length == sql::NTS {
+        sql::NTS as i32
     } else {
-        let len = buffer_data_len(binding);
-        let bytes = unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len) };
-        str::from_utf8(bytes).context(InvalidUtf8Snafu)?.to_string()
+        buffer_data_len(binding) as i32
     };
+    let value_str =
+        unsafe { crate::encoding::decode_char(binding.parameter_value_ptr as *const u8, length) }
+            .context(EncodingSnafu)?;
+    Ok(Value::String(value_str))
+}
 
+/// Read a SQL_C_WCHAR value as a UTF-16 string.
+fn read_wchar_value(binding: &ParameterBinding) -> Result<Value, JsonBindingError> {
+    let length = if binding.buffer_length == sql::NTS {
+        sql::NTS as i32
+    } else {
+        (buffer_data_len(binding) / 2) as i32
+    };
+    let value_str =
+        unsafe { crate::encoding::decode_wchar(binding.parameter_value_ptr as *const u16, length) }
+            .context(EncodingSnafu)?;
     Ok(Value::String(value_str))
 }
 

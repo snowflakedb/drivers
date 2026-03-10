@@ -1,12 +1,33 @@
 //! ODBC C API functions
 //!
 //! This module provides the C API interface for ODBC functions.
+//! All string encoding/decoding happens here at the FFI boundary:
+//! - Input strings: decoded from locale encoding (ANSI) or UTF-16 (W)
+//! - Output strings: encoded to locale encoding (ANSI) or UTF-16 (W)
+//! - The api module works exclusively with Rust `String` / `&str`.
 
 #![allow(non_snake_case)]
 
-use crate::api::{self, ToSqlReturn};
+use crate::api::diagnostic::DiagRecData;
+use crate::api::error::EncodingSnafu;
+use crate::api::{
+    self, ColAttributeResult, ConnectAttrValue, DiagFieldValue, InfoValue, ToSqlReturn,
+};
 use crate::cdata_types::CDataType;
+use crate::conversion::warning::Warning;
 use odbc_sys as sql;
+use snafu::ResultExt;
+
+/// Decode an optional narrow C string: NULL pointers yield `None`,
+/// since ODBC allows NULL for optional string parameters.
+fn decode_optional_char(ptr: *const u8, length: i32) -> api::OdbcResult<Option<String>> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    unsafe { crate::encoding::decode_char(ptr, length) }
+        .context(EncodingSnafu)
+        .map(Some)
+}
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
@@ -51,7 +72,9 @@ pub unsafe extern "C" fn SQLExecDirect(
     text_length: sql::Integer,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::exec_direct_n(statement_handle, statement_text, text_length);
+    let result = unsafe { crate::encoding::decode_char(statement_text, text_length) }
+        .context(EncodingSnafu)
+        .and_then(|query| api::statement::exec_direct(statement_handle, &query));
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     result.to_sql_code()
 }
@@ -65,7 +88,9 @@ pub unsafe extern "C" fn SQLExecDirectW(
     text_length: sql::Integer,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::exec_direct_w(statement_handle, statement_text, text_length);
+    let result = unsafe { crate::encoding::decode_wchar(statement_text, text_length) }
+        .context(EncodingSnafu)
+        .and_then(|query| api::statement::exec_direct(statement_handle, &query));
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     result.to_sql_code()
 }
@@ -102,15 +127,13 @@ pub unsafe extern "C" fn SQLConnect(
     authentication: *const sql::Char,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
-    let result = api::connection::connect(
-        connection_handle,
-        server_name,
-        name_length1,
-        user_name,
-        name_length2,
-        authentication,
-        name_length3,
-    );
+    let result: api::OdbcResult<()> = (|| {
+        let server = unsafe { crate::encoding::decode_char(server_name, name_length1 as i32) }
+            .context(EncodingSnafu)?;
+        let user = decode_optional_char(user_name, name_length2 as i32)?;
+        let auth = decode_optional_char(authentication, name_length3 as i32)?;
+        api::connection::connect(connection_handle, &server, user.as_deref(), auth.as_deref())
+    })();
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
 }
@@ -150,13 +173,43 @@ pub unsafe extern "C" fn SQLGetInfo(
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let result = api::connection::get_info(
-        connection_handle,
-        info_type,
-        info_value_ptr,
-        buffer_length,
-        string_length_ptr,
-    );
+    let result: api::OdbcResult<()> = (|| {
+        let info = api::connection::get_info(connection_handle, info_type)?;
+        match info {
+            InfoValue::USmallInt(val) => unsafe {
+                if !info_value_ptr.is_null() {
+                    *(info_value_ptr as *mut u16) = val;
+                }
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<u16>() as sql::SmallInt;
+                }
+            },
+            InfoValue::UInteger(val) => unsafe {
+                if !info_value_ptr.is_null() {
+                    *(info_value_ptr as *mut u32) = val;
+                }
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            },
+            InfoValue::String(s) => {
+                let mut full_len: i32 = 0;
+                unsafe {
+                    crate::encoding::write_char_to_buffer(
+                        &s,
+                        info_value_ptr as *mut u8,
+                        buffer_length as i32,
+                        &mut full_len,
+                    )
+                }
+                .context(EncodingSnafu)?;
+                if !string_length_ptr.is_null() {
+                    unsafe { *string_length_ptr = full_len as sql::SmallInt };
+                }
+            }
+        }
+        Ok(())
+    })();
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
 }
@@ -171,8 +224,28 @@ pub unsafe extern "C" fn SQLSetConnectAttr(
     string_length: sql::Integer,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let result =
-        api::connection::set_connect_attr(connection_handle, attribute, value, string_length);
+    let result: api::OdbcResult<()> = (|| {
+        let string_value = if let Some(attr) = api::ConnectionAttribute::from_raw(attribute)
+            && attr.is_string_type()
+        {
+            if value.is_null() {
+                Some(String::new())
+            } else {
+                Some(
+                    unsafe { crate::encoding::decode_char(value as *const u8, string_length) }
+                        .context(EncodingSnafu)?,
+                )
+            }
+        } else {
+            None
+        };
+        api::connection::set_connect_attr(
+            connection_handle,
+            attribute,
+            value,
+            string_value.as_deref(),
+        )
+    })();
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
 }
@@ -189,14 +262,34 @@ pub unsafe extern "C" fn SQLGetConnectAttr(
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let mut warnings = vec![];
-    let result = api::connection::get_connect_attr(
-        connection_handle,
-        attribute,
-        value,
-        buffer_length,
-        string_length_ptr,
-        &mut warnings,
-    );
+    let result: api::OdbcResult<()> = (|| {
+        let attr_value = api::connection::get_connect_attr(connection_handle, attribute)?;
+        match attr_value {
+            ConnectAttrValue::ULen(val) => unsafe {
+                if !value.is_null() {
+                    *(value as *mut sql::ULen) = val;
+                }
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            },
+            ConnectAttrValue::String(s) => {
+                let truncated = unsafe {
+                    crate::encoding::write_char_to_buffer(
+                        &s,
+                        value as *mut u8,
+                        buffer_length,
+                        string_length_ptr,
+                    )
+                }
+                .context(EncodingSnafu)?;
+                if truncated {
+                    warnings.push(Warning::StringDataTruncated);
+                }
+            }
+        }
+        Ok(())
+    })();
     api::diagnostic::set_diag_info_from_warnings(
         sql::HandleType::Dbc,
         connection_handle,
@@ -220,7 +313,9 @@ pub unsafe extern "C" fn SQLDriverConnect(
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result =
-        api::connection::driver_connect(connection_handle, in_connection_string, in_string_length);
+        unsafe { crate::encoding::decode_char(in_connection_string, in_string_length as i32) }
+            .context(EncodingSnafu)
+            .and_then(|cs| api::connection::driver_connect(connection_handle, &cs));
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
 }
@@ -341,15 +436,33 @@ pub unsafe extern "C" fn SQLColAttribute(
     numeric_attribute_ptr: *mut sql::Len,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::utils::col_attribute(
-        statement_handle,
-        column_number,
-        field_identifier,
-        character_attribute_ptr,
-        buffer_length,
-        string_length_ptr,
-        numeric_attribute_ptr,
-    );
+    let result: api::OdbcResult<()> = (|| {
+        let attr_result =
+            api::utils::col_attribute(statement_handle, column_number, field_identifier)?;
+        match attr_result {
+            ColAttributeResult::Numeric(val) => {
+                if !numeric_attribute_ptr.is_null() {
+                    unsafe { std::ptr::write(numeric_attribute_ptr, val) };
+                }
+            }
+            ColAttributeResult::String(s) => {
+                let mut full_len: i32 = 0;
+                unsafe {
+                    crate::encoding::write_char_to_buffer(
+                        &s,
+                        character_attribute_ptr as *mut u8,
+                        buffer_length as i32,
+                        &mut full_len,
+                    )
+                }
+                .context(EncodingSnafu)?;
+                if !string_length_ptr.is_null() {
+                    unsafe { *string_length_ptr = full_len as sql::SmallInt };
+                }
+            }
+        }
+        Ok(())
+    })();
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     result.to_sql_code()
 }
@@ -370,18 +483,34 @@ pub unsafe extern "C" fn SQLDescribeCol(
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
     let mut warnings = vec![];
-    let result = api::utils::describe_col(
-        statement_handle,
-        column_number,
-        column_name,
-        buffer_length,
-        name_length_ptr,
-        data_type_ptr,
-        column_size_ptr,
-        decimal_digits_ptr,
-        nullable_ptr,
-        &mut warnings,
-    );
+    let result: api::OdbcResult<()> = (|| {
+        let name = api::utils::describe_col(
+            statement_handle,
+            column_number,
+            data_type_ptr,
+            column_size_ptr,
+            decimal_digits_ptr,
+            nullable_ptr,
+        )?;
+
+        let mut full_len: i32 = 0;
+        let truncated = unsafe {
+            crate::encoding::write_char_to_buffer(
+                &name,
+                column_name,
+                buffer_length as i32,
+                &mut full_len,
+            )
+        }
+        .context(EncodingSnafu)?;
+        if !name_length_ptr.is_null() {
+            unsafe { *name_length_ptr = full_len as sql::SmallInt };
+        }
+        if truncated {
+            warnings.push(Warning::StringDataTruncated);
+        }
+        Ok(())
+    })();
     api::diagnostic::set_diag_info_from_warnings(
         sql::HandleType::Stmt,
         statement_handle,
@@ -456,7 +585,9 @@ pub unsafe extern "C" fn SQLPrepare(
     text_length: sql::Integer,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::prepare_n(statement_handle, statement_text, text_length);
+    let result = unsafe { crate::encoding::decode_char(statement_text, text_length) }
+        .context(EncodingSnafu)
+        .and_then(|query| api::statement::prepare(statement_handle, &query));
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     result.to_sql_code()
 }
@@ -470,7 +601,9 @@ pub unsafe extern "C" fn SQLPrepareW(
     text_length: sql::Integer,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::prepare_w(statement_handle, statement_text, text_length);
+    let result = unsafe { crate::encoding::decode_wchar(statement_text, text_length) }
+        .context(EncodingSnafu)
+        .and_then(|query| api::statement::prepare(statement_handle, &query));
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     result.to_sql_code()
 }
@@ -498,21 +631,62 @@ pub unsafe extern "C" fn SQLGetDiagRec(
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    unsafe {
-        let mut warnings = vec![];
-        let result = api::diagnostic::get_diag_rec(
-            handle_type,
-            handle,
-            rec_number,
+    let mut warnings = vec![];
+    let result: api::OdbcResult<()> = (|| {
+        let diag = api::diagnostic::get_diag_rec(handle_type, handle, rec_number)?;
+        write_diag_rec_to_buffers(
+            &diag,
             sql_state,
             native_error_ptr,
             message_text,
             buffer_length,
             text_length_ptr,
             &mut warnings,
-        );
-        result.to_sql_code_with_warnings(&warnings)
+        )
+    })();
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// Write a `DiagRecData` to the output buffers provided by the caller.
+fn write_diag_rec_to_buffers(
+    diag: &DiagRecData,
+    sql_state: *mut sql::Char,
+    native_error_ptr: *mut sql::Integer,
+    message_text: *mut sql::Char,
+    buffer_length: sql::SmallInt,
+    text_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Vec<Warning>,
+) -> api::OdbcResult<()> {
+    if !sql_state.is_null() {
+        let state_str = diag.sql_state.as_str();
+        let state_bytes = state_str.as_bytes();
+        let len = std::cmp::min(state_bytes.len(), 5);
+        unsafe {
+            std::ptr::copy_nonoverlapping(state_bytes.as_ptr(), sql_state, len);
+            *sql_state.add(len) = 0;
+        }
     }
+    if !native_error_ptr.is_null() {
+        unsafe { std::ptr::write(native_error_ptr, diag.native_error) };
+    }
+
+    let mut full_len: i32 = 0;
+    let truncated = unsafe {
+        crate::encoding::write_char_to_buffer(
+            &diag.message_text,
+            message_text,
+            buffer_length as i32,
+            &mut full_len,
+        )
+    }
+    .context(EncodingSnafu)?;
+    if !text_length_ptr.is_null() {
+        unsafe { *text_length_ptr = full_len as sql::SmallInt };
+    }
+    if truncated {
+        warnings.push(Warning::StringDataTruncated);
+    }
+    Ok(())
 }
 
 /// # Safety
@@ -527,16 +701,38 @@ pub unsafe extern "C" fn SQLGetDiagField(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::get_diag_field(
-        handle_type,
-        handle,
-        rec_number,
-        diag_identifier,
-        diag_info_ptr,
-        buffer_length,
-        string_length_ptr,
-    )
-    .to_sql_code()
+    let result: api::OdbcResult<()> = (|| {
+        let field_value =
+            api::diagnostic::get_diag_field(handle_type, handle, rec_number, diag_identifier)?;
+        match field_value {
+            DiagFieldValue::Integer(val) => unsafe {
+                std::ptr::write(diag_info_ptr as *mut sql::Integer, val);
+            },
+            DiagFieldValue::Len(val) => unsafe {
+                std::ptr::write(diag_info_ptr as *mut sql::Len, val);
+            },
+            DiagFieldValue::RetCode(val) => unsafe {
+                std::ptr::write(diag_info_ptr as *mut sql::RetCode, val);
+            },
+            DiagFieldValue::String(s) => {
+                let mut full_len: i32 = 0;
+                unsafe {
+                    crate::encoding::write_char_to_buffer(
+                        &s,
+                        diag_info_ptr as *mut u8,
+                        buffer_length as i32,
+                        &mut full_len,
+                    )
+                }
+                .context(EncodingSnafu)?;
+                if !string_length_ptr.is_null() {
+                    unsafe { *string_length_ptr = full_len as sql::SmallInt };
+                }
+            }
+        }
+        Ok(())
+    })();
+    result.to_sql_code()
 }
 
 /// # Safety

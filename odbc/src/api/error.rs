@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    str::Utf8Error,
-    string::{FromUtf8Error, FromUtf16Error},
-    sync::LazyLock,
-};
+use std::{collections::HashSet, sync::LazyLock};
 
 use crate::{
     api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
@@ -266,21 +261,9 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("Text conversion error: {source}"))]
-    TextConversionFromUtf8 {
-        source: FromUtf8Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Text conversion error: {source}"))]
-    TextConversionFromUtf16 {
-        source: FromUtf16Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Text conversion error: {source}"))]
-    TextConversionUtf8 {
-        source: Utf8Error,
+    #[snafu(display("String encoding error: {source}"))]
+    Encoding {
+        source: crate::encoding::EncodingError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -417,9 +400,6 @@ impl OdbcError {
             },
             OdbcError::ParameterBinding { .. } => SqlState::WrongNumberOfParameters,
             OdbcError::FetchData { .. } => SqlState::GeneralError,
-            OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::JsonBinding { .. } => SqlState::GeneralError,
             OdbcError::CoreError {
                 source: CoreProtobufError::Application { error, message, .. },
@@ -463,6 +443,7 @@ impl OdbcError {
                 CoreProtobufError::Application { .. } => SqlState::GeneralError,
             },
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
+            OdbcError::Encoding { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
         }

@@ -64,6 +64,14 @@ impl ConnectionAttribute {
         raw >= SQL_SF_CONN_ATTR_BASE
     }
 
+    /// Returns `true` if this attribute uses a string value (as opposed to an integer).
+    pub fn is_string_type(&self) -> bool {
+        matches!(
+            self,
+            Self::PrivKeyContent | Self::PrivKeyPassword | Self::PrivKeyBase64 | Self::Application
+        )
+    }
+
     /// Convert back to the raw ODBC attribute ID.
     pub fn as_raw(&self) -> i32 {
         match self {
@@ -450,6 +458,36 @@ pub fn desc_ref_from_handle<'a>(handle: sql::Handle) -> OdbcResult<DescriptorRef
             Ok(DescriptorRef::Ird(desc))
         }
     }
+}
+
+/// Value returned by `get_connect_attr`: either an integer written directly
+/// or a string that the FFI boundary layer must encode.
+pub enum ConnectAttrValue {
+    ULen(sql::ULen),
+    String(String),
+}
+
+/// Value returned by `get_info`: typed so the FFI boundary layer can write
+/// the correct representation into the caller-supplied buffer.
+pub enum InfoValue {
+    USmallInt(u16),
+    UInteger(u32),
+    String(String),
+}
+
+/// Value returned by `get_diag_field`.
+pub enum DiagFieldValue {
+    Integer(sql::Integer),
+    Len(sql::Len),
+    RetCode(sql::RetCode),
+    String(String),
+}
+
+/// Value returned by `col_attribute`.
+pub enum ColAttributeResult {
+    Numeric(sql::Len),
+    #[allow(dead_code)]
+    String(String),
 }
 
 /// Result type for ODBC operations

@@ -1,4 +1,3 @@
-use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
@@ -19,24 +18,6 @@ use sf_core::protobuf::generated::database_driver_v1::{
 };
 use snafu::ResultExt;
 use tracing;
-
-pub fn exec_direct_n(
-    statement_handle: sql::Handle,
-    statement_text: *const sql::Char,
-    text_length: sql::Integer,
-) -> OdbcResult<()> {
-    let query = cstr_to_string(statement_text, text_length)?;
-    exec_direct(statement_handle, &query)
-}
-
-pub fn exec_direct_w(
-    statement_handle: sql::Handle,
-    statement_text: *const sql::WChar,
-    text_length: sql::Integer,
-) -> OdbcResult<()> {
-    let query = utf16_to_string(statement_text, text_length)?;
-    exec_direct(statement_handle, &query)
-}
 
 /// Execute a SQL statement directly
 pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
@@ -110,24 +91,6 @@ fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut Numeri
             bool_value
         );
     }
-}
-
-pub fn prepare_n(
-    statement_handle: sql::Handle,
-    statement_text: *const sql::Char,
-    text_length: sql::Integer,
-) -> OdbcResult<()> {
-    let query = cstr_to_string(statement_text, text_length)?;
-    prepare(statement_handle, &query)
-}
-
-pub fn prepare_w(
-    statement_handle: sql::Handle,
-    statement_text: *const sql::WChar,
-    text_length: sql::Integer,
-) -> OdbcResult<()> {
-    let query = utf16_to_string(statement_text, text_length)?;
-    prepare(statement_handle, &query)
 }
 
 fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowArrayStreamReader> {
