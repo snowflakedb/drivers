@@ -21,9 +21,11 @@ class CAPIHandle(ctypes.Structure):
 
 
 def _get_core_path() -> Any:
-    # Define the file name for each platform
+    # Define the file name for each platform.
+    # On Windows, cdylib crates produce "sf_core.dll" (no lib prefix).
+    # On Unix, they produce "libsf_core.so" / "libsf_core.dylib".
     if sys.platform.startswith("win"):
-        lib_name = f"{_CORE_LIB_NAME}.dll"
+        lib_name = "sf_core.dll"
     elif sys.platform.startswith("darwin"):
         lib_name = f"{_CORE_LIB_NAME}.dylib"
     else:
