@@ -355,3 +355,16 @@ class BuildHook(BuildHookInterface):
             for file in release_dir.rglob("*"):
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
                     shutil.copy2(file, target_dir)
+
+            # On Windows, sf_core.dll dynamically links against OpenSSL
+            # (libcrypto-3-arm64.dll, libssl-3-arm64.dll). Since Python 3.8+,
+            # ctypes.CDLL uses restricted DLL search that does NOT include PATH.
+            # Bundle the OpenSSL DLLs next to sf_core.dll so the loader finds them.
+            if sys.platform == "win32":
+                openssl_bin = os.environ.get("OPENSSL_DIR", "")
+                if openssl_bin:
+                    openssl_bin_dir = Path(openssl_bin) / "bin"
+                    if openssl_bin_dir.is_dir():
+                        for dll in openssl_bin_dir.glob("*.dll"):
+                            shutil.copy2(dll, target_dir)
+                            print(f"Bundled OpenSSL DLL: {dll.name}")
