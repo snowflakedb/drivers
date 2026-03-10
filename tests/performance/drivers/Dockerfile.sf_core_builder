@@ -39,7 +39,6 @@ COPY proto_utils/ ./proto_utils/
 COPY proto_generator/ ./proto_generator/
 COPY jdbc_bridge/ ./jdbc_bridge/
 COPY protobuf/ ./protobuf/
-COPY thrift/ ./thrift/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY proto_generator/ ./proto_generator/
@@ -53,7 +52,6 @@ COPY --from=planner /workdir/recipe.json recipe.json
 COPY build_common.rs ./build_common.rs
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY protobuf/ ./protobuf/
-COPY thrift/ ./thrift/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY proto_generator/ ./proto_generator/
