@@ -32,11 +32,6 @@ import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.util.HexUtil;
 
-/**
- * Snowflake JDBC PreparedStatement implementation
- *
- * <p>This is a stub implementation that provides the basic JDBC PreparedStatement interface.
- */
 public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     implements PreparedStatement, SnowflakePreparedStatement {
   private static final SFLogger logger =
@@ -66,9 +61,10 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public int executeUpdate() throws SQLException {
     checkClosed();
-    execute();
-    // TODO return real number of rows affected
-    return 0;
+    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
+        PreparedStatementBindingSerializer.serialize(parameterValues)) {
+      return executeUpdateWithBindings(sql, serializedBindings.bindings());
+    }
   }
 
   @Override
@@ -287,11 +283,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
         PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      try (ResultSet ignored = executeQueryWithBindings(sql, serializedBindings.bindings())) {
-        // TODO: Align execute() return value and update-count behavior with snowflake-jdbc by using
-        // backend statement-type metadata (true for result sets, false for update counts).
-        return true;
-      }
+      return executeWithBindings(sql, serializedBindings.bindings());
     }
   }
 

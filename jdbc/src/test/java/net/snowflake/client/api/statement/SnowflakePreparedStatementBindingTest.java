@@ -1,8 +1,10 @@
 package net.snowflake.client.api.statement;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -223,6 +225,88 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
           assertEquals(0, rs.getInt(3));
           assertEquals(0, rs.getInt(4));
         });
+  }
+
+  @Test
+  public void testPreparedStatementExecuteSelectTracksCurrentResultSet() throws Exception {
+    Connection conn = getDefaultConnection();
+    try (PreparedStatement stmt = conn.prepareStatement("SELECT ?")) {
+      stmt.setInt(1, 99);
+
+      assertTrue(stmt.execute(), "SELECT should report a ResultSet");
+
+      ResultSet rs = stmt.getResultSet();
+      assertNotNull(rs, "PreparedStatement should expose the current ResultSet");
+      assertEquals(-1, stmt.getUpdateCount(), "SELECT should not expose an update count");
+
+      assertTrue(rs.next(), "Expected one row");
+      assertEquals(99, rs.getInt(1), "Result should match the bound value");
+      assertFalse(rs.next(), "Expected exactly one row");
+    }
+  }
+
+  @Test
+  public void testPreparedStatementExecuteInsertTracksUpdateCount() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "v INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
+      insert.setInt(1, 42);
+
+      assertFalse(insert.execute(), "INSERT should not report a ResultSet");
+      assertNull(insert.getResultSet(), "INSERT should not expose a ResultSet");
+      assertEquals(1, insert.getUpdateCount(), "INSERT should report affected rows");
+    }
+
+    verifySingleValue(conn, "SELECT v FROM " + tableName, rs -> assertEquals(42, rs.getInt(1)));
+  }
+
+  @Test
+  public void testPreparedStatementExecuteUpdateReturnsAffectedRows() throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "v INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
+      insert.setInt(1, 7);
+
+      assertEquals(1, insert.executeUpdate(), "executeUpdate should report affected rows");
+      assertNull(insert.getResultSet(), "executeUpdate should not expose a ResultSet");
+      assertEquals(1, insert.getUpdateCount(), "Statement state should retain the update count");
+    }
+
+    verifySingleValue(conn, "SELECT v FROM " + tableName, rs -> assertEquals(7, rs.getInt(1)));
+  }
+
+  @Test
+  public void testPreparedStatementExecuteQueryAllowsInsertForLegacyCompatibility()
+      throws Exception {
+    Connection conn = getDefaultConnection();
+    String tableName = createTempTable(conn, "ud_bindings_", "v INTEGER");
+
+    try (PreparedStatement insert =
+        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
+      insert.setInt(1, 7);
+
+      ResultSet rs = assertDoesNotThrow(() -> insert.executeQuery());
+      if (rs != null) {
+        rs.close();
+      }
+    }
+
+    verifySingleValue(conn, "SELECT v FROM " + tableName, rs -> assertEquals(7, rs.getInt(1)));
+  }
+
+  @Test
+  public void testPreparedStatementExecuteUpdateRejectsSelect() throws Exception {
+    Connection conn = getDefaultConnection();
+
+    try (PreparedStatement stmt = conn.prepareStatement("SELECT ?")) {
+      stmt.setInt(1, 99);
+
+      assertThrows(SQLException.class, stmt::executeUpdate);
+    }
   }
 
   private static Stream<SingleSetterCase> singleSetterCases() {
