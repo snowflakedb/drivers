@@ -493,4 +493,193 @@ mod tests {
             panic!("Expected one record batch");
         }
     }
+
+    #[test]
+    fn test_string_rowset_translation_object() {
+        let rowset = vec![
+            vec![r#"{"name":"Alice","age":30}"#.to_string()],
+            vec![r#"{"name":"Bob","age":25}"#.to_string()],
+            vec![r#"{}"#.to_string()],
+        ];
+
+        let row_types = vec![RowType::object("col_object", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+
+        let schema = reader.schema();
+        let fields = schema.fields();
+        assert_eq!(fields.len(), 1);
+
+        assert_eq!(fields[0].name(), "col_object");
+        assert_eq!(format!("{:?}", fields[0].data_type()), "Utf8");
+        assert!(fields[0].is_nullable());
+        let meta = fields[0].metadata();
+        assert_eq!(meta.get("logicalType"), Some(&"OBJECT".to_string()));
+
+        if let Some(Ok(batch)) = reader.next() {
+            assert_eq!(batch.num_columns(), 1);
+            assert_eq!(batch.num_rows(), 3);
+
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            assert_eq!(col.value(0), r#"{"name":"Alice","age":30}"#);
+            assert_eq!(col.value(1), r#"{"name":"Bob","age":25}"#);
+            assert_eq!(col.value(2), "{}");
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_string_rowset_translation_array() {
+        let rowset = vec![
+            vec![r#"[1,2,3]"#.to_string()],
+            vec![r#"["a","b","c"]"#.to_string()],
+            vec!["[]".to_string()],
+        ];
+
+        let row_types = vec![RowType::array("col_array", false)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+
+        let schema = reader.schema();
+        let fields = schema.fields();
+        assert_eq!(fields.len(), 1);
+
+        assert_eq!(fields[0].name(), "col_array");
+        assert_eq!(format!("{:?}", fields[0].data_type()), "Utf8");
+        assert!(!fields[0].is_nullable());
+        let meta = fields[0].metadata();
+        assert_eq!(meta.get("logicalType"), Some(&"ARRAY".to_string()));
+
+        if let Some(Ok(batch)) = reader.next() {
+            assert_eq!(batch.num_columns(), 1);
+            assert_eq!(batch.num_rows(), 3);
+
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            assert_eq!(col.value(0), "[1,2,3]");
+            assert_eq!(col.value(1), r#"["a","b","c"]"#);
+            assert_eq!(col.value(2), "[]");
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_string_rowset_translation_map() {
+        let rowset = vec![
+            vec![r#"{"k1":"v1"}"#.to_string()],
+            vec![r#"{"id":"42","val":"100"}"#.to_string()],
+            vec!["{}".to_string()],
+        ];
+
+        let row_types = vec![RowType::map("col_map", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+
+        let schema = reader.schema();
+        let fields = schema.fields();
+        assert_eq!(fields.len(), 1);
+
+        assert_eq!(fields[0].name(), "col_map");
+        assert_eq!(format!("{:?}", fields[0].data_type()), "Utf8");
+        assert!(fields[0].is_nullable());
+        let meta = fields[0].metadata();
+        assert_eq!(meta.get("logicalType"), Some(&"MAP".to_string()));
+
+        if let Some(Ok(batch)) = reader.next() {
+            assert_eq!(batch.num_columns(), 1);
+            assert_eq!(batch.num_rows(), 3);
+
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            assert_eq!(col.value(0), r#"{"k1":"v1"}"#);
+            assert_eq!(col.value(1), r#"{"id":"42","val":"100"}"#);
+            assert_eq!(col.value(2), "{}");
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_string_rowset_translation_mixed_with_semi_structured() {
+        let rowset = vec![
+            vec![
+                "Alice".to_string(),
+                r#"{"role":"admin"}"#.to_string(),
+                r#"["read","write"]"#.to_string(),
+            ],
+            vec![
+                "Bob".to_string(),
+                r#"{"role":"user"}"#.to_string(),
+                r#"["read"]"#.to_string(),
+            ],
+        ];
+
+        let row_types = vec![
+            RowType::text("name", false, 64, 256),
+            RowType::object("metadata", true),
+            RowType::array("permissions", false),
+        ];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+
+        let schema = reader.schema();
+        let fields = schema.fields();
+        assert_eq!(fields.len(), 3);
+
+        assert_eq!(
+            fields[0].metadata().get("logicalType"),
+            Some(&"TEXT".to_string())
+        );
+        assert_eq!(
+            fields[1].metadata().get("logicalType"),
+            Some(&"OBJECT".to_string())
+        );
+        assert_eq!(
+            fields[2].metadata().get("logicalType"),
+            Some(&"ARRAY".to_string())
+        );
+
+        if let Some(Ok(batch)) = reader.next() {
+            assert_eq!(batch.num_columns(), 3);
+            assert_eq!(batch.num_rows(), 2);
+
+            let names = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            assert_eq!(names.value(0), "Alice");
+            assert_eq!(names.value(1), "Bob");
+
+            let metadata = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            assert_eq!(metadata.value(0), r#"{"role":"admin"}"#);
+            assert_eq!(metadata.value(1), r#"{"role":"user"}"#);
+
+            let permissions = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap();
+            assert_eq!(permissions.value(0), r#"["read","write"]"#);
+            assert_eq!(permissions.value(1), r#"["read"]"#);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
 }
