@@ -235,18 +235,20 @@ jobs:
           $env:WHEEL_PATH = $wheel
           hatch run test.py${{ matrix.py }}:install-wheel
 
-      # TEMPORARY diagnostic: check what DLL is in the installed package and its arch
+      # TEMPORARY diagnostic: check the DLL in _core and its dependencies
       - name: Diagnose installed core DLL (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
+        continue-on-error: true
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           echo === Installed _core directory ===
-          dir "C:\Users\runneradmin\AppData\Local\hatch\env\virtual\snowflake-connector-python-ud\SE-ti7zx\test.py${{ matrix.py }}\Lib\site-packages\snowflake\connector\_core\" 2>nul || echo "_core dir not found at expected path"
-          for /r "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" %%f in (sf_core.dll libsf_core.dll) do (
-            echo === Found: %%f ===
-            dumpbin /headers "%%f" 2>nul | findstr /i "machine"
-          )
+          dir "C:\Users\runneradmin\AppData\Local\hatch\env\virtual\snowflake-connector-python-ud\SE-ti7zx\test.py${{ matrix.py }}\Lib\site-packages\snowflake\connector\_core\" 2>nul || echo "_core dir not found"
+          echo === sf_core.dll headers ===
+          dumpbin /headers "C:\Users\runneradmin\AppData\Local\hatch\env\virtual\snowflake-connector-python-ud\SE-ti7zx\test.py${{ matrix.py }}\Lib\site-packages\snowflake\connector\_core\sf_core.dll" 2>nul | findstr /i "machine type"
+          echo === sf_core.dll dependencies ===
+          dumpbin /dependents "C:\Users\runneradmin\AppData\Local\hatch\env\virtual\snowflake-connector-python-ud\SE-ti7zx\test.py${{ matrix.py }}\Lib\site-packages\snowflake\connector\_core\sf_core.dll" 2>nul
+          echo === Done ===
 
       - name: Run all tests with coverage (Linux)
         if: runner.os == 'Linux'
