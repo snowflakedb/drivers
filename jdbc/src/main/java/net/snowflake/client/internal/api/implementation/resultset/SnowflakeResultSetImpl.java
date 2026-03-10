@@ -265,7 +265,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   @Override
   public InputStream getUnicodeStream(String columnLabel) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getAsciiStream not supported");
+    throw new SQLFeatureNotSupportedException("getUnicodeStream not supported");
   }
 
   @Override
