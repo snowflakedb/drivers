@@ -235,19 +235,50 @@ jobs:
           $env:WHEEL_PATH = $wheel
           hatch run test.py${{ matrix.py }}:install-wheel
 
-      # TEMPORARY diagnostic: check the DLL in _core and its dependencies
+      # Diagnostic for WinError 127 "procedure not found": discovers the _core
+      # directory dynamically (hatch env hash varies) and dumps full import table
+      # plus dependency DLL info to identify which procedure/DLL is missing.
       - name: Diagnose installed core DLL (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         continue-on-error: true
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          echo === Installed _core directory ===
-          dir "C:\Users\runneradmin\AppData\Local\hatch\env\virtual\snowflake-connector-python-ud\SE-ti7zx\test.py${{ matrix.py }}\Lib\site-packages\snowflake\connector\_core\" 2>nul || echo "_core dir not found"
-          echo === sf_core.dll headers ===
-          dumpbin /headers "C:\Users\runneradmin\AppData\Local\hatch\env\virtual\snowflake-connector-python-ud\SE-ti7zx\test.py${{ matrix.py }}\Lib\site-packages\snowflake\connector\_core\sf_core.dll" 2>nul | findstr /i "machine type"
-          echo === sf_core.dll dependencies ===
-          dumpbin /dependents "C:\Users\runneradmin\AppData\Local\hatch\env\virtual\snowflake-connector-python-ud\SE-ti7zx\test.py${{ matrix.py }}\Lib\site-packages\snowflake\connector\_core\sf_core.dll" 2>nul
+          echo === Searching for sf_core.dll in hatch envs ===
+          set "DLL_PATH="
+          for /r "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" %%f in (sf_core.dll) do (
+            set "DLL_PATH=%%f"
+            set "DLL_DIR=%%~dpf"
+          )
+          if not defined DLL_PATH (
+            echo ERROR: sf_core.dll not found in any hatch env
+            exit /b 0
+          )
+          echo Found: %DLL_PATH%
+          echo.
+          echo === Files in _core directory ===
+          dir "%DLL_DIR%" 2>nul
+          echo.
+          echo === sf_core.dll machine type ===
+          dumpbin /headers "%DLL_PATH%" 2>nul | findstr /i "machine"
+          echo.
+          echo === sf_core.dll dependency DLLs (imports from) ===
+          dumpbin /dependents "%DLL_PATH%" 2>nul
+          echo.
+          echo === sf_core.dll full import table (which procedures from which DLLs) ===
+          dumpbin /imports "%DLL_PATH%" 2>nul
+          echo.
+          echo === Check each dependency DLL architecture ===
+          for /f "tokens=*" %%d in ('dumpbin /dependents "%DLL_PATH%" 2^>nul ^| findstr /i ".dll"') do (
+            echo --- %%d ---
+            where "%%d" 2>nul
+            for %%p in ("%%d") do dumpbin /headers "%%~$PATH:p" 2>nul | findstr /i "machine"
+          )
+          echo.
+          echo === OpenSSL DLLs on system PATH ===
+          where libcrypto* 2>nul
+          where libssl* 2>nul
+          echo.
           echo === Done ===
 
       - name: Run all tests with coverage (Linux)
