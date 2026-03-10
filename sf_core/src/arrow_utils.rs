@@ -64,6 +64,21 @@ pub fn create_field_with_type(row_type: &RowType, data_type: DataType) -> Field 
             ];
             Field::new(name, DataType::Struct(fields.into()), *nullable).with_metadata(metadata)
         }
+        RowType::Object { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "OBJECT".to_string());
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
+        }
+        RowType::Array { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "ARRAY".to_string());
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
+        }
+        RowType::Map { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "MAP".to_string());
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
+        }
     }
 }
 
@@ -221,6 +236,10 @@ fn create_column_array(
                 )),
             ))
         }
+        RowType::Object { .. } | RowType::Array { .. } | RowType::Map { .. } => Ok((
+            create_field_with_type(row_type, DataType::Utf8),
+            Arc::new(StringArray::from(values)),
+        )),
         RowType::TimestampNtz { .. } => {
             let epoch: Arc<dyn Array> = Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
                 Vec::<i64>::new(),

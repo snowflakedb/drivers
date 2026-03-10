@@ -28,6 +28,18 @@ pub enum RowType {
         nullable: bool,
         scale: u64,
     },
+    Object {
+        name: String,
+        nullable: bool,
+    },
+    Array {
+        name: String,
+        nullable: bool,
+    },
+    Map {
+        name: String,
+        nullable: bool,
+    },
 }
 
 impl RowType {
@@ -84,6 +96,27 @@ impl RowType {
             name: name.to_string(),
             nullable,
             scale,
+        }
+    }
+
+    pub fn object(name: &str, nullable: bool) -> Self {
+        RowType::Object {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn array(name: &str, nullable: bool) -> Self {
+        RowType::Array {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn map(name: &str, nullable: bool) -> Self {
+        RowType::Map {
+            name: name.to_string(),
+            nullable,
         }
     }
 }
