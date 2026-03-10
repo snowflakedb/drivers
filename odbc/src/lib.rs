@@ -2,6 +2,7 @@ mod api;
 pub mod c_api;
 mod cdata_types;
 mod conversion;
+pub mod encoding;
 mod write_json;
 
 extern crate sf_core;
