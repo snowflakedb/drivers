@@ -70,23 +70,17 @@ class TestArrayLiteral:
         # And Array values should be ['a', 'b', 'c']
         assert parsed == ["a", "b", "c"]
 
-    def test_should_select_array_corner_case_values_from_literals(
-        self, execute_query
-    ):
+    def test_should_select_array_corner_case_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
 
         # When Queries selecting corner case array literals are executed
         # Then Results should contain expected corner case array values
 
-        result = execute_query(
-            "SELECT ARRAY_CONSTRUCT()", single_row=True
-        )
+        result = execute_query("SELECT ARRAY_CONSTRUCT()", single_row=True)
         parsed = parse_array(result[0])
         assert parsed == []
 
-        result = execute_query(
-            "SELECT ARRAY_CONSTRUCT(42)", single_row=True
-        )
+        result = execute_query("SELECT ARRAY_CONSTRUCT(42)", single_row=True)
         parsed = parse_array(result[0])
         assert parsed == [42]
 
@@ -125,9 +119,7 @@ class TestArrayLiteral:
 class TestArrayTable:
     """Tests for ARRAY type using table operations."""
 
-    def test_should_select_array_values_from_table(
-        self, execute_query, tmp_schema
-    ):
+    def test_should_select_array_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
         # And A temporary table with VARIANT column is created
@@ -135,10 +127,7 @@ class TestArrayTable:
         execute_query(f"CREATE TABLE {table_name} (col VARIANT)")
 
         # And The table is populated with array values
-        execute_query(
-            f"INSERT INTO {table_name} SELECT PARSE_JSON(column1) "
-            f"FROM VALUES ('[1, 2, 3]'), ('[4, 5, 6]')"
-        )
+        execute_query(f"INSERT INTO {table_name} SELECT PARSE_JSON(column1) FROM VALUES ('[1, 2, 3]'), ('[4, 5, 6]')")
 
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -149,9 +138,7 @@ class TestArrayTable:
         assert [1, 2, 3] in parsed_rows
         assert [4, 5, 6] in parsed_rows
 
-    def test_should_select_array_corner_case_values_from_table(
-        self, execute_query, tmp_schema
-    ):
+    def test_should_select_array_corner_case_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
         # And A temporary table with VARIANT column is created
@@ -159,16 +146,9 @@ class TestArrayTable:
         execute_query(f"CREATE TABLE {table_name} (col VARIANT)")
 
         # And The table is populated with corner case array values
-        execute_query(
-            f"INSERT INTO {table_name} SELECT PARSE_JSON('[]')"
-        )
-        execute_query(
-            f"INSERT INTO {table_name} SELECT PARSE_JSON('[[1,2],[3,4]]')"
-        )
-        execute_query(
-            f"INSERT INTO {table_name} "
-            f"SELECT PARSE_JSON('[1, \"two\", true]')"
-        )
+        execute_query(f"INSERT INTO {table_name} SELECT PARSE_JSON('[]')")
+        execute_query(f"INSERT INTO {table_name} SELECT PARSE_JSON('[[1,2],[3,4]]')")
+        execute_query(f"INSERT INTO {table_name} SELECT PARSE_JSON('[1, \"two\", true]')")
         execute_query(f"INSERT INTO {table_name} VALUES (NULL)")
 
         # When Query "SELECT * FROM <table>" is executed
@@ -190,32 +170,24 @@ class TestArrayTable:
 class TestArrayBinding:
     """Tests for ARRAY type using parameter binding."""
 
-    def test_should_select_array_using_parameter_binding(
-        self, execute_query
-    ):
+    def test_should_select_array_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
 
         # When Query "SELECT PARSE_JSON(?)" is executed with bound JSON array string
-        json_str = '[1, 2, 3]'
-        result = execute_query(
-            "SELECT PARSE_JSON(?)", (json_str,), single_row=True
-        )
+        json_str = "[1, 2, 3]"
+        result = execute_query("SELECT PARSE_JSON(?)", (json_str,), single_row=True)
 
         # Then Result should contain a valid array
         parsed = parse_array(result[0])
         assert parsed == [1, 2, 3]
 
         # When Query "SELECT PARSE_JSON(?)" is executed with bound NULL value
-        result = execute_query(
-            "SELECT PARSE_JSON(?)", (None,), single_row=True
-        )
+        result = execute_query("SELECT PARSE_JSON(?)", (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result[0] is None
 
-    def test_should_insert_array_using_parameter_binding(
-        self, execute_query, tmp_schema
-    ):
+    def test_should_insert_array_using_parameter_binding(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
         # And A temporary table with VARIANT column is created
@@ -223,7 +195,7 @@ class TestArrayBinding:
         execute_query(f"CREATE TABLE {table_name} (col VARIANT)")
 
         # When JSON array string is inserted using parameter binding via PARSE_JSON
-        json_str = '[10, 20, 30]'
+        json_str = "[10, 20, 30]"
         execute_query(
             f"INSERT INTO {table_name} SELECT PARSE_JSON(?)",
             (json_str,),
@@ -241,9 +213,7 @@ class TestArrayBinding:
 class TestArrayMultipleChunks:
     """Tests for ARRAY type with multiple chunks downloading."""
 
-    def test_should_download_array_data_in_multiple_chunks(
-        self, execute_query
-    ):
+    def test_should_download_array_data_in_multiple_chunks(self, execute_query):
         # Given Snowflake client is logged in
 
         # When Query selecting 10000 ARRAY_CONSTRUCT rows from GENERATOR is executed

@@ -20,15 +20,9 @@ from ...conftest import with_paramstyle
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 10_000
 
-MAP_SQL = (
-    "SELECT OBJECT_CONSTRUCT('x', '1', 'y', '2')"
-    "::MAP(VARCHAR, VARCHAR)"
-)
+MAP_SQL = "SELECT OBJECT_CONSTRUCT('x', '1', 'y', '2')::MAP(VARCHAR, VARCHAR)"
 
-MAP_INT_SQL = (
-    "SELECT OBJECT_CONSTRUCT('a', 1, 'b', 2)"
-    "::MAP(VARCHAR, INTEGER)"
-)
+MAP_INT_SQL = "SELECT OBJECT_CONSTRUCT('a', 1, 'b', 2)::MAP(VARCHAR, INTEGER)"
 
 
 def parse_map(value):
@@ -77,9 +71,7 @@ class TestMapLiteral:
         assert parsed["a"] == 1
         assert parsed["b"] == 2
 
-    def test_should_select_map_corner_case_values_from_literals(
-        self, execute_query
-    ):
+    def test_should_select_map_corner_case_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
 
         # When Queries selecting corner case map literals are executed
@@ -100,35 +92,23 @@ class TestMapLiteral:
         assert len(parsed) == 1
         assert parsed["only"] == "one"
 
-        result = execute_query(
-            "SELECT NULL::MAP(VARCHAR, VARCHAR)", single_row=True
-        )
+        result = execute_query("SELECT NULL::MAP(VARCHAR, VARCHAR)", single_row=True)
         assert result[0] is None
 
 
 class TestMapTable:
     """Tests for MAP type using table operations."""
 
-    def test_should_select_map_values_from_table(
-        self, execute_query, tmp_schema
-    ):
+    def test_should_select_map_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
         # And A temporary table with MAP column is created
         table_name = f"{tmp_schema}.map_table"
-        execute_query(
-            f"CREATE TABLE {table_name} (col MAP(VARCHAR, VARCHAR))"
-        )
+        execute_query(f"CREATE TABLE {table_name} (col MAP(VARCHAR, VARCHAR))")
 
         # And The table is populated with map values
-        execute_query(
-            f"INSERT INTO {table_name} "
-            f"SELECT OBJECT_CONSTRUCT('k1', 'v1')::MAP(VARCHAR, VARCHAR)"
-        )
-        execute_query(
-            f"INSERT INTO {table_name} "
-            f"SELECT OBJECT_CONSTRUCT('k2', 'v2')::MAP(VARCHAR, VARCHAR)"
-        )
+        execute_query(f"INSERT INTO {table_name} SELECT OBJECT_CONSTRUCT('k1', 'v1')::MAP(VARCHAR, VARCHAR)")
+        execute_query(f"INSERT INTO {table_name} SELECT OBJECT_CONSTRUCT('k2', 'v2')::MAP(VARCHAR, VARCHAR)")
 
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -142,29 +122,17 @@ class TestMapTable:
         assert "k1" in keys
         assert "k2" in keys
 
-    def test_should_select_map_corner_case_values_from_table(
-        self, execute_query, tmp_schema
-    ):
+    def test_should_select_map_corner_case_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
         # And A temporary table with MAP column is created
         table_name = f"{tmp_schema}.map_corner_case_table"
-        execute_query(
-            f"CREATE TABLE {table_name} (col MAP(VARCHAR, VARCHAR))"
-        )
+        execute_query(f"CREATE TABLE {table_name} (col MAP(VARCHAR, VARCHAR))")
 
         # And The table is populated with corner case map values
-        execute_query(
-            f"INSERT INTO {table_name} "
-            f"SELECT OBJECT_CONSTRUCT()::MAP(VARCHAR, VARCHAR)"
-        )
-        execute_query(
-            f"INSERT INTO {table_name} "
-            f"SELECT OBJECT_CONSTRUCT('a', 'b')::MAP(VARCHAR, VARCHAR)"
-        )
-        execute_query(
-            f"INSERT INTO {table_name} SELECT NULL::MAP(VARCHAR, VARCHAR)"
-        )
+        execute_query(f"INSERT INTO {table_name} SELECT OBJECT_CONSTRUCT()::MAP(VARCHAR, VARCHAR)")
+        execute_query(f"INSERT INTO {table_name} SELECT OBJECT_CONSTRUCT('a', 'b')::MAP(VARCHAR, VARCHAR)")
+        execute_query(f"INSERT INTO {table_name} SELECT NULL::MAP(VARCHAR, VARCHAR)")
 
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -182,45 +150,34 @@ class TestMapTable:
 class TestMapBinding:
     """Tests for MAP type using parameter binding."""
 
-    def test_should_select_map_using_parameter_binding(
-        self, execute_query
-    ):
+    def test_should_select_map_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
 
         # When Query selecting PARSE_JSON with bound JSON map string is executed
         json_str = '{"key": "value"}'
-        result = execute_query(
-            "SELECT PARSE_JSON(?)", (json_str,), single_row=True
-        )
+        result = execute_query("SELECT PARSE_JSON(?)", (json_str,), single_row=True)
 
         # Then Result should contain a valid map
         parsed = parse_map(result[0])
         assert parsed == dict(key="value")
 
         # When Query "SELECT PARSE_JSON(?)" is executed with bound NULL value
-        result = execute_query(
-            "SELECT PARSE_JSON(?)", (None,), single_row=True
-        )
+        result = execute_query("SELECT PARSE_JSON(?)", (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result[0] is None
 
-    def test_should_insert_map_using_parameter_binding(
-        self, execute_query, tmp_schema
-    ):
+    def test_should_insert_map_using_parameter_binding(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
         # And A temporary table with MAP column is created
         table_name = f"{tmp_schema}.map_bind_table"
-        execute_query(
-            f"CREATE TABLE {table_name} (col MAP(VARCHAR, VARCHAR))"
-        )
+        execute_query(f"CREATE TABLE {table_name} (col MAP(VARCHAR, VARCHAR))")
 
         # When JSON map string is inserted using parameter binding
         json_str = '{"name": "test"}'
         execute_query(
-            f"INSERT INTO {table_name} "
-            f"SELECT PARSE_JSON(?)::MAP(VARCHAR, VARCHAR)",
+            f"INSERT INTO {table_name} SELECT PARSE_JSON(?)::MAP(VARCHAR, VARCHAR)",
             (json_str,),
         )
 
@@ -236,9 +193,7 @@ class TestMapBinding:
 class TestMapMultipleChunks:
     """Tests for MAP type with multiple chunks downloading."""
 
-    def test_should_download_map_data_in_multiple_chunks(
-        self, execute_query
-    ):
+    def test_should_download_map_data_in_multiple_chunks(self, execute_query):
         # Given Snowflake client is logged in
 
         # When Query selecting 10000 MAP rows from GENERATOR is executed

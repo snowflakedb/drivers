@@ -32,8 +32,7 @@ TEST_CASE("should cast map values to appropriate type", "[datatype][map]") {
   Connection conn;
 
   // When Query selecting a MAP(VARCHAR, VARCHAR) value is executed
-  const auto stmt = conn.execute_fetch(
-      "SELECT OBJECT_CONSTRUCT('x', '1', 'y', '2')::MAP(VARCHAR, VARCHAR)");
+  const auto stmt = conn.execute_fetch("SELECT OBJECT_CONSTRUCT('x', '1', 'y', '2')::MAP(VARCHAR, VARCHAR)");
 
   // Then Value should be returned as appropriate type
   auto value = get_data<SQL_C_CHAR>(stmt, 1);
@@ -55,8 +54,7 @@ TEST_CASE("should select hardcoded map literals", "[datatype][map]") {
   Connection conn;
 
   // When Query selecting a MAP(VARCHAR, INTEGER) value with keys [a, b] is executed
-  const auto stmt =
-      conn.execute_fetch("SELECT OBJECT_CONSTRUCT('a', 1, 'b', 2)::MAP(VARCHAR, INTEGER)");
+  const auto stmt = conn.execute_fetch("SELECT OBJECT_CONSTRUCT('a', 1, 'b', 2)::MAP(VARCHAR, INTEGER)");
 
   // Then Result should contain a map with 2 entries
   auto value = get_data<SQL_C_CHAR>(stmt, 1);
@@ -78,16 +76,14 @@ TEST_CASE("should select map corner case values from literals", "[datatype][map]
 
   // Empty map
   {
-    const auto stmt =
-        conn.execute_fetch("SELECT OBJECT_CONSTRUCT()::MAP(VARCHAR, VARCHAR)");
+    const auto stmt = conn.execute_fetch("SELECT OBJECT_CONSTRUCT()::MAP(VARCHAR, VARCHAR)");
     auto value = get_data<SQL_C_CHAR>(stmt, 1);
     CHECK(value == "{}");
   }
 
   // Single entry map
   {
-    const auto stmt = conn.execute_fetch(
-        "SELECT OBJECT_CONSTRUCT('only', 'one')::MAP(VARCHAR, VARCHAR)");
+    const auto stmt = conn.execute_fetch("SELECT OBJECT_CONSTRUCT('only', 'one')::MAP(VARCHAR, VARCHAR)");
     auto value = get_data<SQL_C_CHAR>(stmt, 1);
     CHECK(json_contains_key(value, "only"));
     CHECK(value.find("\"one\"") != std::string::npos);
@@ -95,8 +91,7 @@ TEST_CASE("should select map corner case values from literals", "[datatype][map]
 
   // NULL::MAP
   {
-    const auto stmt =
-        conn.execute_fetch("SELECT NULL::MAP(VARCHAR, VARCHAR)");
+    const auto stmt = conn.execute_fetch("SELECT NULL::MAP(VARCHAR, VARCHAR)");
     auto value = get_data_optional<SQL_C_CHAR>(stmt, 1);
     CHECK(value == std::nullopt);
   }
@@ -124,8 +119,7 @@ TEST_CASE("should select map values from table", "[datatype][map]") {
 
   // When Query "SELECT * FROM <table>" is executed
   const auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM map_table"), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM map_table"), SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain the inserted map values
@@ -164,8 +158,7 @@ TEST_CASE("should select map corner case values from table", "[datatype][map]") 
 
   // When Query "SELECT * FROM <table>" is executed
   const auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(
-      stmt.getHandle(), sqlchar("SELECT col FROM map_corner_table"), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM map_corner_table"), SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain the inserted corner case map values
@@ -192,8 +185,7 @@ TEST_CASE("should select map corner case values from table", "[datatype][map]") 
 // MULTIPLE CHUNKS DOWNLOADING
 // ============================================================================
 
-TEST_CASE("should download map data in multiple chunks",
-          "[datatype][map][large_result_set]") {
+TEST_CASE("should download map data in multiple chunks", "[datatype][map][large_result_set]") {
   // Given Snowflake client is logged in
   Connection conn;
 

@@ -85,8 +85,7 @@ TEST_CASE("should select array corner case values from literals", "[datatype][ar
 
   // Nested array
   {
-    const auto stmt = conn.execute_fetch(
-        "SELECT ARRAY_CONSTRUCT(ARRAY_CONSTRUCT(1, 2), ARRAY_CONSTRUCT(3, 4))");
+    const auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(ARRAY_CONSTRUCT(1, 2), ARRAY_CONSTRUCT(3, 4))");
     auto value = get_data<SQL_C_CHAR>(stmt, 1);
     REQUIRE(!value.empty());
     CHECK(value.find("[") != std::string::npos);
@@ -94,8 +93,7 @@ TEST_CASE("should select array corner case values from literals", "[datatype][ar
 
   // Mixed types
   {
-    const auto stmt =
-        conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1, 'two', TRUE)");
+    const auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1, 'two', TRUE)");
     auto value = get_data<SQL_C_CHAR>(stmt, 1);
     CHECK(value.find("1") != std::string::npos);
     CHECK(value.find("\"two\"") != std::string::npos);
@@ -130,8 +128,7 @@ TEST_CASE("should select array values from table", "[datatype][array]") {
 
   // When Query "SELECT * FROM <table>" is executed
   const auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM array_table"), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM array_table"), SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain the inserted array values
@@ -167,8 +164,7 @@ TEST_CASE("should select array corner case values from table", "[datatype][array
 
   // When Query "SELECT * FROM <table>" is executed
   const auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(
-      stmt.getHandle(), sqlchar("SELECT col FROM array_corner_table"), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM array_corner_table"), SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain the inserted corner case array values
@@ -195,8 +191,7 @@ TEST_CASE("should select array corner case values from table", "[datatype][array
 // MULTIPLE CHUNKS DOWNLOADING
 // ============================================================================
 
-TEST_CASE("should download array data in multiple chunks",
-          "[datatype][array][large_result_set]") {
+TEST_CASE("should download array data in multiple chunks", "[datatype][array][large_result_set]") {
   // Given Snowflake client is logged in
   Connection conn;
 
