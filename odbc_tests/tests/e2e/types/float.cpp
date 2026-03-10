@@ -33,7 +33,7 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
   Connection conn;
 
   // When Query "SELECT 0.0::<type>, 123.456::<type>, 1.23e10::<type>, 'NaN'::<type>, 'inf'::<type>" is executed
-  auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT, 123.456::FLOAT, 1.23e10::FLOAT");
+  auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT, 123.456::FLOAT, 1.23e10::FLOAT, 'NaN'::FLOAT, 'inf'::FLOAT");
 
   // Then All values should be returned as appropriate type
   // And Regular values should have approximately 15 decimal digits precision
@@ -42,9 +42,8 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == Catch::Approx(1.23e10));
 
   // And NaN and inf values should be identified correctly
-  auto stmt2 = conn.execute_fetch("SELECT 'NaN'::FLOAT, 'inf'::FLOAT");
-  CHECK(get_data<SQL_C_CHAR>(stmt2, 1) == "NaN");
-  CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt2, 2)));
+  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "NaN");
+  CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt, 5)));
 }
 
 // ============================================================================
@@ -162,21 +161,30 @@ TEST_CASE("should select floats from table for float and synonyms", "[float]") {
   auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
-  conn.execute("CREATE TABLE float_basic (col FLOAT)");
-  conn.execute("INSERT INTO float_basic VALUES (0.0), (123.456), (-789.012), (1.23e5), (-9.87e-3)");
+  conn.execute("CREATE TABLE float_table (col FLOAT)");
+  conn.execute("INSERT INTO float_table VALUES (0.0), (123.456), (-789.012), (1.23e5), (-9.87e-3)");
 
   // When Query "SELECT * FROM float_table" is executed
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM float_basic ORDER BY col", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  auto stmt = conn.execute_fetch("SELECT * FROM float_table");
 
   // Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
-  std::vector<double> expected = {-789.012, -0.00987, 0.0, 123.456, 123000.0};
-  for (size_t i = 0; i < expected.size(); i++) {
-    ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
-    CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(expected[i]));
-  }
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123000.0));
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-0.00987));
 }
 
 TEST_CASE("should handle special float values from table for float and synonyms", "[float]") {
