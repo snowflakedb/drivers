@@ -44,30 +44,22 @@ def _load_core() -> ctypes.CDLL:
             dll_dir = os.fspath(lib_path.parent)
             os.add_dll_directory(dll_dir)
 
-        try:
-            core = ctypes.CDLL(lib_path_str)
-        except OSError as first_err:
-            if not sys.platform.startswith("win"):
-                raise
-            # --- TEMPORARY FALLBACK (remove after Windows ARM64 is green) ---
-            # Python 3.8+ uses restricted DLL search (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
-            # | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR).  On ARM64 Windows this can fail
-            # with WinError 127.  Fall back to the traditional search (winmode=0)
-            # which uses PATH to locate dependency DLLs.
-            _diag = (  # type: ignore[unreachable]
-                f"[sf_core] Restricted DLL load failed: {first_err}\n"
-                f"[sf_core] DLL path: {lib_path_str}\n"
-                f"[sf_core] _core dir contents: {os.listdir(lib_path.parent)}\n"
-                f"[sf_core] Retrying with winmode=0 (traditional DLL search)..."
-            )
-            print(_diag, file=sys.stderr, flush=True)
-            try:
-                core = ctypes.CDLL(lib_path_str, winmode=0)
-                print("[sf_core] winmode=0 load succeeded", file=sys.stderr, flush=True)
-            except OSError:
-                # Both modes failed — raise the original error
-                raise first_err from None
-            # --- END TEMPORARY FALLBACK ---
+            # Pre-load bundled dependency DLLs (e.g. OpenSSL) so they are already
+            # present in the process when sf_core.dll is loaded.  On ARM64 Windows,
+            # the restricted DLL search introduced in Python 3.8+
+            # (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)
+            # does not reliably find dependency DLLs in the same directory as the
+            # loading DLL.  Pre-loading them by full path avoids WinError 127
+            # ("procedure not found") at sf_core load time.
+            core_dll_name = lib_path.name
+            for dep_name in sorted(os.listdir(dll_dir)):
+                if dep_name.endswith(".dll") and dep_name != core_dll_name:
+                    try:
+                        ctypes.CDLL(os.path.join(dll_dir, dep_name))
+                    except OSError:
+                        pass  # non-critical; sf_core load will surface the real error
+
+        core = ctypes.CDLL(lib_path_str)
     return core
 
 
