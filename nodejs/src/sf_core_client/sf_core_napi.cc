@@ -2,8 +2,12 @@
 #include <napi.h>
 
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
+#include <vector>
+
+#include "arrow_abi.h"
 
 // sf_core C function signatures
 typedef size_t (*sf_core_api_call_proto_fn)(const char* api, const char* method, const uint8_t* request,
@@ -152,9 +156,289 @@ static Napi::Value InitLogger(const Napi::CallbackInfo& info) {
   return Napi::Number::New(env, result);
 }
 
+// ── Arrow stream reader ─────────────────────────────────────────────────────
+
+static uint32_t next_stream_handle = 1;
+static std::map<uint32_t, ArrowArrayStream*> open_streams;
+
+static void ReleaseSchemaRecursive(ArrowSchema* schema) {
+  if (schema && schema->release) {
+    schema->release(schema);
+  }
+}
+
+static void ReleaseArray(ArrowArray* array) {
+  if (array && array->release) {
+    array->release(array);
+  }
+}
+
+static std::vector<std::string> ExtractColumnNames(ArrowSchema* schema) {
+  std::vector<std::string> names;
+  for (int64_t i = 0; i < schema->n_children; i++) {
+    const char* name = schema->children[i]->name;
+    names.push_back(name ? name : "");
+  }
+  return names;
+}
+
+// Read a single value from an Arrow array column and set it on a JS object.
+// Supports the common types needed for the POC; extend as needed.
+static void SetValueFromArrow(Napi::Env env, Napi::Object& row, const std::string& col_name, ArrowSchema* col_schema,
+                              ArrowArray* col_array, int64_t row_idx) {
+  int64_t actual_idx = row_idx + col_array->offset;
+
+  // Check for null via validity bitmap (buffer 0)
+  if (col_array->null_count != 0 && col_array->buffers[0] != nullptr) {
+    const uint8_t* validity = static_cast<const uint8_t*>(col_array->buffers[0]);
+    if (!(validity[actual_idx / 8] & (1 << (actual_idx % 8)))) {
+      row.Set(col_name, env.Null());
+      return;
+    }
+  }
+
+  const char* format = col_schema->format;
+
+  // "l" = int64
+  if (format[0] == 'l' && format[1] == '\0') {
+    const int64_t* data = static_cast<const int64_t*>(col_array->buffers[1]);
+    int64_t val = data[actual_idx];
+    // Use Number for values that fit safely; BigInt otherwise
+    if (val >= -9007199254740991LL && val <= 9007199254740991LL) {
+      row.Set(col_name, Napi::Number::New(env, static_cast<double>(val)));
+    } else {
+      row.Set(col_name, Napi::BigInt::New(env, val));
+    }
+    return;
+  }
+
+  // "i" = int32
+  if (format[0] == 'i' && format[1] == '\0') {
+    const int32_t* data = static_cast<const int32_t*>(col_array->buffers[1]);
+    row.Set(col_name, Napi::Number::New(env, data[actual_idx]));
+    return;
+  }
+
+  // "s" = int16
+  if (format[0] == 's' && format[1] == '\0') {
+    const int16_t* data = static_cast<const int16_t*>(col_array->buffers[1]);
+    row.Set(col_name, Napi::Number::New(env, data[actual_idx]));
+    return;
+  }
+
+  // "c" = int8
+  if (format[0] == 'c' && format[1] == '\0') {
+    const int8_t* data = static_cast<const int8_t*>(col_array->buffers[1]);
+    row.Set(col_name, Napi::Number::New(env, data[actual_idx]));
+    return;
+  }
+
+  // "g" = float64 (double)
+  if (format[0] == 'g' && format[1] == '\0') {
+    const double* data = static_cast<const double*>(col_array->buffers[1]);
+    row.Set(col_name, Napi::Number::New(env, data[actual_idx]));
+    return;
+  }
+
+  // "f" = float32
+  if (format[0] == 'f' && format[1] == '\0') {
+    const float* data = static_cast<const float*>(col_array->buffers[1]);
+    row.Set(col_name, Napi::Number::New(env, data[actual_idx]));
+    return;
+  }
+
+  // "b" = boolean
+  if (format[0] == 'b' && format[1] == '\0') {
+    const uint8_t* data = static_cast<const uint8_t*>(col_array->buffers[1]);
+    bool val = data[actual_idx / 8] & (1 << (actual_idx % 8));
+    row.Set(col_name, Napi::Boolean::New(env, val));
+    return;
+  }
+
+  // "u" = utf8 string (variable-length, 32-bit offsets)
+  if (format[0] == 'u' && format[1] == '\0') {
+    const int32_t* offsets = static_cast<const int32_t*>(col_array->buffers[1]);
+    const char* data = static_cast<const char*>(col_array->buffers[2]);
+    int32_t start = offsets[actual_idx];
+    int32_t end = offsets[actual_idx + 1];
+    row.Set(col_name, Napi::String::New(env, data + start, end - start));
+    return;
+  }
+
+  // "U" = large utf8 string (variable-length, 64-bit offsets)
+  if (format[0] == 'U' && format[1] == '\0') {
+    const int64_t* offsets = static_cast<const int64_t*>(col_array->buffers[1]);
+    const char* data = static_cast<const char*>(col_array->buffers[2]);
+    int64_t start = offsets[actual_idx];
+    int64_t end = offsets[actual_idx + 1];
+    row.Set(col_name, Napi::String::New(env, data + start, static_cast<size_t>(end - start)));
+    return;
+  }
+
+  // "n" = null type
+  if (format[0] == 'n' && format[1] == '\0') {
+    row.Set(col_name, env.Null());
+    return;
+  }
+
+  // Unsupported type: return as string describing the format
+  std::string fallback = std::string("[unsupported Arrow type: ") + format + "]";
+  row.Set(col_name, Napi::String::New(env, fallback));
+}
+
+// openArrowStream(pointerBuffer: Buffer): { handle: number, columnNames: string[] }
+static Napi::Value OpenArrowStream(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsBuffer()) {
+    Napi::TypeError::New(env, "Expected a Buffer containing the ArrowArrayStream pointer").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  Napi::Buffer<uint8_t> buf = info[0].As<Napi::Buffer<uint8_t>>();
+  if (buf.Length() != sizeof(void*)) {
+    Napi::TypeError::New(env, "Pointer buffer must be exactly sizeof(void*) bytes").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ArrowArrayStream* stream = nullptr;
+  std::memcpy(&stream, buf.Data(), sizeof(void*));
+
+  if (!stream || !stream->release) {
+    Napi::Error::New(env, "Invalid or already-released ArrowArrayStream pointer").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  // Get schema to extract column names
+  ArrowSchema schema;
+  std::memset(&schema, 0, sizeof(schema));
+  int rc = stream->get_schema(stream, &schema);
+  if (rc != 0) {
+    const char* err = stream->get_last_error(stream);
+    std::string msg = "get_schema failed: ";
+    msg += err ? err : "unknown error";
+    Napi::Error::New(env, msg).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  std::vector<std::string> col_names = ExtractColumnNames(&schema);
+  ReleaseSchemaRecursive(&schema);
+
+  uint32_t handle = next_stream_handle++;
+  open_streams[handle] = stream;
+
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("handle", Napi::Number::New(env, handle));
+
+  Napi::Array names_arr = Napi::Array::New(env, col_names.size());
+  for (size_t i = 0; i < col_names.size(); i++) {
+    names_arr.Set(static_cast<uint32_t>(i), Napi::String::New(env, col_names[i]));
+  }
+  result.Set("columnNames", names_arr);
+
+  return result;
+}
+
+// readNextBatch(handle: number): object[] | null
+static Napi::Value ReadNextBatch(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "Expected a stream handle (number)").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t handle = info[0].As<Napi::Number>().Uint32Value();
+  auto it = open_streams.find(handle);
+  if (it == open_streams.end()) {
+    Napi::Error::New(env, "Unknown or closed stream handle").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ArrowArrayStream* stream = it->second;
+
+  // We need the schema to know column formats
+  ArrowSchema schema;
+  std::memset(&schema, 0, sizeof(schema));
+  int rc = stream->get_schema(stream, &schema);
+  if (rc != 0) {
+    const char* err = stream->get_last_error(stream);
+    std::string msg = "get_schema failed: ";
+    msg += err ? err : "unknown error";
+    Napi::Error::New(env, msg).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  ArrowArray batch;
+  std::memset(&batch, 0, sizeof(batch));
+  rc = stream->get_next(stream, &batch);
+  if (rc != 0) {
+    const char* err = stream->get_last_error(stream);
+    std::string msg = "get_next failed: ";
+    msg += err ? err : "unknown error";
+    ReleaseSchemaRecursive(&schema);
+    Napi::Error::New(env, msg).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  // End of stream
+  if (!batch.release) {
+    ReleaseSchemaRecursive(&schema);
+    return env.Null();
+  }
+
+  // Convert batch to array of JS objects
+  int64_t n_rows = batch.length;
+  int64_t n_cols = schema.n_children;
+
+  Napi::Array rows = Napi::Array::New(env, static_cast<size_t>(n_rows));
+
+  for (int64_t r = 0; r < n_rows; r++) {
+    Napi::Object row = Napi::Object::New(env);
+    for (int64_t c = 0; c < n_cols; c++) {
+      const char* name = schema.children[c]->name;
+      std::string col_name = name ? name : "";
+      SetValueFromArrow(env, row, col_name, schema.children[c], batch.children[c], r);
+    }
+    rows.Set(static_cast<uint32_t>(r), row);
+  }
+
+  ReleaseArray(&batch);
+  ReleaseSchemaRecursive(&schema);
+
+  return rows;
+}
+
+// closeArrowStream(handle: number): void
+static Napi::Value CloseArrowStream(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "Expected a stream handle (number)").ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+
+  uint32_t handle = info[0].As<Napi::Number>().Uint32Value();
+  auto it = open_streams.find(handle);
+  if (it == open_streams.end()) {
+    return env.Undefined();
+  }
+
+  ArrowArrayStream* stream = it->second;
+  if (stream && stream->release) {
+    stream->release(stream);
+  }
+  open_streams.erase(it);
+
+  return env.Undefined();
+}
+
 static Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("apiCallProto", Napi::Function::New(env, ApiCallProto));
   exports.Set("initLogger", Napi::Function::New(env, InitLogger));
+  exports.Set("openArrowStream", Napi::Function::New(env, OpenArrowStream));
+  exports.Set("readNextBatch", Napi::Function::New(env, ReadNextBatch));
+  exports.Set("closeArrowStream", Napi::Function::New(env, CloseArrowStream));
   return exports;
 }
 

@@ -2,6 +2,7 @@ import { Connection, ConnectionOptions } from "./connection";
 import { configure as configureLogger, ConfigureOptions } from "./logger";
 
 export { Connection, ConnectionOptions } from "./connection";
+export type { ExecuteOptions, ExecuteResult, ColumnInfo } from "./connection";
 export { ConfigureOptions, LogLevel } from "./logger";
 
 export function createConnection(options: ConnectionOptions): Connection {

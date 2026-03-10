@@ -16,6 +16,11 @@ interface NativeAddon {
       func: string,
     ) => void,
   ): number;
+  openArrowStream(
+    pointerBuffer: Buffer,
+  ): { handle: number; columnNames: string[] };
+  readNextBatch(handle: number): Record<string, unknown>[] | null;
+  closeArrowStream(handle: number): void;
 }
 
 const addon: NativeAddon = require(
@@ -107,4 +112,20 @@ export function initNativeLogger(
   ) => void,
 ): number {
   return addon.initLogger(callback);
+}
+
+export function openArrowStream(
+  pointerBuffer: Buffer,
+): { handle: number; columnNames: string[] } {
+  return addon.openArrowStream(pointerBuffer);
+}
+
+export function readNextBatch(
+  handle: number,
+): Record<string, unknown>[] | null {
+  return addon.readNextBatch(handle);
+}
+
+export function closeArrowStream(handle: number): void {
+  addon.closeArrowStream(handle);
 }

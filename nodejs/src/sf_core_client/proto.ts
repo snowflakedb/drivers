@@ -34,6 +34,9 @@ function longsToBigInt(obj: unknown): unknown {
   if (Long.isLong(obj)) {
     return BigInt(obj.toString());
   }
+  if (ArrayBuffer.isView(obj)) {
+    return obj;
+  }
   if (Array.isArray(obj)) {
     return obj.map(longsToBigInt);
   }

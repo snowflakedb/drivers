@@ -1,5 +1,10 @@
 import { SfCoreClient } from "./sf_core_client/generated/client";
 import { database_driver_v1 as proto } from "./sf_core_client/generated/proto";
+import {
+  openArrowStream,
+  readNextBatch,
+  closeArrowStream,
+} from "./sf_core_client/transport";
 
 export interface ConnectionOptions {
   username: string;
@@ -11,6 +16,21 @@ export interface ConnectionOptions {
   role?: string;
   host?: string;
   authenticator?: string;
+}
+
+export interface ExecuteOptions {
+  sqlText: string;
+}
+
+export interface ColumnInfo {
+  name: string;
+  type: string;
+}
+
+export interface ExecuteResult {
+  rows: Record<string, unknown>[];
+  columns: ColumnInfo[];
+  queryId: string;
 }
 
 const KEY_REMAP: Record<string, string> = {
@@ -62,5 +82,62 @@ export class Connection {
     });
 
     return this;
+  }
+
+  async execute(options: ExecuteOptions): Promise<ExecuteResult> {
+    if (!this.connHandle) {
+      throw new Error("Not connected. Call connect() first.");
+    }
+
+    const stmtResp = await client.statementNew({
+      connHandle: this.connHandle,
+    });
+    const stmtHandle = stmtResp.stmtHandle!;
+
+    try {
+      await client.statementSetSqlQuery({
+        stmtHandle,
+        query: options.sqlText,
+      });
+
+      const execResp = await client.statementExecuteQuery({ stmtHandle });
+      const result = execResp.result!;
+
+      const columns: ColumnInfo[] = (result.columns ?? []).map((c) => ({
+        name: c.name ?? "",
+        type: c.type ?? "",
+      }));
+      const queryId = result.queryId ?? "";
+
+      const streamPtrBytes = result.stream?.value;
+      if (!streamPtrBytes || streamPtrBytes.length === 0) {
+        return { rows: [], columns, queryId };
+      }
+
+      const ptrBuffer =
+        Buffer.isBuffer(streamPtrBytes)
+          ? streamPtrBytes
+          : Buffer.from(
+              streamPtrBytes.buffer,
+              streamPtrBytes.byteOffset,
+              streamPtrBytes.byteLength,
+            );
+
+      const { handle } = openArrowStream(ptrBuffer);
+
+      try {
+        const rows: Record<string, unknown>[] = [];
+        while (true) {
+          const batch = readNextBatch(handle);
+          if (!batch) break;
+          rows.push(...batch);
+        }
+        return { rows, columns, queryId };
+      } finally {
+        closeArrowStream(handle);
+      }
+    } finally {
+      await client.statementRelease({ stmtHandle });
+    }
   }
 }
