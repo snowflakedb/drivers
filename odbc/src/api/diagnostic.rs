@@ -5,7 +5,7 @@
 
 use crate::{
     api::{
-        Connection, DiagFieldValue, Environment, OdbcError, OdbcResult, SqlState, Statement,
+        Connection, Environment, FieldValue, OdbcError, OdbcResult, SqlState, Statement,
         conn_from_handle, env_from_handle,
         error::{
             InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
@@ -340,7 +340,7 @@ pub fn get_diag_field(
     handle: sql::Handle,
     rec_number: sql::SmallInt,
     diag_identifier: sql::SmallInt,
-) -> OdbcResult<DiagFieldValue> {
+) -> OdbcResult<FieldValue> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
     tracing::debug!(
         "get_diag_field: handle_type={handle_type:?}, rec_number={rec_number}, diag_identifier={diag_identifier:?}",
@@ -353,23 +353,23 @@ pub fn get_diag_field(
 
     if rec_number == 0 {
         match diag_id {
-            DiagIdentifier::Number => Ok(DiagFieldValue::Integer(
+            DiagIdentifier::Number => Ok(FieldValue::Integer(
                 diagnostic_info.header.number_of_records.unwrap_or(0),
             )),
             DiagIdentifier::ReturnCode => {
-                Ok(DiagFieldValue::RetCode(diagnostic_info.header.return_code))
+                Ok(FieldValue::RetCode(diagnostic_info.header.return_code))
             }
-            DiagIdentifier::RowCount => Ok(DiagFieldValue::Len(
+            DiagIdentifier::RowCount => Ok(FieldValue::Len(
                 diagnostic_info.header.row_count.unwrap_or(0),
             )),
             DiagIdentifier::DynamicFunction => {
                 if let Some(ref dynamic_function) = diagnostic_info.header.dynamic_function_code {
-                    Ok(DiagFieldValue::String(dynamic_function.clone()))
+                    Ok(FieldValue::String(dynamic_function.clone()))
                 } else {
                     NoMoreDataSnafu.fail()
                 }
             }
-            DiagIdentifier::CursorRowCount => Ok(DiagFieldValue::Len(
+            DiagIdentifier::CursorRowCount => Ok(FieldValue::Len(
                 diagnostic_info.header.cursor_row_count.unwrap_or(0),
             )),
             _ => NoMoreDataSnafu.fail(),
@@ -382,28 +382,26 @@ pub fn get_diag_field(
         let record = &diagnostic_info.records[(rec_number - 1) as usize];
 
         match diag_id {
-            DiagIdentifier::SqlState => Ok(DiagFieldValue::String(
-                record.sql_state.as_str().to_string(),
-            )),
-            DiagIdentifier::Native => Ok(DiagFieldValue::Integer(record.native_error)),
-            DiagIdentifier::MessageText => Ok(DiagFieldValue::String(record.message_text.clone())),
+            DiagIdentifier::SqlState => {
+                Ok(FieldValue::String(record.sql_state.as_str().to_string()))
+            }
+            DiagIdentifier::Native => Ok(FieldValue::Integer(record.native_error)),
+            DiagIdentifier::MessageText => Ok(FieldValue::String(record.message_text.clone())),
             DiagIdentifier::ClassOrigin | DiagIdentifier::SubclassOrigin => {
                 let origin_str = match record.class_origin {
                     ClassOrigin::Odbc3_0 => "ODBC 3.0",
                     ClassOrigin::Iso9075 => "ISO 9075",
                 };
-                Ok(DiagFieldValue::String(origin_str.to_string()))
+                Ok(FieldValue::String(origin_str.to_string()))
             }
             DiagIdentifier::ConnectionName => {
-                Ok(DiagFieldValue::String(record.connection_name.clone()))
+                Ok(FieldValue::String(record.connection_name.clone()))
             }
-            DiagIdentifier::ServerName => Ok(DiagFieldValue::String(String::new())),
+            DiagIdentifier::ServerName => Ok(FieldValue::String(String::new())),
             DiagIdentifier::ColumnNumber => {
-                Ok(DiagFieldValue::Integer(record.column_number.unwrap_or(0)))
+                Ok(FieldValue::Integer(record.column_number.unwrap_or(0)))
             }
-            DiagIdentifier::RowNumber => {
-                Ok(DiagFieldValue::Integer(record.row_number.unwrap_or(0)))
-            }
+            DiagIdentifier::RowNumber => Ok(FieldValue::Integer(record.row_number.unwrap_or(0))),
             _ => NoMoreDataSnafu.fail(),
         }
     }

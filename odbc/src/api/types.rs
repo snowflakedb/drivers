@@ -460,33 +460,18 @@ pub fn desc_ref_from_handle<'a>(handle: sql::Handle) -> OdbcResult<DescriptorRef
     }
 }
 
-/// Value returned by `get_connect_attr`: either an integer written directly
-/// or a string that the FFI boundary layer must encode.
-pub enum ConnectAttrValue {
-    ULen(sql::ULen),
-    String(String),
-}
-
-/// Value returned by `get_info`: typed so the FFI boundary layer can write
-/// the correct representation into the caller-supplied buffer.
-pub enum InfoValue {
-    USmallInt(u16),
-    UInteger(u32),
-    String(String),
-}
-
-/// Value returned by `get_diag_field`.
-pub enum DiagFieldValue {
+/// Typed value returned by ODBC functions that produce a field/attribute result.
+///
+/// The c_api layer uses this to write the correct representation into
+/// caller-supplied output buffers. Having one type instead of per-function
+/// enums keeps the conversion logic DRY.
+pub enum FieldValue {
+    USmallInt(sql::USmallInt),
+    UInteger(sql::UInteger),
     Integer(sql::Integer),
     Len(sql::Len),
+    ULen(sql::ULen),
     RetCode(sql::RetCode),
-    String(String),
-}
-
-/// Value returned by `col_attribute`.
-pub enum ColAttributeResult {
-    Numeric(sql::Len),
-    #[allow(dead_code)]
     String(String),
 }
 

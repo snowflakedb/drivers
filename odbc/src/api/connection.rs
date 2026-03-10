@@ -2,7 +2,7 @@ use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::error::Required;
 use crate::api::{
-    ConnectAttrValue, ConnectionState, GetDataExtensions, InfoValue, OdbcResult, conn_from_handle,
+    ConnectionState, FieldValue, GetDataExtensions, OdbcResult, conn_from_handle,
     error::{
         AttributeCannotBeSetNowSnafu, InvalidPortSnafu, UnknownAttributeSnafu,
         UnsupportedAttributeSnafu,
@@ -429,7 +429,7 @@ pub fn set_connect_attr(
 pub fn get_connect_attr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
-) -> OdbcResult<ConnectAttrValue> {
+) -> OdbcResult<FieldValue> {
     let connection = conn_from_handle(connection_handle);
     tracing::debug!("get_connect_attr: attribute={attribute}");
 
@@ -451,9 +451,9 @@ pub fn get_connect_attr(
                 .get(&attr)
                 .cloned()
                 .unwrap_or_default();
-            Ok(ConnectAttrValue::String(value))
+            Ok(FieldValue::String(value))
         }
-        ConnectionAttribute::Autocommit => Ok(ConnectAttrValue::ULen(SQL_AUTOCOMMIT_ON)),
+        ConnectionAttribute::Autocommit => Ok(FieldValue::ULen(SQL_AUTOCOMMIT_ON)),
         ConnectionAttribute::LoginTimeout => {
             let timeout: sql::ULen = match connection.pre_connection_attrs.get(&attr) {
                 Some(s) => s.parse().unwrap_or_else(|_| {
@@ -465,9 +465,9 @@ pub fn get_connect_attr(
                 }),
                 None => DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap(),
             };
-            Ok(ConnectAttrValue::ULen(timeout))
+            Ok(FieldValue::ULen(timeout))
         }
-        ConnectionAttribute::ConnectionTimeout => Ok(ConnectAttrValue::ULen(0)),
+        ConnectionAttribute::ConnectionTimeout => Ok(FieldValue::ULen(0)),
         ConnectionAttribute::PrivKey => UnsupportedAttributeSnafu {
             attribute: attr.as_raw(),
         }
@@ -482,7 +482,7 @@ pub fn get_connect_attr(
 pub fn get_info(
     connection_handle: sql::Handle,
     info_type: sql::USmallInt,
-) -> OdbcResult<InfoValue> {
+) -> OdbcResult<FieldValue> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
 
     let _conn = conn_from_handle(connection_handle);
@@ -491,16 +491,16 @@ pub fn get_info(
 
     match info_type {
         InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => {
-            Ok(InfoValue::USmallInt(1)) // SQL_CB_CLOSE
+            Ok(FieldValue::USmallInt(1)) // SQL_CB_CLOSE
         }
-        InfoType::DriverOdbcVer => Ok(InfoValue::String("03.00".to_string())),
+        InfoType::DriverOdbcVer => Ok(FieldValue::String("03.00".to_string())),
         InfoType::GetDataExtensions => {
             let extensions = [
                 GetDataExtensions::AnyColumn,
                 GetDataExtensions::AnyOrder,
                 GetDataExtensions::Bound,
             ];
-            Ok(InfoValue::UInteger(extensions.bitmask()))
+            Ok(FieldValue::UInteger(extensions.bitmask()))
         }
     }
 }

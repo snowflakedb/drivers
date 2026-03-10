@@ -1,5 +1,5 @@
 use crate::api::error::{ConversionSnafu, InvalidDescriptorIndexSnafu, StatementNotExecutedSnafu};
-use crate::api::{ColAttributeResult, DescField, OdbcResult, StatementState, stmt_from_handle};
+use crate::api::{DescField, FieldValue, OdbcResult, StatementState, stmt_from_handle};
 use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
@@ -63,7 +63,7 @@ pub fn col_attribute(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     field_identifier: sql::USmallInt,
-) -> OdbcResult<ColAttributeResult> {
+) -> OdbcResult<FieldValue> {
     tracing::debug!(
         "col_attribute: column_number={column_number}, field_identifier={field_identifier}",
     );
@@ -95,11 +95,11 @@ pub fn col_attribute(
         DescField::Type | DescField::ConciseType => {
             let sql_type =
                 sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
-            Ok(ColAttributeResult::Numeric(sql_type.0 as sql::Len))
+            Ok(FieldValue::Len(sql_type.0 as sql::Len))
         }
         _ => {
             tracing::warn!("col_attribute: unsupported field_identifier={desc_field:?}");
-            Ok(ColAttributeResult::Numeric(0))
+            Ok(FieldValue::Len(0))
         }
     }
 }

@@ -261,6 +261,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Output length {value} overflows target integer type"))]
+    LengthOverflow {
+        value: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("String encoding error: {source}"))]
     Encoding {
         source: crate::encoding::EncodingError,
@@ -443,6 +450,7 @@ impl OdbcError {
                 CoreProtobufError::Application { .. } => SqlState::GeneralError,
             },
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
+            OdbcError::LengthOverflow { .. } => SqlState::GeneralError,
             OdbcError::Encoding { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
