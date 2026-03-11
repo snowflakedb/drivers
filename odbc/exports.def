@@ -8,19 +8,32 @@ EXPORTS
     SQLExecDirect
     SQLExecDirectW
     SQLFreeHandle
+    SQLFreeStmt
     SQLConnect
     SQLSetEnvAttr
     SQLGetEnvAttr
+    SQLSetConnectAttr
+    SQLGetConnectAttr
+    SQLGetInfo
     SQLDriverConnect
+    SQLDriverConnectW
     SQLDisconnect
     SQLFetch
+    SQLFetchScroll
     SQLExtendedFetch
     SQLGetData
+    SQLColAttribute
+    SQLDescribeCol
     SQLNumResultCols
     SQLRowCount
     SQLBindParameter
+    SQLBindCol
     SQLPrepare
+    SQLPrepareW
     SQLExecute
     SQLGetDiagRec
     SQLGetDiagField
-    SQLBindCol
+    SQLSetStmtAttr
+    SQLGetStmtAttr
+    SQLGetDescField
+    SQLSetDescField

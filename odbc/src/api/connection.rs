@@ -58,16 +58,8 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     }
     map
 }
-
-/// Connect using connection string (SQLDriverConnect)
-pub fn driver_connect(
-    connection_handle: sql::Handle,
-    in_connection_string: *const sql::Char,
-    in_string_length: sql::SmallInt,
-) -> OdbcResult<()> {
-    // Parse the connection string
-    let connection_string =
-        api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
+/// Internal implementation of driver_connect logic (used by both ANSI and Unicode variants)
+fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) -> OdbcResult<()> {
     let connection_string_map = parse_connection_string(&connection_string);
     {
         const REDACTED_KEYS: &[&str] = &[
@@ -242,6 +234,28 @@ pub fn driver_connect(
     };
 
     Ok(())
+}
+
+/// Connect using connection string (SQLDriverConnect - ANSI version)
+pub fn driver_connect(
+    connection_handle: sql::Handle,
+    in_connection_string: *const sql::Char,
+    in_string_length: sql::SmallInt,
+) -> OdbcResult<()> {
+    let connection_string =
+        api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
+    driver_connect_impl(connection_handle, &connection_string)
+}
+
+/// Connect using connection string (SQLDriverConnectW - Unicode version)
+pub fn driver_connect_w(
+    connection_handle: sql::Handle,
+    in_connection_string: *const sql::WChar,
+    in_string_length: sql::SmallInt,
+) -> OdbcResult<()> {
+    let connection_string =
+        api_utils::utf16_to_string(in_connection_string, in_string_length as i32)?;
+    driver_connect_impl(connection_handle, &connection_string)
 }
 
 /// Apply pre-connection attributes to sf_core. SQLSetConnectAttr values override

@@ -228,6 +228,28 @@ pub unsafe extern "C" fn SQLDriverConnect(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLDriverConnectW(
+    connection_handle: sql::Handle,
+    _window_handle: sql::Handle,
+    in_connection_string: *const sql::WChar,
+    in_string_length: sql::SmallInt,
+    _out_connection_string: *mut sql::WChar,
+    _out_string_length: *mut sql::SmallInt,
+    _driver_completion: sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::driver_connect_w(
+        connection_handle,
+        in_connection_string,
+        in_string_length,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::RetCode {
     api::connection::disconnect(connection_handle).to_sql_code()
 }
