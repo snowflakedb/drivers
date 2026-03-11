@@ -5,7 +5,7 @@ use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::conversion::NumericSettings;
 use crate::conversion::warning::Warnings;
-use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
+use arrow::{array::RecordBatch, datatypes::SchemaRef, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
@@ -526,20 +526,24 @@ pub struct ParameterBinding {
 pub enum StatementState {
     Created,
     Prepared {
-        reader: ArrowArrayStreamReader,
+        schema: SchemaRef,
     },
     Executed {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
     },
-    NoResultSet,
+    NoResultSet {
+        schema: SchemaRef,
+    },
     Fetching {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,
         batch_idx: usize,
         rows_affected: Option<i64>,
     },
-    Done,
+    Done {
+        schema: SchemaRef,
+    },
     Error,
 }
 
