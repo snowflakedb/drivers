@@ -40,6 +40,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-11-arm]
         py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        exclude:
+          # Python 3.9 and 3.10 have no native ARM64 Windows builds in uv
+          - os: windows-11-arm
+            py: "3.9"
+          - os: windows-11-arm
+            py: "3.10"
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
