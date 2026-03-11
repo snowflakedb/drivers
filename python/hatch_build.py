@@ -8,6 +8,7 @@ import subprocess
 import sys
 import warnings
 
+from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -155,7 +156,17 @@ class BuildHook(BuildHookInterface):
         scripts_dir = str(Path(sys.executable).parent)
         env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
 
-        with TemporaryDirectory() as temp_dir:
+        # Use a stable target dir when PROTO_CARGO_TARGET_DIR is set (enables
+        # incremental Rust compilation and CI caching). Otherwise fall back to a
+        # temporary directory that is cleaned up after the build.
+        stable_target = os.environ.get("PROTO_CARGO_TARGET_DIR")
+        if stable_target:
+            Path(stable_target).mkdir(parents=True, exist_ok=True)
+            dir_ctx = nullcontext(stable_target)
+        else:
+            dir_ctx = TemporaryDirectory()
+
+        with dir_ctx as target_dir:
             cargo_args = [
                 "cargo",
                 "run",
@@ -164,7 +175,7 @@ class BuildHook(BuildHookInterface):
                 "--manifest-path",
                 str(cargo_manifest),
                 "--target-dir",
-                str(temp_dir),
+                target_dir,
                 "--",
                 "--generator",
                 "python",
@@ -321,16 +332,18 @@ class BuildHook(BuildHookInterface):
         target_dir.mkdir(parents=True, exist_ok=True)
 
         # Build the Rust core library in release mode with optimizations.
-        # On Windows ARM64, the Rust toolchain may be x86_64 running under
-        # emulation (host: x86_64-pc-windows-msvc). Without --target, cargo
-        # builds for the host triple, producing x86_64 code that the ARM64
-        # MSVC linker wraps in an ARM64 PE — causing WinError 127 at load
-        # time. Detect ARM64 Windows and pass --target explicitly.
+        # On Windows ARM64, pass --target explicitly (the Rust host may be
+        # x86_64 under emulation) and disable strip (strip=true + cdylib on
+        # ARM64 Windows causes WinError 127 at LoadLibrary time).
         import platform
 
         rust_target = None
+        extra_cargo_config: list[str] = []
         if sys.platform == "win32" and platform.machine() == "ARM64":
             rust_target = "aarch64-pc-windows-msvc"
+            extra_cargo_config = [
+                "--config", "profile.release.strip=false",
+            ]
 
         with TemporaryDirectory() as temp_dir:
             cargo_args = [
@@ -343,6 +356,7 @@ class BuildHook(BuildHookInterface):
                 str(cargo_manifest),
                 "--target-dir",
                 str(temp_dir),
+                *extra_cargo_config,
             ]
             if rust_target:
                 cargo_args.extend(["--target", rust_target])
@@ -361,18 +375,18 @@ class BuildHook(BuildHookInterface):
                 print(f"stderr: {e.stderr}")
                 raise
 
-            # When --target is used, output goes to <target-dir>/<target>/release/
-            # instead of <target-dir>/release/.
+            # Copy built artifacts from release directory to _core directory.
+            # When --target is specified, cargo puts output under <target>/.
             if rust_target:
                 release_dir = Path(temp_dir) / rust_target / "release"
             else:
                 release_dir = Path(temp_dir) / "release"
             if not release_dir.exists():
                 raise Exception("Core binary not present")
-            # Copy only the sf_core shared library from the top-level release
-            # directory.  Do NOT use rglob — release/deps/ contains proc-macro
-            # DLLs compiled for the host architecture that are not needed at
-            # runtime and bloat the wheel.
+            # Use iterdir(), not rglob() — release/deps/ contains proc-macro DLLs
+            # compiled for the host architecture (x64 under emulation on ARM64).
+            # Bundling those into the wheel causes spurious load failures when
+            # the pre-loading loop tries to open x64 DLLs in an ARM64 process.
             found_core = False
             for file in release_dir.iterdir():
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
