@@ -72,20 +72,20 @@ jobs:
         working-directory: ./python
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
-      - name: Install ARM64 OpenSSL via vcpkg
+      - name: Install ARM64 OpenSSL (static) via vcpkg
         if: matrix.os == 'windows-11-arm'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          vcpkg install openssl:arm64-windows
+          vcpkg install openssl:arm64-windows-static-md
 
-      - name: Configure ARM64 OpenSSL
+      - name: Configure ARM64 OpenSSL (static)
         if: matrix.os == 'windows-11-arm'
         shell: pwsh
         run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
-          echo "C:\vcpkg\installed\arm64-windows\bin" >> $env:GITHUB_PATH
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
       - name: Build python wheel (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
