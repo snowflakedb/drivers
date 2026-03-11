@@ -38,10 +38,8 @@ jobs:
     strategy: &matrix
       fail-fast: false
       matrix:
-        # TEMPORARY: ARM64-only to speed up iteration. Revert to include ubuntu-latest
-        # and full Python version set once ARM64 is green.
-        os: [windows-11-arm]
-        py: ["3.12"]
+        os: [ubuntu-latest, windows-11-arm]
+        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
@@ -236,70 +234,6 @@ jobs:
           $env:WHEEL_PATH = $wheel
           hatch run test.py${{ matrix.py }}:install-wheel
 
-      # TEMPORARY diagnostic for WinError 127: find sf_core.dll in the installed
-      # package and dump its import table / dependency info.  Uses PowerShell
-      # to robustly locate the file (cmd for /r without wildcards doesn't
-      # check file existence).
-      - name: Diagnose installed core DLL (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $dll = Get-ChildItem -Path "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" -Recurse -Filter "sf_core.dll" -ErrorAction SilentlyContinue |
-                 Where-Object { $_.DirectoryName -like '*_core*' } |
-                 Select-Object -First 1
-          if (-not $dll) {
-            Write-Host "ERROR: sf_core.dll not found in any hatch env _core dir"
-            exit 0
-          }
-          $dllPath = $dll.FullName
-          $dllDir  = $dll.DirectoryName
-          Write-Host "=== Found sf_core.dll ==="
-          Write-Host $dllPath
-          Write-Host ""
-          Write-Host "=== Files in _core directory ==="
-          Get-ChildItem $dllDir | Format-Table Name, Length -AutoSize
-          Write-Host ""
-          # Need vcvarsall for dumpbin
-          & cmd /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 >nul 2>&1 && dumpbin /headers `"$dllPath`" | findstr /i `"machine`""
-          Write-Host ""
-          Write-Host "=== sf_core.dll dependency DLLs ==="
-          & cmd /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 >nul 2>&1 && dumpbin /dependents `"$dllPath`""
-          Write-Host ""
-          Write-Host "=== OpenSSL DLLs on PATH ==="
-          where.exe libcrypto* 2>$null
-          where.exe libssl* 2>$null
-          Write-Host ""
-          Write-Host "=== Quick Python DLL load test ==="
-          $pyExe = Get-ChildItem -Path "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" -Recurse -Filter "python.exe" | Select-Object -First 1
-          if ($pyExe) {
-            # Use sys.argv to pass paths — avoids PowerShell variable expansion
-            # mangling Python f-string $ characters in the here-string.
-            & $pyExe.FullName -c "
-          import ctypes, os, sys
-          dll_dir = sys.argv[1]
-          dll_path = sys.argv[2]
-          os.add_dll_directory(dll_dir)
-          for name in os.listdir(dll_dir):
-              if name.endswith('.dll'):
-                  p = os.path.join(dll_dir, name)
-                  try:
-                      ctypes.CDLL(p)
-                      print('  OK: ' + name)
-                  except OSError as e:
-                      print('  FAIL: ' + name + ': ' + str(e))
-          print()
-          for mode_name, kwargs in [('default', {}), ('winmode=0', {'winmode': 0})]:
-              try:
-                  ctypes.CDLL(dll_path, **kwargs)
-                  print('  Load sf_core.dll (' + mode_name + '): OK')
-              except OSError as e:
-                  print('  Load sf_core.dll (' + mode_name + '): FAIL: ' + str(e))
-          " "$dllDir" "$dllPath"
-          }
-          Write-Host ""
-          Write-Host "=== Done ==="
-
       - name: Run all tests with coverage (Linux)
         if: runner.os == 'Linux'
         working-directory: python
@@ -395,9 +329,6 @@ jobs:
   # Compare results between connectors
   python_compare_results:
     needs: [detect-changes, python_tests, python_tests_reference]
-    # TEMPORARY: continue-on-error while matrix is ARM64-only (ubuntu-latest
-    # artifact doesn't exist). Remove when full matrix is restored.
-    continue-on-error: true
     if: |
       always() &&
       needs.python_tests.result != 'skipped' &&

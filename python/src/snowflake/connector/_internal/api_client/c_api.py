@@ -40,45 +40,11 @@ def _load_core() -> ctypes.CDLL:
     path = _get_core_path()
     with resources.as_file(path) as lib_path:
         lib_path_str = str(lib_path)
-        dll_dir = os.fspath(lib_path.parent)
         if sys.platform.startswith("win"):
-            os.add_dll_directory(dll_dir)
-
-            # Pre-load bundled dependency DLLs (e.g. OpenSSL) so they are already
-            # present in the process when sf_core.dll is loaded.  On ARM64 Windows,
-            # the restricted DLL search introduced in Python 3.8+
-            # (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)
-            # does not reliably find dependency DLLs in the same directory as the
-            # loading DLL.  Pre-loading them by full path avoids WinError 127
-            # ("procedure not found") at sf_core load time.
-            core_dll_name = lib_path.name
-            for dep_name in sorted(os.listdir(dll_dir)):
-                if dep_name.endswith(".dll") and dep_name != core_dll_name:
-                    dep_path = os.path.join(dll_dir, dep_name)
-                    try:
-                        ctypes.CDLL(dep_path)
-                    except OSError as _dep_err:
-                        # TEMPORARY: print to stderr so CI logs show pre-load failures
-                        print(
-                            f"[sf_core] pre-load {dep_name}: FAIL: {_dep_err}",
-                            file=sys.stderr,
-                            flush=True,
-                        )
-
-        try:
-            core = ctypes.CDLL(lib_path_str)
-        except OSError:
-            if not sys.platform.startswith("win"):
-                raise
-            # TEMPORARY: try winmode=0 as last resort — if the default restricted
-            # search fails, the traditional search (which includes PATH) might work.
-            print(  # type: ignore[unreachable]
-                f"[sf_core] default load failed, trying winmode=0. dll_dir={dll_dir} lib_path={lib_path_str}",
-                file=sys.stderr,
-                flush=True,
-            )
-            core = ctypes.CDLL(lib_path_str, winmode=0)
-    return core
+            # ctypes.CDLL on Python 3.8+ uses restricted DLL search; register
+            # _core/ so the Windows loader finds sf_core.dll's co-located deps.
+            os.add_dll_directory(os.fspath(lib_path.parent))
+        return ctypes.CDLL(lib_path_str)
 
 
 try:
