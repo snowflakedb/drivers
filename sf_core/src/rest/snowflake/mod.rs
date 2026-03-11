@@ -357,7 +357,7 @@ pub async fn snowflake_login_with_client(
             .collect::<HashMap<String, String>>()
     });
 
-    // Inject server-echoed session info (finalDatabaseName, etc.) so that
+    // Inject server-echoed `sessionInfo` names (`databaseName`, etc.) so that
     // conn.database / conn.schema / conn.warehouse / conn.role return the
     // canonical names the server resolved, not the raw user input.
     if let Some(ref info) = auth_response.data.session_info {

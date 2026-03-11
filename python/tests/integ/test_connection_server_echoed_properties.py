@@ -29,11 +29,16 @@ def dashed_database(cursor):
     Dashes force SQL quoting (``"my-db"``), making it easy to detect when
     the driver returns the raw user input instead of the server-echoed name.
     """
+    cursor.execute("SELECT CURRENT_DATABASE()")
+    original_db = cursor.fetchone()[0]
+
     db_name = _unique_name("test-dashed-db")
     cursor.execute(f'CREATE DATABASE "{db_name}"')
     try:
         yield db_name
     finally:
+        if original_db:
+            cursor.execute(f'USE DATABASE "{original_db}"')
         cursor.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
 
 
@@ -43,11 +48,17 @@ def dashed_schema(cursor):
 
     See ``dashed_database`` for why dashes are used.
     """
+    cursor.execute("SELECT CURRENT_SCHEMA()")
+    row = cursor.fetchone()
+    original_schema = row[0] if row and row[0] is not None else None
+
     schema_name = _unique_name("test-dashed-schema")
     cursor.execute(f'CREATE SCHEMA "{schema_name}"')
     try:
         yield schema_name
     finally:
+        if original_schema:
+            cursor.execute(f'USE SCHEMA "{original_schema}"')
         cursor.execute(f'DROP SCHEMA IF EXISTS "{schema_name}"')
 
 
