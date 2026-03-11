@@ -108,5 +108,12 @@ class ConfigManagerError(Error):
     """
 
 
+class MissingDependencyError(Error):
+    """Exception raised when an optional dependency is not installed."""
+
+    def __init__(self, dependency: str) -> None:
+        super().__init__(f"Missing optional dependency: {dependency}")
+
+
 class ForbiddenError(Error):
     """Exception for 403 HTTP error for retry."""

@@ -7,11 +7,11 @@ This module defines the Cursor class as specified in PEP 249.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
-from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
+from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
@@ -22,7 +22,41 @@ from .errors import NotSupportedError, ProgrammingError
 if TYPE_CHECKING:
     from .connection import Connection
 
+# Retry back-off pattern (seconds) for async query polling.
+# Matches snowflake-connector-python: [1, 1, 2, 3, 4, 8, 10]
+ASYNC_RETRY_PATTERN = [1, 1, 2, 3, 4, 8, 10]
+
 Row = tuple[Any, ...]
+
+
+class ResultMetadata(NamedTuple):
+    """Column metadata returned in cursor.description, compatible with old connector."""
+
+    name: str
+    type_code: int
+    display_size: int | None
+    internal_size: int | None
+    precision: int | None
+    scale: int | None
+    is_nullable: bool
+
+    @classmethod
+    def from_column(cls, col: Any) -> ResultMetadata:
+        return cls(
+            str(col.get("name", "")),
+            int(col.get("type_code", 0)),
+            col.get("display_size"),
+            col.get("length"),
+            col.get("precision"),
+            col.get("scale"),
+            bool(col.get("nullable", True)),
+        )
+
+
+# ResultMetadataV2 — extended metadata with vector_dimension and fields.
+# Snowpark imports it optionally (falls back to ResultMetadata if absent).
+# Alias is sufficient for stub purposes; full fields accessed via properties.
+ResultMetadataV2 = ResultMetadata
 
 
 class Cursor:

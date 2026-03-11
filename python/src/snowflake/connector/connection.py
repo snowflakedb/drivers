@@ -10,7 +10,7 @@ from collections.abc import Generator, Iterable
 from io import StringIO
 from typing import Any, Union
 
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
     ConnectionInitRequest,
