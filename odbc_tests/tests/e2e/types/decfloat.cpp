@@ -12,8 +12,8 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
-#include "get_data.hpp"
 #include "compatibility.hpp"
+#include "get_data.hpp"
 #include "macros.hpp"
 
 // NOTE: Extreme exponent and scientific notation values may be returned by the
@@ -189,7 +189,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
 }
 
 // ============================================================================
-// Table operations 
+// Table operations
 // ============================================================================
 
 TEST_CASE("should select decfloats from table", "[decfloat]") {
@@ -200,8 +200,7 @@ TEST_CASE("should select decfloats from table", "[decfloat]") {
 
   // And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
   conn.execute("CREATE OR REPLACE TABLE decfloat_table (col DECFLOAT)");
-  conn.execute(
-      "INSERT INTO decfloat_table VALUES ('0'), ('123.456'), ('-789.012'), ('1.23E+20'), ('-9.87E-15')");
+  conn.execute("INSERT INTO decfloat_table VALUES ('0'), ('123.456'), ('-789.012'), ('1.23E+20'), ('-9.87E-15')");
 
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
@@ -236,8 +235,7 @@ TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]
 
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_precision_table", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_precision_table", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Then Result should preserve all 38 digits for each value
@@ -264,8 +262,7 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
 
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
-  SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_extreme_table", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_extreme_table", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
