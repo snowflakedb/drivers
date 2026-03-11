@@ -16,6 +16,45 @@ use std::collections::HashMap;
 /// Mirrors the old driver's sf_odbc.h: SQL_DRIVER_CONN_ATTR_BASE (0x4000) + 0x53
 const SQL_SF_CONN_ATTR_BASE: i32 = 0x4000 + 0x53;
 
+/// Typed value for connection attributes parsed at the FFI boundary.
+///
+/// String-typed attributes (e.g. PrivKeyContent) are decoded from the raw C
+/// pointer in the c_api layer. Integer-typed attributes (e.g. LoginTimeout)
+/// carry the pointer-as-integer value.
+#[derive(Debug, Clone)]
+pub enum AttributeValue {
+    String(String),
+    Int(usize),
+    None,
+}
+
+impl AttributeValue {
+    /// Extract the inner value as a `String` for use with protobuf/core APIs.
+    pub fn to_string_value(&self) -> String {
+        match self {
+            AttributeValue::String(s) => s.clone(),
+            AttributeValue::Int(v) => v.to_string(),
+            AttributeValue::None => String::new(),
+        }
+    }
+}
+
+impl From<AttributeValue> for FieldValue {
+    fn from(value: AttributeValue) -> Self {
+        match value {
+            AttributeValue::String(s) => FieldValue::String(s),
+            AttributeValue::Int(v) => FieldValue::ULen(v as sql::ULen),
+            AttributeValue::None => FieldValue::ULen(0),
+        }
+    }
+}
+
+pub enum AttributeType {
+    String,
+    Int,
+    None,
+}
+
 /// ODBC connection attributes — both standard and custom Snowflake attributes.
 ///
 /// Numeric IDs for custom attributes match sf_odbc.h from the old driver.
@@ -42,34 +81,45 @@ pub enum ConnectionAttribute {
     PrivKeyBase64,
 }
 
-impl ConnectionAttribute {
-    /// Convert a raw ODBC attribute ID to a `ConnectionAttribute`.
-    /// Returns `None` for unrecognized attributes.
-    pub fn from_raw(value: i32) -> Option<Self> {
+impl TryFrom<i32> for ConnectionAttribute {
+    type Error = OdbcError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
-            102 => Some(Self::Autocommit),
-            103 => Some(Self::LoginTimeout),
-            113 => Some(Self::ConnectionTimeout),
-            x if x == SQL_SF_CONN_ATTR_BASE + 1 => Some(Self::PrivKey),
-            x if x == SQL_SF_CONN_ATTR_BASE + 2 => Some(Self::Application),
-            x if x == SQL_SF_CONN_ATTR_BASE + 3 => Some(Self::PrivKeyContent),
-            x if x == SQL_SF_CONN_ATTR_BASE + 4 => Some(Self::PrivKeyPassword),
-            x if x == SQL_SF_CONN_ATTR_BASE + 5 => Some(Self::PrivKeyBase64),
-            _ => None,
+            102 => Ok(Self::Autocommit),
+            103 => Ok(Self::LoginTimeout),
+            113 => Ok(Self::ConnectionTimeout),
+            x if x == SQL_SF_CONN_ATTR_BASE + 1 => Ok(Self::PrivKey),
+            x if x == SQL_SF_CONN_ATTR_BASE + 2 => Ok(Self::Application),
+            x if x == SQL_SF_CONN_ATTR_BASE + 3 => Ok(Self::PrivKeyContent),
+            x if x == SQL_SF_CONN_ATTR_BASE + 4 => Ok(Self::PrivKeyPassword),
+            x if x == SQL_SF_CONN_ATTR_BASE + 5 => Ok(Self::PrivKeyBase64),
+            _ => Err(OdbcError::UnknownAttribute {
+                attribute: value,
+                location: snafu::location!(),
+            }),
         }
     }
+}
 
+impl ConnectionAttribute {
     /// Check whether a raw attribute ID falls in the Snowflake custom range.
     pub fn is_snowflake_custom(raw: i32) -> bool {
         raw >= SQL_SF_CONN_ATTR_BASE
     }
 
-    /// Returns `true` if this attribute uses a string value (as opposed to an integer).
-    pub fn is_string_type(&self) -> bool {
-        matches!(
-            self,
-            Self::PrivKeyContent | Self::PrivKeyPassword | Self::PrivKeyBase64 | Self::Application
-        )
+    /// Returns the expected value type for this attribute: string-typed
+    /// attributes are decoded from C string pointers, integer-typed carry
+    /// the pointer-as-integer value, and `None` means no value is used.
+    pub fn attribute_type(&self) -> AttributeType {
+        match self {
+            Self::PrivKeyContent
+            | Self::PrivKeyPassword
+            | Self::PrivKeyBase64
+            | Self::Application => AttributeType::String,
+            Self::Autocommit | Self::LoginTimeout | Self::ConnectionTimeout => AttributeType::Int,
+            Self::PrivKey => AttributeType::None,
+        }
     }
 
     /// Convert back to the raw ODBC attribute ID.
@@ -524,7 +574,7 @@ pub enum ConnectionState {
 
 /// Pre-connection attributes set via SQLSetConnectAttr before connecting.
 /// These are applied to the sf_core connection during driver_connect/connect.
-pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
+pub type PreConnectionAttributes = HashMap<ConnectionAttribute, AttributeValue>;
 
 pub struct Connection {
     pub state: ConnectionState,

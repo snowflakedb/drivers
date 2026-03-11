@@ -2,11 +2,8 @@ use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::error::Required;
 use crate::api::{
-    ConnectionState, FieldValue, GetDataExtensions, OdbcResult, conn_from_handle,
-    error::{
-        AttributeCannotBeSetNowSnafu, InvalidPortSnafu, UnknownAttributeSnafu,
-        UnsupportedAttributeSnafu,
-    },
+    AttributeValue, ConnectionState, FieldValue, GetDataExtensions, OdbcResult, conn_from_handle,
+    error::{AttributeCannotBeSetNowSnafu, InvalidPortSnafu, UnsupportedAttributeSnafu},
     types::ConnectionAttribute,
 };
 use odbc_sys as sql;
@@ -251,47 +248,42 @@ fn apply_pre_connection_attrs(
     let attrs = &connection.pre_connection_attrs;
 
     if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
-        // PrivKeyContent -> private_key (PEM string sent as base64 to core)
         use base64::{Engine as _, engine::general_purpose};
-        let encoded = general_purpose::STANDARD.encode(content.as_bytes());
+        let encoded = general_purpose::STANDARD.encode(content.to_string_value().as_bytes());
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "private_key".to_owned(),
             value: encoded,
         })?;
     } else if let Some(base64_key) = attrs.get(&ConnectionAttribute::PrivKeyBase64) {
-        // PrivKeyBase64 -> private_key (already base64-encoded)
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "private_key".to_owned(),
-            value: base64_key.clone(),
+            value: base64_key.to_string_value(),
         })?;
     }
 
-    // PrivKeyPassword -> private_key_password
     if let Some(password) = attrs.get(&ConnectionAttribute::PrivKeyPassword) {
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "private_key_password".to_owned(),
-            value: password.clone(),
+            value: password.to_string_value(),
         })?;
     }
 
-    // Application -> application
     if let Some(app) = attrs.get(&ConnectionAttribute::Application) {
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "application".to_owned(),
-            value: app.clone(),
+            value: app.to_string_value(),
         })?;
     }
 
-    // LoginTimeout -> authentication_timeout (matches old driver: used as Okta SAML budget)
     if let Some(timeout) = attrs.get(&ConnectionAttribute::LoginTimeout) {
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "authentication_timeout".to_owned(),
-            value: timeout.clone(),
+            value: timeout.to_string_value(),
         })?;
         return Ok(true);
     }
@@ -341,30 +333,16 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
 
 /// Set a connection attribute (SQLSetConnectAttr).
 ///
-/// `string_value` is the pre-decoded string for string-typed attributes;
-/// the caller (c_api.rs) decodes it from the raw C pointer using the
-/// encoding module. For integer-typed attributes it is `None` and
-/// `value_ptr` is used directly.
+/// The caller (c_api) is responsible for parsing the raw attribute ID into a
+/// `ConnectionAttribute` and the raw value pointer into an `AttributeValue`.
 // TODO: Clear sensitive pre_connection_attrs after apply_pre_connection_attrs.
 pub fn set_connect_attr(
     connection_handle: sql::Handle,
-    attribute: sql::Integer,
-    value_ptr: sql::Pointer,
-    string_value: Option<&str>,
+    attr: ConnectionAttribute,
+    value: AttributeValue,
 ) -> OdbcResult<()> {
     let connection = conn_from_handle(connection_handle);
-    tracing::debug!("set_connect_attr: attribute={attribute}");
-
-    let attr = match ConnectionAttribute::from_raw(attribute) {
-        Some(a) => a,
-        None if ConnectionAttribute::is_snowflake_custom(attribute) => {
-            return UnknownAttributeSnafu { attribute }.fail();
-        }
-        None => {
-            tracing::debug!("set_connect_attr: ignoring standard attribute {attribute}");
-            return Ok(());
-        }
-    };
+    tracing::debug!("set_connect_attr: attribute={attr:?}");
 
     match attr {
         // Standard ODBC attributes
@@ -378,11 +356,8 @@ pub fn set_connect_attr(
                 }
                 .fail();
             }
-            let seconds = value_ptr as usize;
-            tracing::debug!("set_connect_attr: LoginTimeout={seconds}");
-            connection
-                .pre_connection_attrs
-                .insert(attr, seconds.to_string());
+            tracing::debug!("set_connect_attr: LoginTimeout={value:?}");
+            connection.pre_connection_attrs.insert(attr, value);
             Ok(())
         }
         ConnectionAttribute::ConnectionTimeout => {
@@ -393,7 +368,6 @@ pub fn set_connect_attr(
             tracing::debug!("set_connect_attr: Autocommit (ignored)");
             Ok(())
         }
-
         ConnectionAttribute::PrivKey => {
             tracing::warn!(
                 "set_connect_attr: PrivKey (EVP_PKEY pointer) is not supported. \
@@ -414,7 +388,6 @@ pub fn set_connect_attr(
                 }
                 .fail();
             }
-            let value = string_value.unwrap_or("").to_string();
             tracing::debug!("set_connect_attr: {attr:?} (set)");
             connection.pre_connection_attrs.insert(attr, value);
             Ok(())
@@ -424,22 +397,14 @@ pub fn set_connect_attr(
 
 /// Get a connection attribute (SQLGetConnectAttr).
 ///
-/// Returns the attribute value; the caller (c_api.rs) is responsible for
-/// writing it to the output buffer and handling truncation.
+/// The caller (c_api) is responsible for parsing the raw attribute ID
+/// and converting the returned `AttributeValue` for the output buffer.
 pub fn get_connect_attr(
     connection_handle: sql::Handle,
-    attribute: sql::Integer,
-) -> OdbcResult<FieldValue> {
+    attr: ConnectionAttribute,
+) -> OdbcResult<AttributeValue> {
     let connection = conn_from_handle(connection_handle);
-    tracing::debug!("get_connect_attr: attribute={attribute}");
-
-    let attr = match ConnectionAttribute::from_raw(attribute) {
-        Some(a) => a,
-        None => {
-            tracing::warn!("get_connect_attr: unknown attribute {attribute}");
-            return UnknownAttributeSnafu { attribute }.fail();
-        }
-    };
+    tracing::debug!("get_connect_attr: attribute={attr:?}");
 
     match attr {
         ConnectionAttribute::PrivKeyContent
@@ -450,24 +415,20 @@ pub fn get_connect_attr(
                 .pre_connection_attrs
                 .get(&attr)
                 .cloned()
-                .unwrap_or_default();
-            Ok(FieldValue::String(value))
+                .unwrap_or(AttributeValue::String(String::new()));
+            Ok(value)
         }
-        ConnectionAttribute::Autocommit => Ok(FieldValue::ULen(SQL_AUTOCOMMIT_ON)),
+        ConnectionAttribute::Autocommit => Ok(AttributeValue::Int(SQL_AUTOCOMMIT_ON)),
         ConnectionAttribute::LoginTimeout => {
-            let timeout: sql::ULen = match connection.pre_connection_attrs.get(&attr) {
-                Some(s) => s.parse().unwrap_or_else(|_| {
-                    tracing::warn!(
-                        "get_connect_attr: LoginTimeout value {s:?} is not a valid integer, \
-                         returning default {DEFAULT_LOGIN_TIMEOUT_SECS}",
-                    );
-                    DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap()
-                }),
-                None => DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap(),
-            };
-            Ok(FieldValue::ULen(timeout))
+            let default_timeout: usize = DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap();
+            let value = connection
+                .pre_connection_attrs
+                .get(&attr)
+                .cloned()
+                .unwrap_or(AttributeValue::Int(default_timeout));
+            Ok(value)
         }
-        ConnectionAttribute::ConnectionTimeout => Ok(FieldValue::ULen(0)),
+        ConnectionAttribute::ConnectionTimeout => Ok(AttributeValue::Int(0)),
         ConnectionAttribute::PrivKey => UnsupportedAttributeSnafu {
             attribute: attr.as_raw(),
         }

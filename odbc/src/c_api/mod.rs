@@ -28,6 +28,30 @@ fn decode_optional_char(ptr: *const u8, length: i32) -> api::OdbcResult<Option<S
         .map(Some)
 }
 
+/// Parse a raw ODBC attribute value pointer into a typed `AttributeValue`.
+///
+/// String-typed attributes are decoded from the C string pointer; integer-typed
+/// attributes treat the pointer as the integer value itself (standard ODBC
+/// convention for `SQLUINTEGER` attributes).
+fn parse_connect_attr_value(
+    attr: api::ConnectionAttribute,
+    value_ptr: sql::Pointer,
+    string_length: sql::Integer,
+) -> api::OdbcResult<api::AttributeValue> {
+    match attr.attribute_type() {
+        api::AttributeType::String => {
+            if value_ptr.is_null() {
+                return Ok(api::AttributeValue::String(String::new()));
+            }
+            let s = unsafe { crate::encoding::decode_char(value_ptr as *const u8, string_length) }
+                .context(EncodingSnafu)?;
+            Ok(api::AttributeValue::String(s))
+        }
+        api::AttributeType::Int => Ok(api::AttributeValue::Int(value_ptr as usize)),
+        api::AttributeType::None => Ok(api::AttributeValue::None),
+    }
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
@@ -205,26 +229,16 @@ pub unsafe extern "C" fn SQLSetConnectAttr(
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result: api::OdbcResult<()> = (|| {
-        let string_value = if let Some(attr) = api::ConnectionAttribute::from_raw(attribute)
-            && attr.is_string_type()
-        {
-            if value.is_null() {
-                Some(String::new())
-            } else {
-                Some(
-                    unsafe { crate::encoding::decode_char(value as *const u8, string_length) }
-                        .context(EncodingSnafu)?,
-                )
+        let attr = match api::ConnectionAttribute::try_from(attribute) {
+            Ok(a) => a,
+            Err(_) if !api::ConnectionAttribute::is_snowflake_custom(attribute) => {
+                tracing::debug!("SQLSetConnectAttr: ignoring standard attribute {attribute}");
+                return Ok(());
             }
-        } else {
-            None
+            Err(e) => return Err(e),
         };
-        api::connection::set_connect_attr(
-            connection_handle,
-            attribute,
-            value,
-            string_value.as_deref(),
-        )
+        let attr_value = parse_connect_attr_value(attr, value, string_length)?;
+        api::connection::set_connect_attr(connection_handle, attr, attr_value)
     })();
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
@@ -243,10 +257,11 @@ pub unsafe extern "C" fn SQLGetConnectAttr(
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let mut warnings = vec![];
     let result: api::OdbcResult<()> = (|| {
-        let attr_value = api::connection::get_connect_attr(connection_handle, attribute)?;
+        let attr = api::ConnectionAttribute::try_from(attribute)?;
+        let attr_value = api::connection::get_connect_attr(connection_handle, attr)?;
         unsafe {
             write_field_value(
-                attr_value,
+                attr_value.into(),
                 value,
                 buffer_length,
                 string_length_ptr,
