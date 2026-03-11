@@ -395,6 +395,9 @@ jobs:
   # Compare results between connectors
   python_compare_results:
     needs: [detect-changes, python_tests, python_tests_reference]
+    # TEMPORARY: continue-on-error while matrix is ARM64-only (ubuntu-latest
+    # artifact doesn't exist). Remove when full matrix is restored.
+    continue-on-error: true
     if: |
       always() &&
       needs.python_tests.result != 'skipped' &&
