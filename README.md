@@ -24,6 +24,13 @@ All integration tests require access to Snowflake credentials. To set up the req
 ./scripts/decode_secrets.sh
 ```
 
+or on Windows
+```ps1
+# Install 1Password CLI if not already installed
+# Then decode the encrypted parameters file:
+./scripts/decode_secrets.ps1
+```
+
 This will create a `parameters.json` file in the project root containing test credentials.
 
 ### Environment: `PARAMETER_PATH`
