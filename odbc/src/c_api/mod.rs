@@ -634,6 +634,7 @@ pub unsafe extern "C" fn SQLGetDiagField(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
+    let mut warnings = vec![];
     let result: api::OdbcResult<()> = (|| {
         let field_value =
             api::diagnostic::get_diag_field(handle_type, handle, rec_number, diag_identifier)?;
@@ -643,11 +644,11 @@ pub unsafe extern "C" fn SQLGetDiagField(
                 diag_info_ptr,
                 buffer_length,
                 string_length_ptr,
-                &mut vec![],
+                &mut warnings,
             )
         }
     })();
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety

@@ -1,5 +1,5 @@
 use crate::api::diagnostic::DiagRecData;
-use crate::api::error::{EncodingSnafu, LengthOverflowSnafu};
+use crate::api::error::{EncodingSnafu, InvalidBufferLengthSnafu, LengthOverflowSnafu};
 use crate::api::{self, FieldValue};
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
@@ -36,8 +36,14 @@ pub unsafe fn write_char_to_buffer<L: Into<i32> + TryFrom<usize>>(
     string_length_ptr: *mut L,
     warnings: &mut Warnings,
 ) -> api::OdbcResult<()> {
-    let buf_len = buf_len.into();
-    let buf_len_clamped = if buf_len > 0 { buf_len as usize } else { 0 };
+    let buf_len: i32 = buf_len.into();
+    if buf_len < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buf_len as i64,
+        }
+        .fail();
+    }
+    let buf_len_clamped = buf_len as usize;
     let result =
         unsafe { crate::encoding::encode_char(s, buf, buf_len_clamped) }.context(EncodingSnafu)?;
     if !string_length_ptr.is_null() {
@@ -74,7 +80,13 @@ pub unsafe fn write_wchar_to_buffer<L: Into<isize> + TryFrom<usize>>(
     string_length_ptr: *mut L,
     warnings: &mut Warnings,
 ) -> api::OdbcResult<()> {
-    let buf_len = buf_len.into();
+    let buf_len: isize = buf_len.into();
+    if buf_len < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buf_len as i64,
+        }
+        .fail();
+    }
     let buf_units = if buf_len > 0 {
         (buf_len / 2) as usize
     } else {
