@@ -16,6 +16,12 @@
 #include "compatibility.hpp"
 #include "macros.hpp"
 
+// NOTE: Extreme exponent and scientific notation values may be returned by the
+// old driver in a normalized form (e.g. "1e16384" instead of "1E+16384",
+// "-1234e7997" instead of "-1.234E+8000"). The expected strings in these tests
+// reflect the old driver's actual output; a Behavior Difference entry may be
+// needed once the new driver is implemented.
+
 // ============================================================================
 // Type casting
 // ============================================================================
@@ -31,7 +37,7 @@ TEST_CASE("should cast decfloat values to appropriate type", "[decfloat]") {
       "SELECT 0::DECFLOAT, 123.456::DECFLOAT, 1.23e37::DECFLOAT, "
       "'12345678901234567890123456789012345678'::DECFLOAT");
 
-  // Then All values should be returned as appropriate type (SQL_NUMERIC)
+  // Then All values should be returned as appropriate type
   for (SQLUSMALLINT col = 1; col <= 4; ++col) {
     SQLCHAR col_name[128] = {0};
     SQLSMALLINT name_length = 0;
@@ -116,7 +122,6 @@ TEST_CASE("should handle extreme exponent values from literals", "[decfloat]") {
   auto stmt1 = conn.execute_fetch("SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT");
 
   // Then Result should contain [1E+16384, 1E-16383]
-  // TODO: is formating wrong?
   auto val1 = get_data<SQL_C_CHAR>(stmt1, 1);
   auto val2 = get_data<SQL_C_CHAR>(stmt1, 2);
   INFO("Column 1: " << val1);
@@ -128,7 +133,6 @@ TEST_CASE("should handle extreme exponent values from literals", "[decfloat]") {
   auto stmt2 = conn.execute_fetch("SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT");
 
   // Then Result should contain [-1.234E+8000, 9.876E-8000]
-  // TODO: is formating wrong?
   auto val3 = get_data<SQL_C_CHAR>(stmt2, 1);
   auto val4 = get_data<SQL_C_CHAR>(stmt2, 2);
   INFO("Column 1: " << val3);
@@ -205,7 +209,6 @@ TEST_CASE("should select decfloats from table", "[decfloat]") {
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain exact decimals [0, 123.456, -789.012, 1.23e20, -9.87e-15]
-  // TODO: is formating wrong?
   std::vector<std::string> expected = {"0", "123.456", "-789.012", "123000000000000000000", "-0.00000000000000987"};
   for (size_t i = 0; i < expected.size(); ++i) {
     ret = SQLFetch(stmt.getHandle());
@@ -266,7 +269,6 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
-  // TODO: is formating wrong?
   std::vector<std::string> expected = {"1e16384", "1e-16383", "-1234e7997", "9876e-8003"};
   for (size_t i = 0; i < expected.size(); ++i) {
     ret = SQLFetch(stmt.getHandle());
@@ -370,7 +372,6 @@ TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
     CHECK_ODBC(ret, stmt);
 
     // Then Result should contain [123.456, -789.012, 42.0]
-    // TODO: is formating wrong ?
     std::vector<std::string> expected = {"123.456", "-789.012", "42"};
     for (size_t i = 0; i < expected.size(); ++i) {
       auto col = static_cast<SQLUSMALLINT>(i + 1);
@@ -448,7 +449,6 @@ TEST_CASE("should select extreme decfloat values using parameter binding", "[dec
     CHECK_ODBC(ret, stmt);
 
     // Then Result should contain [-1.234E+8000]
-    // TODO: is formating wrong?
     auto result = get_data<SQL_C_CHAR>(stmt, 1);
     INFO("Result: " << result);
     CHECK(result == "-1234e7997");
@@ -537,7 +537,6 @@ TEST_CASE("should insert extreme decfloat values using parameter binding", "[dec
   CHECK_ODBC(ret, stmt);
 
   // Then SELECT should return the same exact values
-  // TODO: is formating wrong?
   std::set<std::string> expected = {"1e16384", "1e-16383", "-1234e7997"};
   std::set<std::string> actual;
   while (true) {
