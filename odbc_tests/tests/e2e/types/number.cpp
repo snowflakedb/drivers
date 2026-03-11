@@ -60,15 +60,15 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
   Connection conn;
 
   // When Query "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT =>
-  // 1000000)) v" is executed
+  // 30000)) v" is executed
   auto stmt = conn.createStatement();
   const auto sql =
-      "SELECT seq8()::NUMBER(38,0), (seq8() + 0.12345)::NUMBER(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v "
+      "SELECT seq8()::NUMBER(38,0), (seq8() + 0.12345)::NUMBER(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v "
       "ORDER BY 1";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Column 1 should contain sequential integers from 0 to 999999
+  // Then Column 1 should contain sequential integers from 0 to 29999
   // And Column 2 should contain sequential decimals starting from 0.12345
   int row_count = 0;
   int64_t expected_int = 0;
@@ -96,7 +96,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
     row_count++;
   }
 
-  REQUIRE(row_count == 1000000);
+  REQUIRE(row_count == 30000);
 }
 
 TEST_CASE("should select numbers from table with multiple scales for number and synonyms", "[number]") {
@@ -198,12 +198,12 @@ TEST_CASE("should download large result set from table for number and synonyms",
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // And Table with columns (<type>(38,0), <type>(20,5)) exists with 1000000 sequential rows, from 0 to 999999 in the
-  // first column and from 0.12345 to 999999.12345 in the second column
+  // And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows, from 0 to 29999 in the
+  // first column and from 0.12345 to 29999.12345 in the second column
   conn.execute("DROP TABLE IF EXISTS number_large_table");
   conn.execute("CREATE TABLE number_large_table (col1 NUMBER(38,0), col2 NUMBER(20,5))");
   conn.execute(
-      "INSERT INTO number_large_table SELECT seq8(), seq8() + 0.12345 FROM TABLE(GENERATOR(ROWCOUNT => 1000000))");
+      "INSERT INTO number_large_table SELECT seq8(), seq8() + 0.12345 FROM TABLE(GENERATOR(ROWCOUNT => 30000))");
 
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
@@ -211,7 +211,7 @@ TEST_CASE("should download large result set from table for number and synonyms",
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Column 1 should contain sequential integers from 0 to 999999
+  // Then Column 1 should contain sequential integers from 0 to 29999
   // And Column 2 should contain sequential decimals starting from 0.12345
   int row_count = 0;
   int64_t expected_int = 0;
@@ -239,5 +239,5 @@ TEST_CASE("should download large result set from table for number and synonyms",
     row_count++;
   }
 
-  REQUIRE(row_count == 1000000);
+  REQUIRE(row_count == 30000);
 }

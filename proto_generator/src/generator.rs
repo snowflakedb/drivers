@@ -8,6 +8,9 @@ pub struct GeneratorContext {
     pub proto_file: PathBuf,
     pub include_directories: Vec<PathBuf>,
     pub options: HashMap<String, String>,
+    /// Path to the `protoc` binary used for compilation.
+    /// Defaults to the vendored binary from `protoc-bin-vendored`.
+    pub protoc_path: PathBuf,
 }
 
 impl GeneratorContext {
@@ -16,11 +19,17 @@ impl GeneratorContext {
             proto_file,
             include_directories,
             options: HashMap::new(),
+            protoc_path: crate::vendored_protoc_path(),
         }
     }
 
     pub fn with_option(mut self, key: String, value: String) -> Self {
         self.options.insert(key, value);
+        self
+    }
+
+    pub fn with_protoc_path(mut self, protoc_path: PathBuf) -> Self {
+        self.protoc_path = protoc_path;
         self
     }
 

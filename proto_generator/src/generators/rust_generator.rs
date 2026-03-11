@@ -22,6 +22,7 @@ impl RustGenerator {
         let temp_dir = tempfile::tempdir().whatever_context("Failed to create temp directory")?;
 
         prost_build::Config::new()
+            .protoc_executable(&context.protoc_path)
             .out_dir(temp_dir.path().to_path_buf())
             .compile_protos(
                 &[&context.proto_file],
@@ -58,7 +59,7 @@ impl RustGenerator {
         &self,
         context: &GeneratorContext,
     ) -> Result<GenerationResult, Whatever> {
-        let descriptor_set = run_protoc(context.proto_file.clone())?;
+        let descriptor_set = run_protoc(context)?;
         let mut result = GenerationResult::new();
         for file in descriptor_set.file {
             let package = file.package.unwrap();

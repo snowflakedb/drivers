@@ -6,6 +6,7 @@ Generates coverage reports showing which scenarios and tests are implemented
 across different languages based on e2e feature files.
 """
 
+import html
 import json
 import os
 import re
@@ -117,8 +118,9 @@ class CoverageReportGenerator:
             if line.startswith('📋 Feature:'):
                 # Extract feature path
                 feature_path = line.split('📋 Feature: ')[1]
-                feature_name = Path(feature_path).stem
-                current_feature = feature_name
+                # Use path-based feature ID to distinguish features with the same
+                # name in different directories (matching Rust validator behavior)
+                current_feature = self._get_feature_id(feature_path)
                 
                 # Extract feature tags from the feature file
                 feature_tags = self._extract_feature_tags(feature_path)
@@ -425,8 +427,11 @@ class CoverageReportGenerator:
             except Exception as e:
                 print(f"Error reading feature file {feature_path}: {e}")
         
-        # Fallback to dynamic formatting if feature file parsing fails
-        words = feature_name.replace('_', ' ').split()
+        # Fallback to dynamic formatting if feature file parsing fails.
+        # Feature name may be a path-based ID (e.g., 'shared/types/string'),
+        # so extract just the last component (file stem) for display.
+        display_name = Path(feature_name).name if '/' in feature_name else feature_name
+        words = display_name.replace('_', ' ').split()
         formatted_words = []
         
         for word in words:
@@ -452,6 +457,26 @@ class CoverageReportGenerator:
         
         return ' '.join(formatted_words)
     
+    @staticmethod
+    def _get_feature_id(feature_file_path: str, definitions_dir: str = 'definitions') -> str:
+        """Get a unique feature ID from its file path, mirroring the Rust validator's approach.
+        
+        Uses the relative path (without extension) under the definitions directory as ID,
+        so that features with the same name in different directories are kept separate
+        (e.g., 'shared/types/string' vs 'odbc/types/string').
+        
+        Falls back to the file stem if the definitions dir is not in the path.
+        """
+        parts = Path(feature_file_path).parts
+        # Find the definitions directory and take everything after it
+        for i, part in enumerate(parts):
+            if part == definitions_dir and i + 1 < len(parts):
+                relative = Path(*parts[i + 1:]).with_suffix('')
+                # Normalize to forward slashes for cross-platform consistency
+                return str(relative).replace('\\', '/')
+        # Fallback to stem
+        return Path(feature_file_path).stem
+    
     def _convert_validator_data_to_features(self, validator_data: Dict) -> Dict:
         """Convert validator JSON data to the features format expected by the report generator."""
         features = {}
@@ -459,11 +484,12 @@ class CoverageReportGenerator:
         for validation_result in validator_data.get('validation_results', []):
             feature_file_path = validation_result.get('feature_file', '')
             
-            # Extract feature name from path
-            feature_name = Path(feature_file_path).stem
+            # Use path-based feature ID to distinguish features with the same name
+            # in different directories (e.g., shared/types/string vs odbc/types/string)
+            feature_id = self._get_feature_id(feature_file_path)
             
             # Initialize feature data
-            features[feature_name] = {
+            features[feature_id] = {
                 'path': feature_file_path,
                 'languages': {}
             }
@@ -489,7 +515,7 @@ class CoverageReportGenerator:
                     elif test_file_path.startswith(str(self.workspace_root)):
                         relative_path = Path(test_file_path).relative_to(self.workspace_root)
                 
-                features[feature_name]['languages'][language] = {
+                features[feature_id]['languages'][language] = {
                     'implemented': is_implemented,
                     'status': status,
                     'path': str(relative_path),
@@ -539,6 +565,19 @@ class CoverageReportGenerator:
     def extract_test_methods_with_lines(self, file_path: str, scenario_names: List[str]) -> Dict[str, int]:
         """Extract test method line numbers from a test file for given scenarios."""
         return self.feature_parser.extract_test_methods_with_lines(file_path, scenario_names)
+    
+    @staticmethod
+    def _slugify_scenario(name: str) -> str:
+        """Convert a scenario name to a URL/ID-safe slug.
+        
+        Strips angle brackets (from Scenario Outline placeholders like <type>),
+        parentheses, quotes, and replaces spaces with hyphens.
+        """
+        return (name.lower()
+                .replace('<', '').replace('>', '')
+                .replace('(', '').replace(')', '')
+                .replace("'", '').replace('"', '')
+                .replace(' ', '-'))
     
     def _method_matches_scenario(self, method_name: str, scenario_name: str) -> bool:
         """Check if a method name matches a scenario name using similar logic to the Rust validator."""
@@ -746,8 +785,9 @@ class CoverageReportGenerator:
                         // First, close all tabs and open Behavior Difference tab
                         showTab('behavior_difference-tab');
                         
-                        // Collapse all expandable sections in all tabs
-                        const allExpandableSections = document.querySelectorAll('.expandable-section');
+                        // Collapse all expandable sections in the behavior_difference tab only
+                        const bdTab = document.getElementById('behavior_difference-tab');
+                        const allExpandableSections = bdTab ? bdTab.querySelectorAll('.expandable-section') : [];
                         allExpandableSections.forEach(section => {{
                             const header = section.querySelector('.expandable-header');
                             const content = section.querySelector('.expandable-content');
@@ -822,29 +862,43 @@ class CoverageReportGenerator:
                     }});
                     
                     // Expand/Collapse functionality
-                    function toggleCategory(categoryId) {{
-                        const categoryHeader = document.querySelector(`[onclick*="${{categoryId}}"]`);
-                        const categoryRows = document.querySelectorAll(`[data-category="${{categoryId}}"]`);
+                    // Hierarchical: Category > Feature > Tests > Test Cases
+                    
+                    function toggleCategory(categoryId, clickedElement) {{
+                        const tab = clickedElement ? clickedElement.closest('.tab-content') : getActiveTab();
+                        if (!tab) return;
+                        
+                        const categoryHeader = tab.querySelector(`[onclick*="${{categoryId}}"]`);
                         
                         if (categoryHeader.classList.contains('collapsed')) {{
-                            // Expand
+                            // Expand category: show only feature-row headers (not tests)
                             categoryHeader.classList.remove('collapsed');
-                            categoryRows.forEach(row => {{
+                            tab.querySelectorAll(`.feature-row[data-category="${{categoryId}}"]`).forEach(row => {{
                                 row.style.display = '';
                                 row.classList.remove('collapsed');
                             }});
+                            // Keep feature names collapsed so tests stay hidden
+                            tab.querySelectorAll(`.feature-row[data-category="${{categoryId}}"] .feature-name`).forEach(name => {{
+                                name.classList.add('collapsed');
+                            }});
                         }} else {{
-                            // Collapse
+                            // Collapse category: hide everything
                             categoryHeader.classList.add('collapsed');
-                            categoryRows.forEach(row => {{
+                            tab.querySelectorAll(`tr[data-category="${{categoryId}}"]`).forEach(row => {{
                                 row.style.display = 'none';
                                 row.classList.add('collapsed');
+                            }});
+                            // Also mark features as collapsed
+                            tab.querySelectorAll(`.feature-row[data-category="${{categoryId}}"] .feature-name`).forEach(name => {{
+                                name.classList.add('collapsed');
                             }});
                         }}
                     }}
                     
-                    function toggleFeature(featureId) {{
-                        // Check if it's a language-specific feature (has langspec- prefix)
+                    function toggleFeature(featureId, clickedElement) {{
+                        const tab = clickedElement ? clickedElement.closest('.tab-content') : getActiveTab();
+                        if (!tab) return;
+                        
                         if (featureId.startsWith('langspec-')) {{
                             const contentRow = document.getElementById(featureId);
                             const toggleIcon = document.getElementById('toggle-' + featureId);
@@ -858,19 +912,27 @@ class CoverageReportGenerator:
                                 }}
                             }}
                         }} else {{
-                            // Original toggle for shared features
-                            const featureHeader = document.querySelector(`[onclick*="${{featureId}}"]`);
-                            const featureRows = document.querySelectorAll(`[data-feature="${{featureId}}"]`);
+                            const featureHeader = tab.querySelector(`[onclick*="${{featureId}}"]`);
+                            const featureRows = tab.querySelectorAll(`tr[data-feature="${{featureId}}"]`);
                             
                             if (featureHeader && featureHeader.classList.contains('collapsed')) {{
-                                // Expand
+                                // Expand feature: show test rows
                                 featureHeader.classList.remove('collapsed');
                                 featureRows.forEach(row => {{
                                     row.style.display = '';
                                     row.classList.remove('collapsed');
                                 }});
+                                // Ensure Test Cases inner tables stay collapsed
+                                featureRows.forEach(row => {{
+                                    if (row.classList.contains('examples-row')) {{
+                                        const wrapper = row.querySelector('.examples-table-wrapper');
+                                        const toggle = row.querySelector('.examples-toggle');
+                                        if (wrapper) wrapper.style.display = 'none';
+                                        if (toggle) toggle.textContent = '▶';
+                                    }}
+                                }});
                             }} else if (featureHeader) {{
-                                // Collapse
+                                // Collapse feature: hide test rows
                                 featureHeader.classList.add('collapsed');
                                 featureRows.forEach(row => {{
                                     row.style.display = 'none';
@@ -880,72 +942,94 @@ class CoverageReportGenerator:
                         }}
                     }}
                     
+                    function getActiveTab() {{
+                        return document.querySelector('.tab-content.active');
+                    }}
+                    
                     function expandAll() {{
+                        const activeTab = getActiveTab();
+                        if (!activeTab) return;
+                        
                         // Expand all categories
-                        const categoryHeaders = document.querySelectorAll('.folder-name');
-                        categoryHeaders.forEach(header => {{
+                        activeTab.querySelectorAll('.folder-name').forEach(header => {{
                             header.classList.remove('collapsed');
                         }});
                         
                         // Expand all features
-                        const featureHeaders = document.querySelectorAll('.feature-name');
-                        featureHeaders.forEach(header => {{
+                        activeTab.querySelectorAll('.feature-name').forEach(header => {{
                             header.classList.remove('collapsed');
                         }});
                         
-                        // Show all rows
-                        const allCollapsibleRows = document.querySelectorAll('[data-category], [data-feature]');
-                        allCollapsibleRows.forEach(row => {{
+                        // Show all rows (only target tr elements)
+                        activeTab.querySelectorAll('tr[data-category], tr[data-feature]').forEach(row => {{
                             row.style.display = '';
                             row.classList.remove('collapsed');
                         }});
                         
-                        // Expand all expandable sections (for Language-Specific tab)
-                        const expandableHeaders = document.querySelectorAll('.expandable-header');
-                        expandableHeaders.forEach(header => {{
+                        // Ensure Test Cases inner tables stay collapsed
+                        activeTab.querySelectorAll('.examples-row').forEach(row => {{
+                            const wrapper = row.querySelector('.examples-table-wrapper');
+                            const toggle = row.querySelector('.examples-toggle');
+                            if (wrapper) wrapper.style.display = 'none';
+                            if (toggle) toggle.textContent = '▶';
+                        }});
+                        
+                        // Expand all expandable sections
+                        activeTab.querySelectorAll('.expandable-header').forEach(header => {{
                             const content = header.nextElementSibling;
                             const toggle = header.querySelector('.expandable-toggle');
                             if (content && content.classList.contains('expandable-content')) {{
                                 header.classList.add('expanded');
                                 content.classList.add('expanded');
                                 if (toggle) toggle.classList.add('expanded');
-                                content.style.display = 'block';
                             }}
                         }});
                     }}
                     
                     function collapseAll() {{
+                        const activeTab = getActiveTab();
+                        if (!activeTab) return;
+                        
                         // Collapse all categories
-                        const categoryHeaders = document.querySelectorAll('.folder-name');
-                        categoryHeaders.forEach(header => {{
+                        activeTab.querySelectorAll('.folder-name').forEach(header => {{
                             header.classList.add('collapsed');
                         }});
                         
                         // Collapse all features
-                        const featureHeaders = document.querySelectorAll('.feature-name');
-                        featureHeaders.forEach(header => {{
+                        activeTab.querySelectorAll('.feature-name').forEach(header => {{
                             header.classList.add('collapsed');
                         }});
                         
-                        // Hide all rows
-                        const allCollapsibleRows = document.querySelectorAll('[data-category], [data-feature]');
-                        allCollapsibleRows.forEach(row => {{
+                        // Hide all child rows (features, tests, examples) - only target tr elements
+                        activeTab.querySelectorAll('tr[data-category], tr[data-feature]').forEach(row => {{
                             row.style.display = 'none';
                             row.classList.add('collapsed');
                         }});
                         
-                        // Collapse all expandable sections (for Language-Specific tab)
-                        const expandableHeaders = document.querySelectorAll('.expandable-header');
-                        expandableHeaders.forEach(header => {{
+                        // Collapse all expandable sections
+                        activeTab.querySelectorAll('.expandable-header').forEach(header => {{
                             const content = header.nextElementSibling;
                             const toggle = header.querySelector('.expandable-toggle');
                             if (content && content.classList.contains('expandable-content')) {{
                                 header.classList.remove('expanded');
                                 content.classList.remove('expanded');
                                 if (toggle) toggle.classList.remove('expanded');
-                                content.style.display = 'none';
                             }}
                         }});
+                    }}
+                    
+                    function toggleExamples(examplesId) {{
+                        const wrapper = document.getElementById(examplesId);
+                        const toggle = document.getElementById(examplesId + '-toggle');
+                        if (wrapper) {{
+                            if (wrapper.style.display === 'none' || wrapper.style.display === '') {{
+                                wrapper.style.display = 'block';
+                                if (toggle) toggle.textContent = '▼';
+                            }} else {{
+                                wrapper.style.display = 'none';
+                                if (toggle) toggle.textContent = '▶';
+                            }}
+                        }}
                     }}
                 </script>
             </head>
@@ -999,8 +1083,8 @@ class CoverageReportGenerator:
             folder_display = folder.replace('_', ' ').title()
             colspan = len(languages) + 1  # +1 for the feature column
             folder_id = f"category-{folder.lower().replace('_', '-')}"
-            folder_cell = f'<td colspan="{colspan}"><div class="folder-name" onclick="toggleCategory(\'{folder_id}\')">{folder_display}</div></td>'
-            rows.append(f'<tr>{folder_cell}</tr>')
+            folder_cell = f'<td colspan="{colspan}"><div class="folder-name" onclick="toggleCategory(\'{folder_id}\', this)">{folder_display}</div></td>'
+            rows.append(f'<tr class="category-header-row" data-category-header="{folder_id}">{folder_cell}</tr>')
             
             # Start category content wrapper
             category_rows = []
@@ -1011,10 +1095,10 @@ class CoverageReportGenerator:
                 scenarios = [s['name'] for s in scenarios_with_annotations] if scenarios_with_annotations else self.get_feature_scenarios(feature_data['path'])
                 
                 # Generate unique ID for this feature (same as in detailed breakdown)
-                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
+                feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
                 
                 # Feature header row with collapsible functionality
-                feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\')">{formatted_name}</div></td>']
+                feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\', this)">{formatted_name}</div></td>']
                 
                 # Add status cells for each language at feature level
                 for lang in languages:
@@ -1115,10 +1199,11 @@ class CoverageReportGenerator:
                     test_level_label = '<span class="test-level-integration">Integration</span>' if has_int_tag else '<span class="test-level-e2e">E2E</span>'
                     
                     # Create unique scenario ID for navigation (same logic as detailed breakdown)
-                    scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
-                    scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                    scenario_slug = self._slugify_scenario(scenario)
+                    scenario_id = f"scenario-{feature_id}-{scenario_slug}"
+                    scenario_escaped = html.escape(scenario)
                     
-                    test_cell = f'<td><div class="{test_class}">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario} {test_level_label}</a></div></td>'
+                    test_cell = f'<td><div class="{test_class}">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario_escaped} {test_level_label}</a></div></td>'
                     
                     # Status cells for each language
                     status_cells = []
@@ -1158,8 +1243,7 @@ class CoverageReportGenerator:
                                 # Behavior Difference scenario for this specific driver - show Behavior Difference popup with list
                                 if behavior_difference_ids_for_link:
                                     # Generate unique popup ID for this scenario
-                                    scenario_clean = scenario.lower().replace(" ", "-").replace("'", "")
-                                    popup_id = f'behavior_difference-popup-{scenario_clean}-{lang.lower()}'
+                                    popup_id = f'behavior_difference-popup-{self._slugify_scenario(scenario)}-{lang.lower()}'
                                     
                                     # Create Behavior Difference list items
                                     behavior_difference_items = []
@@ -1233,8 +1317,7 @@ class CoverageReportGenerator:
                                 # Behavior Difference scenario for this specific driver (even if not implemented) - show Behavior Difference popup with list
                                 if behavior_difference_ids_for_link:
                                     # Generate unique popup ID for this scenario
-                                    scenario_clean = scenario.lower().replace(" ", "-").replace("'", "")
-                                    popup_id = f'behavior_difference-popup-{scenario_clean}-{lang.lower()}'
+                                    popup_id = f'behavior_difference-popup-{self._slugify_scenario(scenario)}-{lang.lower()}'
                                     
                                     # Create Behavior Difference list items
                                     behavior_difference_items = []
@@ -1276,13 +1359,41 @@ class CoverageReportGenerator:
                                     status_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
                     
                     category_rows.append(f'<tr class="{row_class} feature-content" data-feature="{feature_id}">{test_cell}{"".join(status_cells)}</tr>')
+                    
+                    # Add expandable Test Cases table for Scenario Outlines
+                    examples = scenario_info.get('examples') if isinstance(scenario_info, dict) else None
+                    if examples and examples.get('headers') and examples.get('rows'):
+                        examples_id = f"examples-overview-{feature_id}-{self._slugify_scenario(scenario)}"
+                        examples_header_cells = ''.join(f'<th>{html.escape(h)}</th>' for h in examples['headers'])
+                        examples_body_rows = []
+                        for row_data in examples['rows']:
+                            row_cells = ''.join(f'<td>{html.escape(c)}</td>' for c in row_data)
+                            examples_body_rows.append(f'<tr>{row_cells}</tr>')
+                        examples_rows_html = '\n'.join(examples_body_rows)
+                        
+                        examples_html = f'''
+                            <tr class="test-row feature-content examples-row" data-feature="{feature_id}">
+                                <td colspan="{colspan}">
+                                    <div class="examples-expandable" onclick="toggleExamples('{examples_id}')">
+                                        <span class="examples-toggle" id="{examples_id}-toggle">▶</span>
+                                        <span class="examples-label">Test Cases ({len(examples['rows'])} values)</span>
+                                    </div>
+                                    <div class="examples-table-wrapper" id="{examples_id}" style="display: none;">
+                                        <table class="examples-table">
+                                            <thead><tr>{examples_header_cells}</tr></thead>
+                                            <tbody>{examples_rows_html}</tbody>
+                                        </table>
+                                    </div>
+                                </td>
+                            </tr>'''
+                        category_rows.append(examples_html)
             
             # Add all category rows with proper data attributes
             for row in category_rows:
                 if 'feature-row' in row:
                     rows.append(row.replace('<tr class="feature-row">', f'<tr class="feature-row" data-category="{folder_id}">'))
                 else:
-                    rows.append(row.replace('<tr class="', f'<tr class="').replace('">', f'" data-category="{folder_id}">'))
+                    rows.append(re.sub(r'<tr\b', f'<tr data-category="{folder_id}"', row, count=1))
         
         rows_html = '\n'.join(f'                    {row}' for row in rows)
         
@@ -1518,7 +1629,7 @@ class CoverageReportGenerator:
                 formatted_name = self.format_feature_name(feature_name, feature_data['path'])
                 
                 # Generate unique ID for this feature (needed for scenario navigation)
-                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
+                feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
                 
                 # Get scenarios with annotations for this feature
                 scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
@@ -1626,12 +1737,33 @@ class CoverageReportGenerator:
                         impl_html = '\n                        '.join(impl_items)
                         
                         # Create unique scenario ID for navigation
-                        scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
-                        scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                        scenario_slug = self._slugify_scenario(scenario)
+                        scenario_id = f"scenario-{feature_id}-{scenario_slug}"
+                        scenario_escaped = html.escape(scenario)
+                        
+                        # Build Test Cases table HTML for Scenario Outlines (visible by default in detailed view)
+                        examples_html = ''
+                        examples = scenario_info.get('examples')
+                        if examples and examples.get('headers') and examples.get('rows'):
+                            examples_header_cells = ''.join(f'<th>{html.escape(h)}</th>' for h in examples['headers'])
+                            examples_body_rows = []
+                            for row_data in examples['rows']:
+                                row_cells = ''.join(f'<td>{html.escape(c)}</td>' for c in row_data)
+                                examples_body_rows.append(f'<tr>{row_cells}</tr>')
+                            examples_rows_html = '\n'.join(examples_body_rows)
+                            examples_html = f'''
+                                <div class="examples-detail">
+                                    <div class="examples-detail-label">Test Cases:</div>
+                                    <table class="examples-table">
+                                        <thead><tr>{examples_header_cells}</tr></thead>
+                                        <tbody>{examples_rows_html}</tbody>
+                                    </table>
+                                </div>'''
                         
                         scenario_item = dedent(f"""
                             <div class="scenario-section" id="{scenario_id}">
-                                <h5 class="scenario-title">📝 {scenario}{test_level_label}</h5>
+                                <h5 class="scenario-title">📝 {scenario_escaped}{test_level_label}</h5>
+                                {examples_html}
                                 <ul class="implementation-list">
                                     {impl_html}
                                 </ul>
@@ -1675,7 +1807,7 @@ class CoverageReportGenerator:
                             impl_html = '\n                            '.join(impl_items)
                             scenario_items.append(dedent(f"""
                                 <div class="scenario-section">
-                                    <h5 class="scenario-title">📝 {scenario}</h5>
+                                    <h5 class="scenario-title">📝 {html.escape(scenario)}</h5>
                                     <ul class="implementation-list">
                                         {impl_html}
                                     </ul>
@@ -1751,6 +1883,10 @@ class CoverageReportGenerator:
         
         return dedent(f"""
             <h2>📋 Detailed Breakdown</h2>
+            <div class="expand-collapse-controls">
+                <span class="expand-collapse-btn" onclick="expandAll()">📖 Expand All</span>
+                <span class="expand-collapse-btn" onclick="collapseAll()">📕 Collapse All</span>
+            </div>
             {sections_html}
         """).strip()
 
@@ -1838,7 +1974,7 @@ class CoverageReportGenerator:
             
             scenario_item = dedent(f"""
                 <div class="scenario-section">
-                    <h5 class="scenario-title">📝 {scenario}</h5>
+                    <h5 class="scenario-title">📝 {html.escape(scenario)}</h5>
                     <ul class="implementation-list">
                         {impl_html}
                     </ul>
@@ -1969,7 +2105,7 @@ class CoverageReportGenerator:
                 # Find the formatted feature name from any item
                 formatted_feature = next(item['formatted_feature'] for item in missing_items if item['feature'] == feature_name)
                 
-                scenario_list = '\n                        '.join([f'<li>• {scenario}</li>' for scenario in sorted(scenarios)])
+                scenario_list = '\n                        '.join([f'<li>• {html.escape(scenario)}</li>' for scenario in sorted(scenarios)])
                 feature_items.append(dedent(f"""
                     <li>
                         <strong>{formatted_feature}</strong>
@@ -2266,12 +2402,12 @@ class CoverageReportGenerator:
             
             # Expandable language section header (similar to category headers in Shared tab)
             html_parts.append('<div class="expandable-section" style="margin-top: 20px;">')
-            html_parts.append(f'<div class="expandable-header" onclick="toggleSection(this)" style="background: #f0f0f0; padding: 15px; cursor: pointer; border-left: 4px solid #0066cc; margin-bottom: 0;">')
+            html_parts.append(f'<div class="expandable-header expanded" onclick="toggleSection(this)" style="background: #f0f0f0; padding: 15px; cursor: pointer; border-left: 4px solid #0066cc; margin-bottom: 0;">')
             html_parts.append(f'<div class="expandable-title" style="font-weight: bold; font-size: 1.1em; color: #333;">{lang.upper()} ({len(lang_features)} features)</div>')
-            html_parts.append('<div class="expandable-toggle" style="float: right; margin-top: -20px;">▼</div>')
+            html_parts.append('<div class="expandable-toggle expanded" style="float: right; margin-top: -20px;">▼</div>')
             html_parts.append('</div>')
             
-            html_parts.append('<div class="expandable-content" style="display: block;">')
+            html_parts.append('<div class="expandable-content expanded">')
             html_parts.append('<div class="expandable-inner">')
             
             # Table for this language (same format as Shared tab)
@@ -2307,11 +2443,10 @@ class CoverageReportGenerator:
                         bd_count += len(behavior_difference_ids)
                 
                 # Generate unique IDs for links (same as Shared tab)
-                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
-                feature_id_for_bd = feature_name.replace('_', '-').replace(' ', '-').lower()
+                feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
                 
                 # Feature header row with collapsible functionality (same as Shared tab)
-                feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\')">{formatted_name}</div></td>']
+                feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\', this)">{formatted_name}</div></td>']
                 
                 # Add status cell
                 if status_icon == '✅':
@@ -2333,14 +2468,15 @@ class CoverageReportGenerator:
                     
                     # Test name cell with link to detailed breakdown (same as Shared tab)
                     # Create unique scenario ID for navigation
-                    scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
-                    scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                    scenario_slug = self._slugify_scenario(scenario)
+                    scenario_id = f"scenario-{feature_id}-{scenario_slug}"
+                    scenario_escaped = html.escape(scenario)
                     
                     # Determine test level for inline label
                     has_int_tag = any(tag.endswith('_int') for tag in tags)
                     test_level_label = '<span class="test-level-integration">Integration</span>' if has_int_tag else '<span class="test-level-e2e">E2E</span>'
                     
-                    test_name_cell = f'<td><div class="test-name">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario} {test_level_label}</a></div></td>'
+                    test_name_cell = f'<td><div class="test-name">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario_escaped} {test_level_label}</a></div></td>'
                     
                     # Check if implemented
                     scenario_implemented = False
@@ -2375,6 +2511,33 @@ class CoverageReportGenerator:
                         status_cell = '<td><div class="test-status"><span class="status-fail">-</span></div></td>'
                     
                     html_parts.append(f'<tr class="{row_class} feature-content" data-feature="{feature_id}">{test_name_cell}{status_cell}</tr>')
+                    
+                    # Add expandable Test Cases table for Scenario Outlines
+                    examples = scenario_info.get('examples') if isinstance(scenario_info, dict) else None
+                    if examples and examples.get('headers') and examples.get('rows'):
+                        examples_id = f"examples-langspec-{feature_id}-{scenario_slug}"
+                        examples_header_cells = ''.join(f'<th>{html.escape(h)}</th>' for h in examples['headers'])
+                        examples_body_rows = []
+                        for row_data in examples['rows']:
+                            row_cells = ''.join(f'<td>{html.escape(c)}</td>' for c in row_data)
+                            examples_body_rows.append(f'<tr>{row_cells}</tr>')
+                        examples_rows_html = '\n'.join(examples_body_rows)
+                        
+                        html_parts.append(f'''
+                            <tr class="test-row feature-content examples-row" data-feature="{feature_id}">
+                                <td colspan="2">
+                                    <div class="examples-expandable" onclick="toggleExamples('{examples_id}')">
+                                        <span class="examples-toggle" id="{examples_id}-toggle">▶</span>
+                                        <span class="examples-label">Test Cases ({len(examples['rows'])} values)</span>
+                                    </div>
+                                    <div class="examples-table-wrapper" id="{examples_id}" style="display: none;">
+                                        <table class="examples-table">
+                                            <thead><tr>{examples_header_cells}</tr></thead>
+                                            <tbody>{examples_rows_html}</tbody>
+                                        </table>
+                                    </div>
+                                </td>
+                            </tr>''')
             
             html_parts.append('</tbody>')
             html_parts.append('</table>')
@@ -2458,7 +2621,7 @@ class CoverageReportGenerator:
                 for scenario in scenarios:
                     scenario_name = scenario['name']
                     tags = ', '.join(scenario.get('tags', []))
-                    html_parts.append(f'<li>• {scenario_name}<br/><small style="color: #666;">Tags: {tags}</small></li>')
+                    html_parts.append(f'<li>• {html.escape(scenario_name)}<br/><small style="color: #666;">Tags: {html.escape(tags)}</small></li>')
                 
                 html_parts.append(f'</ul>')
                 html_parts.append(f'</li>')

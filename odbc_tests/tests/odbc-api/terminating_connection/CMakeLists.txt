@@ -1,0 +1,4 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_disconnect_tests disconnect_tests.cpp)
+add_odbc_test(odbc_api_free_handle_tests free_handle_tests.cpp)

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling", "Cython", "setuptools"]
+requires = ["hatchling", "Cython", "setuptools", "mypy-protobuf~=5.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs switching tests to UD
-version = "0.1.0"
+dynamic = ["version"]
 description = "A PEP 249 Database API 2.0 implementation for Snowflake"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -21,11 +21,14 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 requires-python = ">=3.9"
 dependencies = [
+    "cryptography>=44.0.1",
     "protobuf>=6.32.1",
     "pytz",
+    "tomlkit>=0.13",
 ]
 
 [project.urls]
@@ -47,13 +50,18 @@ test = [
     "requests",
     "brotli",
     "zstandard",
+    "tomlkit",
 ]
 dev = [
     "ruff",
     "mypy",
     "hatchling",
     "types-pytz",
+    "types-protobuf",
 ]
+
+[tool.hatch.version]
+path = "src/snowflake/connector/version.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -61,11 +69,31 @@ include = [
     "hatch_build.py",
     "LICENSE",
     "README.md",
+    # Rust sources (directory symlinks dereferenced during sdist build)
+    "sf_core/",
+    "proto_utils/",
+    "proto_generator/",
+    "protobuf/",
+    "error_trace/",
+    "error_trace_derive/",
 ]
 exclude = [
     "__pycache__",
     "src/snowflake/connector/_internal/nanoarrow_cpp/scripts",
+    # Exclude Rust build artifacts
+    "sf_core/target/",
+    "proto_utils/target/",
+    # Exclude sf_core tests (except arrow_deserialize_macro which is a dev-dependency)
+    "sf_core/tests/e2e/",
+    "sf_core/tests/integration/",
+    "sf_core/tests/*.rs",
 ]
+
+# Individual files need force-include (file symlinks are not dereferenced)
+[tool.hatch.build.targets.sdist.force-include]
+"Cargo.toml.sdist" = "Cargo.toml"
+"../Cargo.lock" = "Cargo.lock"
+"../build_common.rs" = "build_common.rs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snowflake"]
@@ -99,6 +127,7 @@ timeout = 120
 markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
     "skip_universal(reason: str=''): skip when --connector=universal",
+    "slow: marks tests as slow (e.g., full sdist install with Rust compilation)",
 ]
 log_cli = true
 log_cli_level = "INFO"
@@ -163,7 +192,7 @@ installer = "uv"
 check = [
     'ruff format --check {args:src/snowflake tests}',
     'ruff check {args:src/snowflake tests}',
-    'mypy --install-types --non-interactive -p snowflake.connector',
+    'mypy -p snowflake.connector',
 ]
 fix = [
     'ruff format src/snowflake tests',
@@ -182,9 +211,11 @@ dev-mode = true
 [tool.hatch.envs.dev.env-vars]
 # IMPORTANT: PARAMETER_PATH must be explicitly set
 PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
+# Skip core build if library already exists (avoids cmake build issues)
+SKIP_CORE_BUILD = "{env:SKIP_CORE_BUILD:1}"
 
 [[tool.hatch.envs.dev.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.dev.scripts]
 # Unit tests
@@ -194,9 +225,9 @@ integ = "pytest tests/integ {args}"
 # End-to-end tests
 e2e = "pytest tests/e2e {args}"
 # All tests
-all = "pytest tests/ {args}"
+all = "pytest tests/ --ignore=tests/packaging {args}"
 # All tests with coverage
-all-cov = "pytest tests/ --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+all-cov = "pytest tests/ --ignore=tests/packaging --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # This environment skips installing the ud version from sources,
 # installs from wheel via install-wheel
@@ -206,11 +237,23 @@ skip-install = true
 dev-mode = false
 
 [[tool.hatch.envs.test.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.test.scripts]
 # Install from wheel
 install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
+
+# Packaging tests environment - tests sdist build and installation
+[tool.hatch.envs.packaging]
+features = ["test"]
+installer = "uv"
+extra-dependencies = ["build"]
+
+[[tool.hatch.envs.packaging.matrix]]
+python = ["3.13"]
+
+[tool.hatch.envs.packaging.scripts]
+test = "pytest tests/packaging {args}"
 
 # Reference connector environment installs only reference connector
 [tool.hatch.envs.reference]
@@ -220,7 +263,7 @@ template = "test"
 # This environment runs with old driver only. UD driver is not installed.
 test = [
     "uv pip uninstall snowflake-connector-python-ud",
-    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
+    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.2.0}",
     "pytest tests/integ tests/e2e {args}"
 ]
 compare = "python ci/reference_tests/compare_reports.py {args}"

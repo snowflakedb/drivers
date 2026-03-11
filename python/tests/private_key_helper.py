@@ -59,6 +59,12 @@ def get_private_key_from_parameters() -> str:
         RuntimeError: If SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found
     """
     test_params = get_test_parameters()
+
+    # First check if a private key file path is provided
+    private_key_file = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_FILE")
+    if private_key_file:
+        return private_key_file
+
     private_key_contents = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")
 
     if not private_key_contents:

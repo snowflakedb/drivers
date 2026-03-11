@@ -107,7 +107,7 @@ fn upload_original_file(client: &SnowflakeTestClient, stage_name: &str) {
 }
 
 fn assert_put_result_status(
-    put_result: sf_core::protobuf_gen::database_driver_v1::ExecuteResult,
+    put_result: sf_core::protobuf::generated::database_driver_v1::ExecuteResult,
     expected_filename: &str,
     expected_status: &str,
 ) {

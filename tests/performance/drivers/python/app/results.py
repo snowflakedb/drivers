@@ -38,14 +38,15 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
                     "query_s": f"{result['query_time_s']:.6f}",
                 })
         else:
-            # SELECT tests: timestamp, query_s and fetch_s
-            writer = csv.DictWriter(f, fieldnames=["timestamp", "query_s", "fetch_s"])
+            # SELECT tests: timestamp, query_s, fetch_s, and row_count
+            writer = csv.DictWriter(f, fieldnames=["timestamp", "query_s", "fetch_s", "row_count"])
             writer.writeheader()
             for result in results:
                 writer.writerow({
                     "timestamp": result['timestamp'],
                     "query_s": f"{result['query_time_s']:.6f}",
                     "fetch_s": f"{result['fetch_time_s']:.6f}",
+                    "row_count": result.get('row_count', 0),
                 })
     
     return filename

@@ -9,31 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-inline std::string get_driver_path() {
-  // Prefer a driver name if provided/installed via ODBCINSTINI, otherwise fall back to path
-  const char* driver_name_env_value = std::getenv("DRIVER_NAME");
-  if (driver_name_env_value != nullptr && driver_name_env_value[0] != '\0') {
-    std::string driver_name = std::string(driver_name_env_value);
-    INFO("Driver name: " << driver_name);
-    // If ODBCINSTINI is not set, warn the user; still return braced name
-    const char* odbcinstini_env_value = std::getenv("ODBCINSTINI");
-    if (odbcinstini_env_value == nullptr || odbcinstini_env_value[0] == '\0') {
-      WARN(std::string("You are using DRIVER_NAME variable to set the driver implementation, while "
-                       "ODBCINSTINI is not set.\nPlease make sure ODBCINSTINI points to configuration "
-                       "file for ODBC drivers.")
-               .c_str());
-    }
-    // Return braced name so the Driver Manager resolves installed driver entry
-    return "{" + driver_name + "}";
-  }
-
-  // Fallback: DRIVER_PATH from environment variable
-  const char* driver_path_env_value = std::getenv("DRIVER_PATH");
-  REQUIRE(driver_path_env_value != nullptr);
-  std::string driver_path = std::string(driver_path_env_value);
-  INFO("Driver path: " << driver_path);
-  return driver_path;
-}
+#include "ODBCConfig.hpp"
 
 inline picojson::object get_test_parameters(const std::string& connection_name) {
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");
@@ -83,6 +59,14 @@ inline void add_param_optional(std::stringstream& ss, const picojson::object& pa
   }
 }
 
+inline std::string get_private_key_file_path(const picojson::object& params) {
+  auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_FILE");
+  if (it != params.end() && it->second.is<std::string>()) {
+    return it->second.get<std::string>();
+  }
+  return "";
+}
+
 inline std::string read_private_key(const picojson::object& params) {
   auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS");
   if (it == params.end()) {
@@ -103,8 +87,18 @@ inline std::string read_private_key(const picojson::object& params) {
   return private_key_stream.str();
 }
 
+inline void configure_driver_string(std::stringstream& ss) {
+  static std::shared_ptr<DriverConfig> driver_config = DriverConfig::Default();
+  static ConfigInstallation config_installation = ConfigInstallation::install_driver(driver_config);
+#ifdef _WIN32
+  ss << "DSN=" << driver_config->name() << ";";
+#else
+  ss << "DRIVER={" << driver_config->name() << "};";
+#endif
+}
+
 inline void read_default_params(std::stringstream& ss, const picojson::object& params) {
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");

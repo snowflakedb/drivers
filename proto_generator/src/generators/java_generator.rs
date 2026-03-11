@@ -21,7 +21,7 @@ impl JavaGenerator {
         let temp_dir = tempfile::tempdir().whatever_context("Failed to create temp directory")?;
 
         // Run protoc with Java output
-        let status = std::process::Command::new("protoc")
+        let status = std::process::Command::new(&context.protoc_path)
             .arg(format!("--java_out={}", temp_dir.path().display()))
             .arg(context.proto_file.to_str().unwrap())
             .arg(format!(
@@ -63,7 +63,7 @@ impl JavaGenerator {
         &self,
         context: &GeneratorContext,
     ) -> Result<GenerationResult, Whatever> {
-        let descriptor_set = run_protoc(context.proto_file.clone())?;
+        let descriptor_set = run_protoc(context)?;
         let mut result = GenerationResult::new();
 
         for file in descriptor_set.file {
@@ -142,7 +142,7 @@ impl JavaGenerator {
         // Interface
         content += &format!(
             r#"
-import com.snowflake.unicore.TransportException;
+import net.snowflake.client.internal.unicore.TransportException;
 
 /**
  * Service interface for {}
@@ -222,9 +222,9 @@ public interface {}Service {{
         // Import only Message, protobuf classes are now in the same package
         content += &format!(
             r#"import com.google.protobuf.Message;
-import com.snowflake.unicore.CoreTransport;
-import com.snowflake.unicore.CoreTransport.TransportResponse;
-import com.snowflake.unicore.TransportException;
+import net.snowflake.client.internal.unicore.CoreTransport;
+import net.snowflake.client.internal.unicore.CoreTransport.TransportResponse;
+import net.snowflake.client.internal.unicore.TransportException;
 import com.google.protobuf.InvalidProtocolBufferException;
 import {java_package}.{service_name}Service;
 

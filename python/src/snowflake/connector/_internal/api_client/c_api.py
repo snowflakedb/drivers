@@ -1,10 +1,13 @@
 import ctypes
 import logging
+import os
 import sys
 
 from enum import Enum
 from importlib import resources
 from typing import Any
+
+from ..logging import get_sf_core_logger
 
 
 _CORE_LIB_NAME = "libsf_core"
@@ -19,9 +22,11 @@ class CAPIHandle(ctypes.Structure):
 
 
 def _get_core_path() -> Any:
-    # Define the file name for each platform
+    # Define the file name for each platform.
+    # On Windows, cdylib crates produce "sf_core.dll" (no lib prefix).
+    # On Unix, they produce "libsf_core.so" / "libsf_core.dylib".
     if sys.platform.startswith("win"):
-        lib_name = f"{_CORE_LIB_NAME}.dll"
+        lib_name = "sf_core.dll"
     elif sys.platform.startswith("darwin"):
         lib_name = f"{_CORE_LIB_NAME}.dylib"
     else:
@@ -32,20 +37,56 @@ def _get_core_path() -> Any:
 
 
 def _load_core() -> ctypes.CDLL:
-    # This context manager is the safe way to get a
-    # file path from importlib.resources. It handles cases
-    # where the file is inside a zip and needs to be extracted
-    # to a temporary location.
     path = _get_core_path()
     with resources.as_file(path) as lib_path:
-        core = ctypes.CDLL(str(lib_path))
+        lib_path_str = str(lib_path)
+        dll_dir = os.fspath(lib_path.parent)
+        if sys.platform.startswith("win"):
+            os.add_dll_directory(dll_dir)
+
+            # Pre-load bundled dependency DLLs (e.g. OpenSSL) so they are already
+            # present in the process when sf_core.dll is loaded.  On ARM64 Windows,
+            # the restricted DLL search introduced in Python 3.8+
+            # (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR)
+            # does not reliably find dependency DLLs in the same directory as the
+            # loading DLL.  Pre-loading them by full path avoids WinError 127
+            # ("procedure not found") at sf_core load time.
+            core_dll_name = lib_path.name
+            for dep_name in sorted(os.listdir(dll_dir)):
+                if dep_name.endswith(".dll") and dep_name != core_dll_name:
+                    dep_path = os.path.join(dll_dir, dep_name)
+                    try:
+                        ctypes.CDLL(dep_path)
+                    except OSError as _dep_err:
+                        # TEMPORARY: print to stderr so CI logs show pre-load failures
+                        print(
+                            f"[sf_core] pre-load {dep_name}: FAIL: {_dep_err}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+
+        try:
+            core = ctypes.CDLL(lib_path_str)
+        except OSError:
+            if not sys.platform.startswith("win"):
+                raise
+            # TEMPORARY: try winmode=0 as last resort — if the default restricted
+            # search fails, the traditional search (which includes PATH) might work.
+            print(  # type: ignore[unreachable]
+                f"[sf_core] default load failed, trying winmode=0. dll_dir={dll_dir} lib_path={lib_path_str}",
+                file=sys.stderr,
+                flush=True,
+            )
+            core = ctypes.CDLL(lib_path_str, winmode=0)
     return core
 
 
 try:
     core = _load_core()
 except OSError as err:
-    raise RuntimeError("Couldn't load core driver dependency") from err
+    core_path = _get_core_path()
+    msg = f"Couldn't load core driver dependency: {err} (path={core_path})"
+    raise RuntimeError(msg) from err
 
 LOGGER_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p
@@ -63,6 +104,12 @@ core.sf_core_api_call_proto.argtypes = [
     ctypes.POINTER(ctypes.c_size_t),  # size_t* response_len
 ]
 
+core.sf_core_free_buffer.restype = None
+core.sf_core_free_buffer.argtypes = [
+    ctypes.POINTER(ctypes.c_ubyte),  # uint8_t* buffer
+    ctypes.c_size_t,  # size_t len
+]
+
 
 def sf_core_api_call_proto(
     api: ctypes.c_char_p,
@@ -73,6 +120,10 @@ def sf_core_api_call_proto(
     response_len: Any,
 ) -> int:
     return core.sf_core_api_call_proto(api, method, request, request_len, response, response_len)  # type: ignore
+
+
+def sf_core_free_buffer(buffer: Any, length: int) -> None:
+    core.sf_core_free_buffer(buffer, length)
 
 
 def sf_core_init_logger(callback: Any) -> None:
@@ -89,12 +140,18 @@ level_map = {
 
 
 def logger_callback(level: int, message: bytes, filename: bytes, line: int, function: bytes) -> int:
-    if level not in level_map:
+    py_level = level_map.get(level)
+    if py_level is None:
         return 0
-    logger = logging.getLogger("sf_core")
-    record = logger.makeRecord(
-        "sf_core",
-        level_map[level],
+
+    sf_core_logger = get_sf_core_logger()
+    # Respect the logger's configured level - skip if not enabled
+    if not sf_core_logger.isEnabledFor(py_level):
+        return 0
+
+    record = sf_core_logger.makeRecord(
+        sf_core_logger.name,
+        py_level,
         filename.decode("utf-8"),
         line,
         message.decode("utf-8"),
@@ -102,7 +159,7 @@ def logger_callback(level: int, message: bytes, filename: bytes, line: int, func
         None,
         func=function.decode("utf-8"),
     )
-    logger.handle(record)
+    sf_core_logger.handle(record)
     return 0
 
 

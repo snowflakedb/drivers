@@ -1,28 +1,38 @@
-# E2E tests - create individual tests for each .cpp file
+# E2E tests
 
-# Find all .cpp files recursively
-file(GLOB_RECURSE all_sources "*.cpp")
+# authentication
+add_odbc_test(e2e_authentication_native_okta authentication/native_okta.cpp)
+add_odbc_test(e2e_authentication_pat authentication/pat.cpp)
+add_odbc_test(e2e_authentication_private_key_auth authentication/private_key_auth.cpp)
 
-# Create a test for each .cpp file
-foreach(source_file ${all_sources})
-  # Get the relative path from current directory
-  file(RELATIVE_PATH rel_path ${CMAKE_CURRENT_SOURCE_DIR} ${source_file})
-  
-  # Get filename without extension for test name
-  get_filename_component(file_name ${rel_path} NAME_WE)
-  
-  # Get the directory name to include in test name
-  get_filename_component(dir_name ${rel_path} DIRECTORY)
-  
-  # Create test name: e2e_directory_filename
-  if(dir_name)
-    string(REPLACE "/" "_" dir_clean ${dir_name})
-    set(test_name "e2e_${dir_clean}_${file_name}")
-  else()
-    set(test_name "e2e_${file_name}")
-  endif()
-  
-  # Create individual test for this file
-  add_odbc_test(${test_name} ${source_file})
-  message(STATUS "Added E2E test: ${test_name} from ${rel_path}")
-endforeach()
+# put_get
+add_odbc_test(e2e_put_get_put_get_auto_compress put_get/put_get_auto_compress.cpp)
+add_odbc_test(e2e_put_get_put_get_basic_operations put_get/put_get_basic_operations.cpp)
+add_odbc_test(e2e_put_get_put_get_overwrite put_get/put_get_overwrite.cpp)
+add_odbc_test(e2e_put_get_put_get_source_compression put_get/put_get_source_compression.cpp)
+add_odbc_test(e2e_put_get_put_get_wildcards put_get/put_get_wildcards.cpp)
+
+# query
+add_odbc_test(e2e_query_basic_execute_query query/basic_execute_query.cpp)
+add_odbc_test(e2e_query_large_result_set query/large_result_set.cpp)
+add_odbc_test(e2e_query_sql_bind_col query/sql_bind_col.cpp)
+add_odbc_test(e2e_query_sql_describe_col query/sql_describe_col.cpp)
+add_odbc_test(e2e_query_sql_fetch query/sql_fetch.cpp)
+add_odbc_test(e2e_query_sql_get_data query/sql_get_data.cpp)
+add_odbc_test(e2e_query_sql_num_result_cols query/sql_num_result_cols.cpp)
+add_odbc_test(e2e_query_sql_prepare_execute query/sql_prepare_execute.cpp)
+add_odbc_test(e2e_query_sql_row_count query/sql_row_count.cpp)
+
+# tls
+add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
+
+# types
+add_odbc_test(e2e_types_int types/int.cpp)
+add_odbc_test(e2e_types_number types/number.cpp)
+add_odbc_test(e2e_types_string types/string.cpp)
+add_odbc_test(e2e_types_string_conversion_to_c_char types/string_conversion_to_c_char.cpp)
+add_odbc_test(e2e_types_string_conversion_to_c_integer types/string_conversion_to_c_integer.cpp)
+add_odbc_test(e2e_types_string_conversion_to_c_interval types/string_conversion_to_c_interval.cpp)
+add_odbc_test(e2e_types_string_conversion_to_c_real types/string_conversion_to_c_real.cpp)
+add_odbc_test(e2e_types_string_conversion_to_c_temporal types/string_conversion_to_c_temporal.cpp)
+add_odbc_test(e2e_types_string_lob types/string_lob.cpp)

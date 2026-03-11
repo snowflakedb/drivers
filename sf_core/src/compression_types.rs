@@ -112,7 +112,7 @@ fn try_guess_compression_type_from_buffer(
     }
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum CompressionTypeError {
     #[snafu(display("Unsupported compression type: {type_name}"))]
     UnsupportedCompressionType {

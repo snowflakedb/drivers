@@ -6,9 +6,9 @@ on:
   pull_request:
 
 concurrency:
-  # Older builds for the same pull request number or branch should be cancelled
-  cancel-in-progress: true
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,19 +35,18 @@ jobs:
   build_wheel:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    strategy:
+    strategy: &matrix
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-11-arm]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-        exclude:
-          # Python 3.9 and 3.10 don't have Windows ARM64 builds
-          - os: windows-11-arm
-            py: "3.9"
-          - os: windows-11-arm
-            py: "3.10"
+        # TEMPORARY: ARM64-only to speed up iteration. Revert to include ubuntu-latest
+        # and full Python version set once ARM64 is green.
+        os: [windows-11-arm]
+        py: ["3.12"]
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
+    env:
+      # Configure CMake for ARM64 on Windows ARM64 runners
+      CMAKE_GENERATOR_PLATFORM: ${{ matrix.os == 'windows-11-arm' && 'ARM64' || '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -57,16 +56,44 @@ jobs:
         run: sudo apt-get update
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+        # On ARM64 Windows, uv defaults to x86_64 Python ("support for the native
+        # architecture (aarch64) is not yet mature"). This causes Cython extension
+        # linking to fail with unresolved Python C API symbols. Request ARM64 Python
+        # explicitly as uv suggests: cpython-X.Y-windows-aarch64-none
+        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
-      - name: Build python wheel
+      - name: Build python wheel (Linux)
+        if: runner.os == 'Linux'
         working-directory: ./python
-        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
+        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+
+      - name: Install ARM64 OpenSSL via vcpkg
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows
+
+      - name: Configure ARM64 OpenSSL
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
+          echo "C:\vcpkg\installed\arm64-windows\bin" >> $env:GITHUB_PATH
+
+      - name: Build python wheel (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        working-directory: ./python
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
 
       - name: Inspect wheel (Linux)
         if: runner.os == 'Linux'
@@ -85,52 +112,53 @@ jobs:
           name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
           path: python/dist/*.whl
 
-  # Format and lint checking
-  format:
+  # Packaging tests - verify sdist can be built and installed from source
+  packaging_tests:
+    needs: [detect-changes]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python_packaging == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
-      - name: Set up Python
+      - name: Set up Python 3.13
         run: uv python install 3.13
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Run format and lint checks
+      - name: Run packaging tests
         working-directory: ./python
-        run: hatch run precommit:check
+        run: hatch run packaging.py3.13:test -v --timeout=900
 
   # Combined unit + integration tests with universal connector
   python_tests:
-    needs: [detect-changes, build_wheel, format]
+    needs: [detect-changes, build_wheel]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-11-arm]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-        exclude:
-          # Python 3.9 and 3.10 don't have Windows ARM64 builds
-          - os: windows-11-arm
-            py: "3.9"
-          - os: windows-11-arm
-            py: "3.10"
+    strategy: *matrix
     runs-on: ${{ matrix.os }}
     name: python_tests (${{ matrix.os }}, py${{ matrix.py }})
     steps:
+      - name: Set UV cache dir
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "UV_CACHE_DIR=$RUNNER_TEMP/.uv-cache" >> $GITHUB_ENV
+          else
+            echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Restore uv cache (Linux)
         if: runner.os == 'Linux'
@@ -141,8 +169,6 @@ jobs:
           restore-keys: |
             uv-${{ matrix.os }}-${{ matrix.py }}-
             uv-${{ matrix.os }}-
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Restore uv cache (Windows)
         if: runner.os == 'Windows'
@@ -153,11 +179,10 @@ jobs:
           restore-keys: |
             uv-${{ matrix.os }}-${{ matrix.py }}-
             uv-${{ matrix.os }}-
-        env:
-          UV_CACHE_DIR: ${{ runner.temp }}\.uv-cache
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+        # See comment in build_wheel job — ARM64 Windows needs explicit arch request
+        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Download Python wheel
         uses: actions/download-artifact@v4
@@ -165,25 +190,114 @@ jobs:
           name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
           path: python/dist
 
-      - name: Decode secrets (Linux)
-        if: runner.os == 'Linux'
+      - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
 
-      - name: Decode secrets (Windows)
-        if: runner.os == 'Windows'
+      # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
+      # source via maturin. That Rust/C build needs ARM64 OpenSSL headers+libs and
+      # a working ARM64 MSVC environment — same setup the build_wheel job uses.
+      - name: Install ARM64 OpenSSL via vcpkg (for dependency source builds)
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows
+
+      - name: Configure ARM64 build environment
+        if: matrix.os == 'windows-11-arm'
         shell: pwsh
-        run: ./scripts/decode_secrets.ps1
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows\lib" >> $env:GITHUB_ENV
+          echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
+          echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
+          echo "C:\vcpkg\installed\arm64-windows\bin" >> $env:GITHUB_PATH
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Install snowflake ud driver from wheel
+      - name: Install snowflake ud driver from wheel (Linux)
+        if: runner.os == 'Linux'
         working-directory: python
         run: hatch run test.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: python
+        shell: pwsh
+        run: |
+          # On Windows, the dist/*.whl glob isn't expanded by the shell.
+          # Resolve the wheel path explicitly and pass via WHEEL_PATH env var.
+          $wheel = (Get-ChildItem dist/*.whl).FullName
+          $env:WHEEL_PATH = $wheel
+          hatch run test.py${{ matrix.py }}:install-wheel
+
+      # TEMPORARY diagnostic for WinError 127: find sf_core.dll in the installed
+      # package and dump its import table / dependency info.  Uses PowerShell
+      # to robustly locate the file (cmd for /r without wildcards doesn't
+      # check file existence).
+      - name: Diagnose installed core DLL (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" -Recurse -Filter "sf_core.dll" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DirectoryName -like '*_core*' } |
+                 Select-Object -First 1
+          if (-not $dll) {
+            Write-Host "ERROR: sf_core.dll not found in any hatch env _core dir"
+            exit 0
+          }
+          $dllPath = $dll.FullName
+          $dllDir  = $dll.DirectoryName
+          Write-Host "=== Found sf_core.dll ==="
+          Write-Host $dllPath
+          Write-Host ""
+          Write-Host "=== Files in _core directory ==="
+          Get-ChildItem $dllDir | Format-Table Name, Length -AutoSize
+          Write-Host ""
+          # Need vcvarsall for dumpbin
+          & cmd /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 >nul 2>&1 && dumpbin /headers `"$dllPath`" | findstr /i `"machine`""
+          Write-Host ""
+          Write-Host "=== sf_core.dll dependency DLLs ==="
+          & cmd /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat`" arm64 >nul 2>&1 && dumpbin /dependents `"$dllPath`""
+          Write-Host ""
+          Write-Host "=== OpenSSL DLLs on PATH ==="
+          where.exe libcrypto* 2>$null
+          where.exe libssl* 2>$null
+          Write-Host ""
+          Write-Host "=== Quick Python DLL load test ==="
+          $pyExe = Get-ChildItem -Path "C:\Users\runneradmin\AppData\Local\hatch\env\virtual" -Recurse -Filter "python.exe" | Select-Object -First 1
+          if ($pyExe) {
+            # Use sys.argv to pass paths — avoids PowerShell variable expansion
+            # mangling Python f-string $ characters in the here-string.
+            & $pyExe.FullName -c "
+          import ctypes, os, sys
+          dll_dir = sys.argv[1]
+          dll_path = sys.argv[2]
+          os.add_dll_directory(dll_dir)
+          for name in os.listdir(dll_dir):
+              if name.endswith('.dll'):
+                  p = os.path.join(dll_dir, name)
+                  try:
+                      ctypes.CDLL(p)
+                      print('  OK: ' + name)
+                  except OSError as e:
+                      print('  FAIL: ' + name + ': ' + str(e))
+          print()
+          for mode_name, kwargs in [('default', {}), ('winmode=0', {'winmode': 0})]:
+              try:
+                  ctypes.CDLL(dll_path, **kwargs)
+                  print('  Load sf_core.dll (' + mode_name + '): OK')
+              except OSError as e:
+                  print('  Load sf_core.dll (' + mode_name + '): FAIL: ' + str(e))
+          " "$dllDir" "$dllPath"
+          }
+          Write-Host ""
+          Write-Host "=== Done ==="
 
       - name: Run all tests with coverage (Linux)
         if: runner.os == 'Linux'
@@ -193,8 +307,7 @@ jobs:
           hatch run test.py${{ matrix.py }}:all-cov \
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
-            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -208,13 +321,12 @@ jobs:
           hatch run test.py${{ matrix.py }}:all-cov `
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json `
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml `
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml `
-            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
 
-      - name: Upload test results
+      - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
           name: results-universal-${{ matrix.os }}-${{ matrix.py }}
@@ -222,7 +334,7 @@ jobs:
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
-    needs: [detect-changes, build_wheel, format]
+    needs: [detect-changes, build_wheel]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
@@ -230,9 +342,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Restore uv cache
         uses: actions/cache@v4
@@ -260,7 +372,7 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: *setup_env
 
       - name: Run reference integration tests
         working-directory: python
@@ -291,9 +403,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Download universal test results
         uses: actions/download-artifact@v4
@@ -308,7 +420,7 @@ jobs:
           path: ${{ github.workspace }}/reference-results
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: *setup_env
 
       - name: Compare integration test results
         working-directory: python
@@ -321,37 +433,40 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
-    needs: [detect-changes, build_wheel, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheel, packaging_tests, python_tests, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check status
         run: |
           echo "=== Python CI Status ==="
-          
+
           # Check if tests were skipped
           if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
             echo "✓ Python tests were SKIPPED (no relevant changes detected)"
             echo "  - run_python: ${{ needs.detect-changes.outputs.run_python }}"
             exit 0
           fi
-          
+
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.packaging_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+            echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
             exit 1
           fi
-          
+
           # Tests ran and passed
           echo "✓ Python CI PASSED"
           echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+          echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"

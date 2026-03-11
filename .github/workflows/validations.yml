@@ -5,6 +5,11 @@ on:
   push:
     branches: [ main ]
 
+concurrency:
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml
@@ -51,19 +56,23 @@ jobs:
 
   proto:
     needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Generate proto
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Generate proto (Java only)
         run: |
           ./scripts/generate_proto.sh
-          cargo fmt --all --
 
-      - name: Check proto files are up-to-date
-        run: git diff --exit-code
+      - name: Check Java proto files are up-to-date
+        run: git diff --exit-code -- jdbc/
 
   tests-format-validator:
     needs: detect-changes

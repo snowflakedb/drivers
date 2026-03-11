@@ -1,3 +1,4 @@
+use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -47,16 +48,16 @@ pub struct AuthRequestData {
     #[serde(rename = "LOGIN_NAME", skip_serializing_if = "Option::is_none")]
     pub login_name: Option<String>,
     #[serde(rename = "PASSWORD", skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
+    pub password: Option<SensitiveString>,
     #[serde(rename = "RAW_SAML_RESPONSE", skip_serializing_if = "Option::is_none")]
-    pub raw_saml_response: Option<String>,
+    pub raw_saml_response: Option<SensitiveString>,
     #[serde(
         rename = "EXT_AUTHN_DUO_METHOD",
         skip_serializing_if = "Option::is_none"
     )]
     pub ext_authn_duo_method: Option<String>,
     #[serde(rename = "PASSCODE", skip_serializing_if = "Option::is_none")]
-    pub passcode: Option<String>,
+    pub passcode: Option<SensitiveString>,
     #[serde(rename = "AUTHENTICATOR", skip_serializing_if = "Option::is_none")]
     pub authenticator: Option<String>,
     #[serde(rename = "SESSION_PARAMETERS", skip_serializing_if = "Option::is_none")]
@@ -69,9 +70,9 @@ pub struct AuthRequestData {
     )]
     pub browser_mode_redirect_port: Option<String>,
     #[serde(rename = "PROOF_KEY", skip_serializing_if = "Option::is_none")]
-    pub proof_key: Option<String>,
+    pub proof_key: Option<SensitiveString>,
     #[serde(rename = "TOKEN", skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
+    pub token: Option<SensitiveString>,
     #[serde(rename = "OAUTH_TYPE", skip_serializing_if = "Option::is_none")]
     pub oauth_type: Option<String>,
     #[serde(rename = "PROVIDER", skip_serializing_if = "Option::is_none")]

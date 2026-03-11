@@ -1,0 +1,19 @@
+---
+descriptions: Guidelines for datatype implementation
+alwaysApply: false
+---
+
+# Guidelines
+
+Those are guidelines for datatype implementation, including conversions. You should apply these when modyfing ODBC code and writing tests:
+
+1. SQLBindCol
+  - Write size of bound column into length buffer when length buffer is not null. Example test for SQL_C_LONG type
+    ```cpp
+    // Test that length buffer receives correct size
+    SQLINTEGER value = 0;
+    SQLLEN indicator = 0;
+    ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+    ret = SQLFetch(stmt.getHandle());
+    CHECK(indicator == sizeof(SQLINTEGER)); // Length buffer should contain size of data
+    ```

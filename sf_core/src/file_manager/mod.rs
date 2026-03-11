@@ -180,10 +180,14 @@ pub async fn download_single_file(
         decrypt_file_data(&encrypted_data, &file_metadata, &data.encryption_material)
             .context(DecryptionSnafu)?;
 
-    // Create the full output path: local_location/src_location
-    let output_path = Path::new(&data.local_location).join(&data.src_location);
+    // Use only the filename (basename) from src_location to match the old connector
+    // behavior, which downloads files flat into the local directory regardless of
+    // any subdirectory structure in the stage.
+    let filename = Path::new(&data.src_location)
+        .file_name()
+        .unwrap_or(std::ffi::OsStr::new(&data.src_location));
+    let output_path = Path::new(&data.local_location).join(filename);
 
-    // Save the compressed data to the constructed path
     let mut output_file = File::create(&output_path).context(IoSnafu)?;
     output_file.write_all(&compressed_data).context(IoSnafu)?;
 
@@ -204,7 +208,7 @@ pub async fn download_single_file(
 }
 
 // Error types for file manager operations
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum FileManagerError {
     #[snafu(display("Failed to read or write file"))]
     Io {

@@ -103,4 +103,22 @@ static void check_interval_precision_lost(const StatementHandleWrapper& stmt, in
   CHECK(records[0].sqlState == "22015");
 }
 
+inline std::string check_char_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  char buffer[8192];
+  SQLLEN indicator = -999;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(indicator >= 0);
+  return std::string(buffer, indicator);
+}
+
+inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  char16_t buffer[8192];
+  SQLLEN indicator = -999;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(indicator >= 0);
+  return std::u16string(buffer, indicator / sizeof(char16_t));
+}
+
 #endif  // CONVERSION_CHECKS_HPP

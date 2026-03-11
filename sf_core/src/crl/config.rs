@@ -3,9 +3,10 @@ use crate::config::settings::Settings;
 use chrono::Duration;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum CertRevocationCheckMode {
     /// Default - disables CRL checking (TLS handshake still in place)
+    #[default]
     Disabled,
     /// Fails the connection if certificate is revoked or there is other revocation status check issue
     Enabled,
@@ -13,12 +14,6 @@ pub enum CertRevocationCheckMode {
     /// (like connection issues with CRL endpoints, CRL parsing errors etc) assumes
     /// that the certificate is not revoked and allows to connect.
     Advisory,
-}
-
-impl Default for CertRevocationCheckMode {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 #[derive(Debug, Clone)]

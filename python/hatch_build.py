@@ -31,16 +31,21 @@ except ImportError:
 
 
 class BuildHook(BuildHookInterface):
-    """Build hook for compiling Cython extensions with nanoarrow C++ code."""
+    """Build hook for compiling Cython extensions and generating protobuf code."""
 
     PLUGIN_NAME = "nanoarrow"
 
     # Relative paths from src/
+    SRC_DIR = Path("src")
     CONNECTOR_DIR = Path("snowflake") / "connector"
     INTERNAL_DIR = CONNECTOR_DIR / "_internal"
     NANOARROW_CPP_DIR = INTERNAL_DIR / "nanoarrow_cpp"
     ARROW_ITERATOR_DIR = NANOARROW_CPP_DIR / "ArrowIterator"
     LOGGING_DIR = NANOARROW_CPP_DIR / "Logging"
+
+    # Proto generation
+    PROTO_INPUT = Path("protobuf") / "database_driver_v1.proto"
+    PROTOBUF_GEN_DIR = SRC_DIR / INTERNAL_DIR / "protobuf_gen"
 
     # Extension module name
     EXTENSION_NAME = "snowflake.connector._internal.arrow_stream_iterator"
@@ -53,7 +58,6 @@ class BuildHook(BuildHookInterface):
         "BooleanConverter.cpp",
         "CArrowIterator.cpp",
         "CArrowStreamIterator.cpp",
-        "CArrowTableIterator.cpp",
         "ConverterUtil.cpp",
         "DateConverter.cpp",
         "DecFloatConverter.cpp",
@@ -91,9 +95,10 @@ class BuildHook(BuildHookInterface):
     VENDORED_C_FILES = ("nanoarrow.c", "nanoarrow_ipc.c", "flatcc.c")
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        """Initialize the build hook and compile extensions."""
+        """Initialize the build hook: generate protobuf code and compile extensions."""
+        self._generate_protobuf()
+
         if self.target_name != "wheel":
-            # For source distribution
             return
 
         if os.environ.get(self.DISABLE_COMPILE_ENV_VAR, "false").lower() in self.POSITIVE_VALUES:
@@ -110,6 +115,79 @@ class BuildHook(BuildHookInterface):
 
         self._build_extensions()
         self._build_core()
+
+    def _generate_protobuf(self) -> None:
+        """Generate Python protobuf code using the Rust proto_generator binary."""
+        python_dir = Path(self.root)
+        proto_input = (python_dir / self.PROTO_INPUT).resolve()
+        protobuf_gen_dir = python_dir / self.PROTOBUF_GEN_DIR
+
+        if not proto_input.exists():
+            raise RuntimeError(
+                f"Proto file not found at {proto_input}. "
+                "Cannot build package without protobuf definitions."
+            )
+
+        cargo_manifest = python_dir / "Cargo.toml"
+        if not cargo_manifest.exists():
+            # When Cargo.toml is missing (e.g. building a wheel from sdist without the
+            # Rust toolchain), fall back to previously generated files if they exist.
+            if any(protobuf_gen_dir.glob("*_pb2.py")):
+                warnings.warn(
+                    "Cargo.toml not found; skipping protobuf regeneration. "
+                    "Using previously generated protobuf files.",
+                    stacklevel=1,
+                )
+                return
+            raise RuntimeError(
+                "Cargo.toml not found. Cannot build proto_generator. "
+                "Ensure Cargo.toml symlink exists (ln -s ../Cargo.toml Cargo.toml) "
+                "or build from a pre-built wheel."
+            )
+
+        cargo_manifest = cargo_manifest.resolve()
+        protobuf_gen_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure protoc-gen-mypy is discoverable by protoc for .pyi stub generation.
+        # mypy-protobuf is declared in build-system.requires, but the plugin binary
+        # may not be on PATH when cargo shells out to protoc.
+        env = os.environ.copy()
+        scripts_dir = str(Path(sys.executable).parent)
+        env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
+
+        with TemporaryDirectory() as temp_dir:
+            cargo_args = [
+                "cargo",
+                "run",
+                "--bin",
+                "proto_generator",
+                "--manifest-path",
+                str(cargo_manifest),
+                "--target-dir",
+                str(temp_dir),
+                "--",
+                "--generator",
+                "python",
+                "--input",
+                str(proto_input),
+                "--output",
+                str(protobuf_gen_dir),
+            ]
+
+            try:
+                result = subprocess.run(
+                    cargo_args,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                print(result.stdout)
+            except subprocess.CalledProcessError as e:
+                print(f"Proto generation failed with exit code {e.returncode}")
+                print(f"stdout: {e.stdout}")
+                print(f"stderr: {e.stderr}")
+                raise
 
     def _build_extensions(self) -> None:
         """Build the Cython extensions."""
@@ -218,15 +296,42 @@ class BuildHook(BuildHookInterface):
     def _build_core(self) -> None:
         """Build the Rust core library in release mode for distribution."""
 
+        if os.environ.get("SKIP_CORE_BUILD", "").lower() in ["true", "1"]:
+            return
+
         # Get paths relative to the Python wrapper directory
+        # Uses symlinked Cargo.toml in dev (points to ../Cargo.toml) or actual file in sdist
         python_dir = Path(__file__).parent
-        cargo_manifest = python_dir.parent / "Cargo.toml"
         target_dir = python_dir / "src" / "snowflake" / "connector" / "_core"
+        cargo_manifest = python_dir / "Cargo.toml"
+
+        if not cargo_manifest.exists():
+            warnings.warn(
+                "Cargo.toml not found. Cannot build sf_core native extension. "
+                "Ensure symlinks are set up (ln -s ../Cargo.toml Cargo.toml) or "
+                "install from a pre-built wheel.",
+                stacklevel=1,
+            )
+            return
+
+        # Resolve symlinks so cargo uses the actual path (important for workspace resolution)
+        cargo_manifest = cargo_manifest.resolve()
 
         # Ensure target directory exists
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build the Rust core library in release mode with optimizations
+        # Build the Rust core library in release mode with optimizations.
+        # On Windows ARM64, the Rust toolchain may be x86_64 running under
+        # emulation (host: x86_64-pc-windows-msvc). Without --target, cargo
+        # builds for the host triple, producing x86_64 code that the ARM64
+        # MSVC linker wraps in an ARM64 PE — causing WinError 127 at load
+        # time. Detect ARM64 Windows and pass --target explicitly.
+        import platform
+
+        rust_target = None
+        if sys.platform == "win32" and platform.machine() == "ARM64":
+            rust_target = "aarch64-pc-windows-msvc"
+
         with TemporaryDirectory() as temp_dir:
             cargo_args = [
                 "cargo",
@@ -239,6 +344,8 @@ class BuildHook(BuildHookInterface):
                 "--target-dir",
                 str(temp_dir),
             ]
+            if rust_target:
+                cargo_args.extend(["--target", rust_target])
 
             try:
                 result = subprocess.run(
@@ -254,10 +361,37 @@ class BuildHook(BuildHookInterface):
                 print(f"stderr: {e.stderr}")
                 raise
 
-            # Copy built artifacts from release directory to _core directory
-            release_dir = Path(temp_dir) / "release"
+            # When --target is used, output goes to <target-dir>/<target>/release/
+            # instead of <target-dir>/release/.
+            if rust_target:
+                release_dir = Path(temp_dir) / rust_target / "release"
+            else:
+                release_dir = Path(temp_dir) / "release"
             if not release_dir.exists():
                 raise Exception("Core binary not present")
-            for file in release_dir.rglob("*"):
+            # Copy only the sf_core shared library from the top-level release
+            # directory.  Do NOT use rglob — release/deps/ contains proc-macro
+            # DLLs compiled for the host architecture that are not needed at
+            # runtime and bloat the wheel.
+            found_core = False
+            for file in release_dir.iterdir():
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
                     shutil.copy2(file, target_dir)
+                    found_core = True
+            if not found_core:
+                raise Exception(
+                    f"No shared library (.dll/.so/.dylib) found in {release_dir}"
+                )
+
+            # On Windows, sf_core.dll dynamically links against OpenSSL
+            # (libcrypto-3-arm64.dll, libssl-3-arm64.dll). Since Python 3.8+,
+            # ctypes.CDLL uses restricted DLL search that does NOT include PATH.
+            # Bundle the OpenSSL DLLs next to sf_core.dll so the loader finds them.
+            if sys.platform == "win32":
+                openssl_bin = os.environ.get("OPENSSL_DIR", "")
+                if openssl_bin:
+                    openssl_bin_dir = Path(openssl_bin) / "bin"
+                    if openssl_bin_dir.is_dir():
+                        for dll in openssl_bin_dir.glob("*.dll"):
+                            shutil.copy2(dll, target_dir)
+                            print(f"Bundled OpenSSL DLL: {dll.name}")

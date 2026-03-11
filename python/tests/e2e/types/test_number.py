@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 
+from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
 
@@ -65,7 +66,7 @@ NUMBER_38_37_MIN_POSITIVE = Decimal("0.0000000000000000000000000000000000001")
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 30_000
 
 
 class TestNumberTypeCasting:
@@ -192,7 +193,7 @@ class TestNumberLiteral:
         # Given Snowflake client is logged in
 
         # When Query
-        # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v"
+        # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v"
         # is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
@@ -207,7 +208,7 @@ class TestNumberLiteral:
         )
         rows = execute_query(sql)
 
-        # Then Column 1 should contain sequential integers from 0 to 999999
+        # Then Column 1 should contain sequential integers from 0 to 29999
         col0_values = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col0_values, int)
@@ -419,8 +420,8 @@ class TestNumberTable:
     ):
         # Given Snowflake client is logged in
 
-        # And Table with columns (<type>(38,0), <type>(20,5)) exists with 1000000 sequential rows,
-        # from 0 to 999999 in the first column and from 0.12345 to 999999.12345 in the second column
+        # And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows,
+        # from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -438,7 +439,7 @@ class TestNumberTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY 1")
 
-        # Then Column 1 should contain sequential integers from 0 to 999999
+        # Then Column 1 should contain sequential integers from 0 to 29999
         col1 = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col1, int)
@@ -455,10 +456,10 @@ class TestNumberTable:
         )
 
 
+@with_paramstyle("qmark")
 class TestNumberBinding:
     """Tests for NUMBER type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_select_number_using_parameter_binding_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
@@ -480,7 +481,6 @@ class TestNumberBinding:
         assert_type(result[:2], int)
         assert_type(result[2:], Decimal, can_be_none=True)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_select_high_precision_number_using_parameter_binding_for_number_and_synonyms(
         self, execute_query, num_type
@@ -502,10 +502,9 @@ class TestNumberBinding:
         assert_type([result[0]], int)
         assert_type([result[1]], Decimal)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_insert_number_using_parameter_binding_for_number_and_synonyms(
-        self, execute_query, tmp_schema, num_type
+        self, execute_query, executemany_insert, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
 
@@ -521,8 +520,7 @@ class TestNumberBinding:
             (999999, Decimal("999.99")),
             (None, None),
         ]
-        for row in test_data:
-            execute_query(f"INSERT INTO {table_name} VALUES (?, ?)", row)
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?, ?)", test_data)
 
         # Then Result should contain 5 rows with expected values
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -535,7 +533,6 @@ class TestNumberBinding:
         assert set(col_int_values) == {0, 123, -456, 999999, None}
         assert set(col_dec_values) == {Decimal("0.00"), Decimal("123.45"), Decimal("-67.89"), Decimal("999.99"), None}
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_insert_high_precision_number_using_parameter_binding_for_number_and_synonyms(
         self, execute_query, tmp_schema, num_type

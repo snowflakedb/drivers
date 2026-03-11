@@ -1,13 +1,18 @@
 """Connection management and connector selection."""
-import importlib.util
 from importlib.metadata import version, PackageNotFoundError
 from pathlib import Path
+import ssl
+import os
 
 
 def create_connection(driver_type, conn_params):
     """Create and return a connection."""
     connector = _get_connector(driver_type)
     driver_version = _get_driver_version(driver_type)
+    
+    # Disable SSL verification for old Python driver when using WireMock proxy
+    if os.getenv("HTTPS_PROXY") and driver_type == "old":
+        _disable_ssl_verification_for_wiremock(connector)
     
     conn = connector.connect(**conn_params)
     
@@ -53,15 +58,20 @@ def execute_setup_queries(cursor, setup_queries):
 
 
 def _load_from_sources():
-    legacy_path = Path(__file__).parent.parent / "old_driver_src"
-
-    package_name = "snowflake.connector"
-    spec = importlib.util.find_spec(package_name, [legacy_path])
-    if spec is None:
-        raise ImportError(f"Could not find '{package_name}' in {legacy_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """Load old driver from old_driver_src directory."""
+    import sys
+    
+    legacy_path = Path(__file__).parent / "old_driver_src"
+    if not legacy_path.exists():
+        raise ImportError(f"Old driver directory not found: {legacy_path}")
+    
+    legacy_path_str = str(legacy_path.absolute())
+    if legacy_path_str not in sys.path:
+        sys.path.insert(0, legacy_path_str)
+    
+    import snowflake.connector as old_connector
+    
+    return old_connector
 
 
 def _get_connector(driver_type):
@@ -83,3 +93,28 @@ def _get_driver_version(driver_type):
     except PackageNotFoundError as err:
         print(f"⚠️  Warning: Could not determine driver version: {err}")
         return "UNKNOWN"
+
+
+def _disable_ssl_verification_for_wiremock(connector):
+    """
+    Disable SSL verification for old Python driver when using WireMock proxy.
+    
+    Args:
+        connector: The connector module (loaded from old_driver_src for old driver)
+    """
+    # Import ssl_wrap_socket from the connector package
+    if hasattr(connector, 'ssl_wrap_socket'):
+        ssl_wrap = connector.ssl_wrap_socket
+    else:
+        import importlib
+        module_name = connector.__name__ + '.ssl_wrap_socket'
+        ssl_wrap = importlib.import_module(module_name)
+
+    def no_verify_context(*args, **kwargs):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    
+    # Replace the SSL context builder
+    ssl_wrap._build_context_with_partial_chain = no_verify_context

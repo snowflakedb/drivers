@@ -15,10 +15,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 prost-build = "0.14"
 tempfile = "3.22.0"
-lazy_static = "1.5.0" 
 log = "0.4.28"
 env_logger="0.11.8"
 walkdir = "2.5"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(feature, values("arbitrary"))']
 
 [dev-dependencies]
 tempfile = "3.0"

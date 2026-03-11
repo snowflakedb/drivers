@@ -469,6 +469,226 @@ fn should_ignore_braces_in_strings() -> Result<()> {
     Ok(())
 }
 
+// ===== Scenario Outline / Scenario Template Tests =====
+
+#[test]
+fn should_parse_scenario_outline_and_ignore_examples_table() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create a feature file with Scenario Outline and Examples table
+    workspace.create_feature_file(
+        "auth",
+        "outline_test",
+        r#"@core @odbc
+Feature: Scenario Outline Test
+
+  @core_e2e @odbc_e2e
+  Scenario Outline: should retry logout on retryable <error_type> for each <strategy_type>
+    Given Snowflake client is logged in
+    And Error strategy is set to <strategy_type>
+    When Server returns <error_type> error
+    Then Logout is retried according to strategy
+
+    Examples:
+      | error_type | strategy_type |
+      | 503        | BestEffort    |
+      | 503        | Strict        |
+      | 429        | BestEffort    |
+"#,
+    )?;
+
+    // Create matching Rust test
+    workspace.create_rust_test(
+        "auth",
+        "outline_test",
+        r#"
+#[test]
+fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
+    // Given Snowflake client is logged in
+    let client = setup();
+
+    // And Error strategy is set to <strategy_type>
+    // When Server returns <error_type> error
+    // Then Logout is retried according to strategy
+    assert!(true);
+}
+"#,
+    )?;
+
+    // Create matching C++ test
+    workspace.create_cpp_test(
+        "auth",
+        "outline_test",
+        r#"
+#include <catch2/catch.hpp>
+
+TEST_CASE("should retry logout on retryable error_type for each strategy_type") {
+    // Given Snowflake client is logged in
+    auto client = setup();
+
+    // And Error strategy is set to <strategy_type>
+    // When Server returns <error_type> error
+    // Then Logout is retried according to strategy
+    REQUIRE(true);
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let result = &results[0];
+    assert_eq!(
+        result.feature_file.file_stem().unwrap().to_str().unwrap(),
+        "outline_test"
+    );
+
+    // Should have validations for both Rust and ODBC
+    assert_eq!(result.validations.len(), 2, "Should validate Rust and ODBC");
+
+    for validation in &result.validations {
+        assert!(
+            validation.test_file_found,
+            "Language {:?} should find test file",
+            validation.language
+        );
+        assert!(
+            validation.missing_steps.is_empty(),
+            "Language {:?} should have no missing steps, but missing: {:?}",
+            validation.language,
+            validation.missing_steps
+        );
+        // Should find 4 steps: Given, And, When, Then
+        assert_eq!(
+            validation.implemented_steps.len(),
+            4,
+            "Language {:?} should find all 4 steps, found: {:?}",
+            validation.language,
+            validation.implemented_steps
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn should_parse_scenario_template_same_as_outline() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create a feature file with Scenario Template (synonym for Outline)
+    workspace.create_feature_file(
+        "auth",
+        "template_test",
+        r#"@core
+Feature: Scenario Template Test
+
+  @core_e2e
+  Scenario Template: should handle multiple authentication methods
+    Given I have <auth_method> credentials
+    When I authenticate
+    Then Authentication succeeds
+
+    Examples:
+      | auth_method |
+      | password    |
+      | key         |
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "template_test",
+        r#"
+#[test]
+fn should_handle_multiple_authentication_methods() {
+    // Given I have <auth_method> credentials
+    let creds = setup();
+
+    // When I authenticate
+    let result = authenticate(&creds);
+
+    // Then Authentication succeeds
+    assert!(result.is_ok());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let result = &results[0];
+
+    // Should find the scenario from Scenario Template
+    assert_eq!(result.validations.len(), 1);
+    let validation = &result.validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but missing: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(validation.implemented_steps.len(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn should_not_treat_examples_rows_as_steps() -> Result<()> {
+    use tests_format_validator::Feature;
+
+    let temp_dir = TempDir::new()?;
+    let feature_path = temp_dir.path().join("outline.feature");
+    fs::write(
+        &feature_path,
+        r#"@core
+Feature: Examples Table Test
+
+  @core_e2e
+  Scenario Outline: should process <input> correctly
+    Given I have <input>
+    When I process it
+    Then Result is <output>
+
+    Examples:
+      | input | output |
+      | foo   | bar    |
+      | baz   | qux    |
+
+  Scenario: should also work normally
+    Given Normal setup
+    When Normal action
+    Then Normal result
+"#,
+    )?;
+
+    let feature = Feature::parse_from_file(&feature_path)?;
+
+    // Should find 2 scenarios
+    assert_eq!(feature.scenarios.len(), 2, "Should find both scenarios");
+
+    // First scenario (Outline) should have 3 steps, NOT include Examples rows
+    let outline = &feature.scenarios[0];
+    assert_eq!(
+        outline.name, "should process <input> correctly",
+        "Should parse Scenario Outline name"
+    );
+    assert_eq!(
+        outline.steps.len(),
+        3,
+        "Scenario Outline should have 3 steps (not Examples rows), got: {:?}",
+        outline.steps.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+
+    // Second scenario should also parse correctly
+    let normal = &feature.scenarios[1];
+    assert_eq!(normal.name, "should also work normally");
+    assert_eq!(normal.steps.len(), 3);
+
+    Ok(())
+}
+
 // ===== Breaking Change Detection Tests =====
 
 #[test]
@@ -869,6 +1089,206 @@ fn should_handle_multiple_breaking_changes_in_single_test_method() -> Result<()>
     Ok(())
 }
 
+// ===== Regression Tests for Path-Based Feature IDs =====
+
+/// Test that features with the same name in different folders are treated as separate.
+/// This is a regression test for the fix where shared/session/logout.feature and
+/// core/session/logout.feature were incorrectly conflated.
+#[test]
+fn should_not_conflate_features_with_same_name_in_different_folders() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create shared/session/logout.feature - applies to Rust and ODBC
+    workspace.create_feature_file_in_folder(
+        "shared",
+        "session",
+        "logout",
+        r#"@core @odbc
+Feature: Shared Logout
+
+  @core_e2e @odbc_e2e
+  Scenario: User can logout from shared session
+    Given I am logged in
+    When I click logout
+    Then I should be logged out
+"#,
+    )?;
+
+    // Create core/session/logout.feature - Rust-only feature
+    workspace.create_feature_file_in_folder(
+        "core",
+        "session",
+        "logout",
+        r#"@core
+Feature: Core Logout
+
+  @core_e2e
+  Scenario: User can force logout all sessions
+    Given I am logged in on multiple devices
+    When I force logout all sessions
+    Then all sessions should be terminated
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    // Should have 2 separate features, not conflated into one
+    assert_eq!(results.len(), 2, "Should find 2 separate features");
+
+    // Verify both features have distinct paths
+    // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
+    let normalize_path = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+    let feature_paths: Vec<_> = results
+        .iter()
+        .map(|r| normalize_path(&r.feature_file))
+        .collect();
+
+    assert!(
+        feature_paths.iter().any(|p| p.contains("shared/session")),
+        "Should find shared/session/logout.feature"
+    );
+    assert!(
+        feature_paths.iter().any(|p| p.contains("core/session")),
+        "Should find core/session/logout.feature"
+    );
+
+    // Verify the shared feature requires BOTH Rust and ODBC
+    let shared_result = results
+        .iter()
+        .find(|r| normalize_path(&r.feature_file).contains("shared/session"))
+        .expect("Should find shared feature");
+    let shared_languages: Vec<_> = shared_result
+        .validations
+        .iter()
+        .map(|v| &v.language)
+        .collect();
+    assert!(
+        shared_languages.contains(&&tests_format_validator::Language::Rust),
+        "Shared feature should require Rust"
+    );
+    assert!(
+        shared_languages.contains(&&tests_format_validator::Language::Odbc),
+        "Shared feature should require ODBC"
+    );
+
+    // Verify the core feature requires ONLY Rust (not ODBC)
+    let core_result = results
+        .iter()
+        .find(|r| normalize_path(&r.feature_file).contains("core/session"))
+        .expect("Should find core feature");
+    let core_languages: Vec<_> = core_result
+        .validations
+        .iter()
+        .map(|v| &v.language)
+        .collect();
+    assert!(
+        core_languages.contains(&&tests_format_validator::Language::Rust),
+        "Core feature should require Rust"
+    );
+    assert!(
+        !core_languages.contains(&&tests_format_validator::Language::Odbc),
+        "Core feature should NOT require ODBC"
+    );
+
+    Ok(())
+}
+
+/// Test that language-specific folders don't require tests when no scenarios have
+/// implementation tags (e.g., @jdbc_e2e, @odbc_e2e).
+/// This is a regression test for features that document planned behavior without implementations.
+#[test]
+fn should_not_require_tests_when_no_implementation_tags_exist() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create jdbc/session/logout.feature with NO implementation tags (@jdbc_e2e)
+    // This is a "planned" feature that documents behavior but has no tests yet
+    workspace.create_feature_file_in_folder(
+        "jdbc",
+        "session",
+        "logout",
+        r#"@jdbc
+Feature: JDBC Logout (Planned)
+
+  # This feature documents planned behavior - no @jdbc_e2e tags means no tests required
+  Scenario: User can logout from JDBC connection
+    Given I have an active JDBC connection
+    When I close the connection
+    Then the session should be terminated
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    // The feature should be found
+    assert_eq!(results.len(), 1);
+
+    // But since there are no @jdbc_e2e tags, JDBC validation should not be performed
+    // (no language validations should be generated for scenarios without implementation tags)
+    let jdbc_validations: Vec<_> = results[0]
+        .validations
+        .iter()
+        .filter(|v| v.language == tests_format_validator::Language::Jdbc)
+        .collect();
+
+    assert!(
+        jdbc_validations.is_empty(),
+        "Should not require JDBC tests when no @jdbc_e2e tags exist"
+    );
+
+    Ok(())
+}
+
+/// Test that features with implementation tags DO require test files
+#[test]
+fn should_require_tests_when_implementation_tags_exist() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create jdbc/session/logout.feature WITH implementation tag @jdbc_e2e
+    workspace.create_feature_file_in_folder(
+        "jdbc",
+        "session",
+        "logout",
+        r#"@jdbc
+Feature: JDBC Logout
+
+  @jdbc_e2e
+  Scenario: User can logout from JDBC connection
+    Given I have an active JDBC connection
+    When I close the connection
+    Then the session should be terminated
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    // The feature should be found
+    assert_eq!(results.len(), 1);
+
+    // Since there IS a @jdbc_e2e tag, JDBC validation should be performed
+    let jdbc_validations: Vec<_> = results[0]
+        .validations
+        .iter()
+        .filter(|v| v.language == tests_format_validator::Language::Jdbc)
+        .collect();
+
+    assert_eq!(
+        jdbc_validations.len(),
+        1,
+        "Should require JDBC validation when @jdbc_e2e tag exists"
+    );
+
+    // And since we didn't create a test file, it should report missing
+    assert!(
+        !jdbc_validations[0].test_file_found,
+        "Should report test file not found"
+    );
+
+    Ok(())
+}
+
 // ===== Helper Structs and Test Data =====
 
 /// Helper to create a temporary workspace with features and test files
@@ -908,7 +1328,20 @@ impl TestWorkspace {
     }
 
     fn create_feature_file(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
-        let feature_dir = self.features_dir.join(subdir);
+        // Features must be under a valid prefix (shared/, core/, python/, etc.)
+        // Use "shared/" for cross-language test features
+        self.create_feature_file_in_folder("shared", subdir, name, content)
+    }
+
+    /// Create a feature file in a specific top-level folder (shared/, core/, python/, etc.)
+    fn create_feature_file_in_folder(
+        &self,
+        folder: &str,
+        subdir: &str,
+        name: &str,
+        content: &str,
+    ) -> Result<()> {
+        let feature_dir = self.features_dir.join(folder).join(subdir);
         fs::create_dir_all(&feature_dir)?;
         let feature_path = feature_dir.join(format!("{}.feature", name));
         fs::write(feature_path, content)?;
@@ -928,7 +1361,7 @@ impl TestWorkspace {
     fn create_java_test(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
         let test_path = self
             .workspace_root
-            .join("jdbc/src/test/java/com/snowflake/jdbc/integration")
+            .join("jdbc/src/test/java/net/snowflake/jdbc/integration")
             .join(subdir)
             .join(format!("{}Test.java", name));
         fs::create_dir_all(test_path.parent().unwrap())?;
