@@ -29,6 +29,7 @@ fn write_numeric_length<L: TryFrom<usize>, V>(ptr: *mut L) -> api::OdbcResult<()
 ///
 /// `buf` must point to a writable buffer of at least `buf_len` bytes (or be null).
 /// `string_length_ptr` must be valid and writable (or be null).
+#[cfg(not(windows))]
 pub unsafe fn write_char_to_buffer<L: Into<i32> + TryFrom<usize>>(
     s: &str,
     buf: *mut u8,
@@ -72,7 +73,6 @@ pub unsafe fn write_char_to_buffer<L: Into<i32> + TryFrom<usize>>(
 ///
 /// `buf` must point to a writable buffer of at least `buf_len` bytes worth of `u16`
 /// elements (or be null). `string_length_ptr` must be valid and writable (or be null).
-#[allow(dead_code)]
 pub unsafe fn write_wchar_to_buffer<L: Into<isize> + TryFrom<usize>>(
     s: &str,
     buf: *mut u16,
@@ -117,6 +117,7 @@ pub unsafe fn write_wchar_to_buffer<L: Into<isize> + TryFrom<usize>>(
 ///
 /// `value_ptr` must be a valid, writable pointer of the correct type (or null).
 /// `string_length_ptr` must be valid and writable (or null).
+#[cfg(not(windows))]
 pub unsafe fn write_field_value<L: Into<i32> + TryFrom<usize>>(
     value: FieldValue,
     value_ptr: sql::Pointer,
@@ -177,6 +178,7 @@ pub unsafe fn write_field_value<L: Into<i32> + TryFrom<usize>>(
 }
 
 /// Write a [`DiagRecData`] to the output buffers provided by the caller.
+#[cfg(not(windows))]
 pub fn write_diag_rec_to_buffers(
     diag: &DiagRecData,
     sql_state: *mut sql::Char,
@@ -208,4 +210,119 @@ pub fn write_diag_rec_to_buffers(
             warnings,
         )
     }
+}
+
+/// Write a [`FieldValue`] to ODBC output buffers using wide (UTF-16) encoding.
+///
+/// # Safety
+///
+/// `value_ptr` must be a valid, writable pointer of the correct type (or null).
+/// `string_length_ptr` must be valid and writable (or null).
+pub unsafe fn write_field_value_w<L: Into<isize> + TryFrom<usize>>(
+    value: FieldValue,
+    value_ptr: sql::Pointer,
+    buffer_length: L,
+    string_length_ptr: *mut L,
+    warnings: &mut Warnings,
+) -> api::OdbcResult<()> {
+    match value {
+        FieldValue::USmallInt(v) => {
+            if !value_ptr.is_null() {
+                unsafe { std::ptr::write(value_ptr as *mut u16, v) };
+            }
+            write_numeric_length::<L, u16>(string_length_ptr)?;
+        }
+        FieldValue::UInteger(v) => {
+            if !value_ptr.is_null() {
+                unsafe { std::ptr::write(value_ptr as *mut u32, v) };
+            }
+            write_numeric_length::<L, u32>(string_length_ptr)?;
+        }
+        FieldValue::Integer(v) => {
+            if !value_ptr.is_null() {
+                unsafe { std::ptr::write(value_ptr as *mut sql::Integer, v) };
+            }
+            write_numeric_length::<L, sql::Integer>(string_length_ptr)?;
+        }
+        FieldValue::Len(v) => {
+            if !value_ptr.is_null() {
+                unsafe { std::ptr::write(value_ptr as *mut sql::Len, v) };
+            }
+            write_numeric_length::<L, sql::Len>(string_length_ptr)?;
+        }
+        FieldValue::ULen(v) => {
+            if !value_ptr.is_null() {
+                unsafe { std::ptr::write(value_ptr as *mut sql::ULen, v) };
+            }
+            write_numeric_length::<L, sql::ULen>(string_length_ptr)?;
+        }
+        FieldValue::RetCode(v) => {
+            if !value_ptr.is_null() {
+                unsafe { std::ptr::write(value_ptr as *mut sql::RetCode, v) };
+            }
+            write_numeric_length::<L, sql::RetCode>(string_length_ptr)?;
+        }
+        FieldValue::String(s) => {
+            unsafe {
+                write_wchar_to_buffer(
+                    &s,
+                    value_ptr as *mut u16,
+                    buffer_length,
+                    string_length_ptr,
+                    warnings,
+                )
+            }?;
+        }
+    }
+    Ok(())
+}
+
+/// Write a [`DiagRecData`] to wide (UTF-16) output buffers provided by the caller.
+pub fn write_diag_rec_to_buffers_w(
+    diag: &DiagRecData,
+    sql_state: *mut sql::WChar,
+    native_error_ptr: *mut sql::Integer,
+    message_text: *mut sql::WChar,
+    buffer_length: sql::SmallInt,
+    text_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) -> api::OdbcResult<()> {
+    if !sql_state.is_null() {
+        let state_str = diag.sql_state.as_str();
+        let units: Vec<u16> = state_str.encode_utf16().collect();
+        let len = std::cmp::min(units.len(), 5);
+        unsafe {
+            std::ptr::copy_nonoverlapping(units.as_ptr(), sql_state, len);
+            *sql_state.add(len) = 0;
+        }
+    }
+    if !native_error_ptr.is_null() {
+        unsafe { std::ptr::write(native_error_ptr, diag.native_error) };
+    }
+
+    let buf_len_bytes = buffer_length as isize;
+    let mut dummy_len: isize = 0;
+    let dummy_ptr: *mut isize = &mut dummy_len;
+
+    unsafe {
+        write_wchar_to_buffer(
+            &diag.message_text,
+            message_text,
+            buf_len_bytes,
+            dummy_ptr,
+            warnings,
+        )
+    }?;
+
+    if !text_length_ptr.is_null() {
+        let len = sql::SmallInt::try_from(dummy_len as usize).map_err(|_| {
+            LengthOverflowSnafu {
+                value: dummy_len as usize,
+            }
+            .build()
+        })?;
+        unsafe { std::ptr::write(text_length_ptr, len) };
+    }
+
+    Ok(())
 }

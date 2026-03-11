@@ -1,5 +1,7 @@
 ; ODBC Driver Export Definition File
 ; Only export the ODBC API functions, not internal symbols
+; On Windows only W (wide/UTF-16) variants are exported for string-handling functions.
+; On Unix both W and non-W (ANSI) variants are available.
 LIBRARY sfodbc
 EXPORTS
     SQLAllocEnv
@@ -7,12 +9,11 @@ EXPORTS
     SQLAllocHandle
     SQLBindCol
     SQLBindParameter
-    SQLColAttribute
-    SQLConnect
-    SQLDescribeCol
+    SQLColAttributeW
+    SQLConnectW
+    SQLDescribeColW
     SQLDisconnect
-    SQLDriverConnect
-    SQLExecDirect
+    SQLDriverConnectW
     SQLExecDirectW
     SQLExecute
     SQLExtendedFetch
@@ -20,19 +21,18 @@ EXPORTS
     SQLFetchScroll
     SQLFreeHandle
     SQLFreeStmt
-    SQLGetConnectAttr
+    SQLGetConnectAttrW
     SQLGetData
     SQLGetDescField
-    SQLGetDiagField
-    SQLGetDiagRec
+    SQLGetDiagFieldW
+    SQLGetDiagRecW
     SQLGetEnvAttr
-    SQLGetInfo
+    SQLGetInfoW
     SQLGetStmtAttr
     SQLNumResultCols
-    SQLPrepare
     SQLPrepareW
     SQLRowCount
-    SQLSetConnectAttr
+    SQLSetConnectAttrW
     SQLSetDescField
     SQLSetEnvAttr
     SQLSetStmtAttr
