@@ -19,7 +19,7 @@
 // NOTE: Extreme exponent and scientific notation values may be returned by the
 // old driver in a normalized form (e.g. "1e16384" instead of "1E+16384",
 // "-1234e7997" instead of "-1.234E+8000"). The expected strings in these tests
-// reflect the old driver's actual output; a Behavior Difference entry may be
+// reflect the old driver's actual output. A Behavior Difference entry may be
 // needed once the new driver is implemented.
 
 // ============================================================================
