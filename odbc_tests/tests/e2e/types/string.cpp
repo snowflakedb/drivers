@@ -501,9 +501,9 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY
   // 1" is executed
   auto stmt = conn.createStatement();
-  const wchar_t* sql =
-      L"SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
-  SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), (SQLWCHAR*)sql, SQL_NTS);
+  const char* sql =
+      "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol
