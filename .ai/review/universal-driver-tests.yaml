@@ -1,7 +1,6 @@
 id: universal-driver-tests-rules
 friendly_name: "Universal Driver Test Rules"
 status: enabled
-percentage_of_prs_reviewed: 100
 allowed_folders:
   - "tests/definitions"
   - "sf_core/tests"
@@ -13,7 +12,6 @@ excluded_folders:
   - "odbc_tests/cmake-build"
   - "odbc_tests/cmake-build-reference"
   - "python/tests/__pycache__"
-llm_model: "claude-sonnet-4-5"
 allowed_file_extensions:
   - ".rs"
   - ".py"
