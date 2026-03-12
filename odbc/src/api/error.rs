@@ -305,6 +305,13 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("ODBC runtime error"))]
+    OdbcRuntime {
+        source: crate::api::runtime::OdbcRuntimeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -466,6 +473,7 @@ impl OdbcError {
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
+            OdbcError::OdbcRuntime { .. } => SqlState::FunctionSequenceError,
         }
     }
 

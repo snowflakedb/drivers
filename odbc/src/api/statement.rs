@@ -2,8 +2,9 @@ use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
-    NoMoreDataSnafu, Required,
+    NoMoreDataSnafu, OdbcRuntimeSnafu, Required,
 };
+use crate::api::runtime::global;
 use crate::api::{
     ConnectionState, OdbcResult, ParameterBinding, Statement, StatementState, stmt_from_handle,
 };
@@ -13,7 +14,6 @@ use crate::write_json::odbc_bindings_to_json;
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConnectionGetParameterRequest, ConnectionHandle,
     QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
@@ -50,23 +50,27 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             db_handle: _,
             conn_handle,
         } => {
-            DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
-                stmt_handle: Some(stmt.stmt_handle),
-                query: statement_text.to_string(),
-            })?;
-
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
+            let stmt_handle = stmt.stmt_handle;
 
-            let response =
-                DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
+            let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    query: statement_text.to_string(),
+                })
+                .await?;
+
+                c.statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
                     bindings,
-                });
+                })
+                .await
+            });
 
             tracing::info!("exec_direct: response={:?}", response);
             let response = response?;
 
-            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
+            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
             set_state(stmt, create_execute_state(response)?);
             Ok(())
         }
@@ -79,36 +83,39 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
 
 use crate::conversion::NumericSettings;
 
-fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut NumericSettings) {
-    if let Ok(resp) =
-        DatabaseDriverClient::connection_get_parameter(ConnectionGetParameterRequest {
-            conn_handle: Some(*conn_handle),
-            key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
-        })
-        && let Some(value) = resp.value
-    {
-        let bool_value = value.eq_ignore_ascii_case("true");
-        settings.treat_decimal_as_int = bool_value;
-        tracing::info!(
-            "Server parameter ODBC_TREAT_DECIMAL_AS_INT = {}",
-            bool_value
-        );
-    }
+fn update_numeric_settings(
+    conn_handle: &ConnectionHandle,
+    settings: &mut NumericSettings,
+) -> OdbcResult<()> {
+    let g = global().context(OdbcRuntimeSnafu)?;
+    g.block_on(async |c| {
+        if let Ok(resp) = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
+            })
+            .await
+            && let Some(value) = resp.value
+        {
+            let bool_value = value.eq_ignore_ascii_case("true");
+            settings.treat_decimal_as_int = bool_value;
+            tracing::info!("Server parameter ODBC_TREAT_DECIMAL_AS_INT = {bool_value}");
+        }
 
-    if let Ok(resp) =
-        DatabaseDriverClient::connection_get_parameter(ConnectionGetParameterRequest {
-            conn_handle: Some(*conn_handle),
-            key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
-        })
-        && let Some(value) = resp.value
-    {
-        let bool_value = value.eq_ignore_ascii_case("true");
-        settings.treat_big_number_as_string = bool_value;
-        tracing::info!(
-            "Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {}",
-            bool_value
-        );
-    }
+        if let Ok(resp) = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
+            })
+            .await
+            && let Some(value) = resp.value
+        {
+            let bool_value = value.eq_ignore_ascii_case("true");
+            settings.treat_big_number_as_string = bool_value;
+            tracing::info!("Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {bool_value}");
+        }
+    });
+    Ok(())
 }
 
 pub fn prepare_n(
@@ -165,15 +172,19 @@ pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
         } => {
             tracing::debug!("prepare: query = {query}");
 
-            DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
-                stmt_handle: Some(stmt.stmt_handle),
-                query: query.to_string(),
-            })?;
+            let stmt_handle = stmt.stmt_handle;
+            let prepare_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    query: query.to_string(),
+                })
+                .await?;
 
-            let prepare_result =
-                DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                })?;
+                c.statement_prepare(StatementPrepareRequest {
+                    stmt_handle: Some(stmt_handle),
+                })
+                .await
+            })?;
 
             let result = prepare_result.result.required("Result is required")?;
             let stream_ptr = result.stream.required("Stream is required")?;
@@ -213,14 +224,16 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         } => {
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
-            let response =
-                DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
+            let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                c.statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
                     bindings,
-                })?;
+                })
+                .await
+            })?;
 
             tracing::info!("execute: Successfully executed statement");
-            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
+            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
 
             let statement_type_id = response.result.as_ref().and_then(|r| r.statement_type_id);
             let rows_affected = response.result.as_ref().and_then(|r| r.rows_affected);
