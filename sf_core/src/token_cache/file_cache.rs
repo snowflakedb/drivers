@@ -129,6 +129,15 @@ impl FileLock {
                         std::thread::sleep(retry_delay);
                     }
                 }
+                // On Windows, concurrent create_dir + remove_dir can transiently
+                // fail when the directory is in a pending-delete state.  Treat
+                // these as retryable lock contention rather than fatal errors.
+                #[cfg(windows)]
+                Err(ref e) if Self::is_transient_windows_error(e) => {
+                    if attempt < retry_count - 1 {
+                        std::thread::sleep(retry_delay);
+                    }
+                }
                 Err(e) => {
                     return Err(e).context(LockAcquisitionSnafu);
                 }
@@ -136,6 +145,25 @@ impl FileLock {
         }
 
         LockExhaustedSnafu.fail()
+    }
+
+    /// On Windows, `RemoveDirectory` marks a directory for deletion-on-close
+    /// rather than removing it synchronously.  Between that mark and the actual
+    /// removal, `CreateDirectory` on the same path can fail with one of several
+    /// transient error codes instead of `ERROR_ALREADY_EXISTS`.
+    ///
+    /// See <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-removedirectoryw>
+    #[cfg(windows)]
+    fn is_transient_windows_error(e: &std::io::Error) -> bool {
+        // Win32 system error codes.
+        // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+        const ERROR_ACCESS_DENIED: i32 = 5;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        const ERROR_DELETE_PENDING: i32 = 303;
+        matches!(
+            e.raw_os_error(),
+            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_DELETE_PENDING)
+        )
     }
 
     fn is_stale(lock_path: &Path, stale_timeout: Duration) -> bool {
