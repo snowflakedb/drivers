@@ -72,9 +72,8 @@ impl DatabaseDriverV1 {
                         connection_load_from_config(&mut conn, &name)?;
                     }
 
-                    let login_parameters =
-                        LoginParameters::from_settings(&conn.settings)
-                            .context(ConfigurationSnafu)?;
+                    let login_parameters = LoginParameters::from_settings(&conn.settings)
+                        .context(ConfigurationSnafu)?;
                     let init_params = conn.init_session_parameters.clone();
                     (login_parameters, init_params)
                 };
@@ -156,8 +155,7 @@ impl DatabaseDriverV1 {
     }
 
     pub fn connection_new(&self) -> Handle {
-        self.connections
-            .add_handle(Mutex::new(Connection::new()))
+        self.connections.add_handle(Mutex::new(Connection::new()))
     }
 
     pub fn connection_release(&self, conn_handle: Handle) -> Result<(), ApiError> {

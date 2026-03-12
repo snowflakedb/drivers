@@ -20,7 +20,8 @@ pub fn global() -> &'static OdbcGlobals {
 pub fn env_allocated() {
     ENV_COUNT.fetch_add(1, Ordering::AcqRel);
     GLOBALS.get_or_init(|| {
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
             .build()
             .expect("Failed to create ODBC tokio runtime");

@@ -14,7 +14,8 @@ struct JdbcBridge {
 impl JdbcBridge {
     pub fn new() -> Self {
         Self {
-            runtime: tokio::runtime::Builder::new_current_thread()
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
                 .enable_all()
                 .build()
                 .expect("Failed to create tokio runtime"),

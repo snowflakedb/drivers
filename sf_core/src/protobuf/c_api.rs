@@ -5,7 +5,8 @@ use crate::protobuf::apis::RustTransport;
 use proto_utils::{ProtoError, Transport};
 
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_current_thread()
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
         .enable_all()
         .build()
         .expect("Failed to create tokio runtime")
