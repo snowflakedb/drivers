@@ -32,6 +32,9 @@ jobs:
         run: echo 'Dummy step to pass required check'
 
   # Build Python wheel with compiled extensions for each OS/Python version
+  # NOTE: All Windows runners in this matrix are ARM64 (windows-11-arm).
+  # Steps conditioned on runner.os=='Windows' assume ARM64 semantics.
+  # If a non-ARM64 Windows runner is added, review all runner.os=='Windows' steps.
   build_wheel:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
@@ -46,7 +49,8 @@ jobs:
             py: "3.9"
           - os: windows-11-arm
             py: "3.10"
-          # Python 3.14 pre-release has no ARM64 Windows build yet
+          # TODO: Remove when Python 3.14 ARM64 Windows builds are available in uv
+          # (check https://github.com/astral-sh/uv/releases after 3.14 final release)
           - os: windows-11-arm
             py: "3.14"
     runs-on: ${{ matrix.os }}
@@ -100,7 +104,7 @@ jobs:
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
+          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
       - name: Inspect wheel (Linux)
         if: runner.os == 'Linux'
@@ -296,10 +300,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          # Key uses REFERENCE_OS_VERSION (= "ubuntu-latest") to match the matrix.os-based
+          # key written by python_tests, enabling cross-job cache sharing.
+          key: uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
-            uv-${{ runner.os }}-
+            uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-
+            uv-${{ env.REFERENCE_OS_VERSION }}-
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
 
@@ -370,6 +376,7 @@ jobs:
 
       - name: Compare integration test results
         working-directory: python
+        shell: bash
         run: |
           hatch run reference:compare \
             --py ${{ env.REFERENCE_PYTHON_VERSION }} \

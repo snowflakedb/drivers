@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -334,8 +335,6 @@ class BuildHook(BuildHookInterface):
         # Build the Rust core library in release mode with optimizations.
         # On Windows ARM64, disable strip — strip=true on a cdylib removes
         # the .pdata exception-unwind tables, causing WinError 127 at load time.
-        import platform
-
         extra_cargo_args: list[str] = []
         if sys.platform == "win32" and platform.machine() == "ARM64":
             extra_cargo_args = ["--config", "profile.release.strip=false"]
