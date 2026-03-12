@@ -1,7 +1,21 @@
 use std::os::raw::c_char;
+use std::sync::{LazyLock, OnceLock};
 
-use crate::protobuf::apis::call_proto;
-use proto_utils::ProtoError;
+use crate::protobuf::apis::RustTransport;
+use proto_utils::{ProtoError, Transport};
+
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime")
+});
+
+static TRANSPORT: OnceLock<RustTransport> = OnceLock::new();
+
+fn transport() -> &'static RustTransport {
+    TRANSPORT.get_or_init(RustTransport::new)
+}
 
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
     let boxed = vec.into_boxed_slice();
@@ -43,14 +57,13 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
     response: *mut *const u8,
     response_len: *mut usize,
 ) -> usize {
-    // Prevent unwinding across the FFI boundary. Any panic will be converted to a transport error.
     let result = std::panic::catch_unwind(|| unsafe {
         let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
         let method = std::ffi::CStr::from_ptr(method)
             .to_string_lossy()
             .to_string();
         let message = std::slice::from_raw_parts(request, request_len);
-        call_proto(&api, &method, message)
+        RUNTIME.block_on(transport().handle_message(&api, &method, message.to_vec()))
     });
 
     match result {

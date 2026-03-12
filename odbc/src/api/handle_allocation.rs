@@ -3,9 +3,9 @@ use crate::api::{
     StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
     error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
+    runtime::{env_allocated, env_freed, global},
 };
 use odbc_sys as sql;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
     StatementNewRequest, StatementReleaseRequest,
 };
@@ -14,6 +14,7 @@ use tracing;
 /// Allocate a new environment handle
 pub fn alloc_environment() -> OdbcResult<*mut Environment> {
     tracing::info!("Allocating new environment handle");
+    env_allocated();
     let env = Box::new(Environment {
         odbc_version: 3,
         diagnostic_info: DiagnosticInfo::default(),
@@ -42,9 +43,10 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
             db_handle: _,
             conn_handle,
         } => {
-            let response = DatabaseDriverClient::statement_new(StatementNewRequest {
+            let g = global();
+            let response = g.runtime.block_on(g.client.statement_new(StatementNewRequest {
                 conn_handle: Some(*conn_handle),
-            })?;
+            }))?;
             let stmt_handle = response
                 .stmt_handle
                 .required("Statement handle is required")?;
@@ -83,6 +85,7 @@ pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
     unsafe {
         drop(Box::from_raw(handle as *mut Environment));
     }
+    env_freed();
     Ok(())
 }
 
@@ -108,9 +111,10 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     tracing::info!("Freeing statement handle");
     let stmt = unsafe { Box::from_raw(handle as *mut Statement) };
 
-    if let Err(e) = DatabaseDriverClient::statement_release(StatementReleaseRequest {
+    let g = global();
+    if let Err(e) = g.runtime.block_on(g.client.statement_release(StatementReleaseRequest {
         stmt_handle: Some(stmt.stmt_handle),
-    }) {
+    })) {
         tracing::warn!("Failed to release server-side statement handle: {:?}", e);
     }
     Ok(())
@@ -173,7 +177,6 @@ pub fn sql_alloc_handle(
             Ok(())
         }
         sql::HandleType::Desc => {
-            // Not implemented yet
             tracing::warn!(
                 "SQLAllocHandle: Desc handle type not implemented: {:?}",
                 handle_type
@@ -207,7 +210,6 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
             free_statement(handle)
         }
         sql::HandleType::Desc => {
-            // Not implemented yet
             InvalidHandleSnafu.fail()
         }
         _ => InvalidHandleSnafu.fail(),

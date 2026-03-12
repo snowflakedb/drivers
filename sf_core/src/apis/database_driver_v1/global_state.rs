@@ -1,4 +1,4 @@
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 
 use super::connection::Connection;
 use super::database::Database;
@@ -11,14 +11,8 @@ pub struct DatabaseDriverV1 {
     pub(super) statements: HandleManager<Mutex<Statement>>,
 }
 
-static INSTANCE: LazyLock<DatabaseDriverV1> = LazyLock::new(DatabaseDriverV1::new);
-
-pub fn driver_state() -> &'static DatabaseDriverV1 {
-    &INSTANCE
-}
-
 impl DatabaseDriverV1 {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             databases: HandleManager::new(),
             connections: HandleManager::new(),

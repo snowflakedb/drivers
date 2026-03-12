@@ -218,11 +218,18 @@ pub unsafe extern "C" fn SQLDriverConnect(
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let result =
-        api::connection::driver_connect(connection_handle, in_connection_string, in_string_length);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
-    result.to_sql_code()
+    match std::panic::catch_unwind(|| {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let result = api::connection::driver_connect(connection_handle, in_connection_string, in_string_length);
+        api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+        result.to_sql_code()
+    }) {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("SQLDriverConnect: panic: {:?}", e);
+            sql::SqlReturn::ERROR.0
+        }
+    }
 }
 
 /// # Safety

@@ -1,8 +1,17 @@
+use std::sync::LazyLock;
+
 use jni::JNIEnv;
 use jni::objects::{JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jint, jobject};
-use proto_utils::ProtoError;
-use sf_core::protobuf::apis::call_proto;
+use proto_utils::{ProtoError, Transport};
+use sf_core::protobuf::apis::RustTransport;
+
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime")
+});
 
 mod slf4j_layer;
 
@@ -62,12 +71,12 @@ pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICore
         Err(_) => return std::ptr::null_mut(),
     };
 
-    // Call the protobuf API
-    let result = call_proto(
+    let transport = RustTransport::new();
+    let result = RUNTIME.block_on(transport.handle_message(
         &service_name_str.to_string_lossy(),
         &method_name_str.to_string_lossy(),
-        request_bytes_vec.as_slice(),
-    );
+        request_bytes_vec,
+    ));
 
     // Find the TransportResponse class
     let response_class = match env

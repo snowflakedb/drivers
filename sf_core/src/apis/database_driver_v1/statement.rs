@@ -203,8 +203,8 @@ pub struct PrepareResult {
 }
 
 impl DatabaseDriverV1 {
-    pub fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
-        let result = self.execute_query_internal(stmt_handle, None, Some(true))?;
+    pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
+        let result = self.execute_query_internal(stmt_handle, None, Some(true)).await?;
         Ok(PrepareResult {
             stream: result.stream,
             columns: result.columns,
@@ -234,15 +234,15 @@ pub struct ExecuteResult {
 }
 
 impl DatabaseDriverV1 {
-    pub fn statement_execute_query<'a>(
+    pub async fn statement_execute_query<'a>(
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
     ) -> Result<ExecuteResult, ApiError> {
-        self.execute_query_internal(stmt_handle, bindings, None)
+        self.execute_query_internal(stmt_handle, bindings, None).await
     }
 
-    fn execute_query_internal<'a>(
+    async fn execute_query_internal<'a>(
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
@@ -262,8 +262,6 @@ impl DatabaseDriverV1 {
             }
             .build()
         })?;
-
-        let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
         let (query_parameters, http_client, retry_policy) = {
             let conn = stmt
@@ -286,12 +284,9 @@ impl DatabaseDriverV1 {
         let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
             match &binding_type {
                 BindingType::Json(data_ptr) => {
-                    // True zero-copy: pointer → &'static RawValue (no allocation, no validation).
-                    // Wrapper guarantees data lives through synchronous execute call.
                     Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
                 }
                 BindingType::Csv(_csv_ptr) => {
-                    // TODO: Implement CSV binding handling (stage upload)
                     return Err(InvalidArgumentSnafu {
                         argument: "CSV bindings are not yet implemented".to_string(),
                     }
@@ -308,7 +303,7 @@ impl DatabaseDriverV1 {
             describe_only,
         };
 
-        let response = rt.block_on(async {
+        let response = {
             let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
             let mut last_error = None;
             loop {
@@ -323,11 +318,11 @@ impl DatabaseDriverV1 {
                 )
                 .await
                 {
-                    Ok(result) => return Ok(result),
+                    Ok(result) => break Ok(result),
                     Err(e) => last_error = Some(e),
                 }
             }
-        })?;
+        }?;
 
         if response.success {
             let conn = stmt
@@ -337,8 +332,8 @@ impl DatabaseDriverV1 {
             conn.update_session_params_cache(query, response.data.parameters.as_ref());
         }
 
-        let query_result = rt
-            .block_on(process_query_response(&response.data, &http_client))
+        let query_result = process_query_response(&response.data, &http_client)
+            .await
             .context(QueryResponseProcessingSnafu)?;
 
         let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));

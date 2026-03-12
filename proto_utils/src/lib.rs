@@ -5,7 +5,8 @@ pub enum ProtoError<T> {
 }
 
 pub trait Transport {
-    fn handle_message(
+    async fn handle_message(
+        &self,
         service: &str,
         method: &str,
         message: Vec<u8>,

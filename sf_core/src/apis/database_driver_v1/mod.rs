@@ -14,5 +14,5 @@ pub use connection::ConnectionInfo;
 pub use connection::RefreshContext;
 pub use connection::with_valid_session;
 pub use error::ApiError;
-pub use global_state::{DatabaseDriverV1, driver_state};
+pub use global_state::DatabaseDriverV1;
 pub use statement::{BindingType, ColumnMetadata, DataPtr};

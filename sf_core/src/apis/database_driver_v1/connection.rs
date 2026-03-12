@@ -48,7 +48,7 @@ pub fn connection_load_from_config_with_paths(
 }
 
 impl DatabaseDriverV1 {
-    pub fn connection_init(&self, conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
+    pub async fn connection_init(&self, conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr
@@ -68,8 +68,6 @@ impl DatabaseDriverV1 {
                     connection_load_from_config(&mut conn, &name)?;
                 }
 
-                let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
                 let login_parameters =
                     LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
                 let init_params = conn.init_session_parameters.clone();
@@ -79,16 +77,13 @@ impl DatabaseDriverV1 {
                     create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                         .context(TlsClientCreationSnafu)?;
 
-                let login_result = rt
-                    .block_on(async {
-                        crate::rest::snowflake::snowflake_login_with_client(
-                            &http_client,
-                            &login_parameters,
-                            init_params.as_ref(),
-                        )
-                        .await
-                    })
-                    .context(LoginSnafu)?;
+                let login_result = crate::rest::snowflake::snowflake_login_with_client(
+                    &http_client,
+                    &login_parameters,
+                    init_params.as_ref(),
+                )
+                .await
+                .context(LoginSnafu)?;
 
                 // Initialize connection with session parameters from login response.
                 // The server returns system-level parameters but may not echo back
@@ -106,7 +101,7 @@ impl DatabaseDriverV1 {
                         login_parameters.server_url.clone(),
                         login_parameters.client_info.clone(),
                         merged_params,
-                    );
+                    ).await;
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -183,7 +178,7 @@ pub struct Connection {
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
     /// Session parameters cache (populated after login)
-    pub session_parameters: Arc<RwLock<HashMap<String, String>>>,
+    pub session_parameters: Arc<AsyncRwLock<HashMap<String, String>>>,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
 }
@@ -203,12 +198,12 @@ impl Connection {
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
-            session_parameters: Arc::new(RwLock::new(HashMap::new())),
+            session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             init_session_parameters: None,
         }
     }
 
-    pub(crate) fn initialize(
+    pub(crate) async fn initialize(
         &mut self,
         tokens: SessionTokens,
         http_client: reqwest::Client,
@@ -217,45 +212,26 @@ impl Connection {
         session_params: HashMap<String, String>,
     ) {
         // Use blocking_write since we're in a sync context during connection_init
-        *self.tokens.blocking_write() = Some(tokens);
+        *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
 
         // Populate session parameters cache (assume login always returns parameters)
-        if let Ok(mut cache) = self.session_parameters.write() {
-            *cache = session_params;
-        }
+        let mut cache = self.session_parameters.write().await;
+        *cache = session_params;
     }
 
     /// Update the session parameters cache after a successful query.
-    pub fn update_session_params_cache(
+    pub async fn update_session_params_cache(
         &self,
         query: &str,
         response_parameters: Option<
             &Vec<crate::rest::snowflake::query_response::NameValueParameter>,
         >,
     ) {
-        let mut cache = match self.session_parameters.write() {
-            Ok(cache) => cache,
-            Err(_) => return,
-        };
-
-        // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.
-        // This is necessary as Snowflake returns only part of session parameters in response.
-        // Details: SNOW-3104303
-        cache.extend(
-            super::alter_session_parser::parse_all_alter_sessions(query)
-                .into_iter()
-                .map(|p| {
-                    tracing::debug!(
-                        param_name = %p.name,
-                        param_value = %p.value,
-                        "Detected ALTER SESSION SET, updating cache optimistically"
-                    );
-                    (p.name.clone(), p.value.clone())
-                }),
-        );
+        let mut cache = self.session_parameters.write().await;
+        cache.extend(super::alter_session_parser::parse_all_alter_sessions(query).into_iter().map(|p| (p.name.clone(), p.value.clone())));
 
         // 2. Response parameters: merge any server-returned session parameters into the cache.
         if let Some(parameters) = response_parameters {
@@ -535,7 +511,7 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn connection_get_parameter(
+    pub async fn connection_get_parameter(
         &self,
         conn_handle: Handle,
         key: String,
@@ -549,7 +525,7 @@ impl DatabaseDriverV1 {
                 let cache = conn
                     .session_parameters
                     .read()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                    .await;
 
                 let normalized_key = key.to_uppercase();
                 Ok(cache.get(&normalized_key).cloned())

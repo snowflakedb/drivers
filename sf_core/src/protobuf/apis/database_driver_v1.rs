@@ -7,7 +7,7 @@ use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
-use crate::apis::database_driver_v1::{DatabaseDriverV1, driver_state};
+use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
@@ -489,200 +489,219 @@ impl<T> ToProtobuf<T> for Result<T, ApiError> {
     }
 }
 
-pub struct DatabaseDriverImpl;
+pub struct DatabaseDriverImpl {
+    driver: DatabaseDriverV1,
+}
 
 impl DatabaseDriverImpl {
-    fn state() -> &'static DatabaseDriverV1 {
-        driver_state()
+    pub fn new() -> Self {
+        Self {
+            driver: DatabaseDriverV1::new(),
+        }
     }
 }
 
 impl DatabaseDriver for DatabaseDriverImpl {
-    #[instrument(name = "DatabaseDriverV1::database_new", skip(_input))]
-    fn database_new(_input: DatabaseNewRequest) -> Result<DatabaseNewResponse, DriverException> {
-        let handle = Self::state().database_new();
+    #[instrument(name = "DatabaseDriverV1::database_new", skip(self, _input))]
+    async fn database_new(&self, _input: DatabaseNewRequest) -> Result<DatabaseNewResponse, DriverException> {
+        let handle = self.driver.database_new();
         Ok(DatabaseNewResponse {
             db_handle: Some(DatabaseHandle::from(handle)),
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_set_option_string", skip(input))]
-    fn database_set_option_string(
+    #[instrument(name = "DatabaseDriverV1::database_set_option_string", skip(self, input))]
+    async fn database_set_option_string(
+        &self,
         input: DatabaseSetOptionStringRequest,
     ) -> Result<DatabaseSetOptionStringResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        Self::state()
+        self.driver
             .database_set_option(db_handle.into(), input.key, Setting::String(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionStringResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_set_option_bytes", skip(input))]
-    fn database_set_option_bytes(
+    #[instrument(name = "DatabaseDriverV1::database_set_option_bytes", skip(self, input))]
+    async fn database_set_option_bytes(
+        &self,
         input: DatabaseSetOptionBytesRequest,
     ) -> Result<DatabaseSetOptionBytesResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        Self::state()
+        self.driver
             .database_set_option(db_handle.into(), input.key, Setting::Bytes(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionBytesResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_set_option_int", skip(input))]
-    fn database_set_option_int(
+    #[instrument(name = "DatabaseDriverV1::database_set_option_int", skip(self, input))]
+    async fn database_set_option_int(
+        &self,
         input: DatabaseSetOptionIntRequest,
     ) -> Result<DatabaseSetOptionIntResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        Self::state()
+        self.driver
             .database_set_option(db_handle.into(), input.key, Setting::Int(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionIntResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_set_option_double", skip(input))]
-    fn database_set_option_double(
+    #[instrument(name = "DatabaseDriverV1::database_set_option_double", skip(self, input))]
+    async fn database_set_option_double(
+        &self,
         input: DatabaseSetOptionDoubleRequest,
     ) -> Result<DatabaseSetOptionDoubleResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        Self::state()
+        self.driver
             .database_set_option(db_handle.into(), input.key, Setting::Double(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionDoubleResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_init", skip(input))]
-    fn database_init(input: DatabaseInitRequest) -> Result<DatabaseInitResponse, DriverException> {
+    #[instrument(name = "DatabaseDriverV1::database_init", skip(self, input))]
+    async fn database_init(&self, input: DatabaseInitRequest) -> Result<DatabaseInitResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        Self::state()
+        self.driver
             .database_init(db_handle.into())
             .to_protobuf()?;
         Ok(DatabaseInitResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_release", skip(input))]
-    fn database_release(
+    #[instrument(name = "DatabaseDriverV1::database_release", skip(self, input))]
+    async fn database_release(
+        &self,
         input: DatabaseReleaseRequest,
     ) -> Result<DatabaseReleaseResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        Self::state()
+        self.driver
             .database_release(db_handle.into())
             .to_protobuf()?;
         Ok(DatabaseReleaseResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_new", skip(_input))]
-    fn connection_new(
+    #[instrument(name = "DatabaseDriverV1::connection_new", skip(self, _input))]
+    async fn connection_new(
+        &self,
         _input: ConnectionNewRequest,
     ) -> Result<ConnectionNewResponse, DriverException> {
-        let handle = Self::state().connection_new();
+        let handle = self.driver.connection_new();
         Ok(ConnectionNewResponse {
             conn_handle: Some(ConnectionHandle::from(handle)),
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_string", skip(input))]
-    fn connection_set_option_string(
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_string", skip(self, input))]
+    async fn connection_set_option_string(
+        &self,
         input: ConnectionSetOptionStringRequest,
     ) -> Result<ConnectionSetOptionStringResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        Self::state()
+        self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::String(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionStringResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_bytes", skip(input))]
-    fn connection_set_option_bytes(
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_bytes", skip(self, input))]
+    async fn connection_set_option_bytes(
+        &self,
         input: ConnectionSetOptionBytesRequest,
     ) -> Result<ConnectionSetOptionBytesResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        Self::state()
+        self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::Bytes(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionBytesResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_int", skip(input))]
-    fn connection_set_option_int(
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_int", skip(self, input))]
+    async fn connection_set_option_int(
+        &self,
         input: ConnectionSetOptionIntRequest,
     ) -> Result<ConnectionSetOptionIntResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        Self::state()
+        self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::Int(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionIntResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_double", skip(input))]
-    fn connection_set_option_double(
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_double", skip(self, input))]
+    async fn connection_set_option_double(
+        &self,
         input: ConnectionSetOptionDoubleRequest,
     ) -> Result<ConnectionSetOptionDoubleResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        Self::state()
+        self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::Double(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionDoubleResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_init", skip(input))]
-    fn connection_init(
+    #[instrument(name = "DatabaseDriverV1::connection_init", skip(self, input))]
+    async fn connection_init(
+        &self,
         input: ConnectionInitRequest,
     ) -> Result<ConnectionInitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        Self::state()
+        self.driver
             .connection_init(conn_handle.into(), db_handle.into())
+            .await
             .to_protobuf()?;
         Ok(ConnectionInitResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_release", skip(input))]
-    fn connection_release(
+    #[instrument(name = "DatabaseDriverV1::connection_release", skip(self, input))]
+    async fn connection_release(
+        &self,
         input: ConnectionReleaseRequest,
     ) -> Result<ConnectionReleaseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        Self::state()
+        self.driver
             .connection_release(conn_handle.into())
             .to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(input))]
-    fn connection_get_info(
+    #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(self, input))]
+    async fn connection_get_info(
+        &self,
         input: ConnectionGetInfoRequest,
     ) -> Result<ConnectionGetInfoResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let info = Self::state()
+        let info = self.driver
             .connection_get_info(conn_handle.into())
             .to_protobuf()?;
 
         Ok(ConnectionGetInfoResponse::from(info))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(_input))]
-    fn connection_get_objects(
+    #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self, _input))]
+    async fn connection_get_objects(
+        &self,
         _input: ConnectionGetObjectsRequest,
     ) -> Result<ConnectionGetObjectsResponse, DriverException> {
         Err(not_implemented(
@@ -690,8 +709,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_table_schema", skip(_input))]
-    fn connection_get_table_schema(
+    #[instrument(name = "DatabaseDriverV1::connection_get_table_schema", skip(self, _input))]
+    async fn connection_get_table_schema(
+        &self,
         _input: ConnectionGetTableSchemaRequest,
     ) -> Result<ConnectionGetTableSchemaResponse, DriverException> {
         Err(not_implemented(
@@ -699,8 +719,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_table_types", skip(_input))]
-    fn connection_get_table_types(
+    #[instrument(name = "DatabaseDriverV1::connection_get_table_types", skip(self, _input))]
+    async fn connection_get_table_types(
+        &self,
         _input: ConnectionGetTableTypesRequest,
     ) -> Result<ConnectionGetTableTypesResponse, DriverException> {
         Err(not_implemented(
@@ -708,15 +729,17 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_commit", skip(_input))]
-    fn connection_commit(
+    #[instrument(name = "DatabaseDriverV1::connection_commit", skip(self, _input))]
+    async fn connection_commit(
+        &self,
         _input: ConnectionCommitRequest,
     ) -> Result<ConnectionCommitResponse, DriverException> {
         Err(not_implemented("connection_commit is not yet implemented"))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_rollback", skip(_input))]
-    fn connection_rollback(
+    #[instrument(name = "DatabaseDriverV1::connection_rollback", skip(self, _input))]
+    async fn connection_rollback(
+        &self,
         _input: ConnectionRollbackRequest,
     ) -> Result<ConnectionRollbackResponse, DriverException> {
         Err(not_implemented(
@@ -726,38 +749,41 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::connection_set_session_parameters",
-        skip(input)
+        skip(self, input)
     )]
-    fn connection_set_session_parameters(
+    async fn connection_set_session_parameters(
+        &self,
         input: ConnectionSetSessionParametersRequest,
     ) -> Result<ConnectionSetSessionParametersResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        Self::state()
+        self.driver
             .connection_set_session_parameters(conn_handle.into(), input.parameters)
             .to_protobuf()?;
 
         Ok(ConnectionSetSessionParametersResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_parameter", skip(input))]
-    fn connection_get_parameter(
+    #[instrument(name = "DatabaseDriverV1::connection_get_parameter", skip(self, input))]
+    async fn connection_get_parameter(
+        &self,
         input: ConnectionGetParameterRequest,
     ) -> Result<ConnectionGetParameterResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let value = Self::state()
+        let value = self.driver
             .connection_get_parameter(conn_handle.into(), input.key)
+            .await
             .to_protobuf()?;
 
         Ok(ConnectionGetParameterResponse { value })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_new", skip(input))]
-    fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException> {
+    #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]
+    async fn statement_new(&self, input: StatementNewRequest) -> Result<StatementNewResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let handle = Self::state()
+        let handle = self.driver
             .statement_new(conn_handle.into())
             .to_protobuf()?;
         Ok(StatementNewResponse {
@@ -765,32 +791,35 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_release", skip(input))]
-    fn statement_release(
+    #[instrument(name = "DatabaseDriverV1::statement_release", skip(self, input))]
+    async fn statement_release(
+        &self,
         input: StatementReleaseRequest,
     ) -> Result<StatementReleaseResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        Self::state()
+        self.driver
             .statement_release(stmt_handle.into())
             .to_protobuf()?;
         Ok(StatementReleaseResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_sql_query", skip(input))]
-    fn statement_set_sql_query(
+    #[instrument(name = "DatabaseDriverV1::statement_set_sql_query", skip(self, input))]
+    async fn statement_set_sql_query(
+        &self,
         input: StatementSetSqlQueryRequest,
     ) -> Result<StatementSetSqlQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        Self::state()
+        self.driver
             .statement_set_sql_query(stmt_handle.into(), input.query)
             .to_protobuf()?;
         Ok(StatementSetSqlQueryResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_substrait_plan", skip(_input))]
-    fn statement_set_substrait_plan(
+    #[instrument(name = "DatabaseDriverV1::statement_set_substrait_plan", skip(self, _input))]
+    async fn statement_set_substrait_plan(
+        &self,
         _input: StatementSetSubstraitPlanRequest,
     ) -> Result<StatementSetSubstraitPlanResponse, DriverException> {
         // TODO: Implement when corresponding API method is available
@@ -799,13 +828,15 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(input))]
-    fn statement_prepare(
+    #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(self, input))]
+    async fn statement_prepare(
+        &self,
         input: StatementPrepareRequest,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-        let result = Self::state()
+        let result = self.driver
             .statement_prepare(stmt_handle.into())
+            .await
             .to_protobuf()?;
         let result_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
         Ok(StatementPrepareResponse {
@@ -816,52 +847,56 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_string", skip(input))]
-    fn statement_set_option_string(
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_string", skip(self, input))]
+    async fn statement_set_option_string(
+        &self,
         input: StatementSetOptionStringRequest,
     ) -> Result<StatementSetOptionStringResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        Self::state()
+        self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::String(input.value))
             .to_protobuf()?;
 
         Ok(StatementSetOptionStringResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_bytes", skip(input))]
-    fn statement_set_option_bytes(
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_bytes", skip(self, input))]
+    async fn statement_set_option_bytes(
+        &self,
         input: StatementSetOptionBytesRequest,
     ) -> Result<StatementSetOptionBytesResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        Self::state()
+        self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::Bytes(input.value))
             .to_protobuf()?;
 
         Ok(StatementSetOptionBytesResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_int", skip(input))]
-    fn statement_set_option_int(
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_int", skip(self, input))]
+    async fn statement_set_option_int(
+        &self,
         input: StatementSetOptionIntRequest,
     ) -> Result<StatementSetOptionIntResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        Self::state()
+        self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::Int(input.value))
             .to_protobuf()?;
 
         Ok(StatementSetOptionIntResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_double", skip(input))]
-    fn statement_set_option_double(
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_double", skip(self, input))]
+    async fn statement_set_option_double(
+        &self,
         input: StatementSetOptionDoubleRequest,
     ) -> Result<StatementSetOptionDoubleResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        Self::state()
+        self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::Double(input.value))
             .to_protobuf()?;
 
@@ -870,9 +905,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
     #[instrument(
         name = "DatabaseDriverV1::statement_get_parameter_schema",
-        skip(_input)
+        skip(self, _input)
     )]
-    fn statement_get_parameter_schema(
+    async fn statement_get_parameter_schema(
+        &self,
         _input: StatementGetParameterSchemaRequest,
     ) -> Result<StatementGetParameterSchemaResponse, DriverException> {
         Err(not_implemented(
@@ -880,8 +916,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_execute_query", skip(input))]
-    fn statement_execute_query(
+    #[instrument(name = "DatabaseDriverV1::statement_execute_query", skip(self, input))]
+    async fn statement_execute_query(
+        &self,
         input: StatementExecuteQueryRequest,
     ) -> Result<StatementExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
@@ -891,8 +928,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .and_then(|b| b.binding_type)
             .map(BindingType::from);
 
-        let result = Self::state()
+        let result = self.driver
             .statement_execute_query(stmt_handle.into(), bindings_opt)
+            .await
             .to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
 
@@ -913,8 +951,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(_input))]
-    fn statement_execute_partitions(
+    #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(self, _input))]
+    async fn statement_execute_partitions(
+        &self,
         _input: StatementExecutePartitionsRequest,
     ) -> Result<StatementExecutePartitionsResponse, DriverException> {
         Err(not_implemented(
@@ -922,8 +961,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_read_partition", skip(_input))]
-    fn statement_read_partition(
+    #[instrument(name = "DatabaseDriverV1::statement_read_partition", skip(self, _input))]
+    async fn statement_read_partition(
+        &self,
         _input: StatementReadPartitionRequest,
     ) -> Result<StatementReadPartitionResponse, DriverException> {
         Err(not_implemented(
@@ -931,8 +971,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(input))]
-    fn config_load_all_sections(
+    #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(self, input))]
+    async fn config_load_all_sections(
+        &self,
         input: ConfigLoadAllSectionsRequest,
     ) -> Result<ConfigLoadAllSectionsResponse, DriverException> {
         let all_sections = if input.config_file.is_some() || input.connections_file.is_some() {
@@ -957,8 +998,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConfigLoadAllSectionsResponse { config_json })
     }
 
-    #[instrument(name = "DatabaseDriverV1::config_get_paths", skip(_input))]
-    fn config_get_paths(
+    #[instrument(name = "DatabaseDriverV1::config_get_paths", skip(self, _input))]
+    async fn config_get_paths(
+        &self,
         _input: ConfigGetPathsRequest,
     ) -> Result<ConfigGetPathsResponse, DriverException> {
         let paths = path_resolver::get_config_paths()
@@ -1002,3 +1044,7 @@ pub type DatabaseDriverClient =
     crate::protobuf::generated::database_driver_v1::DatabaseDriverClient<
         crate::protobuf::apis::RustTransport,
     >;
+
+pub fn database_driver_client() -> DatabaseDriverClient {
+    DatabaseDriverClient::new(crate::protobuf::apis::RustTransport::new())
+}
