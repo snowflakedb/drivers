@@ -40,9 +40,13 @@ TEST_CASE("should cast decfloat values to appropriate type", "[decfloat]") {
   // Then All values should be returned as appropriate type
   for (SQLUSMALLINT col = 1; col <= 4; ++col) {
     SQLSMALLINT data_type = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
+    SQLULEN column_size = 0;
+    SQLSMALLINT decimal_digits = 0;
+    SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &decimal_digits, nullptr);
     CHECK_ODBC(ret, stmt);
     CHECK(data_type == SQL_NUMERIC);
+    CHECK(column_size == 38);
+    CHECK(decimal_digits == 0);
   }
 
   // And Values should maintain full 38-digit precision
