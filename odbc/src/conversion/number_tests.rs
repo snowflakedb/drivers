@@ -1176,26 +1176,28 @@ mod tests {
     }
 
     #[test]
-    fn interval_year_at_u32_max() {
+    fn interval_year_at_max_precision_9() {
         let sn = make_decimal(0, 38);
         let mut value = zero_interval();
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let mut binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(9);
         let warnings = sn
-            .write_odbc_type(u32::MAX as i128, &binding, &mut None)
+            .write_odbc_type(999_999_999i128, &binding, &mut None)
             .unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(unsafe { value.interval_value.year_month.year }, u32::MAX);
+        assert_eq!(unsafe { value.interval_value.year_month.year }, 999_999_999);
     }
 
     #[test]
-    fn interval_year_at_u32_max_plus_one_overflows() {
+    fn interval_year_overflows_at_precision_9() {
         use crate::conversion::error::WriteOdbcError;
         let sn = make_decimal(0, 38);
         let mut value = zero_interval();
         let mut str_len: sql::Len = 0;
-        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
-        let result = sn.write_odbc_type(u32::MAX as i128 + 1, &binding, &mut None);
+        let mut binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(9);
+        let result = sn.write_odbc_type(1_000_000_000i128, &binding, &mut None);
         assert!(matches!(
             result.unwrap_err(),
             WriteOdbcError::IntervalFieldOverflow { .. }
@@ -1207,13 +1209,13 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn interval_year_overflow() {
+    fn interval_year_overflow_default_precision() {
         use crate::conversion::error::WriteOdbcError;
         let sn = make_decimal(0, 38);
         let mut value = zero_interval();
         let mut str_len: sql::Len = 0;
         let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
-        let result = sn.write_odbc_type(5_000_000_000i128, &binding, &mut None);
+        let result = sn.write_odbc_type(100i128, &binding, &mut None);
         assert!(matches!(
             result.unwrap_err(),
             WriteOdbcError::IntervalFieldOverflow { .. }
@@ -1221,13 +1223,150 @@ mod tests {
     }
 
     #[test]
-    fn interval_second_overflow() {
+    fn interval_second_overflow_default_precision() {
         use crate::conversion::error::WriteOdbcError;
         let sn = make_decimal(0, 38);
         let mut value = zero_interval();
         let mut str_len: sql::Len = 0;
         let binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
-        let result = sn.write_odbc_type(5_000_000_000i128, &binding, &mut None);
+        let result = sn.write_odbc_type(100i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
+    // ========================================================================
+    // Interval leading precision -- SQL_DESC_DATETIME_INTERVAL_PRECISION
+    // ========================================================================
+
+    #[test]
+    fn interval_year_default_precision_allows_99() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let warnings = sn.write_odbc_type(99i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.year_month.year }, 99);
+    }
+
+    #[test]
+    fn interval_year_default_precision_rejects_100() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut value, &mut str_len);
+        let result = sn.write_odbc_type(100i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn interval_day_precision_5_allows_99999() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalDay, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(5);
+        let warnings = sn.write_odbc_type(99_999i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.day_second.day }, 99_999);
+    }
+
+    #[test]
+    fn interval_day_precision_5_rejects_100000() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalDay, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(5);
+        let result = sn.write_odbc_type(100_000i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn interval_hour_precision_1_allows_9() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalHour, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(1);
+        let warnings = sn.write_odbc_type(9i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.day_second.hour }, 9);
+    }
+
+    #[test]
+    fn interval_hour_precision_1_rejects_10() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalHour, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(1);
+        let result = sn.write_odbc_type(10i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn interval_second_precision_3_allows_999() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(3);
+        let warnings = sn.write_odbc_type(999i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.day_second.second }, 999);
+    }
+
+    #[test]
+    fn interval_second_precision_3_rejects_1000() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalSecond, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(3);
+        let result = sn.write_odbc_type(1000i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::IntervalFieldOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn interval_minute_precision_0_allows_zero_only() {
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalMinute, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(0);
+        let warnings = sn.write_odbc_type(0i128, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { value.interval_value.day_second.minute }, 0);
+    }
+
+    #[test]
+    fn interval_minute_precision_0_rejects_1() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 10);
+        let mut value = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let mut binding = binding_for_interval(CDataType::IntervalMinute, &mut value, &mut str_len);
+        binding.datetime_interval_precision = Some(0);
+        let result = sn.write_odbc_type(1i128, &binding, &mut None);
         assert!(matches!(
             result.unwrap_err(),
             WriteOdbcError::IntervalFieldOverflow { .. }

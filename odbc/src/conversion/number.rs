@@ -360,9 +360,13 @@ impl WriteODBCType for SnowflakeNumber {
             | CDataType::IntervalHour
             | CDataType::IntervalMinute => {
                 let abs_int = int_value.unsigned_abs();
-                if abs_int > u32::MAX as u128 {
+                let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
+                let max_leading = 10u128.pow(leading_precision);
+                if abs_int >= max_leading {
                     return IntervalFieldOverflowSnafu {
-                        reason: format!("Value {int_value} exceeds interval field capacity"),
+                        reason: format!(
+                            "Value {int_value} exceeds leading field precision of {leading_precision} digits"
+                        ),
                     }
                     .fail();
                 }
@@ -413,9 +417,13 @@ impl WriteODBCType for SnowflakeNumber {
             }
             CDataType::IntervalSecond => {
                 let abs_int = int_value.unsigned_abs();
-                if abs_int > u32::MAX as u128 {
+                let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
+                let max_leading = 10u128.pow(leading_precision);
+                if abs_int >= max_leading {
                     return IntervalFieldOverflowSnafu {
-                        reason: format!("Value {int_value} exceeds interval second field capacity"),
+                        reason: format!(
+                            "Value {int_value} exceeds leading field precision of {leading_precision} digits"
+                        ),
                     }
                     .fail();
                 }
@@ -424,7 +432,10 @@ impl WriteODBCType for SnowflakeNumber {
                     let remainder = snowflake_value.unsigned_abs() % (scale_factor as u128);
                     if self.scale > 6 {
                         let divisor = 10u128.pow(self.scale - 6);
-                        ((remainder / divisor) as u32, remainder % divisor != 0)
+                        (
+                            (remainder / divisor) as u32,
+                            !remainder.is_multiple_of(divisor),
+                        )
                     } else {
                         let multiplier = 10u128.pow(6 - self.scale);
                         ((remainder * multiplier) as u32, false)

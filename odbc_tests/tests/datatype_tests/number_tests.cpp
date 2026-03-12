@@ -1471,6 +1471,123 @@ TEST_CASE("NUMBER to interval - NULL returns SQL_NULL_DATA", "[datatype][number]
   check_null_via_get_data(conn.execute_fetch("SELECT NULL::NUMBER(10,0)"), 1, SQL_C_INTERVAL_SECOND);
 }
 
+// ============================================================================
+// Interval leading precision via SQL_DESC_DATETIME_INTERVAL_PRECISION
+// Per ODBC spec the default leading precision is 2 digits, so values >= 100
+// must fail with 22015. Applications can increase precision via SQLSetDescField.
+// ============================================================================
+
+TEST_CASE("NUMBER to interval - default precision rejects values >= 100", "[datatype][number][interval][precision]") {
+  SKIP_OLD_DRIVER("BD#22", "Old driver does not enforce interval leading precision");
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // value 99 succeeds with default precision 2
+  {
+    auto stmt = conn.execute_fetch("SELECT 99::NUMBER(10,0)");
+    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_YEAR);
+    CHECK(interval.intval.year_month.year == 99);
+  }
+
+  // value 100 fails with default precision 2
+  {
+    auto stmt = conn.execute_fetch("SELECT 100::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_YEAR>(stmt, 1);
+  }
+
+  // value -100 fails with default precision 2
+  {
+    auto stmt = conn.execute_fetch("SELECT -100::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_DAY>(stmt, 1);
+  }
+
+  // SQL_C_INTERVAL_SECOND with value 100 fails
+  {
+    auto stmt = conn.execute_fetch("SELECT 100::NUMBER(10,0)");
+    check_interval_precision_lost<SQL_C_INTERVAL_SECOND>(stmt, 1);
+  }
+}
+
+TEST_CASE("NUMBER to interval - custom precision via SQLSetDescField",
+          "[datatype][number][interval][precision][descriptor]") {
+  SKIP_OLD_DRIVER("BD#22", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // precision 5 allows values up to 99999
+  {
+    auto stmt = conn.execute_fetch("SELECT 99999::NUMBER(10,0)");
+
+    SQLHDESC ard = SQL_NULL_HDESC;
+    SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)5, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_YEAR);
+    CHECK(interval.intval.year_month.year == 99999);
+  }
+
+  // precision 5 rejects value 100000
+  {
+    auto stmt = conn.execute_fetch("SELECT 100000::NUMBER(10,0)");
+
+    SQLHDESC ard = SQL_NULL_HDESC;
+    SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)5, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    check_interval_precision_lost<SQL_C_INTERVAL_YEAR>(stmt, 1);
+  }
+
+  // precision 1 allows single digit
+  {
+    auto stmt = conn.execute_fetch("SELECT 9::NUMBER(10,0)");
+
+    SQLHDESC ard = SQL_NULL_HDESC;
+    SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)1, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_HOUR);
+    CHECK(interval.intval.day_second.hour == 9);
+  }
+
+  // precision 1 rejects two digits
+  {
+    auto stmt = conn.execute_fetch("SELECT 10::NUMBER(10,0)");
+
+    SQLHDESC ard = SQL_NULL_HDESC;
+    SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)1, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    check_interval_precision_lost<SQL_C_INTERVAL_HOUR>(stmt, 1);
+  }
+
+  // precision 9 allows large values for SQL_C_INTERVAL_SECOND
+  {
+    auto stmt = conn.execute_fetch("SELECT 999999999::NUMBER(10,0)");
+
+    SQLHDESC ard = SQL_NULL_HDESC;
+    SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+    REQUIRE(ret == SQL_SUCCESS);
+    ret = SQLSetDescField(ard, 1, SQL_DESC_DATETIME_INTERVAL_PRECISION, (SQLPOINTER)9, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 1);
+    CHECK(interval.interval_type == SQL_IS_SECOND);
+    CHECK(interval.intval.day_second.second == 999999999);
+    CHECK(interval.intval.day_second.fraction == 0);
+  }
+}
+
 TEST_CASE("Without TREAT_DECIMAL_AS_INT default is SQL_C_CHAR for scale=0",
           "[datatype][number][treat_decimal_as_int]") {
   Connection conn;

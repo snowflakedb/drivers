@@ -424,6 +424,7 @@ pub fn bind_col(
                 indicator_ptr: str_len_or_ind_ptr,
                 precision: None,
                 scale: None,
+                datetime_interval_precision: None,
             },
         );
     }
