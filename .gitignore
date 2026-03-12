@@ -6,7 +6,7 @@ parameters*.json
 cmake-build*
 .venv
 __pycache__/
-build/reports
+build
 jdbc/.gradle
 jdbc/build
 odbc_tests/cmake-build
