@@ -347,6 +347,53 @@ pub unsafe fn get_diag_rec(
     Ok(())
 }
 
+/// Wide variant of get_diag_rec — writes SQL state and message text as UTF-16.
+pub unsafe fn get_diag_rec_w(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    sql_state: *mut sql::WChar,
+    native_error_ptr: *mut sql::Integer,
+    message_text: *mut sql::WChar,
+    buffer_length: sql::SmallInt,
+    text_length_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    let diagnostic_info = get_diag_info(handle_type, handle)?;
+    if rec_number <= 0 {
+        return InvalidRecordNumberSnafu { number: rec_number }.fail();
+    }
+
+    if rec_number > diagnostic_info.records.len() as i16 {
+        return NoMoreDataSnafu.fail();
+    }
+
+    let record = diagnostic_info
+        .records
+        .get((rec_number - 1) as usize)
+        .unwrap();
+
+    unsafe {
+        let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
+        api_utils::string_to_wstr(state, sql_state, 6);
+
+        let truncated = api_utils::string_to_wstr(&record.message_text, message_text, buffer_length);
+
+        if !native_error_ptr.is_null() {
+            std::ptr::write(native_error_ptr, record.native_error);
+        }
+        if !text_length_ptr.is_null() {
+            let utf16_len: usize = record.message_text.encode_utf16().count();
+            std::ptr::write(text_length_ptr, utf16_len as sql::SmallInt);
+        }
+
+        if truncated {
+            warnings.push(Warning::StringDataTruncated);
+        }
+    }
+    Ok(())
+}
+
 /// Get diagnostic field from handle
 ///
 /// Retrieves a specific diagnostic field from a diagnostic record.

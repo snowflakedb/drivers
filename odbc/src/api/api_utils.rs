@@ -3,17 +3,31 @@ use std::cmp::min;
 use crate::api::OdbcResult;
 use crate::api::error::{
     InvalidBufferLengthSnafu, NullPointerSnafu, TextConversionFromUtf8Snafu,
-    TextConversionFromUtf16Snafu, TextConversionUtf8Snafu,
+    TextConversionFromUtf16Snafu,
 };
 use odbc_sys as sql;
 use snafu::ResultExt;
 
 #[allow(dead_code)]
 pub fn cstr_to_string(text: *const sql::Char, length: sql::Integer) -> OdbcResult<String> {
+    if text.is_null() {
+        return NullPointerSnafu.fail();
+    }
+    if length != sql::NTS as i32 && length <= 0 {
+        return InvalidBufferLengthSnafu {
+            length: length as i64,
+        }
+        .fail();
+    }
     if length == sql::NTS as i32 {
-        let result =
-            unsafe { std::ffi::CStr::from_ptr(text as *const std::os::raw::c_char).to_str() };
-        result.context(TextConversionUtf8Snafu {}).map(String::from)
+        let mut len = 0;
+        unsafe {
+            while *text.add(len) != 0 {
+                len += 1;
+            }
+        }
+        let text_slice = unsafe { std::slice::from_raw_parts(text, len) };
+        String::from_utf8(text_slice.to_vec()).context(TextConversionFromUtf8Snafu {})
     } else {
         let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
         String::from_utf8(text_slice.to_vec()).context(TextConversionFromUtf8Snafu {})
@@ -31,9 +45,14 @@ pub fn utf16_to_string(text: *const sql::WChar, length: sql::Integer) -> OdbcRes
         .fail();
     }
     if length == sql::NTS as i32 {
-        let result =
-            unsafe { std::ffi::CStr::from_ptr(text as *const std::os::raw::c_char).to_str() };
-        result.context(TextConversionUtf8Snafu {}).map(String::from)
+        let mut len = 0;
+        unsafe {
+            while *text.add(len) != 0 {
+                len += 1;
+            }
+        }
+        let text_slice = unsafe { std::slice::from_raw_parts(text, len) };
+        String::from_utf16(text_slice).context(TextConversionFromUtf16Snafu {})
     } else {
         let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
         String::from_utf16(text_slice).context(TextConversionFromUtf16Snafu {})
@@ -56,6 +75,28 @@ pub fn string_to_cstr(
         *buffer.add(length) = 0;
     }
     Ok(())
+}
+
+/// Write a Rust string to a wide-character (UTF-16) ODBC output buffer.
+/// `buffer_length` is the number of wide characters (not bytes) the buffer can hold,
+/// including space for the null terminator.
+/// Returns `true` if the string was truncated.
+pub fn string_to_wstr(
+    string: &str,
+    buffer: *mut sql::WChar,
+    buffer_length_chars: sql::SmallInt,
+) -> bool {
+    let utf16: Vec<u16> = string.encode_utf16().collect();
+    if buffer.is_null() || buffer_length_chars <= 0 {
+        return utf16.len() >= buffer_length_chars.max(0) as usize;
+    }
+    let max_chars = (buffer_length_chars as usize).saturating_sub(1);
+    let copy_len = min(utf16.len(), max_chars);
+    unsafe {
+        std::ptr::copy_nonoverlapping(utf16.as_ptr(), buffer, copy_len);
+        *buffer.add(copy_len) = 0; // null terminate
+    }
+    utf16.len() > max_chars
 }
 
 /// Read a string value from an ODBC input pointer (e.g. `SQLSetConnectAttr` value).

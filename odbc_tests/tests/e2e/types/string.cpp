@@ -79,7 +79,6 @@ TEST_CASE("should select hardcoded string literals using SQLBindCol", "[datatype
 }
 
 TEST_CASE("should select string literals with corner case values", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -154,7 +153,6 @@ TEST_CASE("should select hardcoded string values from table", "[datatype][string
 }
 
 TEST_CASE("should select corner case string values from table", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -205,7 +203,6 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
     CHECK_ODBC(ret, stmt);
 
     auto value = get_data_optional<SQL_C_WCHAR>(stmt, 1);
-    INFO("Row " << row);
     CHECK(value == expected[row]);
     row++;
   }
@@ -217,7 +214,6 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
 // ============================================================================
 
 TEST_CASE("should insert and select back hardcoded string values using parameter binding", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -254,7 +250,6 @@ TEST_CASE("should insert and select back hardcoded string values using parameter
 // ============================================================================
 
 TEST_CASE("should select string literals using parameter binding", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -506,9 +501,9 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY
   // 1" is executed
   auto stmt = conn.createStatement();
-  const char* sql =
-      "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
+  const wchar_t* sql =
+      L"SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
+  SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), (SQLWCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol

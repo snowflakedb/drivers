@@ -2,7 +2,7 @@ use crate::api::error::{
     ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
     StatementNotExecutedSnafu,
 };
-use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
+use crate::api::{DescField, OdbcResult, StatementState, api_utils, stmt_from_handle};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
 use arrow::array::RecordBatchReader;
@@ -204,6 +204,92 @@ pub fn describe_col(
     }
 
     // Write nullability
+    if !nullable_ptr.is_null() {
+        let nullable = if field.is_nullable() {
+            sql::Nullability::NULLABLE.0
+        } else {
+            sql::Nullability::NO_NULLS.0
+        };
+        unsafe { std::ptr::write(nullable_ptr, nullable) };
+    }
+
+    Ok(())
+}
+
+/// Wide variant of describe_col — writes the column name as UTF-16.
+#[allow(clippy::too_many_arguments)]
+pub fn describe_col_w(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    column_name: *mut sql::WChar,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+    data_type_ptr: *mut sql::SmallInt,
+    column_size_ptr: *mut sql::ULen,
+    decimal_digits_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    tracing::debug!("describe_col_w: column_number={column_number}");
+    let stmt = stmt_from_handle(statement_handle);
+
+    let schema = match stmt.state.as_ref() {
+        StatementState::Executed { reader, .. } => reader.schema(),
+        StatementState::Fetching { record_batch, .. } => record_batch.schema(),
+        StatementState::Prepared { reader } => reader.schema(),
+        _ => return StatementNotExecutedSnafu.fail(),
+    };
+
+    if column_number < 1 || (column_number as usize - 1) >= schema.fields().len() {
+        return InvalidDescriptorIndexSnafu {
+            number: column_number as sql::SmallInt,
+        }
+        .fail();
+    }
+    let col_idx = (column_number - 1) as usize;
+
+    if buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
+    let field = schema.field(col_idx);
+
+    let name = field.name();
+    let utf16_name: Vec<u16> = name.encode_utf16().collect();
+    let full_len = utf16_name.len() as sql::SmallInt;
+
+    if !name_length_ptr.is_null() {
+        unsafe { std::ptr::write(name_length_ptr, full_len) };
+    }
+
+    if !column_name.is_null() && buffer_length > 0 {
+        let truncated = api_utils::string_to_wstr(name, column_name, buffer_length);
+        if truncated {
+            warnings.push(Warning::StringDataTruncated);
+        }
+    }
+
+    if !data_type_ptr.is_null() {
+        let sql_type =
+            sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+        unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
+    }
+
+    if !column_size_ptr.is_null() {
+        let col_size =
+            column_size_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+        unsafe { std::ptr::write(column_size_ptr, col_size) };
+    }
+
+    if !decimal_digits_ptr.is_null() {
+        let digits = decimal_digits_from_field(field, &stmt.conn.numeric_settings)
+            .context(ConversionSnafu)?;
+        unsafe { std::ptr::write(decimal_digits_ptr, digits) };
+    }
+
     if !nullable_ptr.is_null() {
         let nullable = if field.is_nullable() {
             sql::Nullability::NULLABLE.0

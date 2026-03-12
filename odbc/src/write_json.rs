@@ -56,6 +56,13 @@ pub enum JsonBindingError {
         location: Location,
     },
 
+    #[cfg(windows)]
+    #[snafu(display("Failed to convert ANSI code page string to UTF-8"))]
+    AcpConversion {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to serialize bindings to JSON: {source}"))]
     Serialization {
         source: serde_json::Error,
@@ -234,21 +241,81 @@ fn buffer_data_len(binding: &ParameterBinding) -> usize {
     max_len
 }
 
-/// Read a SQL_C_CHAR value as a UTF-8 string.
-fn read_char_value(binding: &ParameterBinding) -> Result<Value, JsonBindingError> {
-    let value_str = if binding.buffer_length == sql::NTS {
-        unsafe {
-            CStr::from_ptr(binding.parameter_value_ptr as *const c_char)
-                .to_string_lossy()
-                .to_string()
+/// Convert bytes from the system's ANSI code page to a Rust UTF-8 `String`.
+///
+/// On Windows, SQL_C_CHAR data uses the active ANSI code page (ACP), which may
+/// not be UTF-8. We call `MultiByteToWideChar(CP_ACP, …)` to widen to UTF-16,
+/// then convert the UTF-16 to a Rust `String`.
+#[cfg(windows)]
+fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, JsonBindingError> {
+    if bytes.is_empty() {
+        return Ok(String::new());
+    }
+
+    use std::ptr;
+
+    unsafe extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            dw_flags: u32,
+            lp_multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            lp_wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+
+    const CP_ACP: u32 = 0;
+
+    let result = unsafe {
+        let wide_len = MultiByteToWideChar(
+            CP_ACP,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            ptr::null_mut(),
+            0,
+        );
+        if wide_len <= 0 {
+            return AcpConversionSnafu.fail();
         }
+
+        let mut wide_buf = vec![0u16; wide_len as usize];
+        let written = MultiByteToWideChar(
+            CP_ACP,
+            0,
+            bytes.as_ptr(),
+            bytes.len() as i32,
+            wide_buf.as_mut_ptr(),
+            wide_len,
+        );
+        if written <= 0 {
+            return AcpConversionSnafu.fail();
+        }
+
+        String::from_utf16(&wide_buf[..written as usize]).map_err(|_| AcpConversionSnafu.build())
+    };
+    tracing::debug!("acp_bytes_to_string: result={:?}", result);
+    result
+}
+
+#[cfg(not(windows))]
+fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, JsonBindingError> {
+    str::from_utf8(bytes)
+        .context(InvalidUtf8Snafu)
+        .map(|s| s.to_string())
+}
+
+/// Read a SQL_C_CHAR value, converting from the system ANSI code page to UTF-8.
+fn read_char_value(binding: &ParameterBinding) -> Result<Value, JsonBindingError> {
+    let bytes = if binding.buffer_length == sql::NTS {
+        unsafe { CStr::from_ptr(binding.parameter_value_ptr as *const c_char).to_bytes() }
     } else {
         let len = buffer_data_len(binding);
-        let bytes = unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len) };
-        str::from_utf8(bytes).context(InvalidUtf8Snafu)?.to_string()
+        unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len) }
     };
 
-    Ok(Value::String(value_str))
+    Ok(Value::String(acp_bytes_to_string(bytes)?))
 }
 
 /// Read a SQL_C_BIT value as a boolean string ("true"/"false").

@@ -59,16 +59,33 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     map
 }
 
-/// Connect using connection string (SQLDriverConnect)
+/// Connect using connection string (SQLDriverConnect) - narrow variant
 pub fn driver_connect(
     connection_handle: sql::Handle,
     in_connection_string: *const sql::Char,
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
-    // Parse the connection string
     let connection_string =
         api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
-    let connection_string_map = parse_connection_string(&connection_string);
+    driver_connect_impl(connection_handle, &connection_string)
+}
+
+/// Connect using connection string (SQLDriverConnectW) - wide variant
+pub fn driver_connect_w(
+    connection_handle: sql::Handle,
+    in_connection_string: *const sql::WChar,
+    in_string_length: sql::SmallInt,
+) -> OdbcResult<()> {
+    let connection_string =
+        api_utils::utf16_to_string(in_connection_string, in_string_length as i32)?;
+    driver_connect_impl(connection_handle, &connection_string)
+}
+
+fn driver_connect_impl(
+    connection_handle: sql::Handle,
+    connection_string: &str,
+) -> OdbcResult<()> {
+    let connection_string_map = parse_connection_string(connection_string);
     {
         const REDACTED_KEYS: &[&str] = &[
             "PWD",
@@ -319,6 +336,21 @@ pub fn connect(
     Ok(())
 }
 
+/// Wide-character connect function (SQLConnectW) - currently a placeholder
+pub fn connect_w(
+    _connection_handle: sql::Handle,
+    _server_name: *const sql::WChar,
+    _name_length1: sql::SmallInt,
+    _user_name: *const sql::WChar,
+    _name_length2: sql::SmallInt,
+    _authentication: *const sql::WChar,
+    _name_length3: sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("connect_w: currently a placeholder implementation");
+    // TODO: Implement proper SQLConnectW functionality
+    Ok(())
+}
+
 /// Disconnect from the database
 pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
@@ -525,11 +557,47 @@ pub fn get_info(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
+    get_info_impl(
+        connection_handle,
+        info_type,
+        info_value_ptr,
+        buffer_length,
+        string_length_ptr,
+        false,
+    )
+}
+
+pub fn get_info_w(
+    connection_handle: sql::Handle,
+    info_type: sql::USmallInt,
+    info_value_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    get_info_impl(
+        connection_handle,
+        info_type,
+        info_value_ptr,
+        buffer_length,
+        string_length_ptr,
+        true,
+    )
+}
+
+fn get_info_impl(
+    connection_handle: sql::Handle,
+    info_type: sql::USmallInt,
+    info_value_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    wide: bool,
+) -> OdbcResult<()> {
+    tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}, wide={wide}");
 
     let _conn = conn_from_handle(connection_handle);
 
     let info_type = InfoType::try_from(info_type)?;
+    tracing::debug!("get_info: info_type={info_type:?}");
 
     match info_type {
         InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => {
@@ -548,20 +616,45 @@ pub fn get_info(
             Ok(())
         }
         InfoType::DriverOdbcVer => {
-            let ver = b"03.00\0";
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        ver.as_ptr(),
-                        info_value_ptr as *mut u8,
-                        std::cmp::min(buffer_length as usize, ver.len()),
-                    );
+            if wide {
+                tracing::debug!("get_info: wide=true, buffer_length={buffer_length}");
+                let ver: Vec<u16> = "03.00\0".encode_utf16().collect();
+                let ver_bytes = ver.len() * std::mem::size_of::<u16>();
+                if !info_value_ptr.is_null() {
+                    tracing::debug!("get_info: info_value_ptr={info_value_ptr:?}, ver_bytes={ver_bytes}");
+                    let copy_bytes = std::cmp::min(buffer_length as usize, ver_bytes);
+                    tracing::debug!("get_info: copy_bytes={copy_bytes}");
+                    let copy_units = copy_bytes / std::mem::size_of::<u16>();
+                    tracing::debug!("get_info: copy_units={copy_units}");
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            ver.as_ptr(),
+                            info_value_ptr as *mut u16,
+                            copy_units,
+                        );
+                    }
                 }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    // String length excludes null terminator
-                    *string_length_ptr = (ver.len() - 1) as sql::SmallInt;
+                if !string_length_ptr.is_null() {
+                    unsafe {
+                        *string_length_ptr =
+                            ((ver.len() - 1) * std::mem::size_of::<u16>()) as sql::SmallInt;
+                    }
+                }
+            } else {
+                let ver_bytes = b"03.00\0";
+                if !info_value_ptr.is_null() {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            ver_bytes.as_ptr(),
+                            info_value_ptr as *mut u8,
+                            std::cmp::min(buffer_length as usize, ver_bytes.len()),
+                        );
+                    }
+                }
+                if !string_length_ptr.is_null() {
+                    unsafe {
+                        *string_length_ptr = (ver_bytes.len() - 1) as sql::SmallInt;
+                    }
                 }
             }
             Ok(())

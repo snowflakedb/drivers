@@ -425,7 +425,7 @@ TEST_CASE("SQLExecDirectW basic flow.", "[query][prepare]") {
   auto stmt = conn.createStatement();
 
   // When a SELECT is executed via SQLExecDirectW
-  std::u16string sql = u"SELECT 123 AS direct_w_val";
+  std::u16string sql = u"SELECT '123ト' AS direct_w_val";
   SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), (SQLWCHAR*)sql.data(), (SQLINTEGER)sql.size());
   CHECK_ODBC(ret, stmt);
 
@@ -433,11 +433,11 @@ TEST_CASE("SQLExecDirectW basic flow.", "[query][prepare]") {
   CHECK_ODBC(ret, stmt);
 
   // Then the result should be correct
-  SQLINTEGER value = 0;
+  char16_t value[100];
   SQLLEN indicator = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, &value, sizeof(value), &indicator);
   CHECK_ODBC(ret, stmt);
-  CHECK(value == 123);
+  CHECK(std::u16string(value) == u"123ト");
 }
 
 TEST_CASE("SQLExecDirect with bound parameters via SQLBindParameter.", "[query][prepare]") {

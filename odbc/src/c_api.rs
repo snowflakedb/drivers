@@ -8,12 +8,32 @@ use crate::api::{self, ToSqlReturn};
 use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 
+fn odbc_api_call(name: &str, f: impl FnOnce() -> sql::RetCode) -> sql::RetCode {
+    tracing::debug!("{name}");
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(code) => {
+            tracing::debug!("{name}: code={code}");
+            code
+        }
+        Err(_) => {
+            tracing::error!("{name}: panic caught");
+            sql::SqlReturn::ERROR.0
+        }
+    }
+}
+
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> sql::RetCode {
-    api::handle_allocation::sql_alloc_handle(sql::HandleType::Env, 0 as sql::Handle, output_handle)
+    odbc_api_call("SQLAllocEnv", || {
+        api::handle_allocation::sql_alloc_handle(
+            sql::HandleType::Env,
+            0 as sql::Handle,
+            output_handle,
+        )
         .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -23,12 +43,14 @@ pub unsafe extern "C" fn SQLAllocConnect(
     environment_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> sql::RetCode {
-    api::handle_allocation::sql_alloc_handle(
-        sql::HandleType::Dbc,
-        environment_handle,
-        output_handle,
-    )
-    .to_sql_code()
+    odbc_api_call("SQLAllocConnect", || {
+        api::handle_allocation::sql_alloc_handle(
+            sql::HandleType::Dbc,
+            environment_handle,
+            output_handle,
+        )
+        .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -39,7 +61,10 @@ pub unsafe extern "C" fn SQLAllocHandle(
     input_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> sql::RetCode {
-    api::handle_allocation::sql_alloc_handle(handle_type, input_handle, output_handle).to_sql_code()
+    odbc_api_call("SQLAllocHandle", || {
+        api::handle_allocation::sql_alloc_handle(handle_type, input_handle, output_handle)
+            .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -50,10 +75,17 @@ pub unsafe extern "C" fn SQLExecDirect(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::exec_direct_n(statement_handle, statement_text, text_length);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLExecDirect", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result =
+            api::statement::exec_direct_n(statement_handle, statement_text, text_length);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -64,10 +96,17 @@ pub unsafe extern "C" fn SQLExecDirectW(
     statement_text: *const sql::WChar,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::exec_direct_w(statement_handle, statement_text, text_length);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLExecDirectW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result =
+            api::statement::exec_direct_w(statement_handle, statement_text, text_length);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -77,7 +116,9 @@ pub unsafe extern "C" fn SQLFreeHandle(
     handle_type: sql::HandleType,
     handle: sql::Handle,
 ) -> sql::RetCode {
-    api::handle_allocation::sql_free_handle(handle_type, handle).to_sql_code()
+    odbc_api_call("SQLFreeHandle", || {
+        api::handle_allocation::sql_free_handle(handle_type, handle).to_sql_code()
+    })
 }
 
 /// # Safety
@@ -87,7 +128,9 @@ pub unsafe extern "C" fn SQLFreeStmt(
     statement_handle: sql::Handle,
     option: sql::FreeStmtOption,
 ) -> sql::RetCode {
-    api::statement::free_stmt(statement_handle, option).to_sql_code()
+    odbc_api_call("SQLFreeStmt", || {
+        api::statement::free_stmt(statement_handle, option).to_sql_code()
+    })
 }
 
 /// # Safety
@@ -102,17 +145,54 @@ pub unsafe extern "C" fn SQLConnect(
     authentication: *const sql::Char,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
-    let result = api::connection::connect(
-        connection_handle,
-        server_name,
-        name_length1,
-        user_name,
-        name_length2,
-        authentication,
-        name_length3,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLConnect", || {
+        let result = api::connection::connect(
+            connection_handle,
+            server_name,
+            name_length1,
+            user_name,
+            name_length2,
+            authentication,
+            name_length3,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLConnectW(
+    connection_handle: sql::Handle,
+    server_name: *const sql::WChar,
+    name_length1: sql::SmallInt,
+    user_name: *const sql::WChar,
+    name_length2: sql::SmallInt,
+    authentication: *const sql::WChar,
+    name_length3: sql::SmallInt,
+) -> sql::RetCode {
+    odbc_api_call("SQLConnectW", || {
+        let result = api::connection::connect_w(
+            connection_handle,
+            server_name,
+            name_length1,
+            user_name,
+            name_length2,
+            authentication,
+            name_length3,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -124,7 +204,9 @@ pub unsafe extern "C" fn SQLSetEnvAttr(
     value: sql::Pointer,
     _string_length: sql::SmallInt,
 ) -> sql::RetCode {
-    api::environment::set_env_attribute(environment_handle, attribute, value).to_sql_code()
+    odbc_api_call("SQLSetEnvAttr", || {
+        api::environment::set_env_attribute(environment_handle, attribute, value).to_sql_code()
+    })
 }
 
 /// # Safety
@@ -136,7 +218,9 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
     value: sql::Pointer,
     _string_length: sql::SmallInt,
 ) -> sql::RetCode {
-    api::environment::get_env_attribute(environment_handle, attribute, value).to_sql_code()
+    odbc_api_call("SQLGetEnvAttr", || {
+        api::environment::get_env_attribute(environment_handle, attribute, value).to_sql_code()
+    })
 }
 
 /// # Safety
@@ -149,16 +233,50 @@ pub unsafe extern "C" fn SQLGetInfo(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let result = api::connection::get_info(
-        connection_handle,
-        info_type,
-        info_value_ptr,
-        buffer_length,
-        string_length_ptr,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLGetInfo", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let result = api::connection::get_info(
+            connection_handle,
+            info_type,
+            info_value_ptr,
+            buffer_length,
+            string_length_ptr,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetInfoW(
+    connection_handle: sql::Handle,
+    info_type: sql::USmallInt,
+    info_value_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    odbc_api_call("SQLGetInfoW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let result = api::connection::get_info_w(
+            connection_handle,
+            info_type,
+            info_value_ptr,
+            buffer_length,
+            string_length_ptr,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -170,11 +288,39 @@ pub unsafe extern "C" fn SQLSetConnectAttr(
     value: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let result =
-        api::connection::set_connect_attr(connection_handle, attribute, value, string_length);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLSetConnectAttr", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let result =
+            api::connection::set_connect_attr(connection_handle, attribute, value, string_length);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetConnectAttrW(
+    connection_handle: sql::Handle,
+    attribute: sql::Integer,
+    value: sql::Pointer,
+    string_length: sql::Integer,
+) -> sql::RetCode {
+    odbc_api_call("SQLSetConnectAttrW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let result =
+            api::connection::set_connect_attr(connection_handle, attribute, value, string_length);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -187,23 +333,64 @@ pub unsafe extern "C" fn SQLGetConnectAttr(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let mut warnings = vec![];
-    let result = api::connection::get_connect_attr(
-        connection_handle,
-        attribute,
-        value,
-        buffer_length,
-        string_length_ptr,
-        &mut warnings,
-    );
-    api::diagnostic::set_diag_info_from_warnings(
-        sql::HandleType::Dbc,
-        connection_handle,
-        &warnings,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
-    result.to_sql_code_with_warnings(&warnings)
+    odbc_api_call("SQLGetConnectAttr", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let mut warnings = vec![];
+        let result = api::connection::get_connect_attr(
+            connection_handle,
+            attribute,
+            value,
+            buffer_length,
+            string_length_ptr,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetConnectAttrW(
+    connection_handle: sql::Handle,
+    attribute: sql::Integer,
+    value: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    odbc_api_call("SQLGetConnectAttrW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let mut warnings = vec![];
+        let result = api::connection::get_connect_attr(
+            connection_handle,
+            attribute,
+            value,
+            buffer_length,
+            string_length_ptr,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -218,34 +405,79 @@ pub unsafe extern "C" fn SQLDriverConnect(
     _out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-    let result =
-        api::connection::driver_connect(connection_handle, in_connection_string, in_string_length);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLDriverConnect", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let result = api::connection::driver_connect(
+            connection_handle,
+            in_connection_string,
+            in_string_length,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLDriverConnectW(
+    connection_handle: sql::Handle,
+    _window_handle: sql::Handle,
+    in_connection_string: *const sql::WChar,
+    in_string_length: sql::SmallInt,
+    _out_connection_string: *mut sql::WChar,
+    _out_string_length: *mut sql::SmallInt,
+    _driver_completion: sql::SmallInt,
+) -> sql::RetCode {
+    odbc_api_call("SQLDriverConnectW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+        let result = api::connection::driver_connect_w(
+            connection_handle,
+            in_connection_string,
+            in_string_length,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::RetCode {
-    api::connection::disconnect(connection_handle).to_sql_code()
+    odbc_api_call("SQLDisconnect", || {
+        api::connection::disconnect(connection_handle).to_sql_code()
+    })
 }
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let mut warnings = vec![];
-    let result = api::data::fetch(statement_handle, &mut warnings);
-    api::diagnostic::set_diag_info_from_warnings(
-        sql::HandleType::Stmt,
-        statement_handle,
-        &warnings,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code_with_warnings(&warnings)
+    odbc_api_call("SQLFetch", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result = api::data::fetch(statement_handle, &mut warnings);
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -256,16 +488,23 @@ pub unsafe extern "C" fn SQLFetchScroll(
     fetch_orientation: sql::SmallInt,
     _fetch_offset: sql::Len,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let mut warnings = vec![];
-    let result = api::data::fetch_scroll(statement_handle, fetch_orientation, &mut warnings);
-    api::diagnostic::set_diag_info_from_warnings(
-        sql::HandleType::Stmt,
-        statement_handle,
-        &warnings,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code_with_warnings(&warnings)
+    odbc_api_call("SQLFetchScroll", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result =
+            api::data::fetch_scroll(statement_handle, fetch_orientation, &mut warnings);
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -278,23 +517,29 @@ pub unsafe extern "C" fn SQLExtendedFetch(
     row_count_ptr: *mut sql::ULen,
     row_status_ptr: *mut sql::USmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let mut warnings = vec![];
-    let result = api::data::extended_fetch(
-        statement_handle,
-        fetch_orientation,
-        fetch_offset,
-        row_count_ptr,
-        row_status_ptr,
-        &mut warnings,
-    );
-    api::diagnostic::set_diag_info_from_warnings(
-        sql::HandleType::Stmt,
-        statement_handle,
-        &warnings,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code_with_warnings(&warnings)
+    odbc_api_call("SQLExtendedFetch", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result = api::data::extended_fetch(
+            statement_handle,
+            fetch_orientation,
+            fetch_offset,
+            row_count_ptr,
+            row_status_ptr,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -308,24 +553,30 @@ pub unsafe extern "C" fn SQLGetData(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let mut warnings = vec![];
-    let result = api::data::get_data(
-        statement_handle,
-        col_or_param_num,
-        target_type,
-        target_value_ptr,
-        buffer_length,
-        str_len_or_ind_ptr,
-        &mut warnings,
-    );
-    api::diagnostic::set_diag_info_from_warnings(
-        sql::HandleType::Stmt,
-        statement_handle,
-        &warnings,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code_with_warnings(&warnings)
+    odbc_api_call("SQLGetData", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result = api::data::get_data(
+            statement_handle,
+            col_or_param_num,
+            target_type,
+            target_value_ptr,
+            buffer_length,
+            str_len_or_ind_ptr,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -340,18 +591,56 @@ pub unsafe extern "C" fn SQLColAttribute(
     string_length_ptr: *mut sql::SmallInt,
     numeric_attribute_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::utils::col_attribute(
-        statement_handle,
-        column_number,
-        field_identifier,
-        character_attribute_ptr,
-        buffer_length,
-        string_length_ptr,
-        numeric_attribute_ptr,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLColAttribute", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result = api::utils::col_attribute(
+            statement_handle,
+            column_number,
+            field_identifier,
+            character_attribute_ptr,
+            buffer_length,
+            string_length_ptr,
+            numeric_attribute_ptr,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLColAttributeW(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    field_identifier: sql::USmallInt,
+    character_attribute_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    numeric_attribute_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    odbc_api_call("SQLColAttributeW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result = api::utils::col_attribute(
+            statement_handle,
+            column_number,
+            field_identifier,
+            character_attribute_ptr,
+            buffer_length,
+            string_length_ptr,
+            numeric_attribute_ptr,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -368,27 +657,76 @@ pub unsafe extern "C" fn SQLDescribeCol(
     decimal_digits_ptr: *mut sql::SmallInt,
     nullable_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let mut warnings = vec![];
-    let result = api::utils::describe_col(
-        statement_handle,
-        column_number,
-        column_name,
-        buffer_length,
-        name_length_ptr,
-        data_type_ptr,
-        column_size_ptr,
-        decimal_digits_ptr,
-        nullable_ptr,
-        &mut warnings,
-    );
-    api::diagnostic::set_diag_info_from_warnings(
-        sql::HandleType::Stmt,
-        statement_handle,
-        &warnings,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code_with_warnings(&warnings)
+    odbc_api_call("SQLDescribeCol", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result = api::utils::describe_col(
+            statement_handle,
+            column_number,
+            column_name,
+            buffer_length,
+            name_length_ptr,
+            data_type_ptr,
+            column_size_ptr,
+            decimal_digits_ptr,
+            nullable_ptr,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLDescribeColW(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    column_name: *mut sql::WChar,
+    buffer_length: sql::SmallInt,
+    name_length_ptr: *mut sql::SmallInt,
+    data_type_ptr: *mut sql::SmallInt,
+    column_size_ptr: *mut sql::ULen,
+    decimal_digits_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    odbc_api_call("SQLDescribeColW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result = api::utils::describe_col_w(
+            statement_handle,
+            column_number,
+            column_name,
+            buffer_length,
+            name_length_ptr,
+            data_type_ptr,
+            column_size_ptr,
+            decimal_digits_ptr,
+            nullable_ptr,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -398,10 +736,16 @@ pub unsafe extern "C" fn SQLNumResultCols(
     statement_handle: sql::Handle,
     column_count_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::utils::num_result_cols(statement_handle, column_count_ptr);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLNumResultCols", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result = api::utils::num_result_cols(statement_handle, column_count_ptr);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -411,10 +755,16 @@ pub unsafe extern "C" fn SQLRowCount(
     statement_handle: sql::Handle,
     row_count_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::utils::row_count(statement_handle, row_count_ptr);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLRowCount", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result = api::utils::row_count(statement_handle, row_count_ptr);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -432,19 +782,21 @@ pub unsafe extern "C" fn SQLBindParameter(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::statement::bind_parameter(
-        statement_handle,
-        parameter_number,
-        input_output_type,
-        value_type,
-        parameter_type,
-        column_size,
-        decimal_digits,
-        parameter_value_ptr,
-        buffer_length,
-        str_len_or_ind_ptr,
-    )
-    .to_sql_code()
+    odbc_api_call("SQLBindParameter", || {
+        api::statement::bind_parameter(
+            statement_handle,
+            parameter_number,
+            input_output_type,
+            value_type,
+            parameter_type,
+            column_size,
+            decimal_digits,
+            parameter_value_ptr,
+            buffer_length,
+            str_len_or_ind_ptr,
+        )
+        .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -455,10 +807,16 @@ pub unsafe extern "C" fn SQLPrepare(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::prepare_n(statement_handle, statement_text, text_length);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLPrepare", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result = api::statement::prepare_n(statement_handle, statement_text, text_length);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -469,20 +827,32 @@ pub unsafe extern "C" fn SQLPrepareW(
     statement_text: *const sql::WChar,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::prepare_w(statement_handle, statement_text, text_length);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLPrepareW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result = api::statement::prepare_w(statement_handle, statement_text, text_length);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::execute(statement_handle);
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    odbc_api_call("SQLExecute", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let result = api::statement::execute(statement_handle);
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code()
+    })
 }
 
 /// # Safety
@@ -498,21 +868,55 @@ pub unsafe extern "C" fn SQLGetDiagRec(
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    unsafe {
+    odbc_api_call("SQLGetDiagRec", || {
         let mut warnings = vec![];
-        let result = api::diagnostic::get_diag_rec(
-            handle_type,
-            handle,
-            rec_number,
-            sql_state,
-            native_error_ptr,
-            message_text,
-            buffer_length,
-            text_length_ptr,
-            &mut warnings,
-        );
+        let result = unsafe {
+            api::diagnostic::get_diag_rec(
+                handle_type,
+                handle,
+                rec_number,
+                sql_state,
+                native_error_ptr,
+                message_text,
+                buffer_length,
+                text_length_ptr,
+                &mut warnings,
+            )
+        };
         result.to_sql_code_with_warnings(&warnings)
-    }
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetDiagRecW(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    sql_state: *mut sql::WChar,
+    native_error_ptr: *mut sql::Integer,
+    message_text: *mut sql::WChar,
+    buffer_length: sql::SmallInt,
+    text_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    odbc_api_call("SQLGetDiagRecW", || {
+        let mut warnings = vec![];
+        let result = unsafe {
+            api::diagnostic::get_diag_rec_w(
+                handle_type,
+                handle,
+                rec_number,
+                sql_state,
+                native_error_ptr,
+                message_text,
+                buffer_length,
+                text_length_ptr,
+                &mut warnings,
+            )
+        };
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -527,16 +931,44 @@ pub unsafe extern "C" fn SQLGetDiagField(
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    api::diagnostic::get_diag_field(
-        handle_type,
-        handle,
-        rec_number,
-        diag_identifier,
-        diag_info_ptr,
-        buffer_length,
-        string_length_ptr,
-    )
-    .to_sql_code()
+    odbc_api_call("SQLGetDiagField", || {
+        api::diagnostic::get_diag_field(
+            handle_type,
+            handle,
+            rec_number,
+            diag_identifier,
+            diag_info_ptr,
+            buffer_length,
+            string_length_ptr,
+        )
+        .to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetDiagFieldW(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    diag_identifier: sql::SmallInt,
+    diag_info_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    odbc_api_call("SQLGetDiagFieldW", || {
+        api::diagnostic::get_diag_field(
+            handle_type,
+            handle,
+            rec_number,
+            diag_identifier,
+            diag_info_ptr,
+            buffer_length,
+            string_length_ptr,
+        )
+        .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -550,15 +982,17 @@ pub unsafe extern "C" fn SQLBindCol(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::statement::bind_col(
-        statement_handle,
-        column_number,
-        target_type,
-        target_value_ptr,
-        buffer_length,
-        str_len_or_ind_ptr,
-    )
-    .to_sql_code()
+    odbc_api_call("SQLBindCol", || {
+        api::statement::bind_col(
+            statement_handle,
+            column_number,
+            target_type,
+            target_value_ptr,
+            buffer_length,
+            str_len_or_ind_ptr,
+        )
+        .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -570,22 +1004,61 @@ pub unsafe extern "C" fn SQLSetStmtAttr(
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
-    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let mut warnings = vec![];
-    let result = api::statement::set_stmt_attr(
-        statement_handle,
-        attribute,
-        value_ptr,
-        string_length,
-        &mut warnings,
-    );
-    api::diagnostic::set_diag_info_from_warnings(
-        sql::HandleType::Stmt,
-        statement_handle,
-        &warnings,
-    );
-    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code_with_warnings(&warnings)
+    odbc_api_call("SQLSetStmtAttr", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result = api::statement::set_stmt_attr(
+            statement_handle,
+            attribute,
+            value_ptr,
+            string_length,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetStmtAttrW(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    value_ptr: sql::Pointer,
+    string_length: sql::Integer,
+) -> sql::RetCode {
+    odbc_api_call("SQLSetStmtAttrW", || {
+        api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+        let mut warnings = vec![];
+        let result = api::statement::set_stmt_attr(
+            statement_handle,
+            attribute,
+            value_ptr,
+            string_length,
+            &mut warnings,
+        );
+        api::diagnostic::set_diag_info_from_warnings(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &warnings,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Stmt,
+            statement_handle,
+            &result,
+        );
+        result.to_sql_code_with_warnings(&warnings)
+    })
 }
 
 /// # Safety
@@ -598,14 +1071,38 @@ pub unsafe extern "C" fn SQLGetStmtAttr(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::statement::get_stmt_attr(
-        statement_handle,
-        attribute,
-        value_ptr,
-        buffer_length,
-        string_length_ptr,
-    )
-    .to_sql_code()
+    odbc_api_call("SQLGetStmtAttr", || {
+        api::statement::get_stmt_attr(
+            statement_handle,
+            attribute,
+            value_ptr,
+            buffer_length,
+            string_length_ptr,
+        )
+        .to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetStmtAttrW(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    odbc_api_call("SQLGetStmtAttrW", || {
+        api::statement::get_stmt_attr(
+            statement_handle,
+            attribute,
+            value_ptr,
+            buffer_length,
+            string_length_ptr,
+        )
+        .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -619,15 +1116,41 @@ pub unsafe extern "C" fn SQLGetDescField(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::descriptor::get_desc_field(
-        descriptor_handle,
-        rec_number,
-        field_identifier,
-        value_ptr,
-        buffer_length,
-        string_length_ptr,
-    )
-    .to_sql_code()
+    odbc_api_call("SQLGetDescField", || {
+        api::descriptor::get_desc_field(
+            descriptor_handle,
+            rec_number,
+            field_identifier,
+            value_ptr,
+            buffer_length,
+            string_length_ptr,
+        )
+        .to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetDescFieldW(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    field_identifier: sql::SmallInt,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    odbc_api_call("SQLGetDescFieldW", || {
+        api::descriptor::get_desc_field(
+            descriptor_handle,
+            rec_number,
+            field_identifier,
+            value_ptr,
+            buffer_length,
+            string_length_ptr,
+        )
+        .to_sql_code()
+    })
 }
 
 /// # Safety
@@ -640,12 +1163,36 @@ pub unsafe extern "C" fn SQLSetDescField(
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
 ) -> sql::RetCode {
-    api::descriptor::set_desc_field(
-        descriptor_handle,
-        rec_number,
-        field_identifier,
-        value_ptr,
-        buffer_length,
-    )
-    .to_sql_code()
+    odbc_api_call("SQLSetDescField", || {
+        api::descriptor::set_desc_field(
+            descriptor_handle,
+            rec_number,
+            field_identifier,
+            value_ptr,
+            buffer_length,
+        )
+        .to_sql_code()
+    })
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetDescFieldW(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    field_identifier: sql::SmallInt,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+) -> sql::RetCode {
+    odbc_api_call("SQLSetDescFieldW", || {
+        api::descriptor::set_desc_field(
+            descriptor_handle,
+            rec_number,
+            field_identifier,
+            value_ptr,
+            buffer_length,
+        )
+        .to_sql_code()
+    })
 }
