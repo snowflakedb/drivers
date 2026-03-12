@@ -109,3 +109,63 @@ behavior_differences:
       now see the correct precision and scale in the output struct, matching
       the ODBC specification behavior.
       TODO: To be fixed in old driver
+
+  16:
+    name: "SQL_C_BINARY on FLOAT/DOUBLE/REAL columns returns raw f64 bytes instead of SQL_NUMERIC_STRUCT"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_BINARY on a SQL_DOUBLE
+      (FLOAT/DOUBLE/REAL) column, the old driver returns the raw 8-byte IEEE 754
+      double representation. The indicator is set to 8 and the buffer contents
+      are not interpretable as an SQL_NUMERIC_STRUCT.
+      NEW driver: Returns a 19-byte SQL_NUMERIC_STRUCT as required by the ODBC
+      specification, with precision=38, scale=0 (integer part after truncation),
+      sign (1 positive, 0 negative), and val[16] containing the unsigned magnitude
+      in little-endian 128-bit format. The indicator is set to sizeof(SQL_NUMERIC_STRUCT).
+      Fractional values produce SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07.
+      Impact: Applications requesting SQL_C_BINARY for floating-point columns now
+      receive a standards-compliant SQL_NUMERIC_STRUCT instead of raw double bytes.
+      Related: BD#12 (same issue for DECIMAL/NUMERIC columns).
+      TODO: To be fixed in old driver
+
+  17:
+    name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_CHAR on a FLOAT/DOUBLE/REAL
+      column and the buffer is too small to hold the full string representation,
+      the old driver returns SQL_ERROR.
+      NEW driver: Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 (String data,
+      right truncation), per the ODBC specification for string data truncation.
+      Impact: Applications providing small buffers for SQL_C_CHAR on FLOAT columns
+      will now receive a truncated result with a warning instead of an error.
+      Note: This is distinct from BD#11, which covers the same scenario for
+      DECIMAL/NUMERIC columns where the old driver returns SQL_SUCCESS (too lenient)
+      rather than SQL_ERROR (too strict as seen here for FLOAT).
+      TODO: To be fixed in old driver
+
+  18:
+    name: "NaN FLOAT value silently converts to 0 for integer and BIT targets instead of returning 22003"
+    description: |
+      OLD driver: When SQLGetData is called on a FLOAT/DOUBLE column containing NaN
+      with an integer target type (SQL_C_SLONG, SQL_C_ULONG, SQL_C_SHORT, SQL_C_USHORT,
+      SQL_C_STINYINT, SQL_C_UTINYINT, SQL_C_SBIGINT, SQL_C_UBIGINT) or SQL_C_BIT,
+      the old driver returns SQL_SUCCESS_WITH_INFO and silently writes 0 to the output
+      buffer. This happens because NaN comparisons always return false, so range checks
+      pass, and the cast produces 0.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of range).
+      NaN is not a representable numeric value and cannot be meaningfully converted to
+      any integer or BIT type.
+      Note: Both drivers correctly reject NaN for SQL_C_NUMERIC (returning 22003) and
+      both correctly produce the string "NaN" for SQL_C_CHAR. The discrepancy is limited
+      to integer and BIT targets.
+      Impact: Applications that previously received 0 for NaN inputs to integer types
+      will now receive an error. This is a spec-compliance improvement.
+      TODO: To be fixed in old driver
+
+  19:
+    name: "On Windows, PUT source column returns filename only instead of full absolute path"
+    description: |
+      OLD driver: On Windows, the PUT result set source column returns the full
+      absolute file path (e.g. C:/Users/.../test_data.csv).
+      NEW driver: Returns just the filename (e.g. test_data.csv), same as on Linux.
+      Impact: Applications that parse the PUT source column for the full path on
+      Windows will now receive only the filename.

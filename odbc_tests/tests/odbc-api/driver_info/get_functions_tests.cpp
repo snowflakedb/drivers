@@ -122,6 +122,11 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
   REQUIRE(ret == SQL_SUCCESS);
 
   for (const auto& func : ALL_ODBC_FUNCTIONS) {
+    // Windows DM does not report deprecated SQLSetScrollOptions
+    WINDOWS_ONLY {
+      if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
+    }
+    INFO("Function: " << func.name << " (ID=" << func.functionId << ")");
     REQUIRE(SQL_FUNC_EXISTS(supported, func.functionId));
   }
 
@@ -144,6 +149,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
 
   for (const auto& func : ALL_ODBC_FUNCTIONS) {
     if (func.odbc2) {
+      WINDOWS_ONLY {
+        if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
+      }
       REQUIRE(supported[func.functionId] == SQL_TRUE);
     }
   }
@@ -267,6 +275,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: All known supported fun
   REQUIRE(ret == SQL_SUCCESS);
 
   for (const auto& func : ALL_ODBC_FUNCTIONS) {
+    WINDOWS_ONLY {
+      if (func.functionId == SQL_API_SQLSETSCROLLOPTIONS) continue;
+    }
     SQLUSMALLINT supported = SQL_FALSE;
     ret = SQLGetFunctions(dbc_handle(), func.functionId, &supported);
     REQUIRE(ret == SQL_SUCCESS);

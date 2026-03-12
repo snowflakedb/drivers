@@ -123,9 +123,10 @@ void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, const st
 
 TEST_CASE("should fail JWT authentication when no private file provided", "[private_key_auth]") {
   // Given Authentication is set to JWT
-  // When Trying to Connect with no private file provided
   /* TODO: Explicit config installation */
   std::string connection_string = get_jwt_connection_string_without_private_key();
+
+  // When Trying to Connect with no private file provided
   auto env = setup_environment_integration();
   auto dbc = get_connection_handle_integration(env);
 

@@ -72,7 +72,7 @@ spotless {
 }
 
 checkstyle {
-    toolVersion = '10.12.4'
+    toolVersion = '9.3'
     configFile = file('config/checkstyle/checkstyle.xml')
 }
 

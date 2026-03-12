@@ -18,6 +18,7 @@ import java.sql.SQLXML;
 import java.sql.Savepoint;
 import java.sql.Statement;
 import java.sql.Struct;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
@@ -28,6 +29,8 @@ import net.snowflake.client.api.resultset.QueryStatus;
 import net.snowflake.client.internal.api.implementation.metadata.SnowflakeDatabaseMetaDataImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakePreparedStatementImpl;
 import net.snowflake.client.internal.api.implementation.statement.SnowflakeStatementImpl;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
@@ -38,6 +41,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Conne
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewRequest;
+import net.snowflake.client.internal.util.NotImplementedException;
 
 /**
  * Snowflake JDBC Connection implementation
@@ -46,7 +50,7 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
  * to native Rust implementation via JNI.
  */
 public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
-
+  private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
   private final String url;
   private final Properties properties;
   private boolean autoCommit = true;
@@ -132,13 +136,13 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public CallableStatement prepareCall(String sql) throws SQLException {
-    throw new SQLFeatureNotSupportedException("prepareCall not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public String nativeSQL(String sql) throws SQLException {
     checkClosed();
-    return sql; // No translation needed in stub implementation
+    return sql;
   }
 
   @Override
@@ -149,26 +153,17 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public boolean getAutoCommit() throws SQLException {
-    checkClosed();
-    return autoCommit;
+    throw new NotImplementedException();
   }
 
   @Override
   public void commit() throws SQLException {
-    checkClosed();
-    if (autoCommit) {
-      throw new SQLException("Cannot commit when autocommit is enabled");
-    }
-    // Stub implementation - no actual commit logic
+    throw new NotImplementedException();
   }
 
   @Override
   public void rollback() throws SQLException {
-    checkClosed();
-    if (autoCommit) {
-      throw new SQLException("Cannot rollback when autocommit is enabled");
-    }
-    // Stub implementation - no actual rollback logic
+    throw new NotImplementedException();
   }
 
   @Override
@@ -192,7 +187,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public void setReadOnly(boolean readOnly) throws SQLException {
     checkClosed();
-    // Stub implementation - ignore readonly setting
+    logger.debug("setReadOnly not supported.", false);
   }
 
   @Override
@@ -203,41 +198,34 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public void setCatalog(String catalog) throws SQLException {
-    checkClosed();
-    this.catalog = catalog;
+    throw new NotImplementedException();
   }
 
   @Override
   public String getCatalog() throws SQLException {
-    checkClosed();
-    return catalog;
+    throw new NotImplementedException();
   }
 
   @Override
   public void setTransactionIsolation(int level) throws SQLException {
-    checkClosed();
-    // Stub implementation - ignore transaction isolation level
+    throw new SQLFeatureNotSupportedException("setTransactionIsolation not supported");
   }
 
   @Override
   public int getTransactionIsolation() throws SQLException {
-    checkClosed();
-    return Connection.TRANSACTION_READ_COMMITTED;
+    throw new NotImplementedException();
   }
 
   @Override
   public SQLWarning getWarnings() throws SQLException {
-    checkClosed();
-    return null;
+    throw new NotImplementedException();
   }
 
   @Override
   public void clearWarnings() throws SQLException {
-    checkClosed();
-    // Stub implementation - no warnings to clear
+    throw new NotImplementedException();
   }
 
-  // Additional methods required by JDBC interface (stubs)
   @Override
   public Statement createStatement(int resultSetType, int resultSetConcurrency)
       throws SQLException {
@@ -253,12 +241,13 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
       throws SQLException {
-    throw new SQLFeatureNotSupportedException("prepareCall not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public Map<String, Class<?>> getTypeMap() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getTypeMap not supported");
+    checkClosed();
+    return Collections.emptyMap(); // nop
   }
 
   @Override
@@ -268,8 +257,8 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public void setHoldability(int holdability) throws SQLException {
-    checkClosed();
-    // Stub implementation
+    throw new SQLFeatureNotSupportedException(
+        "Holdability other than ResultSet.CLOSE_CURSORS_AT_COMMIT is not supported");
   }
 
   @Override
@@ -301,41 +290,41 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public Statement createStatement(
       int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
-    return createStatement();
+    throw new NotImplementedException();
   }
 
   @Override
   public PreparedStatement prepareStatement(
       String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
       throws SQLException {
-    return prepareStatement(sql);
+    throw new NotImplementedException();
   }
 
   @Override
   public CallableStatement prepareCall(
       String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
       throws SQLException {
-    throw new SQLFeatureNotSupportedException("prepareCall not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, int autoGeneratedKeys) throws SQLException {
-    return prepareStatement(sql);
+    throw new SQLFeatureNotSupportedException("prepareStatement not supported");
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, int[] columnIndexes) throws SQLException {
-    return prepareStatement(sql);
+    throw new SQLFeatureNotSupportedException("prepareStatement not supported");
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException {
-    return prepareStatement(sql);
+    throw new SQLFeatureNotSupportedException("prepareStatement not supported");
   }
 
   @Override
   public Clob createClob() throws SQLException {
-    throw new SQLFeatureNotSupportedException("createClob not supported");
+    throw new NotImplementedException();
   }
 
   @Override
@@ -355,32 +344,32 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public boolean isValid(int timeout) throws SQLException {
-    return !isClosed();
+    throw new NotImplementedException();
   }
 
   @Override
   public void setClientInfo(String name, String value) throws SQLClientInfoException {
-    // Stub implementation
+    throw new NotImplementedException();
   }
 
   @Override
   public void setClientInfo(Properties properties) throws SQLClientInfoException {
-    // Stub implementation
+    throw new NotImplementedException();
   }
 
   @Override
   public String getClientInfo(String name) throws SQLException {
-    return null;
+    throw new NotImplementedException();
   }
 
   @Override
   public Properties getClientInfo() throws SQLException {
-    return new Properties();
+    throw new NotImplementedException();
   }
 
   @Override
   public Array createArrayOf(String typeName, Object[] elements) throws SQLException {
-    throw new SQLFeatureNotSupportedException("createArrayOf not supported");
+    throw new NotImplementedException();
   }
 
   @Override
@@ -390,29 +379,27 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public void setSchema(String schema) throws SQLException {
-    checkClosed();
-    this.schema = schema;
+    throw new NotImplementedException();
   }
 
   @Override
   public String getSchema() throws SQLException {
-    checkClosed();
-    return schema;
+    throw new NotImplementedException();
   }
 
   @Override
   public void abort(Executor executor) throws SQLException {
-    close();
+    throw new NotImplementedException();
   }
 
   @Override
   public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
-    // Stub implementation
+    throw new NotImplementedException();
   }
 
   @Override
   public int getNetworkTimeout() throws SQLException {
-    return 0;
+    throw new NotImplementedException();
   }
 
   @Override
@@ -425,10 +412,10 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public boolean isWrapperFor(Class<?> iface) throws SQLException {
-    return iface.isAssignableFrom(getClass());
+    return iface.isInstance(this);
   }
 
-  private void checkClosed() throws SQLException {
+  public void checkClosed() throws SQLException {
     if (isClosed()) {
       throw new SQLException("Connection is closed");
     }
@@ -437,35 +424,35 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public void uploadStream(String stageName, String destFileName, InputStream inputStream)
       throws SQLException {
-    throw new SQLFeatureNotSupportedException("uploadStream not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public void uploadStream(
       String stageName, String destFileName, InputStream inputStream, UploadStreamConfig config)
       throws SQLException {
-    throw new SQLFeatureNotSupportedException("uploadStream not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public InputStream downloadStream(String stageName, String sourceFileName) throws SQLException {
-    throw new SQLFeatureNotSupportedException("downloadStream not supported");
+    return downloadStream(stageName, sourceFileName, DownloadStreamConfig.builder().build());
   }
 
   @Override
   public InputStream downloadStream(
       String stageName, String sourceFileName, DownloadStreamConfig config) throws SQLException {
-    throw new SQLFeatureNotSupportedException("downloadStream not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public String getSessionID() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getSessionID not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public QueryStatus getQueryStatus(String queryID) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getQueryStatus not supported");
+    throw new NotImplementedException();
   }
 
   @Override
@@ -475,21 +462,21 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public String[] getChildQueryIds(String queryID) throws SQLException {
-    throw new SQLFeatureNotSupportedException("getChildQueryIds not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public int getDatabaseMajorVersion() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getDatabaseMajorVersion not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public int getDatabaseMinorVersion() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getDatabaseMinorVersion not supported");
+    throw new NotImplementedException();
   }
 
   @Override
   public String getDatabaseVersion() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getDatabaseVersion not supported");
+    throw new NotImplementedException();
   }
 }

@@ -23,6 +23,7 @@ RUN dnf install -y \
         libstdc++-devel \
         libstdc++-static \
         libtool \
+        openssl-devel \
         python3 \
         tar \
         unixODBC-devel \

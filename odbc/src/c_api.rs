@@ -499,7 +499,8 @@ pub unsafe extern "C" fn SQLGetDiagRec(
     text_length_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
     unsafe {
-        api::diagnostic::get_diag_rec(
+        let mut warnings = vec![];
+        let result = api::diagnostic::get_diag_rec(
             handle_type,
             handle,
             rec_number,
@@ -508,8 +509,9 @@ pub unsafe extern "C" fn SQLGetDiagRec(
             message_text,
             buffer_length,
             text_length_ptr,
-        )
-        .to_sql_code()
+            &mut warnings,
+        );
+        result.to_sql_code_with_warnings(&warnings)
     }
 }
 

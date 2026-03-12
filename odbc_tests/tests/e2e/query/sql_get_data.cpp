@@ -707,6 +707,7 @@ TEST_CASE("SQLGetData retrieves data in increasing column number order.", "[quer
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
 
+  // Then each column should return its correct value
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
   CHECK_ODBC(ret, stmt);
   CHECK(value == 1);
@@ -1332,7 +1333,7 @@ TEST_CASE("SQLGetData with SQL_ARD_TYPE uses the type from the ARD descriptor.",
 TEST_CASE("SQLGetData with SQL_ARD_TYPE returns 07009 error when ARD is unmodified.", "[query][get_data]") {
   // Doc: "If TargetType is SQL_ARD_TYPE, the driver uses the type identifier
   //       specified in the SQL_DESC_CONCISE_TYPE field of the ARD."
-  // When no descriptor fields have been set, SQL_DESC_CONCISE_TYPE defaults to
+  // Note: when no descriptor fields have been set, SQL_DESC_CONCISE_TYPE defaults to
   // SQL_C_DEFAULT, but the current implementation returns error 07009 (Invalid descriptor index).
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
 
@@ -1468,6 +1469,8 @@ TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL value regardless of TargetT
   SQLLEN int_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &int_value, sizeof(int_value), &int_ind);
   CHECK_ODBC(ret, stmt);
+
+  // Then both should return SQL_NULL_DATA indicator
   CHECK(int_ind == SQL_NULL_DATA);
 }
 
@@ -1498,12 +1501,14 @@ TEST_CASE("SQLGetData retrieves same data for same column on same row with SQL_G
   SQLLEN col2_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
   CHECK_ODBC(ret, stmt);
-  CHECK(std::string((char*)col2) == "hello");
 
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
   CHECK_ODBC(ret, stmt);
+
+  // Then both columns should return their correct values
+  CHECK(std::string((char*)col2) == "hello");
   CHECK(col1 == 42);
 }
 
@@ -1667,13 +1672,14 @@ TEST_CASE("SQLGetData converts same integer to multiple C types.", "[query][get_
   // Given Snowflake client is logged in
   Connection conn;
 
-  // Test SQL_C_LONG
+  // When SQLGetData retrieves the same integer value using different C types
   {
     auto stmt = conn.execute_fetch("SELECT 42 AS value");
     SQLINTEGER value = 0;
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
     CHECK_ODBC(ret, stmt);
+    // Then each C type conversion should return the correct value
     CHECK(value == 42);
   }
 

@@ -85,10 +85,8 @@ class TestIntTypeCasting:
         sql = f"SELECT 0::{int_type}, 1000000::{int_type}, {INT64_SIGNED_MAX}::{int_type}"
         result = execute_query(sql, single_row=True)
 
-        # Then All values should be returned as appropriate type
+        # Then All values should be returned as appropriate type with no precision loss
         assert_type(result, int)
-
-        # And No precision loss should occur
         assert result == (0, 1000000, INT64_SIGNED_MAX)
 
 
@@ -285,10 +283,9 @@ class TestIntTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
 
-        # Then Result should contain 50000 rows
+        # Then Result should contain 50000 rows with all values equal to expected data
         assert len(rows) == LARGE_RESULT_SET_SIZE
 
-        # And All values should be equal to expected data
         for row in rows:
             assert row == (100, 30000, 2000000000, 9000000000000000000)
 

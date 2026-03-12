@@ -19,6 +19,7 @@ pub struct GherkinValidator {
 pub struct ValidationResult {
     pub feature_file: PathBuf,
     pub validations: Vec<LanguageValidation>,
+    pub scenario_structure_errors: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,6 +31,7 @@ pub struct LanguageValidation {
     pub implemented_steps: Vec<String>,
     pub warnings: Vec<String>,
     pub missing_steps_by_method: Vec<MethodValidation>,
+    pub empty_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,6 +39,7 @@ pub struct MethodValidation {
     pub method_name: String,
     pub scenario_name: String,
     pub missing_steps: Vec<String>,
+    pub empty_steps: Vec<String>,
     pub line_number: Option<usize>,
 }
 
@@ -878,6 +881,7 @@ impl GherkinValidator {
                     implemented_steps: Vec::new(),
                     warnings: Vec::new(),
                     missing_steps_by_method: Vec::new(),
+                    empty_steps: Vec::new(),
                 });
             }
         } else if validations.is_empty() && !tag_errors.is_empty() {
@@ -890,12 +894,20 @@ impl GherkinValidator {
                 implemented_steps: Vec::new(),
                 warnings: Vec::new(),
                 missing_steps_by_method: Vec::new(),
+                empty_steps: Vec::new(),
             });
         }
+
+        let scenario_structure_errors: Vec<String> = feature
+            .scenarios
+            .iter()
+            .flat_map(|scenario| scenario.validate_mandatory_steps())
+            .collect();
 
         Ok(ValidationResult {
             feature_file: feature.file_path.clone(),
             validations,
+            scenario_structure_errors,
         })
     }
 
@@ -916,6 +928,7 @@ impl GherkinValidator {
             // Check if we need to validate specific scenarios or the whole file
             let mut all_implemented_steps = Vec::new();
             let mut all_missing_steps = Vec::new();
+            let mut all_empty_steps = Vec::new();
             let mut warnings = Vec::new();
             let mut missing_steps_by_method = Vec::new();
 
@@ -1060,12 +1073,21 @@ impl GherkinValidator {
                             }
                         }
 
-                        // If there are missing steps in this method, record them
-                        if !method_missing_steps.is_empty() {
+                        // Check for empty steps (step comments with no implementation code)
+                        let method_empty_steps = step_finder
+                            .find_empty_steps_in_method(actual_test_file_path, &method_name)?;
+                        for empty_step in &method_empty_steps {
+                            if !all_empty_steps.contains(empty_step) {
+                                all_empty_steps.push(empty_step.clone());
+                            }
+                        }
+
+                        if !method_missing_steps.is_empty() || !method_empty_steps.is_empty() {
                             missing_steps_by_method.push(MethodValidation {
                                 method_name: method_name.clone(),
                                 scenario_name: scenario.name.clone(),
                                 missing_steps: method_missing_steps,
+                                empty_steps: method_empty_steps,
                                 line_number: Some(line_number),
                             });
                         }
@@ -1081,16 +1103,18 @@ impl GherkinValidator {
                 implemented_steps: all_implemented_steps,
                 warnings,
                 missing_steps_by_method,
+                empty_steps: all_empty_steps,
             })
         } else {
             Ok(LanguageValidation {
                 language,
                 test_file_found: false,
                 test_file_path: None,
-                missing_steps: Vec::new(), // Don't list individual steps when file doesn't exist
+                missing_steps: Vec::new(),
                 implemented_steps: Vec::new(),
                 warnings: vec![format!("No test file found for feature: {}", feature.name)],
                 missing_steps_by_method: Vec::new(),
+                empty_steps: Vec::new(),
             })
         }
     }

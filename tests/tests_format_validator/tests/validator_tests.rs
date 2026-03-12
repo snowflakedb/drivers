@@ -1289,6 +1289,727 @@ Feature: JDBC Logout
     Ok(())
 }
 
+// ===== Empty Steps Validation Tests =====
+
+#[test]
+fn should_report_empty_steps_in_rust_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_rust",
+        r#"@core
+Feature: Empty Steps Rust Test
+
+  @core_e2e
+  Scenario: should detect empty steps in rust
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "empty_steps_rust",
+        r#"
+#[test]
+fn should_detect_empty_steps_in_rust() {
+    // Given I have valid credentials
+    let credentials = setup_valid_credentials();
+
+    // When I attempt to login
+
+    // Then login should succeed
+    assert!(login_succeeded());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(
+        validation.empty_steps[0].contains("When"),
+        "Empty step should be the 'When' step, got: {}",
+        validation.empty_steps[0]
+    );
+
+    assert_eq!(validation.missing_steps_by_method.len(), 1);
+    let method_validation = &validation.missing_steps_by_method[0];
+    assert_eq!(method_validation.empty_steps.len(), 1);
+    assert!(method_validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_empty_steps_in_jdbc_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_jdbc",
+        r#"@jdbc
+Feature: Empty Steps JDBC Test
+
+  @jdbc_int
+  Scenario: should detect empty steps in jdbc
+    Given Snowflake client is logged in
+    When Query is executed
+    Then result should be correct
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "EmptyStepsJdbc",
+        r#"
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class EmptyStepsJdbcTest {
+    @Test
+    public void shouldDetectEmptyStepsInJdbc() throws Exception {
+        // Given Snowflake client is logged in
+        Connection connection = getDefaultConnection();
+
+        // When Query is executed
+
+        // Then result should be correct
+        assertTrue(result.isSuccess());
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_empty_steps_in_odbc_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_odbc",
+        r#"@odbc
+Feature: Empty Steps ODBC Test
+
+  @odbc_e2e
+  Scenario: should detect empty steps in odbc
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_cpp_test(
+        "auth",
+        "empty_steps_odbc",
+        r#"
+#include <catch2/catch.hpp>
+
+TEST_CASE("should detect empty steps in odbc") {
+    // Given I have valid credentials
+    auto credentials = setup_valid_credentials();
+
+    // When I attempt to login
+
+    // Then login should succeed
+    REQUIRE(login_succeeded());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_empty_steps_in_python_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_python",
+        r#"@python
+Feature: Empty Steps Python Test
+
+  @python_e2e
+  Scenario: should detect empty steps in python
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_python_test(
+        "auth",
+        "empty_steps_python",
+        r#"
+def test_should_detect_empty_steps_in_python():
+    # Given I have valid credentials
+    credentials = setup_valid_credentials()
+
+    # When I attempt to login
+
+    # Then login should succeed
+    assert login_succeeded()
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_not_report_empty_steps_when_all_steps_have_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "no_empty_steps",
+        r#"@core @jdbc @odbc @python
+Feature: No Empty Steps Test
+
+  @core_e2e @jdbc_int @odbc_e2e @python_e2e
+  Scenario: should have no empty steps
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+    And I should have access
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "no_empty_steps",
+        r#"
+#[test]
+fn should_have_no_empty_steps() {
+    // Given I have valid credentials
+    let credentials = setup_valid_credentials();
+
+    // When I attempt to login
+    let result = attempt_login(&credentials);
+
+    // Then login should succeed
+    assert!(result.is_ok());
+
+    // And I should have access
+    assert!(has_access(&result.unwrap()));
+}
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "NoEmptySteps",
+        r#"
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class NoEmptyStepsTest {
+    @Test
+    public void shouldHaveNoEmptySteps() throws Exception {
+        // Given I have valid credentials
+        Credentials credentials = setupValidCredentials();
+
+        // When I attempt to login
+        LoginResult result = attemptLogin(credentials);
+
+        // Then login should succeed
+        assertTrue(result.isSuccess());
+
+        // And I should have access
+        assertTrue(result.hasAccess());
+    }
+}
+"#,
+    )?;
+
+    workspace.create_cpp_test(
+        "auth",
+        "no_empty_steps",
+        r#"
+#include <catch2/catch.hpp>
+
+TEST_CASE("should have no empty steps") {
+    // Given I have valid credentials
+    auto credentials = setup_valid_credentials();
+
+    // When I attempt to login
+    auto result = attempt_login(credentials);
+
+    // Then login should succeed
+    REQUIRE(result.is_success());
+
+    // And I should have access
+    REQUIRE(has_access(result));
+}
+"#,
+    )?;
+
+    workspace.create_python_test(
+        "auth",
+        "no_empty_steps",
+        r#"
+def test_should_have_no_empty_steps():
+    # Given I have valid credentials
+    credentials = setup_valid_credentials()
+
+    # When I attempt to login
+    result = attempt_login(credentials)
+
+    # Then login should succeed
+    assert result.is_success()
+
+    # And I should have access
+    assert result.has_access()
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    for validation in &results[0].validations {
+        assert!(
+            validation.test_file_found,
+            "Language {:?} should find test file",
+            validation.language
+        );
+        assert!(
+            validation.missing_steps.is_empty(),
+            "Language {:?} should have no missing steps, but has: {:?}",
+            validation.language,
+            validation.missing_steps
+        );
+        assert!(
+            validation.empty_steps.is_empty(),
+            "Language {:?} should have no empty steps, but has: {:?}",
+            validation.language,
+            validation.empty_steps
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn should_report_multiple_empty_steps_in_same_method() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "multi_empty",
+        r#"@core
+Feature: Multiple Empty Steps Test
+
+  @core_e2e
+  Scenario: should detect multiple empty steps
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+    And I should have access
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "multi_empty",
+        r#"
+#[test]
+fn should_detect_multiple_empty_steps() {
+    // Given I have valid credentials
+
+    // When I attempt to login
+
+    // Then login should succeed
+    assert!(login_succeeded());
+
+    // And I should have access
+    assert!(has_access());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert_eq!(
+        validation.empty_steps.len(),
+        2,
+        "Should have 2 empty steps (Given and When), but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps.iter().any(|s| s.contains("Given")));
+    assert!(validation.empty_steps.iter().any(|s| s.contains("When")));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_last_step_as_empty_when_no_code_follows() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "last_empty",
+        r#"@core
+Feature: Last Empty Step Test
+
+  @core_e2e
+  Scenario: should detect last empty step
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "last_empty",
+        r#"
+#[test]
+fn should_detect_last_empty_step() {
+    // Given I have valid credentials
+    let credentials = setup_valid_credentials();
+
+    // When I attempt to login
+    let result = attempt_login(&credentials);
+
+    // Then login should succeed
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have 1 empty step (Then), but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("Then"));
+
+    Ok(())
+}
+
+#[test]
+fn should_not_count_continuation_comments_as_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "continuation_empty",
+        r#"@jdbc
+Feature: Continuation Comment Test
+
+  @jdbc_int
+  Scenario: should not count continuations as code
+    Given Snowflake client is logged in
+    When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
+    Then All values should be returned as appropriate type
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "ContinuationEmpty",
+        r#"
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class ContinuationEmptyTest {
+    @Test
+    public void shouldNotCountContinuationsAsCode() throws Exception {
+        // Given Snowflake client is logged in
+        Connection connection = getDefaultConnection();
+
+        // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>,
+        // '日本語テスト'::<type>" is executed
+
+        // Then All values should be returned as appropriate type
+        assertSingleRow(resultSet, Arrays.asList("hello", "Hello World"));
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have 1 empty step (When with continuation), but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_fail_when_scenario_missing_when_step() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "missing_when",
+        r#"@core
+Feature: Missing When Test
+
+  @core_e2e
+  Scenario: should fail without when
+    Given Snowflake client is logged in
+    Then Something should happen
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "missing_when",
+        r#"
+#[test]
+fn should_fail_without_when() {
+    // Given Snowflake client is logged in
+    let client = connect();
+
+    // Then Something should happen
+    assert!(client.is_connected());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].scenario_structure_errors.len(), 1);
+    assert!(results[0].scenario_structure_errors[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_fail_when_scenario_missing_then_step() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "missing_then",
+        r#"@core
+Feature: Missing Then Test
+
+  @core_e2e
+  Scenario: should fail without then
+    Given Snowflake client is logged in
+    When Something is executed
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "missing_then",
+        r#"
+#[test]
+fn should_fail_without_then() {
+    // Given Snowflake client is logged in
+    let client = connect();
+
+    // When Something is executed
+    client.execute("SELECT 1");
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].scenario_structure_errors.len(), 1);
+    assert!(results[0].scenario_structure_errors[0].contains("Then"));
+
+    Ok(())
+}
+
+#[test]
+fn should_fail_when_scenario_missing_both_when_and_then() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "missing_both",
+        r#"@core
+Feature: Missing Both Test
+
+  @core_e2e
+  Scenario: should fail without when and then
+    Given Snowflake client is logged in
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "missing_both",
+        r#"
+#[test]
+fn should_fail_without_when_and_then() {
+    // Given Snowflake client is logged in
+    let client = connect();
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].scenario_structure_errors.len(), 2);
+    assert!(
+        results[0]
+            .scenario_structure_errors
+            .iter()
+            .any(|e| e.contains("When"))
+    );
+    assert!(
+        results[0]
+            .scenario_structure_errors
+            .iter()
+            .any(|e| e.contains("Then"))
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_pass_when_scenario_has_when_and_then() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "complete_steps",
+        r#"@core
+Feature: Complete Steps Test
+
+  @core_e2e
+  Scenario: should pass with all steps
+    Given Snowflake client is logged in
+    When Something is executed
+    Then Result should be correct
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "complete_steps",
+        r#"
+#[test]
+fn should_pass_with_all_steps() {
+    // Given Snowflake client is logged in
+    let client = connect();
+
+    // When Something is executed
+    let result = client.execute("SELECT 1");
+
+    // Then Result should be correct
+    assert!(result.is_ok());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].scenario_structure_errors.is_empty());
+
+    Ok(())
+}
+
 // ===== Helper Structs and Test Data =====
 
 /// Helper to create a temporary workspace with features and test files
@@ -1312,6 +2033,8 @@ impl TestWorkspace {
         fs::create_dir_all(workspace_root.join("jdbc/src/test/java/e2e/query"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/auth"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/query"))?;
+        fs::create_dir_all(workspace_root.join("python/tests/e2e/auth"))?;
+        fs::create_dir_all(workspace_root.join("python/tests/e2e/query"))?;
 
         // Create BehaviorDifferences.yaml file for tests
         let breaking_change_file = workspace_root.join("odbc_tests/BehaviorDifferences.yaml");
@@ -1375,6 +2098,17 @@ impl TestWorkspace {
             .join("odbc_tests/tests/e2e")
             .join(subdir)
             .join(format!("{}.cpp", name));
+        fs::write(test_path, content)?;
+        Ok(())
+    }
+
+    fn create_python_test(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
+        let test_path = self
+            .workspace_root
+            .join("python/tests/e2e")
+            .join(subdir)
+            .join(format!("test_{name}.py"));
+        fs::create_dir_all(test_path.parent().unwrap())?;
         fs::write(test_path, content)?;
         Ok(())
     }

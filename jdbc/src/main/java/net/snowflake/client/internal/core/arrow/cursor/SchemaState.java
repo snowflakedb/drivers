@@ -102,6 +102,8 @@ public final class SchemaState {
         return Types.BOOLEAN;
       case BINARY:
         return Types.BINARY;
+      case DATE:
+        return Types.DATE;
       default:
         return Types.OTHER;
     }

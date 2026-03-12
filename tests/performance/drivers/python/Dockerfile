@@ -1,7 +1,10 @@
 # Build with: cd tests/performance && hatch run build-python
 ARG BUILDPLATFORM=linux/amd64
 
-FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/python:3.13-slim
+# ============================================================================
+# Base stage: OS packages and test application (shared by both drivers)
+# ============================================================================
+FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/python:3.13-slim AS base
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -16,6 +19,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workdir
+
+RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
+
+# Copy test application
+COPY tests/performance/drivers/python/app/ /workdir/
+
+ENV PYTHONUNBUFFERED=1
+
+# ============================================================================
+# Universal driver: builds Rust core + Cython extensions
+# ============================================================================
+FROM base AS universal
 
 # Install Rust toolchain
 COPY rust-toolchain.toml ./rust-toolchain.toml
@@ -52,23 +67,35 @@ RUN cd python && \
     ln -s ../error_trace error_trace && \
     ln -s ../error_trace_derive error_trace_derive
 
-# Save Rust version for runtime reporting
 RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /etc/rust_version
 
-# Install the driver — this builds Rust core and Cython extensions via hatch_build.py
+# Install the driver — builds Rust core and Cython extensions via hatch_build.py
 RUN pip install --no-cache-dir /workdir/python/
 
-# Copy test application
-COPY tests/performance/drivers/python/app/ /workdir/
+ENV DRIVER_TYPE=universal
 
-# Install old driver to separate directory for comparison tests
-# Using -t flag to install to old_driver_src without overwriting universal driver
-RUN pip install --no-cache-dir snowflake-connector-python -t /workdir/old_driver_src
+CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
+    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+        CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+    fi && \
+    python main.py
 
-# Detect OS version at build time (major version only) and write to file
-RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
+# ============================================================================
+# Old driver
+# ============================================================================
+FROM base AS old
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
+RUN pip install --no-cache-dir snowflake-connector-python
+RUN echo "N/A" > /etc/rust_version
 
-CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && python main.py
+ENV DRIVER_TYPE=old
+
+CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
+    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+        CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+        export REQUESTS_CA_BUNDLE="$CA_BUNDLE"; \
+        export SSL_CERT_FILE="$CA_BUNDLE"; \
+    fi && \
+    python main.py

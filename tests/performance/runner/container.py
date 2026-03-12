@@ -59,7 +59,10 @@ def create_perf_container(
     Returns:
         Configured DockerContainer instance
     """
-    image_name = f"{driver}-perf-driver:latest"
+    if driver == "core" or not driver_type:
+        image_name = f"{driver}-perf-driver:latest"
+    else:
+        image_name = f"{driver}-perf-driver-{driver_type}:latest"
     
     container_kwargs = {
         "mem_limit": MEMORY_LIMIT,
