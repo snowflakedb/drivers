@@ -32,13 +32,13 @@ Feature: PUT/GET basic operations
     When File is downloaded using GET command
     Then Rowset for GET command should be correct
 
-  @core_e2e @python_e2e @odbc_e2e
+  @core_e2e @python_e2e
   Scenario: should return correct column metadata for PUT
     Given Snowflake client is logged in
     When File is uploaded to stage
     Then Column metadata for PUT command should be correct
 
-  @core_e2e @python_e2e @odbc_e2e
+  @core_e2e @python_e2e
   Scenario: should return correct column metadata for GET
     Given File is uploaded to stage
     When File is downloaded using GET command

@@ -52,15 +52,12 @@ impl OktaTestFixture {
         self.client.connect()
     }
 
-    fn connect_expecting_success(&self, context: &str) {
-        let result = self.connect();
+    fn assert_success(result: Result<(), String>, context: &str) {
         assert!(result.is_ok(), "Expected {context}, got: {result:?}");
     }
 
-    fn connect_expecting_error(&self, patterns: &[&str], context: &str) {
-        let error = self
-            .connect()
-            .expect_err(&format!("Expected {context} to fail"));
+    fn assert_error(result: Result<(), String>, patterns: &[&str], context: &str) {
+        let error = result.expect_err(&format!("Expected {context} to fail"));
         let matches = patterns.iter().any(|p| error.contains(p));
         assert!(matches, "Expected {context}, got: {error}");
     }
@@ -72,15 +69,14 @@ impl OktaTestFixture {
 
 #[test]
 fn should_login_with_native_okta_using_saml_flow() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake and Okta mappings
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake and Okta mappings
     let fixture = OktaTestFixture::new().with_successful_okta_flow();
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Login is successful
-    fixture.connect_expecting_success("Okta login to succeed");
+    OktaTestFixture::assert_success(result, "Okta login to succeed");
 }
 
 // =============================================================================
@@ -89,19 +85,20 @@ fn should_login_with_native_okta_using_saml_flow() {
 
 #[test]
 fn should_fail_with_bad_credentials_when_okta_returns_401() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token endpoint returning 401 Unauthorized
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token endpoint returning 401 Unauthorized
     fixture.mock.mount(okta::okta_token_401());
     fixture.set_option("user", "invalid_user");
     fixture.set_option("password", "wrong_password");
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with bad credentials error
-    fixture.connect_expecting_error(
+    OktaTestFixture::assert_error(
+        result,
         &["BadCredentials", "401", "credentials"],
         "bad credentials error",
     );
@@ -109,19 +106,20 @@ fn should_fail_with_bad_credentials_when_okta_returns_401() {
 
 #[test]
 fn should_fail_with_bad_credentials_when_okta_returns_403() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token endpoint returning 403 Forbidden
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token endpoint returning 403 Forbidden
     fixture.mock.mount(okta::okta_token_403());
     fixture.set_option("user", "forbidden_user");
     fixture.set_option("password", "forbidden_password");
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with bad credentials error
-    fixture.connect_expecting_error(
+    OktaTestFixture::assert_error(
+        result,
         &["BadCredentials", "403", "credentials"],
         "bad credentials error",
     );
@@ -133,19 +131,19 @@ fn should_fail_with_bad_credentials_when_okta_returns_403() {
 
 #[test]
 fn should_fail_when_okta_returns_mfa_required_status() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token endpoint returning MFA_REQUIRED status
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token endpoint returning MFA_REQUIRED status
     fixture.mock.mount(okta::okta_token_mfa_required());
     fixture.set_option("user", "mfa_user");
     fixture.set_option("password", "mfa_password");
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with MFA required error
-    fixture.connect_expecting_error(&["MfaRequired", "MFA", "mfa"], "MFA required error");
+    OktaTestFixture::assert_error(result, &["MfaRequired", "MFA", "mfa"], "MFA required error");
 }
 
 // =============================================================================
@@ -155,10 +153,9 @@ fn should_fail_when_okta_returns_mfa_required_status() {
 #[test]
 fn should_fail_when_tokenurl_does_not_match_configured_okta_url_origin() {
     // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request with mismatched tokenUrl
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
     let fixture = OktaTestFixture::new();
+
+    // And Wiremock has Snowflake authenticator-request with mismatched tokenUrl
     fixture
         .mock
         .mount(okta::authenticator_request_mismatched_token_url(
@@ -166,8 +163,11 @@ fn should_fail_when_tokenurl_does_not_match_configured_okta_url_origin() {
         ));
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with IdP URL mismatch error
-    fixture.connect_expecting_error(
+    OktaTestFixture::assert_error(
+        result,
         &["IdpUrlMismatch", "mismatch", "does not match"],
         "IdP URL mismatch error",
     );
@@ -176,10 +176,9 @@ fn should_fail_when_tokenurl_does_not_match_configured_okta_url_origin() {
 #[test]
 fn should_fail_when_ssourl_does_not_match_configured_okta_url_origin() {
     // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request with mismatched ssoUrl
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
     let fixture = OktaTestFixture::new();
+
+    // And Wiremock has Snowflake authenticator-request with mismatched ssoUrl
     fixture
         .mock
         .mount(okta::authenticator_request_mismatched_sso_url(
@@ -187,8 +186,11 @@ fn should_fail_when_ssourl_does_not_match_configured_okta_url_origin() {
         ));
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with IdP URL mismatch error
-    fixture.connect_expecting_error(
+    OktaTestFixture::assert_error(
+        result,
         &["IdpUrlMismatch", "mismatch", "does not match"],
         "IdP URL mismatch error",
     );
@@ -200,19 +202,21 @@ fn should_fail_when_ssourl_does_not_match_configured_okta_url_origin() {
 
 #[test]
 fn should_fail_when_saml_postback_url_does_not_match_snowflake_server() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token success mapping
-    // And Wiremock has Okta SSO returning SAML with mismatched postback URL
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token success mapping
     fixture.mock.mount(okta::okta_token_success());
+
+    // And Wiremock has Okta SSO returning SAML with mismatched postback URL
     fixture.mock.mount(okta::okta_sso_mismatched_postback());
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with SAML destination mismatch error
-    fixture.connect_expecting_error(
+    OktaTestFixture::assert_error(
+        result,
         &["SamlDestinationMismatch", "postback", "destination"],
         "SAML destination mismatch error",
     );
@@ -220,40 +224,46 @@ fn should_fail_when_saml_postback_url_does_not_match_snowflake_server() {
 
 #[test]
 fn should_succeed_with_mismatched_postback_when_disable_saml_url_check_is_true() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token success mapping
-    // And Wiremock has Okta SSO returning SAML with mismatched postback URL
-    // And Wiremock has Snowflake login success for Okta
-    // And Snowflake client is configured for native Okta with disable_saml_url_check
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token success mapping
     fixture.mock.mount(okta::okta_token_success());
+
+    // And Wiremock has Okta SSO returning SAML with mismatched postback URL
     fixture.mock.mount(okta::okta_sso_mismatched_postback());
+
+    // And Wiremock has Snowflake login success for Okta
     fixture.mock.mount(okta::login_success());
+
+    // And Snowflake client is configured for native Okta with disable_saml_url_check
     fixture.set_option("disable_saml_url_check", "true");
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Login is successful
-    fixture.connect_expecting_success("Okta login to succeed with disable_saml_url_check");
+    OktaTestFixture::assert_success(result, "Okta login to succeed with disable_saml_url_check");
 }
 
 #[test]
 fn should_fail_when_saml_html_is_missing_form_action() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token success mapping
-    // And Wiremock has Okta SSO returning SAML HTML without form action
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token success mapping
     fixture.mock.mount(okta::okta_token_success());
+
+    // And Wiremock has Okta SSO returning SAML HTML without form action
     fixture.mock.mount(okta::okta_sso_missing_form_action());
     fixture.set_option("authentication_timeout", "5");
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with missing SAML postback error
-    fixture.connect_expecting_error(
+    OktaTestFixture::assert_error(
+        result,
         &["MissingSamlPostback", "postback", "form action"],
         "missing SAML postback error",
     );
@@ -265,23 +275,25 @@ fn should_fail_when_saml_html_is_missing_form_action() {
 
 #[test]
 fn should_use_cookietoken_when_sessiontoken_is_missing() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token endpoint returning cookieToken instead of sessionToken
-    // And Wiremock has Okta SSO success mapping
-    // And Wiremock has Snowflake login success for Okta
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token endpoint returning cookieToken instead of sessionToken
     fixture.mock.mount(okta::okta_token_cookie_token());
+
+    // And Wiremock has Okta SSO success mapping
     fixture
         .mock
         .mount(okta::okta_sso_success(&fixture.mock.http_url()));
+
+    // And Wiremock has Snowflake login success for Okta
     fixture.mock.mount(okta::login_success());
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Login is successful
-    fixture.connect_expecting_success("Okta login with cookieToken to succeed");
+    OktaTestFixture::assert_success(result, "Okta login with cookieToken to succeed");
 }
 
 // =============================================================================
@@ -290,23 +302,29 @@ fn should_use_cookietoken_when_sessiontoken_is_missing() {
 
 #[test]
 fn should_retry_saml_fetch_with_fresh_token_on_transient_error() {
-    // Given Wiremock is running
-    // And Wiremock has Snowflake authenticator-request mapping
-    // And Wiremock has Okta token success mapping
-    // And Wiremock has Okta SSO returning 503 on first attempt
-    // And Wiremock has Okta SSO returning success on retry
-    // And Wiremock has Snowflake login success for Okta
-    // And Snowflake client is configured for native Okta
-    // And TLS certificate verification is disabled for the Okta HTTPS mock
+    // Given Wiremock is running with Snowflake authenticator-request mapping
     let fixture = OktaTestFixture::new().with_authenticator_request();
+
+    // And Wiremock has Okta token success mapping
     fixture.mock.mount(okta::okta_token_success());
+
+    // And Wiremock has Okta SSO returning 503 on first attempt
+    fixture.mock.mount(okta::okta_sso_503_once());
+
+    // And Wiremock has Okta SSO returning success on retry
     fixture
         .mock
         .mount(okta::okta_sso_success(&fixture.mock.http_url()));
-    fixture.mock.mount(okta::okta_sso_503_once());
+
+    // And Wiremock has Snowflake login success for Okta
     fixture.mock.mount(okta::login_success());
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Login is successful
-    fixture.connect_expecting_success("Okta login to succeed after retrying transient error");
+    OktaTestFixture::assert_success(
+        result,
+        "Okta login to succeed after retrying transient error",
+    );
 }

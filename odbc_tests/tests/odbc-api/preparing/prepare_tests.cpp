@@ -233,9 +233,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY090 for empty SQL string"
                  "[odbc-api][prepare][preparing][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  // Note: Reference driver treats empty string as invalid buffer length (HY090)
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(""), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  WINDOWS_ONLY {
+    // Windows DM forwards empty string to server, which returns HY000 (general error)
+    REQUIRE_EXPECTED_ERROR(ret, "HY000", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  UNIX_ONLY {
+    // Note: Reference driver treats empty string as invalid buffer length (HY090)
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrepare: HY090 for negative TextLength",

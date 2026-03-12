@@ -276,7 +276,8 @@ Feature: Client-side binding (pyformat/format paramstyles)
 
   @python_e2e
   Scenario: should raise error for invalid paramstyle
-    Given Connection is created with paramstyle "invalid"
+    Given Snowflake client is logged in
+    When Connection is created with paramstyle "invalid"
     Then ProgrammingError should be raised indicating invalid paramstyle
 
   @python_e2e

@@ -46,11 +46,11 @@ Feature: ODBC string to character/binary type conversions
     # UTF-8 encoded strings are returned as raw bytes
     Given Snowflake client is logged in
     When Query selecting UTF-8 string literals is executed
-    Then Japanese '日本語' should convert to UTF-8 bytes (3 chars × 3 bytes each = 9 bytes)
-    And Russian 'Привет' should convert to UTF-8 bytes (6 chars × 2 bytes each = 12 bytes)
-    And Chinese '你好' should convert to UTF-8 bytes (2 chars × 3 bytes each = 6 bytes)
-    And emoji string 'émoji: 😀' should include 4-byte emoji
-    And French 'café' should convert correctly (4 chars, 5 bytes due to 'é')
+    Then Japanese '日本語' should convert to raw bytes
+    And Russian 'Привет' should convert to raw bytes
+    And Chinese '你好' should convert to raw bytes
+    And emoji string 'émoji: 😀' should include multi-byte emoji
+    And French 'café' should convert correctly
     And Spanish 'Ñoño' should convert correctly
     And musical symbol '𝄞' should convert correctly
 

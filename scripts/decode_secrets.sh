@@ -1,4 +1,10 @@
 #!/bin/bash
+CLOUD="${1:-aws}"
+
+if [[ "${CLOUD}" != "aws" && "${CLOUD}" != "gcp" && "${CLOUD}" != "azure" ]]; then
+    echo "Usage: $0 [aws|gcp|azure]" >&2
+    exit 1
+fi
 
 set -euo pipefail
 
@@ -11,27 +17,27 @@ fi
 echo "Decoding secrets with GPG..."
 
 # Decode main parameters file (required)
-echo "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt ./.github/secrets/parameters_aws.json.gpg > parameters.json
+printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "./.github/secrets/parameters_${CLOUD}.json.gpg" > parameters.json
 echo "  ✓ parameters.json"
 
 # Decode performance test parameters if they exist (optional)
 perf_dir="tests/performance/parameters"
 if [ -f "$perf_dir/parameters_perf_aws.json.gpg" ]; then
-    echo "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_aws.json.gpg" > "$perf_dir/parameters_perf_aws.json"
+    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_aws.json.gpg" > "$perf_dir/parameters_perf_aws.json"
     echo "  ✓ parameters_perf_aws.json"
 else
     echo "  ⊘ parameters_perf_aws.json.gpg not found, skipping"
 fi
 
 if [ -f "$perf_dir/parameters_perf_azure.json.gpg" ]; then
-    echo "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_azure.json.gpg" > "$perf_dir/parameters_perf_azure.json"
+    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_azure.json.gpg" > "$perf_dir/parameters_perf_azure.json"
     echo "  ✓ parameters_perf_azure.json"
 else
     echo "  ⊘ parameters_perf_azure.json.gpg not found, skipping"
 fi
 
 if [ -f "$perf_dir/parameters_perf_gcp.json.gpg" ]; then
-    echo "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_gcp.json.gpg" > "$perf_dir/parameters_perf_gcp.json"
+    printf '%s' "${PARAMETERS_SECRET}" | gpg --batch --yes --passphrase-fd 0 --decrypt "$perf_dir/parameters_perf_gcp.json.gpg" > "$perf_dir/parameters_perf_gcp.json"
     echo "  ✓ parameters_perf_gcp.json"
 else
     echo "  ⊘ parameters_perf_gcp.json.gpg not found, skipping"

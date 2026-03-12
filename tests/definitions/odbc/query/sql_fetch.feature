@@ -21,8 +21,7 @@ Feature: ODBC SQLFetch function behavior
   @odbc_e2e
   Scenario: SQLSetStmtAttr sets supported cursor types.
     Given Snowflake client is logged in
-    When SQLSetStmtAttr is called with SQL_ATTR_CURSOR_TYPE to set the cursor type
-    And SQLGetStmtAttr is called to get the current cursor type
+    When SQLSetStmtAttr is called with SQL_ATTR_CURSOR_TYPE and SQLGetStmtAttr is called to get the current cursor type
     Then default cursor type is SQL_CURSOR_FORWARD_ONLY
     And SQL_CURSOR_STATIC is not supported
     And SQL_CURSOR_KEYSET_DRIVEN is not supported
@@ -252,11 +251,10 @@ Feature: ODBC SQLFetch function behavior
   @odbc_e2e
   Scenario: SQLFetch moves cursor forward when no columns are bound.
     Given Snowflake client is logged in
-    When SQLExecDirect is called to execute a query that returns 3 rows
-    And no columns are bound
+    When SQLExecDirect is called to execute a query that returns 3 rows with no columns bound
     Then SQLFetch should return SQL_SUCCESS for each row
     And SQLFetch should return SQL_NO_DATA after all rows are consumed
-    And SQLGetData can still retrieve data after moving cursor without bound columns Reset and test again
+    And SQLGetData can still retrieve data after moving cursor without bound columns
 
   @odbc_e2e
   Scenario: SQLFetch supports separate length and indicator buffers via descriptor.

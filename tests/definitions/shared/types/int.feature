@@ -10,8 +10,7 @@ Feature: INT type support
     # Python: Values should be cast to 'int' type
     Given Snowflake client is logged in
     When Query "SELECT 0::<type>, 1000000::<type>, 9223372036854775807::<type>" is executed
-    Then All values should be returned as appropriate type
-    And No precision loss should occur
+    Then All values should be returned as appropriate type with no precision loss
 
   # =========================================================================== #
   #                     SELECT with literals (no tables)                        #
@@ -84,8 +83,7 @@ Feature: INT type support
       | col_int32 | -2B to 2B       | Int32      |
       | col_int64 | -9Q to 9Q       | Int64      |
     When Query "SELECT * FROM <table>" is executed
-    Then Result should contain 50000 rows
-    And All values should be equal to expected data
+    Then Result should contain 50000 rows with all values equal to expected data
 
   # =========================================================================== #
   #                            Parameter binding                                #

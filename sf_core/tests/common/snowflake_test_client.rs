@@ -1,12 +1,7 @@
-use arrow::array::{Array, ArrayRef, ArrowPrimitiveType, PrimitiveArray, StructArray};
-use arrow::datatypes::{Field, Schema};
-use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use proto_utils::ProtoError;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
-use std::mem::size_of;
-use std::sync::Arc;
 
 use super::config::{Parameters, get_parameters, setup_logging};
 use super::private_key_helper::{self, PrivateKeyFile};
@@ -142,9 +137,26 @@ impl SnowflakeTestClient {
     }
 
     pub fn execute_statement_query(&self, stmt: &StatementHandle) -> ExecuteResult {
+        self.execute_statement_query_with_bindings(stmt, None)
+    }
+
+    pub fn execute_statement_query_with_bindings(
+        &self,
+        stmt: &StatementHandle,
+        json_bindings: Option<&str>,
+    ) -> ExecuteResult {
+        let bindings = json_bindings.map(|json| {
+            let ptr = json.as_bytes().as_ptr() as u64;
+            QueryBindings {
+                binding_type: Some(query_bindings::BindingType::Json(BinaryDataPtr {
+                    value: ptr.to_le_bytes().to_vec(),
+                    length: json.len() as i64,
+                })),
+            }
+        });
         DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
             stmt_handle: Some(*stmt),
-            bindings: None,
+            bindings,
         })
         .unwrap()
         .result
@@ -159,21 +171,22 @@ impl SnowflakeTestClient {
         .unwrap();
     }
 
-    pub fn bind_parameters<T: ArrowPrimitiveType>(
-        &self,
-        stmt: &StatementHandle,
-        params: &[T::Native],
-    ) where
-        PrimitiveArray<T>: From<Vec<T::Native>>,
-    {
-        let (schema, array) = create_param_bindings::<T>(params);
-
-        DatabaseDriverClient::statement_bind(StatementBindRequest {
-            stmt_handle: Some(*stmt),
-            schema: Some(schema),
-            array: Some(array),
-        })
-        .unwrap();
+    /// Builds a JSON bindings string for integer parameters.
+    pub fn bind_int_parameters_json(&self, params: &[i32]) -> String {
+        let mut bindings = serde_json::Map::new();
+        for (i, value) in params.iter().enumerate() {
+            let mut entry = serde_json::Map::new();
+            entry.insert(
+                "type".to_string(),
+                serde_json::Value::String("FIXED".to_string()),
+            );
+            entry.insert(
+                "value".to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            bindings.insert((i + 1).to_string(), serde_json::Value::Object(entry));
+        }
+        serde_json::to_string(&bindings).unwrap()
     }
 
     pub fn release_statement(&self, stmt: &StatementHandle) {
@@ -383,59 +396,4 @@ impl Drop for SnowflakeTestClient {
             tracing::warn!("Failed to release database handle in Drop: {e:?}");
         }
     }
-}
-
-/// Creates Arrow schema and array for parameter binding
-pub fn create_param_bindings<T: ArrowPrimitiveType>(
-    params: &[T::Native],
-) -> (ArrowSchemaPtr, ArrowArrayPtr)
-where
-    PrimitiveArray<T>: From<Vec<T::Native>>,
-{
-    let schema_fields = params
-        .iter()
-        .enumerate()
-        .map(|(i, _)| Field::new(format!("param_{}", i + 1), T::DATA_TYPE, false))
-        .collect::<Vec<_>>();
-
-    let arrays = params
-        .iter()
-        .map(|p| Arc::new(PrimitiveArray::<T>::from(vec![*p])) as ArrayRef)
-        .collect::<Vec<_>>();
-    let array = StructArray::from(
-        arrays
-            .iter()
-            .enumerate()
-            .map(|(i, array)| {
-                (
-                    Arc::new(Field::new(format!("param_{}", i + 1), T::DATA_TYPE, false)),
-                    array.clone(),
-                )
-            })
-            .collect::<Vec<_>>(),
-    );
-    let array_data = array.to_data();
-    let schema = Schema::new(schema_fields);
-
-    let schema_box = Box::new(FFI_ArrowSchema::try_from(&schema).unwrap());
-    let array_box = Box::new(FFI_ArrowArray::new(&array_data));
-    let raw_array = Box::into_raw(array_box);
-    let raw_schema = Box::into_raw(schema_box);
-
-    let schema = ArrowSchemaPtr {
-        value: unsafe {
-            let len = size_of::<*mut FFI_ArrowSchema>();
-            let buf_ptr = std::ptr::addr_of!(raw_schema) as *const u8;
-            std::slice::from_raw_parts(buf_ptr, len).to_vec()
-        },
-    };
-
-    let array = ArrowArrayPtr {
-        value: unsafe {
-            let len = size_of::<*mut FFI_ArrowArray>();
-            let buf_ptr = std::ptr::addr_of!(raw_array) as *const u8;
-            std::slice::from_raw_parts(buf_ptr, len).to_vec()
-        },
-    };
-    (schema, array)
 }
