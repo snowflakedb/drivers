@@ -665,8 +665,9 @@ mod tests {
 
         #[test]
         fn transient_error_access_denied_only_when_lock_dir_exists() {
-            let existing = std::env::temp_dir(); // exists
-            let missing = Path::new(r"C:\nonexistent_lock_dir_for_test");
+            let existing = std::env::temp_dir(); // guaranteed to exist
+            let missing = existing.join(format!("nonexistent_{}", std::process::id()));
+            assert!(!missing.exists(), "test precondition: path must not exist");
 
             let err = std::io::Error::from_raw_os_error(5); // ERROR_ACCESS_DENIED
             assert!(
@@ -674,7 +675,7 @@ mod tests {
                 "ACCESS_DENIED should be transient when lock dir exists"
             );
             assert!(
-                !FileLock::is_transient_windows_error(&err, missing),
+                !FileLock::is_transient_windows_error(&err, &missing),
                 "ACCESS_DENIED should NOT be transient when lock dir is absent"
             );
         }
