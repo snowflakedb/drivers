@@ -118,7 +118,7 @@ async fn read_batches<'a>(
                 .map(|rt| rt.try_into())
                 .collect::<Result<Vec<_>, _>>()
                 .context(RowTypeParsingSnafu)?;
-            let rowset = vec![];
+            let rowset: Vec<Vec<Option<String>>> = vec![];
             convert_string_rowset_to_arrow_reader(&rowset, &row_types)
                 .context(RowsetConversionSnafu)
         }

@@ -20,7 +20,7 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<String>>>,
+    pub rowset: Option<Vec<Vec<Option<String>>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
@@ -490,7 +490,8 @@ impl Data {
         if value.is_empty() { None } else { Some(value) }
     }
 
-    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<String>>, &Vec<RowType>)> {
+    #[allow(clippy::type_complexity)]
+    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<Option<String>>>, &Vec<RowType>)> {
         match (self.rowset.as_ref(), self.row_type.as_ref()) {
             (Some(rowset), Some(row_type)) => Some((rowset, row_type)),
             (Some(_), None) => {
@@ -519,7 +520,7 @@ pub enum RowsetData<'a> {
         chunk_base64: &'a str,
     },
     JsonRowset {
-        rowset: &'a Vec<Vec<String>>,
+        rowset: &'a Vec<Vec<Option<String>>>,
         rowtype: &'a Vec<RowType>,
     },
     NoData,
@@ -724,4 +725,40 @@ pub enum QueryResponseError {
         #[snafu(implicit)]
         location: snafu::Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nullable_json_rowset_deserializes() {
+        let json = r#"
+        {
+            "data": {
+                "rowset": [
+                    ["hello", null, "42"],
+                    [null, "world", null]
+                ],
+                "rowtype": [
+                    {"name": "a", "type": "TEXT", "nullable": true, "length": 10, "byteLength": 40},
+                    {"name": "b", "type": "TEXT", "nullable": true, "length": 10, "byteLength": 40},
+                    {"name": "c", "type": "FIXED", "nullable": true, "precision": 5, "scale": 0}
+                ]
+            },
+            "message": null,
+            "code": null,
+            "success": true
+        }
+        "#;
+        let response: Response = serde_json::from_str(json).unwrap();
+        let rowset = response.data.rowset.as_ref().unwrap();
+        assert_eq!(rowset.len(), 2);
+        assert_eq!(rowset[0][0], Some("hello".to_string()));
+        assert_eq!(rowset[0][1], None);
+        assert_eq!(rowset[0][2], Some("42".to_string()));
+        assert_eq!(rowset[1][0], None);
+        assert_eq!(rowset[1][1], Some("world".to_string()));
+        assert_eq!(rowset[1][2], None);
+    }
 }

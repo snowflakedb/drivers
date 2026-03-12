@@ -110,7 +110,7 @@ fn parse_decimal_str(v: &str, scale: u32) -> Result<i128, ArrowUtilsError> {
 
 /// Creates an Arrow array from column values and data type
 fn create_column_array(
-    values: Vec<&str>,
+    values: Vec<Option<&str>>,
     row_type: &RowType,
 ) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError> {
     match row_type {
@@ -121,53 +121,64 @@ fn create_column_array(
         RowType::Fixed {
             scale, precision, ..
         } => {
-            let decimal_values: Result<Vec<i128>, ArrowUtilsError> = values
+            let parsed: Result<Vec<Option<i128>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| parse_decimal_str(v, *scale as u32))
+                .map(|v| match v {
+                    Some(s) => parse_decimal_str(s, *scale as u32).map(Some),
+                    None => Ok(None),
+                })
                 .collect();
+            let parsed = parsed?;
 
-            let decimal_values = decimal_values?;
-            if decimal_values.is_empty() {
+            let non_null: Vec<i128> = parsed.iter().filter_map(|v| *v).collect();
+            if non_null.is_empty() {
                 return Ok((
-                    create_field_with_type(row_type, DataType::Int64), // TODO is it correct? We have to assume something, but it probably doesn't matter.
-                    Arc::new(Int64Array::new_null(0)),
+                    create_field_with_type(row_type, DataType::Int64),
+                    Arc::new(Int64Array::from(
+                        parsed.iter().map(|_| None::<i64>).collect::<Vec<_>>(),
+                    )),
                 ));
             }
-            let min_value: i128 = decimal_values.iter().min().copied().unwrap();
-            let max_value: i128 = decimal_values.iter().max().copied().unwrap();
+            let min_value = *non_null.iter().min().unwrap();
+            let max_value = *non_null.iter().max().unwrap();
 
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
-                let int8_values: Vec<i8> = decimal_values.into_iter().map(|v| v as i8).collect();
+                let values: Vec<Option<i8>> =
+                    parsed.into_iter().map(|v| v.map(|x| x as i8)).collect();
                 Ok((
                     create_field_with_type(row_type, DataType::Int8),
-                    Arc::new(Int8Array::from(int8_values)),
+                    Arc::new(Int8Array::from(values)),
                 ))
             } else if min_value >= i16::MIN as i128 && max_value <= i16::MAX as i128 {
-                let int16_values: Vec<i16> = decimal_values.into_iter().map(|v| v as i16).collect();
+                let values: Vec<Option<i16>> =
+                    parsed.into_iter().map(|v| v.map(|x| x as i16)).collect();
                 Ok((
                     create_field_with_type(row_type, DataType::Int16),
-                    Arc::new(arrow::array::Int16Array::from(int16_values)),
+                    Arc::new(arrow::array::Int16Array::from(values)),
                 ))
             } else if min_value >= i32::MIN as i128 && max_value <= i32::MAX as i128 {
-                let int32_values: Vec<i32> = decimal_values.into_iter().map(|v| v as i32).collect();
+                let values: Vec<Option<i32>> =
+                    parsed.into_iter().map(|v| v.map(|x| x as i32)).collect();
                 Ok((
                     create_field_with_type(row_type, DataType::Int32),
-                    Arc::new(arrow::array::Int32Array::from(int32_values)),
+                    Arc::new(arrow::array::Int32Array::from(values)),
                 ))
             } else if min_value >= i64::MIN as i128 && max_value <= i64::MAX as i128 {
-                let int64_values: Vec<i64> = decimal_values.into_iter().map(|v| v as i64).collect();
+                let values: Vec<Option<i64>> =
+                    parsed.into_iter().map(|v| v.map(|x| x as i64)).collect();
                 Ok((
                     create_field_with_type(row_type, DataType::Int64),
-                    Arc::new(Int64Array::from(int64_values)),
+                    Arc::new(Int64Array::from(values)),
                 ))
             } else {
+                let non_null_values: Vec<i128> = parsed.iter().filter_map(|v| *v).collect();
                 Ok((
                     create_field_with_type(
                         row_type,
                         DataType::Decimal128(*precision as u8, *scale as i8),
                     ),
                     Arc::new(
-                        arrow::array::Decimal128Array::from(decimal_values)
+                        arrow::array::Decimal128Array::from(non_null_values)
                             .with_precision_and_scale(*precision as u8, *scale as i8)
                             .expect("valid decimal precision/scale"),
                     ),
@@ -175,12 +186,13 @@ fn create_column_array(
             }
         }
         RowType::Boolean { .. } => {
-            let bool_values: Result<Vec<bool>, ArrowUtilsError> = values
+            let bool_values: Result<Vec<Option<bool>>, ArrowUtilsError> = values
                 .into_iter()
                 .map(|v| match v {
-                    "true" => Ok(true),
-                    "false" => Ok(false),
-                    other => BooleanParsingSnafu {
+                    Some("true") => Ok(Some(true)),
+                    Some("false") => Ok(Some(false)),
+                    None => Ok(None),
+                    Some(other) => BooleanParsingSnafu {
                         value: other.to_string(),
                     }
                     .fail(),
@@ -192,12 +204,16 @@ fn create_column_array(
             ))
         }
         RowType::Real { .. } => {
-            let float_values: Result<Vec<f64>, ArrowUtilsError> = values
+            let float_values: Result<Vec<Option<f64>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| {
-                    v.parse::<f64>().context(FloatParsingSnafu {
-                        value: v.to_string(),
-                    })
+                .map(|v| match v {
+                    Some(s) => s
+                        .parse::<f64>()
+                        .context(FloatParsingSnafu {
+                            value: s.to_string(),
+                        })
+                        .map(Some),
+                    None => Ok(None),
                 })
                 .collect();
             Ok((
@@ -206,12 +222,16 @@ fn create_column_array(
             ))
         }
         RowType::Date { .. } => {
-            let day_values: Result<Vec<i32>, ArrowUtilsError> = values
+            let day_values: Result<Vec<Option<i32>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| {
-                    v.parse::<i32>().context(IntegerParsingSnafu {
-                        value: v.to_string(),
-                    })
+                .map(|v| match v {
+                    Some(s) => s
+                        .parse::<i32>()
+                        .context(IntegerParsingSnafu {
+                            value: s.to_string(),
+                        })
+                        .map(Some),
+                    None => Ok(None),
                 })
                 .collect();
             Ok((
@@ -254,7 +274,7 @@ fn create_column_array(
 /// Supports TEXT and FIXED (with scale 0) types, converting strings to appropriate Arrow types
 /// Assumes rowset and row_types have been validated to have matching column counts
 pub fn convert_string_rowset_to_arrow_reader(
-    rowset: &[Vec<String>],
+    rowset: &[Vec<Option<String>>],
     row_types: &[RowType],
 ) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowUtilsError> {
     // Create Arrow arrays for each column
@@ -263,7 +283,8 @@ pub fn convert_string_rowset_to_arrow_reader(
         .iter()
         .enumerate()
         .map(|(col_idx, row_type)| {
-            let values: Vec<&str> = rowset.iter().map(|row| row[col_idx].as_str()).collect();
+            let values: Vec<Option<&str>> =
+                rowset.iter().map(|row| row[col_idx].as_deref()).collect();
             create_column_array(values, row_type)
         })
         .collect();
@@ -335,10 +356,10 @@ mod tests {
     fn test_string_rowset_translation_with_metadata_small() {
         // Build a Snowflake-like rowset
         let rowset = vec![
-            vec!["alpha.txt".to_string(), "7".to_string()], // SB1
-            vec!["beta.md".to_string(), "123".to_string()], // SB2
-            vec!["gamma.bin".to_string(), "32767".to_string()], // SB2
-            vec!["delta.png".to_string(), "1024".to_string()], // SB2
+            vec![Some("alpha.txt".to_string()), Some("7".to_string())], // SB1
+            vec![Some("beta.md".to_string()), Some("123".to_string())], // SB2
+            vec![Some("gamma.bin".to_string()), Some("32767".to_string())], // SB2
+            vec![Some("delta.png".to_string()), Some("1024".to_string())], // SB2
         ];
 
         // Describe columns via RowType
@@ -404,13 +425,19 @@ mod tests {
     fn test_string_rowset_translation_with_metadata_large() {
         // Build a Snowflake-like rowset
         let rowset = vec![
-            vec!["alpha/report.csv".to_string(), "7".to_string()], // SB1
-            vec!["beta/readme.md".to_string(), "123".to_string()], // SB2
-            vec!["gamma/data.bin".to_string(), "32767".to_string()], // SB2
-            vec!["delta/image.png".to_string(), "2147483647".to_string()], // SB4
+            vec![Some("alpha/report.csv".to_string()), Some("7".to_string())], // SB1
+            vec![Some("beta/readme.md".to_string()), Some("123".to_string())], // SB2
             vec![
-                "epsilon/archive.tar.gz".to_string(),
-                "9223372036854775807".to_string(), // SB8
+                Some("gamma/data.bin".to_string()),
+                Some("32767".to_string()),
+            ], // SB2
+            vec![
+                Some("delta/image.png".to_string()),
+                Some("2147483647".to_string()),
+            ], // SB4
+            vec![
+                Some("epsilon/archive.tar.gz".to_string()),
+                Some("9223372036854775807".to_string()), // SB8
             ],
         ];
 

@@ -119,7 +119,7 @@ fn calculate_rows_affected(data: &Data) -> Option<i64> {
                     || DML_AFFECTED_ROWS_COLUMN_PREFIXES
                         .iter()
                         .any(|p| col_name.starts_with(p)))
-                    && let Some(value) = rowset[0].get(idx)
+                    && let Some(Some(value)) = rowset[0].get(idx)
                     && let Ok(count) = value.parse::<i64>()
                 {
                     affected_rows += count;
