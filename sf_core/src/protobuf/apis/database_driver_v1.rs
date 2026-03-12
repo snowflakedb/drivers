@@ -525,6 +525,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .database_set_option(db_handle.into(), input.key, Setting::String(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionStringResponse {})
@@ -542,6 +543,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .database_set_option(db_handle.into(), input.key, Setting::Bytes(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionBytesResponse {})
@@ -556,6 +558,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .database_set_option(db_handle.into(), input.key, Setting::Int(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionIntResponse {})
@@ -573,6 +576,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .database_set_option(db_handle.into(), input.key, Setting::Double(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionDoubleResponse {})
@@ -625,6 +629,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::String(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionStringResponse {})
@@ -642,6 +647,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::Bytes(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionBytesResponse {})
@@ -659,6 +665,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::Int(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionIntResponse {})
@@ -676,6 +683,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .connection_set_option(conn_handle.into(), input.key, Setting::Double(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionDoubleResponse {})
@@ -720,6 +728,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let info = self
             .driver
             .connection_get_info(conn_handle.into())
+            .await
             .to_protobuf()?;
 
         Ok(ConnectionGetInfoResponse::from(info))
@@ -791,6 +800,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .connection_set_session_parameters(conn_handle.into(), input.parameters)
+            .await
             .to_protobuf()?;
 
         Ok(ConnectionSetSessionParametersResponse {})
@@ -850,6 +860,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .statement_set_sql_query(stmt_handle.into(), input.query)
+            .await
             .to_protobuf()?;
         Ok(StatementSetSqlQueryResponse {})
     }
@@ -900,6 +911,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::String(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(StatementSetOptionStringResponse {})
@@ -917,6 +929,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::Bytes(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(StatementSetOptionBytesResponse {})
@@ -931,6 +944,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::Int(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(StatementSetOptionIntResponse {})
@@ -948,6 +962,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         self.driver
             .statement_set_option(stmt_handle.into(), input.key, Setting::Double(input.value))
+            .await
             .to_protobuf()?;
 
         Ok(StatementSetOptionDoubleResponse {})

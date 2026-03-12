@@ -14,6 +14,7 @@ parameters*.json
 **/rsa_key.p8
 .DS_Store
 /.tmp
+/build
 
 # Python/Cython build artifacts
 python/src/snowflake/connector/_internal/nanoarrow_cpp/ArrowIterator/arrow_stream_iterator.cpp

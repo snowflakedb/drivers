@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
@@ -11,7 +11,7 @@ impl DatabaseDriverV1 {
         self.databases.add_handle(Mutex::new(Database::new()))
     }
 
-    pub fn database_set_option(
+    pub async fn database_set_option(
         &self,
         db_handle: Handle,
         key: String,
@@ -19,7 +19,7 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.databases.get_obj(db_handle) {
             Some(db_ptr) => {
-                let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
+                let mut db = db_ptr.lock().await;
                 db.settings.insert(key, value);
                 Ok(())
             }

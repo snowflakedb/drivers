@@ -1,5 +1,5 @@
 use snafu::{OptionExt, ResultExt, Snafu};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 use super::connection::{Connection, RefreshContext};
 use super::error::*;
@@ -159,7 +159,7 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn statement_set_option(
+    pub async fn statement_set_option(
         &self,
         handle: Handle,
         key: String,
@@ -167,7 +167,7 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.statements.get_obj(handle) {
             Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+                let mut stmt = stmt_ptr.lock().await;
                 stmt.settings.insert(key, value);
                 Ok(())
             }
@@ -178,14 +178,14 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn statement_set_sql_query(
+    pub async fn statement_set_sql_query(
         &self,
         stmt_handle: Handle,
         query: String,
     ) -> Result<(), ApiError> {
         match self.statements.get_obj(stmt_handle) {
             Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+                let mut stmt = stmt_ptr.lock().await;
                 stmt.query = Some(query);
                 Ok(())
             }
@@ -258,7 +258,7 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+        let mut stmt = stmt_ptr.lock().await;
         let query = stmt.query.as_deref().ok_or_else(|| {
             InvalidArgumentSnafu {
                 argument: "Query not found".to_string(),
@@ -267,10 +267,7 @@ impl DatabaseDriverV1 {
         })?;
 
         let (query_parameters, http_client, retry_policy) = {
-            let conn = stmt
-                .conn
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu.build())?;
+            let conn = stmt.conn.lock().await;
             (
                 QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
                 conn.http_client
@@ -307,7 +304,7 @@ impl DatabaseDriverV1 {
         };
 
         let response = {
-            let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
+            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
             let mut last_error = None;
             loop {
                 let session_token = ctx.refresh_token(last_error).await?;
@@ -328,11 +325,9 @@ impl DatabaseDriverV1 {
         }?;
 
         if response.success {
-            let conn = stmt
-                .conn
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu.build())?;
-            conn.update_session_params_cache(query, response.data.parameters.as_ref());
+            let conn = stmt.conn.lock().await;
+            conn.update_session_params_cache(query, response.data.parameters.as_ref())
+                .await;
         }
 
         let query_result = process_query_response(&response.data, &http_client)

@@ -1,6 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
-use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Setting;
@@ -55,27 +56,28 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let (login_parameters, init_params) = {
+                    let mut conn = conn_ptr.lock().await;
 
-                // Check if connection_name is set and load from config if present
-                let connection_name = conn.settings.get("connection_name").and_then(|s| {
-                    if let Setting::String(name) = s {
-                        Some(name.clone())
-                    } else {
-                        None
+                    // Check if connection_name is set and load from config if present
+                    let connection_name = conn.settings.get("connection_name").and_then(|s| {
+                        if let Setting::String(name) = s {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(name) = connection_name {
+                        connection_load_from_config(&mut conn, &name)?;
                     }
-                });
 
-                if let Some(name) = connection_name {
-                    connection_load_from_config(&mut conn, &name)?;
-                }
-
-                let login_parameters =
-                    LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
-                let init_params = conn.init_session_parameters.clone();
-                drop(conn);
+                    let login_parameters =
+                        LoginParameters::from_settings(&conn.settings)
+                            .context(ConfigurationSnafu)?;
+                    let init_params = conn.init_session_parameters.clone();
+                    (login_parameters, init_params)
+                };
 
                 let http_client =
                     create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
@@ -98,7 +100,7 @@ impl DatabaseDriverV1 {
 
                 conn_ptr
                     .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?
+                    .await
                     .initialize(
                         login_result.tokens,
                         http_client,
@@ -116,7 +118,7 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn connection_set_option(
+    pub async fn connection_set_option(
         &self,
         handle: Handle,
         key: String,
@@ -124,9 +126,7 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let mut conn = conn_ptr.lock().await;
                 conn.settings.insert(key, value);
                 Ok(())
             }
@@ -137,16 +137,14 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn connection_set_session_parameters(
+    pub async fn connection_set_session_parameters(
         &self,
         handle: Handle,
         parameters: HashMap<String, String>,
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let mut conn = conn_ptr.lock().await;
                 conn.init_session_parameters = Some(parameters);
                 Ok(())
             }
@@ -158,7 +156,8 @@ impl DatabaseDriverV1 {
     }
 
     pub fn connection_new(&self) -> Handle {
-        self.connections.add_handle(Mutex::new(Connection::new()))
+        self.connections
+            .add_handle(Mutex::new(Connection::new()))
     }
 
     pub fn connection_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
@@ -281,7 +280,7 @@ where
     F: Fn(SensitiveString) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
-    let mut ctx = RefreshContext::from_arc(conn)?;
+    let mut ctx = RefreshContext::from_arc(conn).await?;
     let mut last_error: Option<RestError> = None;
     loop {
         let token = ctx.refresh_token(last_error).await?;
@@ -333,8 +332,8 @@ pub struct RefreshContext {
 }
 
 impl RefreshContext {
-    pub fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
-        let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+    pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
+        let guard = conn.lock().await;
         Self::new(&guard)
     }
     /// Create a new `RefreshContext` by extracting connection info.
@@ -467,12 +466,13 @@ pub struct ConnectionInfo {
 
 impl DatabaseDriverV1 {
     /// Get connection information for the given connection handle
-    pub fn connection_get_info(&self, conn_handle: Handle) -> Result<ConnectionInfo, ApiError> {
+    pub async fn connection_get_info(
+        &self,
+        conn_handle: Handle,
+    ) -> Result<ConnectionInfo, ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let conn = conn_ptr.lock().await;
 
                 // Extract host and port from settings
                 let host = conn.settings.get("host").and_then(|s| {
@@ -496,7 +496,7 @@ impl DatabaseDriverV1 {
 
                 // Get session token and session ID from tokens
                 let (session_token, session_id) = {
-                    let tokens_guard = conn.tokens.blocking_read();
+                    let tokens_guard = conn.tokens.read().await;
                     match tokens_guard.as_ref() {
                         Some(tokens) => {
                             (Some(tokens.session_token.clone()), Some(tokens.session_id))
@@ -527,9 +527,7 @@ impl DatabaseDriverV1 {
     ) -> Result<Option<String>, ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let conn = conn_ptr.lock().await;
 
                 let cache = conn.session_parameters.read().await;
 

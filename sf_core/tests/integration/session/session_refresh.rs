@@ -9,9 +9,10 @@ use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
 
 fn test_client_info() -> ClientInfo {
@@ -102,7 +103,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         server_url: Some(format!("http://{}", addr)),
         client_info: Some(test_client_info()),
         init_session_parameters: None,
-        session_parameters: Arc::new(std::sync::RwLock::new(HashMap::new())),
+        session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
     }));
 
     // When multiple concurrent requests receive 401 errors
@@ -160,7 +161,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
     );
 
     // Verify the token was updated
-    let tokens_lock = conn.lock().unwrap().tokens.clone();
+    let tokens_lock = conn.lock().await.tokens.clone();
     let final_token = tokens_lock
         .read()
         .await
