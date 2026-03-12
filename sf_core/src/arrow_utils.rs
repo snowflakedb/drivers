@@ -8,13 +8,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
-pub fn create_field(row_type: &RowType) -> Field {
+pub fn create_field(row_type: &RowType) -> Result<Field, ArrowUtilsError> {
     create_field_with_type(row_type, None)
 }
 
 /// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
 /// Takes specific_data_type to allow overriding the default type inference for FIXED types based on scale/precision
-pub fn create_field_with_type(row_type: &RowType, data_type: Option<DataType>) -> Field {
+pub fn create_field_with_type(
+    row_type: &RowType,
+    data_type: Option<DataType>,
+) -> Result<Field, ArrowUtilsError> {
     match row_type {
         RowType::Text {
             name,
@@ -26,7 +29,10 @@ pub fn create_field_with_type(row_type: &RowType, data_type: Option<DataType>) -
             metadata.insert("logicalType".to_string(), "TEXT".to_string());
             metadata.insert("charLength".to_string(), length.to_string());
             metadata.insert("byteLength".to_string(), byte_length.to_string());
-            Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable).with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::Fixed {
             name,
@@ -38,30 +44,38 @@ pub fn create_field_with_type(row_type: &RowType, data_type: Option<DataType>) -
             metadata.insert("logicalType".to_string(), "FIXED".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
             metadata.insert("precision".to_string(), precision.to_string());
-            Field::new(
-                name,
-                data_type.expect("data type is required for FIXED column"),
-                *nullable,
-            )
-            .with_metadata(metadata)
+            let data_type = match data_type {
+                Some(dt) => Ok(dt),
+                None => GenericSnafu {
+                    message: "Data type must be provided for FIXED column".to_string(),
+                }
+                .fail(),
+            }?;
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
         RowType::Boolean { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "BOOLEAN".to_string());
-            Field::new(name, data_type.unwrap_or(DataType::Boolean), *nullable)
-                .with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Boolean), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::Real { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "REAL".to_string());
-            Field::new(name, data_type.unwrap_or(DataType::Float64), *nullable)
-                .with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Float64), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::Date { name, nullable } => {
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "DATE".to_string());
-            Field::new(name, data_type.unwrap_or(DataType::Date32), *nullable)
-                .with_metadata(metadata)
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Date32), *nullable)
+                    .with_metadata(metadata),
+            )
         }
         RowType::TimestampNtz {
             name,
@@ -86,7 +100,7 @@ pub fn create_field_with_type(row_type: &RowType, data_type: Option<DataType>) -
                     )
                 })
             };
-            Field::new(name, data_type, *nullable).with_metadata(metadata)
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
     }
 }
@@ -138,7 +152,7 @@ fn create_column_array(
     row_type: &RowType,
 ) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError> {
     match row_type {
-        RowType::Text { .. } => Ok((create_field(row_type), Arc::new(StringArray::from(values)))),
+        RowType::Text { .. } => Ok((create_field(row_type)?, Arc::new(StringArray::from(values)))),
         RowType::Fixed {
             scale, precision, ..
         } => {
@@ -150,7 +164,7 @@ fn create_column_array(
             let decimal_values = decimal_values?;
             if decimal_values.is_empty() {
                 return Ok((
-                    create_field_with_type(row_type, Some(DataType::Int64)), // TODO is it correct? We have to assume something, but it probably doesn't matter.
+                    create_field_with_type(row_type, Some(DataType::Int64))?, // TODO is it correct? We have to assume something, but it probably doesn't matter.
                     Arc::new(Int64Array::new_null(0)),
                 ));
             }
@@ -160,25 +174,25 @@ fn create_column_array(
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
                 let int8_values: Vec<i8> = decimal_values.into_iter().map(|v| v as i8).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int8)),
+                    create_field_with_type(row_type, Some(DataType::Int8))?,
                     Arc::new(Int8Array::from(int8_values)),
                 ))
             } else if min_value >= i16::MIN as i128 && max_value <= i16::MAX as i128 {
                 let int16_values: Vec<i16> = decimal_values.into_iter().map(|v| v as i16).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int16)),
+                    create_field_with_type(row_type, Some(DataType::Int16))?,
                     Arc::new(arrow::array::Int16Array::from(int16_values)),
                 ))
             } else if min_value >= i32::MIN as i128 && max_value <= i32::MAX as i128 {
                 let int32_values: Vec<i32> = decimal_values.into_iter().map(|v| v as i32).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int32)),
+                    create_field_with_type(row_type, Some(DataType::Int32))?,
                     Arc::new(arrow::array::Int32Array::from(int32_values)),
                 ))
             } else if min_value >= i64::MIN as i128 && max_value <= i64::MAX as i128 {
                 let int64_values: Vec<i64> = decimal_values.into_iter().map(|v| v as i64).collect();
                 Ok((
-                    create_field_with_type(row_type, Some(DataType::Int64)),
+                    create_field_with_type(row_type, Some(DataType::Int64))?,
                     Arc::new(Int64Array::from(int64_values)),
                 ))
             } else {
@@ -186,11 +200,11 @@ fn create_column_array(
                     create_field_with_type(
                         row_type,
                         Some(DataType::Decimal128(*precision as u8, *scale as i8)),
-                    ),
+                    )?,
                     Arc::new(
                         arrow::array::Decimal128Array::from(decimal_values)
                             .with_precision_and_scale(*precision as u8, *scale as i8)
-                            .expect("valid decimal precision/scale"),
+                            .context(ArrowSnafu {})?,
                     ),
                 ))
             }
@@ -208,7 +222,7 @@ fn create_column_array(
                 })
                 .collect();
             Ok((
-                create_field(row_type),
+                create_field(row_type)?,
                 Arc::new(BooleanArray::from(bool_values?)),
             ))
         }
@@ -222,7 +236,7 @@ fn create_column_array(
                 })
                 .collect();
             Ok((
-                create_field(row_type),
+                create_field(row_type)?,
                 Arc::new(Float64Array::from(float_values?)),
             ))
         }
@@ -236,7 +250,7 @@ fn create_column_array(
                 })
                 .collect();
             Ok((
-                create_field(row_type),
+                create_field(row_type)?,
                 Arc::new(arrow::array::PrimitiveArray::<Date32Type>::from(
                     day_values?,
                 )),
@@ -275,7 +289,7 @@ fn create_column_array(
             let (epoch_values, fraction_values): (Vec<i64>, Vec<i32>) =
                 all_values.into_iter().unzip();
 
-            let field = create_field(row_type);
+            let field = create_field(row_type)?;
             match field.data_type() {
                 DataType::Int64 => {
                     let normalized_epoch_values: Vec<i64> = epoch_values
@@ -306,7 +320,11 @@ fn create_column_array(
                     ];
                     Ok((field, Arc::new(arrow::array::StructArray::from(values))))
                 }
-                _ => panic!("Unexpected data type for TIMESTAMP_NTZ column"),
+                _ => UnsupportedDataTypeSnafu {
+                    data_type: format!("{:?}", field.data_type()),
+                    row_type: "TIMESTAMP_NTZ".to_string(),
+                }
+                .fail(),
             }
         }
     }
@@ -342,7 +360,7 @@ pub fn create_schema(row_types: &[(RowType, DataType)]) -> Result<Arc<Schema>, A
     let fields: Vec<Field> = row_types
         .iter()
         .map(|(r, d)| create_field_with_type(r, Some(d.clone())))
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Arc::new(Schema::new(fields)))
 }
 
@@ -382,6 +400,19 @@ pub enum ArrowUtilsError {
     #[snafu(display("Failed to parse boolean value: {value}"))]
     BooleanParsing {
         value: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported data type '{data_type}' for row type '{row_type}'"))]
+    UnsupportedDataType {
+        data_type: String,
+        row_type: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unexpected error: {message}"))]
+    Generic {
+        message: String,
         #[snafu(implicit)]
         location: Location,
     },
