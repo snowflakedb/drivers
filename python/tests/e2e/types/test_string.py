@@ -14,7 +14,7 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-text
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_sequential_values, assert_type
+from .utils import assert_connection_is_open, assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -82,6 +82,7 @@ class TestStringTypeCasting:
     @string_type_parametrize
     def test_should_cast_string_values_to_appropriate_type_for_string_and_synonyms(self, execute_query, string_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
         sql = f"SELECT 'hello'::{string_type}(32), 'Hello World'::{string_type}(32), '日本語テスト'::{string_type}(32)"
@@ -98,6 +99,7 @@ class TestStringLiteral:
     @string_type_parametrize
     def test_should_select_hardcoded_string_literals(self, execute_query, string_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3" is executed
         sql = (
@@ -116,12 +118,13 @@ class TestStringLiteral:
         # Corner cases: empty string, single character, whitespace-only, unicode characters, escape sequences
 
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query selecting corner case string literals is executed
-
+        type_cast = f"::{string_type}(32)"
         # Then the result should contain expected corner case string values
         for expected_val, sql_val in CORNER_CASE_VALUES:
-            result = execute_query(f"SELECT {sql_val}::{string_type}(32)", single_row=True)
+            result = execute_query(f"SELECT {sql_val}{type_cast}", single_row=True)
             assert result == (expected_val,), f"Expected {expected_val!r}, got {result[0]!r}"
 
 
@@ -131,6 +134,7 @@ class TestStringTable:
     @string_type_parametrize
     def test_should_select_hardcoded_string_values_from_table(self, execute_query, tmp_schema, string_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.string_table_test"
@@ -152,6 +156,7 @@ class TestStringTable:
     @string_type_parametrize
     def test_should_select_corner_case_string_values_from_table(self, execute_query, tmp_schema, string_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.string_corner_case_table_test"
@@ -181,6 +186,7 @@ class TestStringBinding:
         self, execute_query, executemany_insert, tmp_schema, string_type
     ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.string_bind_table_test"
@@ -204,6 +210,7 @@ class TestStringBinding:
         # SELECT binding test: Uses SELECT ?::VARCHAR to bind string values
 
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed
         # with bound string values ['hello', 'Hello World', '日本語テスト']
@@ -220,11 +227,11 @@ class TestStringBinding:
     @string_type_parametrize
     def test_should_select_corner_case_string_values_using_parameter_binding(self, execute_query, string_type):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
         for corner_case, _ in CORNER_CASE_VALUES:
             result = execute_query(f"SELECT ?::{string_type}(32)", (corner_case,), single_row=True)
-
             # Then the result should match the bound corner case value
             assert result == (corner_case,)
 
@@ -237,6 +244,7 @@ class TestStringMultipleChunks:
         # ~10000 values ensures data is downloaded in at least two chunks
 
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val
         # FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id" is executed
@@ -251,8 +259,7 @@ class TestStringMultipleChunks:
         )
         rows = execute_query(sql)
 
-        # Then there are 10000 rows returned
+        # Then there are 10000 rows returned and all string values should match the generated values in order
         assert len(rows) == LARGE_RESULT_SET_SIZE
 
-        # And all returned string values should match the generated values in order
         assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=lambda i: (i, str(i)))

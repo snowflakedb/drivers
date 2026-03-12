@@ -84,6 +84,12 @@ impl ConnectionAttribute {
 #[repr(u16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InfoType {
+    /// `SQL_CURSOR_COMMIT_BEHAVIOR` (23) — cursor behavior on commit.
+    CursorCommitBehavior = 23,
+    /// `SQL_CURSOR_ROLLBACK_BEHAVIOR` (24) — cursor behavior on rollback.
+    CursorRollbackBehavior = 24,
+    /// `SQL_DRIVER_ODBC_VER` (77) — ODBC version the driver conforms to (string).
+    DriverOdbcVer = 77,
     /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
     GetDataExtensions = 81,
 }
@@ -93,6 +99,9 @@ impl TryFrom<u16> for InfoType {
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
+            23 => Ok(InfoType::CursorCommitBehavior),
+            24 => Ok(InfoType::CursorRollbackBehavior),
+            77 => Ok(InfoType::DriverOdbcVer),
             81 => Ok(InfoType::GetDataExtensions),
             _ => {
                 tracing::warn!("Unsupported info type: {value}");
@@ -292,6 +301,8 @@ impl TryFrom<i16> for DescField {
 pub enum DescriptorKind {
     Ard = 1,
     Ird = 2,
+    Apd = 3,
+    Ipd = 4,
 }
 
 impl TryFrom<u8> for DescriptorKind {
@@ -301,6 +312,8 @@ impl TryFrom<u8> for DescriptorKind {
         match value {
             1 => Ok(DescriptorKind::Ard),
             2 => Ok(DescriptorKind::Ird),
+            3 => Ok(DescriptorKind::Apd),
+            4 => Ok(DescriptorKind::Ipd),
             _ => {
                 tracing::error!("Invalid descriptor kind: {}", value);
                 InvalidDescriptorKindSnafu { kind: value }.fail()
@@ -333,8 +346,16 @@ impl Default for ArdDescriptor {
 
 impl ArdDescriptor {
     pub fn new() -> Self {
+        Self::with_kind(DescriptorKind::Ard)
+    }
+
+    pub fn new_apd() -> Self {
+        Self::with_kind(DescriptorKind::Apd)
+    }
+
+    fn with_kind(kind: DescriptorKind) -> Self {
         Self {
-            kind: DescriptorKind::Ard,
+            kind,
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -384,8 +405,16 @@ impl Default for IrdDescriptor {
 
 impl IrdDescriptor {
     pub fn new() -> Self {
+        Self::with_kind(DescriptorKind::Ird)
+    }
+
+    pub fn new_ipd() -> Self {
+        Self::with_kind(DescriptorKind::Ipd)
+    }
+
+    fn with_kind(kind: DescriptorKind) -> Self {
         Self {
-            kind: DescriptorKind::Ird,
+            kind,
             desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -412,11 +441,11 @@ pub fn desc_ref_from_handle<'a>(handle: sql::Handle) -> OdbcResult<DescriptorRef
     let raw_kind = unsafe { *(handle as *const u8) };
     let kind = DescriptorKind::try_from(raw_kind)?;
     match kind {
-        DescriptorKind::Ard => {
+        DescriptorKind::Ard | DescriptorKind::Apd => {
             let desc = unsafe { &mut *(handle as *mut ArdDescriptor) };
             Ok(DescriptorRef::Ard(desc))
         }
-        DescriptorKind::Ird => {
+        DescriptorKind::Ird | DescriptorKind::Ipd => {
             let desc = unsafe { &mut *(handle as *mut IrdDescriptor) };
             Ok(DescriptorRef::Ird(desc))
         }
@@ -596,6 +625,8 @@ pub struct Statement<'a> {
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
     pub ard: ArdDescriptor,
     pub ird: IrdDescriptor,
+    pub apd: ArdDescriptor,
+    pub ipd: IrdDescriptor,
     pub diagnostic_info: DiagnosticInfo,
     pub get_data_state: Option<GetDataState>,
     /// `SQL_ATTR_CURSOR_TYPE` — default `ForwardOnly`.

@@ -2,7 +2,7 @@ mod api;
 pub mod c_api;
 mod cdata_types;
 mod conversion;
-mod write_arrow;
+mod write_json;
 
 extern crate sf_core;
 extern crate tracing;

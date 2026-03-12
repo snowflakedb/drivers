@@ -1,42 +1,24 @@
 use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, NoMoreDataSnafu, Required,
+    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
+    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
+    NoMoreDataSnafu, Required,
 };
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
-use crate::write_arrow::odbc_bindings_to_arrow_bindings;
+use crate::write_json::odbc_bindings_to_json;
 use arrow::array::RecordBatchReader;
-use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ArrowArrayPtr, ArrowArrayStreamPtr, ArrowSchemaPtr, ConnectionGetParameterRequest,
-    ConnectionHandle, StatementBindRequest, StatementExecuteQueryRequest,
-    StatementExecuteQueryResponse, StatementHandle, StatementPrepareRequest,
-    StatementSetSqlQueryRequest,
+    ArrowArrayStreamPtr, BinaryDataPtr, ConnectionGetParameterRequest, ConnectionHandle,
+    QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
+    StatementPrepareRequest, StatementSetSqlQueryRequest, query_bindings,
 };
 use snafu::ResultExt;
 use tracing;
-
-fn protobuf_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
-    let len = std::mem::size_of::<*mut FFI_ArrowArray>();
-    let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
-    let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
-    let vec = slice.to_vec();
-    ArrowArrayPtr { value: vec }
-}
-
-fn protobuf_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
-    let len = std::mem::size_of::<*mut FFI_ArrowSchema>();
-    let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
-    let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
-    let vec = slice.to_vec();
-    ArrowSchemaPtr { value: vec }
-}
 
 pub fn exec_direct_n(
     statement_handle: sql::Handle,
@@ -71,12 +53,12 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
                 query: statement_text.to_string(),
             })?;
 
-            apply_parameter_bindings(&stmt.stmt_handle, &stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
-                    bindings: None,
+                    bindings,
                 });
 
             tracing::info!("exec_direct: response={:?}", response);
@@ -225,12 +207,12 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            apply_parameter_bindings(&stmt.stmt_handle, &stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
-                    bindings: None,
+                    bindings,
                 })?;
 
             tracing::info!("execute: Successfully executed statement");
@@ -300,29 +282,39 @@ fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<S
     })
 }
 
+/// Build JSON query bindings from ODBC parameter bindings.
+///
+/// Returns `(bindings, json_owner)`. The caller **must** keep `json_owner` alive
+/// until after the bindings have been consumed by `statement_execute_query`,
+/// because `BinaryDataPtr` holds a raw pointer into the owned `String`.
 fn apply_parameter_bindings(
-    stmt_handle: &StatementHandle,
     parameter_bindings: &std::collections::HashMap<u16, ParameterBinding>,
-) -> OdbcResult<()> {
+) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
     if parameter_bindings.is_empty() {
-        return Ok(());
+        return Ok((None, None));
     }
     tracing::info!(
         "apply_parameter_bindings: Found {} bound parameters",
         parameter_bindings.len()
     );
 
-    let (schema, array) =
-        odbc_bindings_to_arrow_bindings(parameter_bindings).context(ArrowBindingSnafu {})?;
+    let json_string = odbc_bindings_to_json(parameter_bindings).context(JsonBindingSnafu {})?;
 
-    DatabaseDriverClient::statement_bind(StatementBindRequest {
-        stmt_handle: Some(*stmt_handle),
-        schema: Some(protobuf_from_ffi_arrow_schema(Box::into_raw(schema))),
-        array: Some(protobuf_from_ffi_arrow_array(Box::into_raw(array))),
-    })?;
+    let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
+    let json_data_len = json_string.len();
+
+    let binary_data_ptr = BinaryDataPtr {
+        value: json_data_ptr.to_le_bytes().to_vec(),
+        length: json_data_len as i64,
+    };
+
+    let bindings = QueryBindings {
+        binding_type: Some(query_bindings::BindingType::Json(binary_data_ptr)),
+    };
 
     tracing::info!("apply_parameter_bindings: Successfully bound parameters");
-    Ok(())
+
+    Ok((Some(bindings), Some(json_string)))
 }
 
 /// Bind a parameter to a prepared statement
@@ -535,11 +527,7 @@ pub fn get_stmt_attr(
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
-    tracing::debug!(
-        "get_stmt_attr: statement_handle={:?}, attribute={}",
-        statement_handle,
-        attribute
-    );
+    tracing::debug!("get_stmt_attr: attribute={}", attribute);
 
     let attr = StmtAttr::try_from(attribute)?;
     let stmt = stmt_from_handle(statement_handle);
@@ -580,6 +568,20 @@ pub fn get_stmt_attr(
             let ird_ptr = &mut stmt.ird as *mut crate::api::IrdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = ird_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::AppParamDesc => {
+            let apd_ptr = &mut stmt.apd as *mut crate::api::ArdDescriptor as sql::Handle;
+            unsafe {
+                *(value_ptr as *mut sql::Handle) = apd_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ImpParamDesc => {
+            let ipd_ptr = &mut stmt.ipd as *mut crate::api::IrdDescriptor as sql::Handle;
+            unsafe {
+                *(value_ptr as *mut sql::Handle) = ipd_ptr;
             }
             Ok(())
         }

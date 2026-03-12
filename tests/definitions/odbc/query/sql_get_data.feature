@@ -180,6 +180,7 @@ Feature: ODBC SQLGetData function behavior
   Scenario: SQLGetData retrieves data in increasing column number order.
     Given Snowflake client is logged in
     When SQLGetData is called in increasing column order
+    Then each column should return its correct value
 
   @odbc_e2e
   Scenario: SQLGetInfo returns SQL_GETDATA_EXTENSIONS bitmask.
@@ -355,12 +356,14 @@ Feature: ODBC SQLGetData function behavior
     Given Snowflake client is logged in
     When SQLGetData is called with SQL_C_CHAR for a NULL column
     And when called with SQL_C_LONG for a NULL column
+    Then both should return SQL_NULL_DATA indicator
 
   @odbc_e2e
   Scenario: SQLGetData retrieves same data for same column on same row with SQL_GD_ANY_ORDER.
     Given Snowflake client is logged in
     And SQL_GD_ANY_ORDER is supported
     When SQLGetData retrieves column 2 first, then column 1
+    Then both columns should return their correct values
 
   @odbc_e2e
   Scenario: SQLGetData on a bound column when SQL_GD_BOUND is supported.
@@ -394,3 +397,5 @@ Feature: ODBC SQLGetData function behavior
   @odbc_e2e
   Scenario: SQLGetData converts same integer to multiple C types.
     Given Snowflake client is logged in
+    When SQLGetData retrieves the same integer value using different C types
+    Then each C type conversion should return the correct value

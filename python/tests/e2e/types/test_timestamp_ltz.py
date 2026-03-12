@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from ...conftest import with_paramstyle
 from .utils import assert_connection_is_open, assert_datetime_type, assert_sequential_values, batch_insert
 
@@ -67,6 +65,8 @@ class TestTimestampLtzTypeCasting:
         result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_LTZ", single_row=True)
 
         # Then All values should be returned as appropriate type
+        assert_datetime_type(result)
+
         # And Values should have timezone info
         assert_datetime_type(result, require_tzinfo=True)
 
@@ -186,7 +186,6 @@ class TestTimestampLtzTable:
 
 
 @with_paramstyle("qmark")
-@pytest.mark.skip_reference
 class TestTimestampLtzBinding:
     """Tests for TIMESTAMP_LTZ type using parameter binding.
 

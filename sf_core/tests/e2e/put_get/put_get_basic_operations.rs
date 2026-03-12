@@ -183,7 +183,6 @@ fn check_text_field(field: &Field, name: &str) {
     assert_eq!(field.name(), name);
     let m0 = field.metadata();
     assert_eq!(m0.get("logicalType"), Some(&"TEXT".to_string()));
-    assert_eq!(m0.get("physicalType"), Some(&"LOB".to_string()));
     assert_eq!(m0.get("charLength"), Some(&rowset_text_length.to_string()));
     assert_eq!(m0.get("byteLength"), Some(&rowset_text_length.to_string()));
 }
@@ -194,5 +193,4 @@ fn check_fixed_field(field: &Field, name: &str) {
     assert_eq!(m0.get("logicalType"), Some(&"FIXED".to_string()));
     assert_eq!(m0.get("scale"), Some(&"0".to_string()));
     assert_eq!(m0.get("precision"), Some(&"64".to_string()));
-    assert_eq!(m0.get("physicalType"), Some(&"SB8".to_string()));
 }

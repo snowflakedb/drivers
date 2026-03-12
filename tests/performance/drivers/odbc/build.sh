@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/../detect_platform.sh"
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
 
-echo "Building ODBC performance driver..."
+echo "Building ODBC performance drivers..."
 echo "Platform: ${BUILDPLATFORM}"
 echo ""
 
@@ -38,14 +38,14 @@ docker create --name sf-core-extract sf-core-builder:latest >/dev/null 2>&1
 if docker cp sf-core-extract:/workdir/libsfodbc.so tests/performance/.tmp/libsfodbc.so 2>/dev/null; then
     echo "✓ Extracted libsfodbc.so"
 else
-    echo "❌ Error: Could not extract libsfodbc.so"
+    echo "Error: Could not extract libsfodbc.so"
     docker rm -f sf-core-extract >/dev/null 2>&1
     exit 1
 fi
 if docker cp sf-core-extract:/workdir/libsf_core.so tests/performance/.tmp/libsf_core.so 2>/dev/null; then
     echo "✓ Extracted libsf_core.so"
 else
-    echo "❌ Error: Could not extract libsf_core.so"
+    echo "Error: Could not extract libsf_core.so"
     docker rm -f sf-core-extract >/dev/null 2>&1
     exit 1
 fi
@@ -57,12 +57,23 @@ echo "${RUST_VERSION}" > tests/performance/.tmp/rust_version
 echo "✓ Rust version: ${RUST_VERSION}"
 echo ""
 
-# Step 3: Build ODBC driver
-echo "→ Building ODBC driver..."
-echo ""
+# Step 3: Build universal driver image
+echo "→ Building universal driver image..."
 docker build -f tests/performance/drivers/odbc/Dockerfile \
   --build-arg BUILDPLATFORM="${BUILDPLATFORM}" \
-  -t odbc-perf-driver:latest .
+  --target universal \
+  -t odbc-perf-driver-universal:latest .
 
 echo ""
-echo "✓ Build complete: odbc-perf-driver:latest"
+echo "✓ Built: odbc-perf-driver-universal:latest"
+echo ""
+
+# Step 4: Build old driver image
+echo "→ Building old driver image..."
+docker build -f tests/performance/drivers/odbc/Dockerfile \
+  --build-arg BUILDPLATFORM="${BUILDPLATFORM}" \
+  --target old \
+  -t odbc-perf-driver-old:latest .
+
+echo ""
+echo "✓ Built: odbc-perf-driver-old:latest"

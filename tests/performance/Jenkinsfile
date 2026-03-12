@@ -159,11 +159,17 @@ pipeline {
                                     // Build test command with optional TEST_ARGS
                                     def testArgs = params.TEST_ARGS?.trim() ?: ""
                                     
+                                    // ODBC has known fetch performance issues causing timeouts.
+                                    // Run a reduced set of E2E tests to stay within the 6hr limit:
+                                    if (!testArgs && params.DRIVER == 'odbc') {
+                                        testArgs = "tests/ -k '(test_select_number_50M_arrow or test_select_date_50M_arrow or test_put_files_12mx100 or test_get_files_12mx100 or 1M) and not (12mx1000 or 50M_arrow_recorded)'"
+                                        echo "ODBC: using reduced test set to avoid timeout"
+                                    }
+                                    
                                     echo "Hatch environment: ${hatchEnv}"
                                     echo "TEST_ARGS parameter: '${testArgs ?: '(empty - will run all tests)'}'"
                                     
                                     if (testArgs) {
-                                        // Pass TEST_ARGS directly as a Groovy variable, not through shell export
                                         echo "Running specific test(s): ${testArgs}"
                                         sh """
                                             source .venv/bin/activate

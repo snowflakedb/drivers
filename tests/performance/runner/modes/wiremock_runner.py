@@ -1,5 +1,4 @@
 import csv
-import json
 import logging
 import shutil
 import statistics
@@ -118,7 +117,8 @@ def run_wiremock_performance_test(
                     s3_files_dir=s3_files_dir,
                     wiremock_url=wiremock.get_url(),
                     wiremock_container_name=wiremock.get_container_name(),
-                    network_mode=network
+                    network_mode=network,
+                    wiremock_manager=wiremock,
                 )
                 
                 # Step 4: Create snapshot and transform
@@ -155,7 +155,7 @@ def run_wiremock_performance_test(
         wiremock = WiremockManager(mappings_dir, network_mode=network)
         
         try:
-            wiremock.start_replay()
+            wiremock.start_replay(driver_label=driver_type)
             
             # Execute test N times with cached responses
             logger.info("")
@@ -176,17 +176,17 @@ def run_wiremock_performance_test(
                 wiremock_container_name=wiremock.get_container_name(),
                 network_mode=network,
                 is_replay=True,  # Flag to indicate replay mode
-                expected_row_count=expected_row_count  # Pass expected row count for validation
+                expected_row_count=expected_row_count,  # Pass expected row count for validation
+                wiremock_manager=wiremock,
             )
             
-            # Collect and display WireMock response time metrics
+            # Collect metrics while WireMock is still running (triggers flush to disk)
             logger.info("")
             logger.info("Collecting response time metrics...")
             metrics = wiremock.get_request_metrics()
             _log_wiremock_metrics(metrics, warmup_iterations=warmup_iterations, iterations=iterations)
             
         finally:
-            # Stop and cleanup
             cleanup_step = 4 if skip_recording else 8
             logger.info("")
             logger.info(f"Step {cleanup_step}: Cleanup...")
@@ -517,27 +517,23 @@ def _run_test_with_proxy(
     s3_files_dir: Path = None,
     is_replay: bool = False,
     expected_row_count: int = None,
+    wiremock_manager: "WiremockManager" = None,
 ):
     """
     Run test with WireMock proxy configuration.
     
-    Adds proxy settings and disables certificate verification for drivers.
-    
-    Args:
-        wiremock_url: WireMock URL for host access (e.g., http://127.0.0.1:12345)
-        wiremock_container_name: WireMock container name for inter-container communication
-        network_mode: Docker network mode ("host" for direct host network)
-        ... (other args)
+    Sets up proxy environment variables and exports the WireMock CA certificate
+    so drivers trust the dynamically generated MITM certificates.
     """
-    # Modify parameters to disable certificate verification for WireMock
-    modified_parameters_json = _modify_parameters_for_wiremock(parameters_json, driver)
-    
     # Build environment variables for proxy and replay mode
     # With host network: use localhost; with bridge network: use container name
     proxy_url = _get_proxy_url_for_container(wiremock_url, wiremock_container_name, network_mode)
     env_vars = {
         "HTTPS_PROXY": proxy_url,
         "HTTP_PROXY": proxy_url,
+        # Lowercase variants required by the old Snowflake ODBC driver (libcurl)
+        "https_proxy": proxy_url,
+        "http_proxy": proxy_url,
     }
     
     if is_replay:
@@ -546,11 +542,26 @@ def _run_test_with_proxy(
             logger.info(f"Setting EXPECTED_ROW_COUNT={expected_row_count} for replay validation")
             env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
     
+    # Export the WireMock CA cert so the driver trusts the dynamically generated
+    # MITM certificates. Each Dockerfile appends this to the appropriate CA bundle.
+    if wiremock_manager:
+        try:
+            ca_cert_path = wiremock_manager.export_ca_cert(results_dir)
+            env_vars["WIREMOCK_CA_CERT"] = "/results/" + ca_cert_path.name
+            if driver == "odbc" and driver_type == "old":
+                env_vars["WIREMOCK_PROXY_URL"] = proxy_url
+        except Exception as e:
+            logger.error(
+                "Failed to export WireMock CA cert; skipping this test execution.",
+                exc_info=True,
+            )
+            return
+    
     # Execute test with common function
     execute_test(
         test_name=test_name,
         sql_command=sql_command,
-        parameters_json=modified_parameters_json,
+        parameters_json=parameters_json,
         results_dir=results_dir,
         iterations=iterations,
         warmup_iterations=warmup_iterations,
@@ -565,23 +576,3 @@ def _run_test_with_proxy(
     )
 
 
-def _modify_parameters_for_wiremock(parameters_json: str, driver: str) -> str:
-    """
-    Modify connection parameters to disable certificate verification for WireMock tests.
-    
-    Args:
-        parameters_json: Original JSON parameters
-        driver: Driver being used
-    
-    Returns:
-        Modified JSON parameters
-    """
-    params = json.loads(parameters_json)
-    
-    # Disable certificate verification for Core/Python/ODBC
-    # (WireMock needs certs server-side for HTTPS, but clients don't verify them)
-    if driver in ("core", "python", "odbc"):
-        params["testconnection"]["verify_certificates"] = "false"
-        params["testconnection"]["verify_hostname"] = "false"
-    
-    return json.dumps(params)

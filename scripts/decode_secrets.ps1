@@ -1,55 +1,43 @@
-#!/usr/bin/env pwsh
-
-# Decode secrets using GPG on Windows
-# Decrypts test parameter files needed for CI testing
-
-$ErrorActionPreference = "Stop"
+param(
+    [ValidateSet("aws", "gcp", "azure")]
+    [string]$Cloud = "aws"
+)
 
 if (-not $env:PARAMETERS_SECRET) {
     Write-Error "PARAMETERS_SECRET environment variable is not set"
     exit 1
 }
 
+$ErrorActionPreference = "Stop"
+
 Write-Host "Decoding secrets with GPG..."
 
-# Helper function to decrypt with proper error handling
-function Invoke-GpgDecrypt {
-    param(
-        [string]$InputFile,
-        [string]$OutputFile,
-        [string]$Passphrase
-    )
-
-    # Use Write-Output to properly pipe passphrase to gpg stdin
-    # This mimics bash's "echo '$PASS' | gpg --passphrase-fd 0"
-    $result = Write-Output $Passphrase | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --decrypt --output $OutputFile $InputFile 2>&1
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "GPG decryption failed for $InputFile : $result"
-        exit 1
-    }
-}
-
-# Decode main parameters file
-Invoke-GpgDecrypt -InputFile ".github/secrets/parameters_aws.json.gpg" -OutputFile "parameters.json" -Passphrase $env:PARAMETERS_SECRET
+# Decode main parameters file (required)
+$env:PARAMETERS_SECRET | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --output "parameters.json" --decrypt "./.github/secrets/parameters_$Cloud.json.gpg"
+if ($LASTEXITCODE -ne 0) { throw "gpg decryption failed for ./.github/secrets/parameters_$Cloud.json.gpg with exit code $LASTEXITCODE" }
 Write-Host "  ✓ parameters.json"
 
-# Decode performance test parameters if they exist
+# Decode performance test parameters if they exist (optional)
 $perfDir = "tests/performance/parameters"
 if (Test-Path "$perfDir/parameters_perf_aws.json.gpg") {
-    Invoke-GpgDecrypt -InputFile "$perfDir/parameters_perf_aws.json.gpg" -OutputFile "$perfDir/parameters_perf_aws.json" -Passphrase $env:PARAMETERS_SECRET
+    $env:PARAMETERS_SECRET | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --output "$perfDir/parameters_perf_aws.json" --decrypt "$perfDir/parameters_perf_aws.json.gpg"
+    if ($LASTEXITCODE -ne 0) { throw "gpg decryption failed for $perfDir/parameters_perf_aws.json.gpg with exit code $LASTEXITCODE" }
     Write-Host "  ✓ parameters_perf_aws.json"
 } else {
     Write-Host "  ⊘ parameters_perf_aws.json.gpg not found, skipping"
 }
+
 if (Test-Path "$perfDir/parameters_perf_azure.json.gpg") {
-    Invoke-GpgDecrypt -InputFile "$perfDir/parameters_perf_azure.json.gpg" -OutputFile "$perfDir/parameters_perf_azure.json" -Passphrase $env:PARAMETERS_SECRET
+    $env:PARAMETERS_SECRET | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --output "$perfDir/parameters_perf_azure.json" --decrypt "$perfDir/parameters_perf_azure.json.gpg"
+    if ($LASTEXITCODE -ne 0) { throw "gpg decryption failed for $perfDir/parameters_perf_azure.json.gpg with exit code $LASTEXITCODE" }
     Write-Host "  ✓ parameters_perf_azure.json"
 } else {
     Write-Host "  ⊘ parameters_perf_azure.json.gpg not found, skipping"
 }
+
 if (Test-Path "$perfDir/parameters_perf_gcp.json.gpg") {
-    Invoke-GpgDecrypt -InputFile "$perfDir/parameters_perf_gcp.json.gpg" -OutputFile "$perfDir/parameters_perf_gcp.json" -Passphrase $env:PARAMETERS_SECRET
+    $env:PARAMETERS_SECRET | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --output "$perfDir/parameters_perf_gcp.json" --decrypt "$perfDir/parameters_perf_gcp.json.gpg"
+    if ($LASTEXITCODE -ne 0) { throw "gpg decryption failed for $perfDir/parameters_perf_gcp.json.gpg with exit code $LASTEXITCODE" }
     Write-Host "  ✓ parameters_perf_gcp.json"
 } else {
     Write-Host "  ⊘ parameters_perf_gcp.json.gpg not found, skipping"

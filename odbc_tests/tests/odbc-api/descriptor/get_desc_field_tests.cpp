@@ -215,7 +215,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetDescField: 01004 - String truncat
   ret = SQLGetDescField(ird, 1, SQL_DESC_NAME, tiny, sizeof(tiny), &full_len);
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   REQUIRE(std::string(tiny) == "MY");
-  REQUIRE(full_len == 6);
+  WINDOWS_ONLY {
+    // Windows DM reports the Unicode byte length (6 chars * 2 bytes = 12)
+    REQUIRE(full_len == 12);
+  }
+  UNIX_ONLY { REQUIRE(full_len == 6); }
 }
 
 // ============================================================================

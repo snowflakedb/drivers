@@ -6,7 +6,6 @@ use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::apis::database_driver_v1::error::RestError;
-use crate::apis::database_driver_v1::statement_bind;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     connection_get_info, connection_get_parameter, connection_init, connection_new,
@@ -23,7 +22,6 @@ use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::rest::snowflake::error::SfError;
-use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use error_trace::ErrorTrace;
@@ -94,13 +92,6 @@ impl From<ArrowArrayStreamPtr> for *mut FFI_ArrowArrayStream {
 impl Into<*mut FFI_ArrowSchema> for ArrowSchemaPtr {
     fn into(self) -> *mut FFI_ArrowSchema {
         unsafe { std::ptr::read(self.value.as_ptr() as *const *mut FFI_ArrowSchema) }
-    }
-}
-
-#[allow(clippy::from_over_into)]
-impl Into<*mut FFI_ArrowArray> for ArrowArrayPtr {
-    fn into(self) -> *mut FFI_ArrowArray {
-        unsafe { std::ptr::read(self.value.as_ptr() as *const *mut FFI_ArrowArray) }
     }
 }
 
@@ -856,27 +847,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementGetParameterSchemaResponse, DriverException> {
         Err(not_implemented(
             "statement_get_parameter_schema is not yet implemented",
-        ))
-    }
-
-    #[instrument(name = "DatabaseDriverV1::statement_bind", skip(input))]
-    fn statement_bind(
-        input: StatementBindRequest,
-    ) -> Result<StatementBindResponse, DriverException> {
-        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-        let schema = required(input.schema, "Schema is required")?;
-        let array = required(input.array, "Array is required")?;
-        unsafe { statement_bind(stmt_handle.into(), schema.into(), array.into()).to_protobuf()? };
-        Ok(StatementBindResponse {})
-    }
-
-    #[instrument(name = "DatabaseDriverV1::statement_bind_stream", skip(_input))]
-    fn statement_bind_stream(
-        _input: StatementBindStreamRequest,
-    ) -> Result<StatementBindStreamResponse, DriverException> {
-        // TODO: Implement when corresponding API method is available
-        Err(not_implemented(
-            "statement_bind_stream is not yet implemented",
         ))
     }
 
