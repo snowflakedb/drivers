@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    # Allow stacked PRs (e.g. ODBC on top of JDBC) to trigger this workflow.
+    # Allow stacked PRs to trigger this workflow.
     # detect-changes still decides whether ODBC jobs actually run.
 
 concurrency:
