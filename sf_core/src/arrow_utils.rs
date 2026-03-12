@@ -65,6 +65,16 @@ pub fn create_field_with_type(row_type: &RowType, data_type: DataType) -> Field 
             ];
             Field::new(name, DataType::Struct(fields.into()), *nullable).with_metadata(metadata)
         }
+        RowType::Binary {
+            name,
+            nullable,
+            byte_length,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "BINARY".to_string());
+            metadata.insert("byteLength".to_string(), byte_length.to_string());
+            Field::new(name, data_type, *nullable).with_metadata(metadata)
+        }
     }
 }
 
@@ -242,6 +252,24 @@ fn create_column_array(
                 )),
             ))
         }
+        RowType::Binary { .. } => {
+            let mut builder = arrow::array::BinaryBuilder::new();
+            for v in &values {
+                match v {
+                    Some(s) => {
+                        let bytes = hex::decode(s).context(HexParsingSnafu {
+                            value: s.to_string(),
+                        })?;
+                        builder.append_value(&bytes);
+                    }
+                    None => builder.append_null(),
+                }
+            }
+            Ok((
+                create_field_with_type(row_type, DataType::Binary),
+                Arc::new(builder.finish()),
+            ))
+        }
         RowType::TimestampNtz { .. } => {
             let epoch: Arc<dyn Array> = Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
                 Vec::<i64>::new(),
@@ -345,14 +373,21 @@ pub enum ArrowUtilsError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to parse hex value: {value}"))]
+    HexParsing {
+        value: String,
+        source: hex::FromHexError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use arrow::array::{
-        Array, BooleanArray, Decimal128Array, Float64Array, Int8Array, Int16Array, Int32Array,
-        Int64Array, StringArray,
+        Array, BinaryArray, BooleanArray, Decimal128Array, Float64Array, Int8Array, Int16Array,
+        Int32Array, Int64Array, StringArray,
     };
     use arrow::datatypes::Date32Type;
     use arrow::record_batch::RecordBatchReader;
@@ -841,5 +876,176 @@ mod tests {
         assert_eq!(col.len(), 2);
         assert!(col.is_null(0));
         assert!(col.is_null(1));
+    }
+
+    #[test]
+    fn test_binary_hex_round_trip_with_nulls() {
+        let rowset = vec![
+            vec![Some("48454C4C4F".to_string())],
+            vec![None],
+            vec![Some("00FF01".to_string())],
+            vec![Some("".to_string())],
+        ];
+        let row_types = vec![RowType::binary("col_bin", true, 8388608)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_columns(), 1);
+        assert_eq!(batch.num_rows(), 4);
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .expect("should produce BinaryArray");
+
+        assert!(!col.is_null(0));
+        assert_eq!(col.value(0), b"HELLO");
+
+        assert!(col.is_null(1));
+
+        assert!(!col.is_null(2));
+        assert_eq!(col.value(2), &[0x00, 0xFF, 0x01]);
+
+        assert!(!col.is_null(3));
+        assert_eq!(col.value(3), b"");
+
+        let schema = batch.schema();
+        let field = schema.field(0);
+        assert_eq!(field.metadata().get("logicalType").unwrap(), "BINARY");
+        assert_eq!(field.metadata().get("byteLength").unwrap(), "8388608");
+    }
+
+    #[test]
+    fn test_binary_all_nulls() {
+        let rowset = vec![vec![None], vec![None], vec![None]];
+        let row_types = vec![RowType::binary("col_bin", true, 100)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .expect("should produce BinaryArray");
+        assert_eq!(col.len(), 3);
+        assert!(col.is_null(0));
+        assert!(col.is_null(1));
+        assert!(col.is_null(2));
+    }
+
+    #[test]
+    fn test_binary_non_nullable() {
+        let rowset = vec![vec![Some("CAFE".to_string())], vec![Some("".to_string())]];
+        let row_types = vec![RowType::binary("col_bin", false, 256)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        assert_eq!(col.value(0), &[0xCA, 0xFE]);
+        assert_eq!(col.value(1), b"");
+
+        let schema = batch.schema();
+        assert!(!schema.field(0).is_nullable());
+    }
+
+    #[test]
+    fn test_binary_invalid_hex_errors() {
+        let rowset = vec![vec![Some("ZZZZ".to_string())]];
+        let row_types = vec![RowType::binary("col_bin", true, 100)];
+        let result = convert_string_rowset_to_arrow_reader(&rowset, &row_types);
+        assert!(matches!(result, Err(ArrowUtilsError::HexParsing { .. })));
+
+        let rowset = vec![vec![Some("ABC".to_string())]];
+        let result = convert_string_rowset_to_arrow_reader(&rowset, &row_types);
+        assert!(matches!(result, Err(ArrowUtilsError::HexParsing { .. })));
+    }
+
+    #[test]
+    fn test_binary_lowercase_and_mixed_case_hex() {
+        let rowset = vec![
+            vec![Some("48454c4c4f".to_string())],
+            vec![Some("48454C4c4F".to_string())],
+        ];
+        let row_types = vec![RowType::binary("col_bin", true, 100)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        assert_eq!(col.value(0), b"HELLO");
+        assert_eq!(col.value(1), b"HELLO");
+    }
+
+    #[test]
+    fn test_binary_multi_column_with_text_and_fixed() {
+        let rowset = vec![
+            vec![
+                Some("FF00".to_string()),
+                Some("hello".to_string()),
+                Some("42".to_string()),
+            ],
+            vec![None, None, None],
+            vec![
+                Some("AABB".to_string()),
+                Some("world".to_string()),
+                Some("7".to_string()),
+            ],
+        ];
+        let row_types = vec![
+            RowType::binary("col_bin", true, 256),
+            RowType::text("col_txt", true, 16, 64),
+            RowType::fixed("col_num", true, 10, 0),
+        ];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+        assert_eq!(batch.num_columns(), 3);
+        assert_eq!(batch.num_rows(), 3);
+
+        let bin_col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        assert!(!bin_col.is_null(0));
+        assert_eq!(bin_col.value(0), &[0xFF, 0x00]);
+        assert!(bin_col.is_null(1));
+        assert!(!bin_col.is_null(2));
+        assert_eq!(bin_col.value(2), &[0xAA, 0xBB]);
+
+        let schema = batch.schema();
+        let bin_field = schema.field(0);
+        assert!(bin_field.is_nullable());
+        assert_eq!(bin_field.metadata().get("logicalType").unwrap(), "BINARY");
+
+        let txt_col = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(txt_col.value(0), "hello");
+        assert!(txt_col.is_null(1));
+        assert_eq!(txt_col.value(2), "world");
+
+        let num_col = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int8Array>()
+            .unwrap();
+        assert_eq!(num_col.value(0), 42);
+        assert!(num_col.is_null(1));
+        assert_eq!(num_col.value(2), 7);
     }
 }

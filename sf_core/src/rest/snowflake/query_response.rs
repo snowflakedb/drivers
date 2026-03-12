@@ -580,6 +580,12 @@ impl TryFrom<&RowType> for query_types::RowType {
                 Ok(query_types::RowType::timestamp_ntz(&name, nullable, scale))
             }
             "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
+            "BINARY" => {
+                let byte_length = value.byte_length.context(MissingParameterSnafu {
+                    parameter: format!("row type -> byte_length for BINARY column '{name}'"),
+                })?;
+                Ok(query_types::RowType::binary(&name, nullable, byte_length))
+            }
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
@@ -727,4 +733,55 @@ pub enum QueryResponseError {
         #[snafu(implicit)]
         location: snafu::Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query_types;
+
+    #[test]
+    fn test_try_from_binary_rowtype() {
+        let row_type = RowType {
+            name: "bin_col".to_string(),
+            scale: None,
+            nullable: true,
+            type_: "BINARY".to_string(),
+            byte_length: Some(8388608),
+            length: None,
+            precision: None,
+            _fields: None,
+        };
+
+        let result = query_types::RowType::try_from(&row_type).unwrap();
+        match result {
+            query_types::RowType::Binary {
+                name,
+                nullable,
+                byte_length,
+            } => {
+                assert_eq!(name, "bin_col");
+                assert!(nullable);
+                assert_eq!(byte_length, 8388608);
+            }
+            _ => panic!("expected RowType::Binary"),
+        }
+    }
+
+    #[test]
+    fn test_try_from_binary_missing_byte_length() {
+        let row_type = RowType {
+            name: "bin_col".to_string(),
+            scale: None,
+            nullable: false,
+            type_: "BINARY".to_string(),
+            byte_length: None,
+            length: None,
+            precision: None,
+            _fields: None,
+        };
+
+        let result = query_types::RowType::try_from(&row_type);
+        assert!(result.is_err());
+    }
 }

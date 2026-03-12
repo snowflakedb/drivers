@@ -28,6 +28,11 @@ pub enum RowType {
         nullable: bool,
         scale: u64,
     },
+    Binary {
+        name: String,
+        nullable: bool,
+        byte_length: u64,
+    },
 }
 
 impl RowType {
@@ -84,6 +89,14 @@ impl RowType {
             name: name.to_string(),
             nullable,
             scale,
+        }
+    }
+
+    pub fn binary(name: &str, nullable: bool, byte_length: u64) -> Self {
+        RowType::Binary {
+            name: name.to_string(),
+            nullable,
+            byte_length,
         }
     }
 }
