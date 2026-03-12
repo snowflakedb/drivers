@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from ...conftest import with_paramstyle
 from .utils import assert_connection_is_open, assert_datetime_type, assert_sequential_values, batch_insert
 
@@ -85,18 +87,22 @@ class TestTimestampLtzLiteral:
         ("microseconds", [TS_WITH_MICROSECONDS_STR], (TS_WITH_MICROSECONDS,)),
     ]
 
-    def test_should_select_timestamp_ltz_values(self, execute_query):
+    @pytest.mark.parametrize(
+        "values,query_values,expected_values",
+        LITERAL_SELECT_TEST_CASES,
+        ids=[c[0] for c in LITERAL_SELECT_TEST_CASES],
+    )
+    def test_should_select_timestamp_ltz_values(self, execute_query, values, query_values, expected_values):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        for _name, query_values, expected_values in self.LITERAL_SELECT_TEST_CASES:
-            # When Query "SELECT <query_values>" is executed
-            select_cols = ", ".join(f"'{v}'::TIMESTAMP_LTZ" for v in query_values)
-            result = execute_query(f"SELECT {select_cols}", single_row=True)
+        # When Query "SELECT <query_values>" is executed
+        select_cols = ", ".join(f"'{v}'::TIMESTAMP_LTZ" for v in query_values)
+        result = execute_query(f"SELECT {select_cols}", single_row=True)
 
-            # Then Result should contain timestamps <expected_values>
-            assert_datetime_type(result, require_tzinfo=True)
-            assert tuple(to_utc(result)) == expected_values
+        # Then Result should contain timestamps <expected_values>
+        assert_datetime_type(result, require_tzinfo=True)
+        assert tuple(to_utc(result)) == expected_values
 
     def test_should_handle_null_values_for_timestamp_ltz(self, execute_query):
         # Given Snowflake client is logged in
@@ -142,23 +148,29 @@ class TestTimestampLtzTable:
         ("null", [None, TS_2024_JAN_STR], [TS_2024_JAN, None], True),
     ]
 
-    def test_should_select_values_from_table_for_timestamp_ltz(self, execute_query, tmp_schema):
+    @pytest.mark.parametrize(
+        "values_name,insert_values,expected_values,can_be_none",
+        TABLE_SELECT_TEST_CASES,
+        ids=[c[0] for c in TABLE_SELECT_TEST_CASES],
+    )
+    def test_should_select_values_from_table_for_timestamp_ltz(
+        self, execute_query, tmp_schema, values_name, insert_values, expected_values, can_be_none
+    ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        for values_name, insert_values, expected_values, can_be_none in self.TABLE_SELECT_TEST_CASES:
-            # And Table with TIMESTAMP_LTZ column exists with values <insert_values>
-            table_name = f"{tmp_schema}.timestamp_ltz_table_{values_name}"
-            execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_LTZ)")
-            batch_insert(execute_query, table_name, insert_values, quote_strings=True)
+        # And Table with TIMESTAMP_LTZ column exists with values <insert_values>
+        table_name = f"{tmp_schema}.timestamp_ltz_table_{values_name}"
+        execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_LTZ)")
+        batch_insert(execute_query, table_name, insert_values, quote_strings=True)
 
-            # When Query "SELECT * FROM <table> ORDER BY col" is executed
-            rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
-            result = [row[0] for row in rows]
+        # When Query "SELECT * FROM <table> ORDER BY col" is executed
+        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+        result = [row[0] for row in rows]
 
-            # Then Result should contain timestamps <expected_values>
-            assert_datetime_type(result, can_be_none=can_be_none, require_tzinfo=True)
-            assert to_utc(result) == expected_values
+        # Then Result should contain timestamps <expected_values>
+        assert_datetime_type(result, can_be_none=can_be_none, require_tzinfo=True)
+        assert to_utc(result) == expected_values
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table_for_timestamp_ltz(
         self, execute_query, tmp_schema
@@ -208,6 +220,10 @@ class TestTimestampLtzBinding:
         # Then Result should contain the bound timestamps
         assert_datetime_type(result, require_tzinfo=True)
         assert len(result) == 2
+
+    def test_should_select_null_timestamp_ltz_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::TIMESTAMP_LTZ" is executed with bound NULL value
         result = execute_query("SELECT ?::TIMESTAMP_LTZ", (None,), single_row=True)

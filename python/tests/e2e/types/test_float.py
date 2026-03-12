@@ -119,24 +119,36 @@ class TestFloatLiteral:
         assert_floats_equal(result, (nan, inf, -inf))
         assert_type(result, float)
 
+    BOUNDARY_LITERAL_CASES = [
+        ((FLOAT_MAX, FLOAT_MIN), (FLOAT_MAX, FLOAT_MIN)),
+        ((FLOAT_MIN_NORMAL, FLOAT_MIN_SUBNORMAL), (FLOAT_MIN_NORMAL, FLOAT_MIN_SUBNORMAL)),
+    ]
+
     @float_type_parametrize
-    def test_should_handle_float_boundary_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
+    @pytest.mark.parametrize(
+        "select_values, expected",
+        BOUNDARY_LITERAL_CASES,
+        ids=["max", "min"],
+    )
+    def test_should_handle_float_case_boundary_values_from_literals_for_float_and_synonyms(
+        self, execute_query, float_type, select_values, expected
+    ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is executed
-        sql = f"SELECT {FLOAT_MAX}::{float_type}, {FLOAT_MIN}::{float_type}"
-        result = execute_query(sql, single_row=True)
+        # When Query "SELECT <query_values>" is executed
+        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
+        result = execute_query(f"SELECT {columns}", single_row=True)
 
-        # Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
-        assert_floats_equal(result, (FLOAT_MAX, FLOAT_MIN))
+        # Then Result should contain floats [<expected_values>]
+        assert_floats_equal(result, expected)
 
-        # When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
-        sql = f"SELECT {FLOAT_MIN_NORMAL}::{float_type}, {FLOAT_MIN_SUBNORMAL}::{float_type}"
-        result = execute_query(sql, single_row=True)
-
-        # Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
-        assert_floats_equal(result, (FLOAT_MIN_NORMAL, FLOAT_MIN_SUBNORMAL))
+    @float_type_parametrize
+    def test_should_handle_float_precision_boundary_values_from_literals_for_float_and_synonyms(
+        self, execute_query, float_type
+    ):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
         sql = f"SELECT {FLOAT_15_DIGITS}::{float_type}, {FLOAT_16_DIGITS}::{float_type}"
@@ -325,13 +337,14 @@ class TestFloatBinding:
         assert_floats_equal(result, [123.456, -789.012, 42.0])
         assert_type(result, float)
 
-        # Note: NaN, inf, -inf cannot be bound via parameter binding in Snowflake.
-        # Snowflake rejects them with "Invalid bind value (nan) for type (REAL)".
-        # Special float values are tested via literals in TestFloatLiteral instead.
+    @float_type_parametrize
+    def test_should_select_null_float_using_parameter_binding_for_float_and_synonyms(self, execute_query, float_type):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::<type>" is executed with bound NULL value
-        sql_null = f"SELECT ?::{float_type}"
-        result = execute_query(sql_null, (None,), single_row=True)
+        sql = f"SELECT ?::{float_type}"
+        result = execute_query(sql, (None,), single_row=True)
 
         # Then Result should contain NULL
         assert_floats_equal(result, [None])

@@ -8,11 +8,15 @@ Feature: ODBC boolean to floating point and numeric type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario: should convert boolean to floating point types
+  Scenario Outline: should convert boolean to <c_type>
     Given Snowflake client is logged in
     When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
-    Then SQL_C_FLOAT should return 1.0 for TRUE and 0.0 for FALSE
-    And SQL_C_DOUBLE should return 1.0 for TRUE and 0.0 for FALSE
+    Then <c_type> should return 1.0 for TRUE and 0.0 for FALSE
+
+    Examples:
+      | c_type     |
+      | SQL_C_FLOAT  |
+      | SQL_C_DOUBLE |
 
   # ============================================================================
   # SUCCESSFUL CONVERSIONS - Boolean to SQL_C_NUMERIC
@@ -29,9 +33,13 @@ Feature: ODBC boolean to floating point and numeric type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario: should handle NULL boolean with numeric and binary C types
+  Scenario Outline: should handle NULL boolean with <c_type>
     Given Snowflake client is logged in
     When Query "SELECT NULL::BOOLEAN" is executed
-    Then SQL_C_FLOAT should return SQL_NULL_DATA indicator
-    And SQL_C_DOUBLE should return SQL_NULL_DATA indicator
-    And SQL_C_NUMERIC should return SQL_NULL_DATA indicator
+    Then <c_type> should return SQL_NULL_DATA indicator
+
+    Examples:
+      | c_type      |
+      | SQL_C_FLOAT   |
+      | SQL_C_DOUBLE  |
+      | SQL_C_NUMERIC |

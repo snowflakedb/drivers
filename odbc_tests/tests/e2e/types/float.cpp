@@ -86,32 +86,41 @@ TEST_CASE("should handle special float values from literals for float and synony
   CHECK(is_negative_infinity_str(get_data<SQL_C_CHAR>(stmt, 3)));
 }
 
-TEST_CASE("should handle float boundary values from literals for float and synonyms", "[float]") {
+TEST_CASE("should handle float case boundary values from literals for float and synonyms", "[float]") {
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is executed
-  auto stmt = conn.execute_fetch("SELECT 1.7976931348623157e308::FLOAT, -1.7976931348623157e308::FLOAT");
+  SECTION("max") {
+    // When Query "SELECT <query_values>" is executed
+    auto stmt = conn.execute_fetch("SELECT 1.7976931348623157e308::FLOAT, -1.7976931348623157e308::FLOAT");
 
-  // Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
-  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(1.7976931348623157e308));
-  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(-1.7976931348623157e308));
+    // Then Result should contain floats [<expected_values>]
+    CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(1.7976931348623157e308));
+    CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(-1.7976931348623157e308));
+  }
 
-  // When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
-  auto stmt2 = conn.execute_fetch("SELECT 2.2250738585072014e-308::FLOAT, 5e-324::FLOAT");
+  SECTION("min") {
+    // When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
+    auto stmt = conn.execute_fetch("SELECT 2.2250738585072014e-308::FLOAT, 5e-324::FLOAT");
 
-  // Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
-  CHECK(get_data<SQL_C_DOUBLE>(stmt2, 1) == Catch::Approx(2.2250738585072014e-308));
-  double subnormal = get_data<SQL_C_DOUBLE>(stmt2, 2);
-  CHECK(subnormal > 0.0);
-  CHECK(subnormal < 1e-300);
+    // Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
+    CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(2.2250738585072014e-308));
+    double subnormal = get_data<SQL_C_DOUBLE>(stmt, 2);
+    CHECK(subnormal > 0.0);
+    CHECK(subnormal < 1e-300);
+  }
+}
+
+TEST_CASE("should handle float precision boundary values from literals for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
 
   // When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
-  auto stmt3 = conn.execute_fetch("SELECT 123456789012345.0::FLOAT, 1234567890123456.0::FLOAT");
+  auto stmt = conn.execute_fetch("SELECT 123456789012345.0::FLOAT, 1234567890123456.0::FLOAT");
 
   // Then Result should verify precision around 15 decimal digits
-  CHECK(get_data<SQL_C_DOUBLE>(stmt3, 1) == Catch::Approx(123456789012345.0));
-  CHECK(get_data<SQL_C_DOUBLE>(stmt3, 2) == Catch::Approx(1234567890123456.0));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123456789012345.0));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(1234567890123456.0));
 }
 
 TEST_CASE("should handle NULL values from literals for float and synonyms", "[float]") {

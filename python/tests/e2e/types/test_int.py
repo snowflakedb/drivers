@@ -114,18 +114,24 @@ class TestIntLiteral:
     ]
 
     @int_type_parametrize
-    def test_should_select_integer_values_for_int_and_synonyms(self, execute_query, int_type):
+    @pytest.mark.parametrize(
+        "values,query_values,expected_values",
+        LITERAL_SELECT_TEST_CASES,
+        ids=[c[0] for c in LITERAL_SELECT_TEST_CASES],
+    )
+    def test_should_select_integer_values_for_int_and_synonyms(
+        self, execute_query, int_type, values, query_values, expected_values
+    ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        for _values, query_values, expected_values in self.LITERAL_SELECT_TEST_CASES:
-            # When Query "SELECT <query_values>" is executed
-            select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
-            result = execute_query(f"SELECT {select_cols}", single_row=True)
+        # When Query "SELECT <query_values>" is executed
+        select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
+        result = execute_query(f"SELECT {select_cols}", single_row=True)
 
-            # Then Result should contain integers <expected_values>
-            assert result == expected_values
-            assert_type(result, int)
+        # Then Result should contain integers <expected_values>
+        assert result == expected_values
+        assert_type(result, int)
 
     @int_type_parametrize
     def test_should_handle_large_integer_values_for_int_and_synonyms(self, execute_query, int_type):
@@ -223,23 +229,29 @@ class TestIntTable:
     ]
 
     @int_type_parametrize
-    def test_should_select_values_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
+    @pytest.mark.parametrize(
+        "values,insert_values,expected_values,can_be_none",
+        TABLE_SELECT_TEST_CASES,
+        ids=[c[0] for c in TABLE_SELECT_TEST_CASES],
+    )
+    def test_should_select_values_from_table_for_int_and_synonyms(
+        self, execute_query, tmp_schema, int_type, values, insert_values, expected_values, can_be_none
+    ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        for values, insert_values, expected_values, can_be_none in self.TABLE_SELECT_TEST_CASES:
-            # And Table with <type> column exists with values <insert_values>
-            table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
-            execute_query(f"CREATE TABLE {table_name} (col {int_type})")
-            batch_insert(execute_query, table_name, insert_values)
+        # And Table with <type> column exists with values <insert_values>
+        table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
+        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        batch_insert(execute_query, table_name, insert_values)
 
-            # When Query "SELECT * FROM <table> ORDER BY col" is executed
-            rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
-            result = [row[0] for row in rows]
+        # When Query "SELECT * FROM <table> ORDER BY col" is executed
+        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+        result = [row[0] for row in rows]
 
-            # Then Result should contain integers <expected_values>
-            assert result == expected_values
-            assert_type(result, int, can_be_none=can_be_none)
+        # Then Result should contain integers <expected_values>
+        assert result == expected_values
+        assert_type(result, int, can_be_none=can_be_none)
 
     @int_type_parametrize
     def test_should_select_large_integer_values_from_table_for_int_and_synonyms(

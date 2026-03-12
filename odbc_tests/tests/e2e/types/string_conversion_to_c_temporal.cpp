@@ -27,7 +27,7 @@
 // SUCCESSFUL CONVERSIONS - String to Date/Time Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to date and time types", "[datatype][string][conversion][temporal]") {
+TEST_CASE("should convert string literals to c_type", "[datatype][string][conversion][temporal]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -38,7 +38,7 @@ TEST_CASE("should convert string literals to date and time types", "[datatype][s
       "'14:30:45' AS c4, '00:00:00' AS c5, '23:59:59' AS c6, "
       "'2024-01-15 14:30:45' AS c7, '1999-12-31 23:59:59' AS c8, '  2024-01-15 14:30:45  ' AS c9");
 
-  // Then SQL_C_TYPE_DATE conversions should work
+  // Then <c_type> conversions should work
   auto date1 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 1);
   CHECK(date1.year == 2024);
   CHECK(date1.month == 1);

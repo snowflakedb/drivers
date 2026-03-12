@@ -14,8 +14,12 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Stream;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class DecfloatTests extends SnowflakeIntegrationTestBase {
   private static final int LARGE_RESULT_SET_SIZE = 20_000;
@@ -130,34 +134,32 @@ public class DecfloatTests extends SnowflakeIntegrationTestBase {
         });
   }
 
-  @Test
-  public void shouldHandleExtremeExponentValuesFromLiterals() throws Exception {
+  private static Stream<Arguments> caseExponentLiteralValues() {
+    return Stream.of(
+        Arguments.of(
+            "max positive and min positive",
+            "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT",
+            Arrays.asList(new BigDecimal("1E+16384"), new BigDecimal("1E-16383"))),
+        Arguments.of(
+            "large negative and small positive",
+            "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT",
+            Arrays.asList(new BigDecimal("-1.234E+8000"), new BigDecimal("9.876E-8000"))));
+  }
+
+  @ParameterizedTest
+  @MethodSource("caseExponentLiteralValues")
+  public void shouldHandleCaseExponentValuesFromLiterals(
+      String caseName, String sql, List<BigDecimal> expectedValues) throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
-    String sql1 = "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT";
+    // When Query "SELECT <query_values>" is executed
     withQueryResult(
         connection,
-        sql1,
+        sql,
         resultSet -> {
-
-          // Then Result should contain [1E+16384, 1E-16383]
-          assertSingleRowWithNulls(
-              resultSet, Arrays.asList(new BigDecimal("1E+16384"), new BigDecimal("1E-16383")));
-        });
-
-    // When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
-    String sql2 = "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT";
-    withQueryResult(
-        connection,
-        sql2,
-        resultSet -> {
-
-          // Then Result should contain [-1.234E+8000, 9.876E-8000]
-          assertSingleRowWithNulls(
-              resultSet,
-              Arrays.asList(new BigDecimal("-1.234E+8000"), new BigDecimal("9.876E-8000")));
+          // Then Result should contain [<expected_values>]
+          assertSingleRowWithNulls(resultSet, expectedValues);
         });
   }
 
@@ -395,6 +397,12 @@ public class DecfloatTests extends SnowflakeIntegrationTestBase {
               resultSet, 3, new BigDecimal("42.0"), "Column 3 mismatch for DECFLOAT");
           assertFalse(resultSet.next(), "Expected exactly one row for type: DECFLOAT");
         });
+  }
+
+  @Test
+  public void shouldSelectNullDecfloatUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
 
     // When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
     withPreparedQueryResult(
@@ -412,34 +420,28 @@ public class DecfloatTests extends SnowflakeIntegrationTestBase {
         });
   }
 
-  @Test
-  public void shouldSelectExtremeDecfloatValuesUsingParameterBinding() throws Exception {
+  private static Stream<Arguments> caseDecfloatBindingValues() {
+    return Stream.of(
+        Arguments.of("max exponent", new BigDecimal("1E+16384")),
+        Arguments.of("large negative exponent", new BigDecimal("-1.234E+8000")));
+  }
+
+  @ParameterizedTest
+  @MethodSource("caseDecfloatBindingValues")
+  public void shouldSelectCaseDecfloatUsingParameterBinding(String caseName, BigDecimal value)
+      throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
+    // When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
     withPreparedQueryResult(
         connection,
         "SELECT ?::DECFLOAT",
-        ps -> ps.setBigDecimal(1, new BigDecimal("1E+16384")),
+        ps -> ps.setBigDecimal(1, value),
         resultSet -> {
-          // Then Result should contain [1E+16384]
+          // Then Result should contain [<expected>]
           assertTrue(resultSet.next(), "Expected one row for type: DECFLOAT");
-          assertDecfloatColumn(
-              resultSet, 1, new BigDecimal("1E+16384"), "Value mismatch for DECFLOAT");
-          assertFalse(resultSet.next(), "Expected exactly one row for type: DECFLOAT");
-        });
-
-    // When Query "SELECT ?::DECFLOAT" is executed with bound value -1.234E+8000
-    withPreparedQueryResult(
-        connection,
-        "SELECT ?::DECFLOAT",
-        ps -> ps.setBigDecimal(1, new BigDecimal("-1.234E+8000")),
-        resultSet -> {
-          // Then Result should contain [-1.234E+8000]
-          assertTrue(resultSet.next(), "Expected one row for type: DECFLOAT");
-          assertDecfloatColumn(
-              resultSet, 1, new BigDecimal("-1.234E+8000"), "Value mismatch for DECFLOAT");
+          assertDecfloatColumn(resultSet, 1, value, "Value mismatch for DECFLOAT");
           assertFalse(resultSet.next(), "Expected exactly one row for type: DECFLOAT");
         });
   }

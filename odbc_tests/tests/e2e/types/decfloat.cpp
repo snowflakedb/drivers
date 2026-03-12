@@ -108,31 +108,35 @@ TEST_CASE("should handle full 38-digit precision values from literals", "[decflo
   }
 }
 
-TEST_CASE("should handle extreme exponent values from literals", "[decfloat]") {
+TEST_CASE("should handle case exponent values from literals", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
-  auto stmt1 = conn.execute_fetch("SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT");
+  SECTION("max positive and min positive") {
+    // When Query "SELECT <query_values>" is executed
+    auto stmt = conn.execute_fetch("SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT");
 
-  // Then Result should contain [1E+16384, 1E-16383]
-  CHECK(get_data<SQL_C_CHAR>(stmt1, 1) == "1e16384");
-  CHECK(get_data<SQL_C_CHAR>(stmt1, 2) == "1e-16383");
-
-  // When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
-  auto stmt2 = conn.execute_fetch("SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT");
-
-  // Then Result should contain [-1.234E+8000, 9.876E-8000]
-  NEW_DRIVER_ONLY("BD#23") {
-    CHECK(get_data<SQL_C_CHAR>(stmt2, 1) == "-1.234e8000");
-    CHECK(get_data<SQL_C_CHAR>(stmt2, 2) == "9.876e-8000");
+    // Then Result should contain [<expected_values>]
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
+    CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "1e-16383");
   }
 
-  OLD_DRIVER_ONLY("BD#23") {
-    CHECK(get_data<SQL_C_CHAR>(stmt2, 1) == "-1234e7997");
-    CHECK(get_data<SQL_C_CHAR>(stmt2, 2) == "9876e-8003");
+  SECTION("large negative and small positive") {
+    // When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
+    auto stmt = conn.execute_fetch("SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT");
+
+    // Then Result should contain [-1.234E+8000, 9.876E-8000]
+    NEW_DRIVER_ONLY("BD#23") {
+      CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
+      CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "9.876e-8000");
+    }
+
+    OLD_DRIVER_ONLY("BD#23") {
+      CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997");
+      CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "9876e-8003");
+    }
   }
 }
 

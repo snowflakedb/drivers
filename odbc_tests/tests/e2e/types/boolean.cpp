@@ -228,24 +228,27 @@ TEST_CASE("should select boolean using parameter binding", "[boolean]") {
     REQUIRE(get_data<SQL_C_BIT>(stmt, 2) == 0);
     REQUIRE(get_data<SQL_C_BIT>(stmt, 3) == 1);
   }
+}
+
+TEST_CASE("should select null boolean using parameter binding", "[boolean]") {
+  // Given Snowflake client is logged in
+  Connection conn;
 
   // When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
-  {
-    const auto stmt = conn.createStatement();
-    SQLCHAR val = 0;
-    SQLLEN ind = SQL_NULL_DATA;
+  const auto stmt = conn.createStatement();
+  SQLCHAR val = 0;
+  SQLLEN ind = SQL_NULL_DATA;
 
-    SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_BIT, 1, 0, &val, 0, &ind);
-    CHECK_ODBC(ret, stmt);
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_BIT, 1, 0, &val, 0, &ind);
+  CHECK_ODBC(ret, stmt);
 
-    ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::BOOLEAN"), SQL_NTS);
-    CHECK_ODBC(ret, stmt);
-    ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::BOOLEAN"), SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
 
-    // Then Result should contain [NULL]
-    REQUIRE(get_data_optional<SQL_C_BIT>(stmt, 1) == std::nullopt);
-  }
+  // Then Result should contain [NULL]
+  REQUIRE(get_data_optional<SQL_C_BIT>(stmt, 1) == std::nullopt);
 }
 
 TEST_CASE("should insert boolean using parameter binding", "[boolean]") {

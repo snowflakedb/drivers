@@ -201,6 +201,12 @@ public class BooleanTests extends SnowflakeIntegrationTestBase {
           // Then Result should contain [TRUE, FALSE, TRUE]
           assertSingleRow(resultSet, Arrays.asList(true, false, true));
         });
+  }
+
+  @Test
+  public void shouldSelectNullBooleanUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
 
     // When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
     withPreparedQueryResult(

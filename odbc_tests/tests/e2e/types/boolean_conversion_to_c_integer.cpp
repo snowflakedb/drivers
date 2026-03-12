@@ -7,18 +7,14 @@
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
 
-// ============================================================================
-// Signed integer types
-// ============================================================================
-
-TEST_CASE("should convert boolean to signed integer types", "[datatype][boolean][conversion][integer]") {
+TEST_CASE("should convert boolean to c_type", "[datatype][boolean][conversion][integer]") {
   // Given Snowflake client is logged in
   Connection conn;
 
   // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
   const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
 
-  // Then SQL_C_LONG should return 1 for TRUE and 0 for FALSE
+  // Then <c_type> should return 1 for TRUE and 0 for FALSE
   REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 1) == 1);
   REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 2) == 0);
 
@@ -45,20 +41,8 @@ TEST_CASE("should convert boolean to signed integer types", "[datatype][boolean]
   // And SQL_C_SBIGINT should return 1 for TRUE and 0 for FALSE
   REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 1);
   REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == 0);
-}
 
-// ============================================================================
-// Unsigned integer types
-// ============================================================================
-
-TEST_CASE("should convert boolean to unsigned integer types", "[datatype][boolean][conversion][integer]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-
-  // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
-  const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
-
-  // Then SQL_C_ULONG should return 1 for TRUE and 0 for FALSE
+  // And SQL_C_ULONG should return 1 for TRUE and 0 for FALSE
   REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 1) == 1);
   REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 2) == 0);
 

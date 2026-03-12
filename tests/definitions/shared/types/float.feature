@@ -31,12 +31,19 @@ Feature: FLOAT type support
     Then Result should contain [NaN, positive_infinity, negative_infinity]
 
   @python_e2e @odbc_e2e @jdbc_e2e
-  Scenario: should handle float boundary values from literals for float and synonyms
+  Scenario Outline: should handle float <case> boundary values from literals for float and synonyms
     Given Snowflake client is logged in
-    When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is executed
-    Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
-    When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
-    Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
+    When Query "SELECT <query_values>" is executed
+    Then Result should contain floats [<expected_values>]
+
+    Examples:
+      | case | query_values                                                   | expected_values                                 |
+      | max  | 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type> | 1.7976931348623157e308, -1.7976931348623157e308  |
+      | min  | 2.2250738585072014e-308::<type>, 5e-324::<type>                | 2.2250738585072014e-308, approximately 5e-324    |
+
+  @python_e2e @odbc_e2e @jdbc_e2e
+  Scenario: should handle float precision boundary values from literals for float and synonyms
+    Given Snowflake client is logged in
     When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
     Then Result should verify precision around 15 decimal digits
 
@@ -100,6 +107,10 @@ Feature: FLOAT type support
     Given Snowflake client is logged in
     When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values [123.456, -789.012, 42.0]
     Then Result should contain floats [123.456, -789.012, 42.0]
+
+  @python_e2e @jdbc_e2e
+  Scenario: should select null float using parameter binding for float and synonyms
+    Given Snowflake client is logged in
     When Query "SELECT ?::<type>" is executed with bound NULL value
     Then Result should contain NULL
 

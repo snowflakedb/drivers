@@ -30,12 +30,15 @@ Feature: DECFLOAT type support
     Then Result should preserve all 38 digits for each value
 
   @python_e2e @odbc_e2e @jdbc_e2e
-  Scenario: should handle extreme exponent values from literals
+  Scenario Outline: should handle <case> exponent values from literals
     Given Snowflake client is logged in
-    When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
-    Then Result should contain [1E+16384, 1E-16383]
-    When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
-    Then Result should contain [-1.234E+8000, 9.876E-8000]
+    When Query "SELECT <query_values>" is executed
+    Then Result should contain [<expected_values>]
+
+    Examples:
+      | case                              | query_values                                       | expected_values           |
+      | max positive and min positive     | '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT        | 1E+16384, 1E-16383        |
+      | large negative and small positive | '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT | -1.234E+8000, 9.876E-8000 |
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle NULL values from literals
@@ -97,16 +100,23 @@ Feature: DECFLOAT type support
     Given Snowflake client is logged in
     When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed with bound DECFLOAT values [123.456, -789.012, 42.0]
     Then Result should contain [123.456, -789.012, 42.0]
+
+  @python_e2e @jdbc_e2e
+  Scenario: should select null decfloat using parameter binding
+    Given Snowflake client is logged in
     When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
     Then Result should contain [NULL]
 
   @python_e2e @odbc_e2e @jdbc_e2e
-  Scenario: should select extreme decfloat values using parameter binding
+  Scenario Outline: should select <case> decfloat using parameter binding
     Given Snowflake client is logged in
-    When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
-    Then Result should contain [1E+16384]
-    When Query "SELECT ?::DECFLOAT" is executed with bound value -1.234E+8000
-    Then Result should contain [-1.234E+8000]
+    When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
+    Then Result should contain [<expected>]
+
+    Examples:
+      | case                    | value          | expected        |
+      | max exponent            | 1E+16384       | 1E+16384        |
+      | large negative exponent | -1.234E+8000   | -1.234E+8000    |
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should insert decfloat using parameter binding

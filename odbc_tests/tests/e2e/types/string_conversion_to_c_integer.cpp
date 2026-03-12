@@ -29,7 +29,7 @@
 // SUCCESSFUL CONVERSIONS - String to Signed Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to signed integer types", "[datatype][string][conversion][integer]") {
+TEST_CASE("should convert string literals to c_type", "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -44,7 +44,7 @@ TEST_CASE("should convert string literals to signed integer types", "[datatype][
       "'50' AS c14, '-50' AS c15, "
       "'9223372036854775807' AS c16, '-9223372036854775808' AS c17, '1234567890123456789' AS c18");
 
-  // Then SQL_C_LONG conversions should work
+  // Then <c_type> conversions should work
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == -456);
   CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
@@ -79,7 +79,7 @@ TEST_CASE("should convert string literals to signed integer types", "[datatype][
 // SUCCESSFUL CONVERSIONS - String to Unsigned Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to unsigned integer types", "[datatype][string][conversion][integer]") {
+TEST_CASE("should convert string literals to c_type (unsigned)", "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -92,7 +92,7 @@ TEST_CASE("should convert string literals to unsigned integer types", "[datatype
       "'18446744073709551615' AS c6, '12345678901234567890' AS c7, "
       "'100' AS c8, '200' AS c9");
 
-  // Then SQL_C_ULONG conversions should work
+  // Then <c_type> conversions should work
   CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
   CHECK(get_data<SQL_C_ULONG>(stmt, 2) == 0);
   CHECK(get_data<SQL_C_ULONG>(stmt, 3) == 4294967295U);

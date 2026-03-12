@@ -22,35 +22,54 @@ TEST_CASE("should cast integer values to appropriate type for int and synonyms",
 }
 
 TEST_CASE("should select integer values for int and synonyms", "[int]") {
-  struct TestCase {
-    std::string name;
-    std::string query;
-    std::vector<int64_t> expected;
-  };
-
-  std::vector<TestCase> test_cases = {
-      {"zero", "SELECT 0::INT", {0}},
-      {"tinyint", "SELECT -128::INT, 127::INT, 255::INT", {-128, 127, 255}},
-      {"smallint", "SELECT -32768::INT, 32767::INT, 65535::INT", {-32768, 32767, 65535}},
-      {"int",
-       "SELECT -2147483648::INT, 2147483647::INT, 4294967295::BIGINT",
-       {-2147483648LL, 2147483647LL, 4294967295LL}},
-      {"bigint",
-       "SELECT -9223372036854775808::BIGINT, 9223372036854775807::BIGINT",
-       {-9223372036854775807LL - 1, 9223372036854775807LL}},
-  };
-
   // Given Snowflake client is logged in
   Connection conn;
 
-  for (const auto& [name, query, expected] : test_cases) {
+  SECTION("zero") {
     // When Query "SELECT <query_values>" is executed
-    auto stmt = conn.execute_fetch(query);
+    auto stmt = conn.execute_fetch("SELECT 0::INT");
 
     // Then Result should contain integers <expected_values>
-    for (size_t i = 0; i < expected.size(); i++) {
-      CHECK(get_data<SQL_C_SBIGINT>(stmt, static_cast<SQLUSMALLINT>(i + 1)) == expected[i]);
-    }
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
+  }
+
+  SECTION("tinyint") {
+    // When Query "SELECT -128::INT, 127::INT, 255::INT" is executed
+    auto stmt = conn.execute_fetch("SELECT -128::INT, 127::INT, 255::INT");
+
+    // Then Result should contain integers [-128, 127, 255]
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -128);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 2) == 127);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 255);
+  }
+
+  SECTION("smallint") {
+    // When Query "SELECT -32768::INT, 32767::INT, 65535::INT" is executed
+    auto stmt = conn.execute_fetch("SELECT -32768::INT, 32767::INT, 65535::INT");
+
+    // Then Result should contain integers [-32768, 32767, 65535]
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -32768);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 2) == 32767);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 65535);
+  }
+
+  SECTION("int") {
+    // When Query "SELECT -2147483648::INT, 2147483647::INT, 4294967295::BIGINT" is executed
+    auto stmt = conn.execute_fetch("SELECT -2147483648::INT, 2147483647::INT, 4294967295::BIGINT");
+
+    // Then Result should contain integers [-2147483648, 2147483647, 4294967295]
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -2147483648LL);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 2) == 2147483647LL);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 4294967295LL);
+  }
+
+  SECTION("bigint") {
+    // When Query "SELECT -9223372036854775808::BIGINT, 9223372036854775807::BIGINT" is executed
+    auto stmt = conn.execute_fetch("SELECT -9223372036854775808::BIGINT, 9223372036854775807::BIGINT");
+
+    // Then Result should contain integers [-9223372036854775808, 9223372036854775807]
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -9223372036854775807LL - 1);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 2) == 9223372036854775807LL);
   }
 }
 
@@ -88,39 +107,66 @@ TEST_CASE("should download large result set with multiple chunks for int and syn
 }
 
 TEST_CASE("should select values from table for int and synonyms", "[int]") {
-  struct TestCase {
-    std::string name;
-    std::string insert_values;
-    std::vector<std::optional<int64_t>> expected;
-  };
-
-  std::vector<TestCase> test_cases = {
-      {"positive",
-       "(0), (1), (127), (255), (32767), (65535), (2147483647), (4294967295), (9223372036854775807)",
-       {{0}, {1}, {127}, {255}, {32767}, {65535}, {2147483647LL}, {4294967295LL}, {9223372036854775807LL}}},
-      {"negative",
-       "(-1), (-128), (-32768), (-2147483648), (-9223372036854775808)",
-       {{-9223372036854775807LL - 1}, {-2147483648LL}, {-32768}, {-128}, {-1}}},
-      {"null", "(0), (NULL), (42)", {{0}, {42}, std::nullopt}},
-  };
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  for (const auto& [name, insert_values, expected] : test_cases) {
+  SECTION("positive") {
     // And Table with <type> column exists with values <insert_values>
-    auto table_name = "int_table_" + name;
-    conn.execute("CREATE TABLE " + table_name + " (col BIGINT)");
-    conn.execute("INSERT INTO " + table_name + " VALUES " + insert_values);
+    conn.execute("CREATE TABLE int_table_positive (col BIGINT)");
+    conn.execute(
+        "INSERT INTO int_table_positive VALUES "
+        "(0), (1), (127), (255), (32767), (65535), (2147483647), (4294967295), (9223372036854775807)");
 
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
     auto stmt = conn.createStatement();
-    auto select_sql = "SELECT * FROM " + table_name + " ORDER BY col";
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)select_sql.c_str(), SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM int_table_positive ORDER BY col", SQL_NTS);
     CHECK_ODBC(ret, stmt);
 
     // Then Result should contain integers <expected_values>
+    std::vector<std::optional<int64_t>> expected = {
+        {0}, {1}, {127}, {255}, {32767}, {65535}, {2147483647LL}, {4294967295LL}, {9223372036854775807LL}};
+    for (size_t i = 0; i < expected.size(); i++) {
+      ret = SQLFetch(stmt.getHandle());
+      CHECK_ODBC(ret, stmt);
+      auto result = get_data_optional<SQL_C_SBIGINT>(stmt, 1);
+      REQUIRE(result == expected[i]);
+    }
+  }
+
+  SECTION("negative") {
+    // And Table with <type> column exists with values <insert_values>
+    conn.execute("CREATE TABLE int_table_negative (col BIGINT)");
+    conn.execute("INSERT INTO int_table_negative VALUES (-1), (-128), (-32768), (-2147483648), (-9223372036854775808)");
+
+    // When Query "SELECT * FROM <table> ORDER BY col" is executed
+    auto stmt = conn.createStatement();
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM int_table_negative ORDER BY col", SQL_NTS);
+    CHECK_ODBC(ret, stmt);
+
+    // Then Result should contain integers <expected_values>
+    std::vector<std::optional<int64_t>> expected = {
+        {-9223372036854775807LL - 1}, {-2147483648LL}, {-32768}, {-128}, {-1}};
+    for (size_t i = 0; i < expected.size(); i++) {
+      ret = SQLFetch(stmt.getHandle());
+      CHECK_ODBC(ret, stmt);
+      auto result = get_data_optional<SQL_C_SBIGINT>(stmt, 1);
+      REQUIRE(result == expected[i]);
+    }
+  }
+
+  SECTION("null") {
+    // And Table with <type> column exists with values <insert_values>
+    conn.execute("CREATE TABLE int_table_null (col BIGINT)");
+    conn.execute("INSERT INTO int_table_null VALUES (0), (NULL), (42)");
+
+    // When Query "SELECT * FROM <table> ORDER BY col" is executed
+    auto stmt = conn.createStatement();
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM int_table_null ORDER BY col", SQL_NTS);
+    CHECK_ODBC(ret, stmt);
+
+    // Then Result should contain integers [0, 42, NULL]
+    std::vector<std::optional<int64_t>> expected = {{0}, {42}, std::nullopt};
     for (size_t i = 0; i < expected.size(); i++) {
       ret = SQLFetch(stmt.getHandle());
       CHECK_ODBC(ret, stmt);

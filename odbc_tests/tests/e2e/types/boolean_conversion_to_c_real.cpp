@@ -12,14 +12,14 @@
 // Float / Double
 // ============================================================================
 
-TEST_CASE("should convert boolean to floating point types", "[datatype][boolean][conversion][real]") {
+TEST_CASE("should convert boolean to c_type", "[datatype][boolean][conversion][real]") {
   // Given Snowflake client is logged in
   Connection conn;
 
   // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
   const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
 
-  // Then SQL_C_FLOAT should return 1.0 for TRUE and 0.0 for FALSE
+  // Then <c_type> should return 1.0 for TRUE and 0.0 for FALSE
   REQUIRE(check_no_truncation<SQL_C_FLOAT>(stmt, 1) == 1.0f);
   REQUIRE(check_no_truncation<SQL_C_FLOAT>(stmt, 2) == 0.0f);
 
@@ -58,7 +58,7 @@ TEST_CASE("should convert boolean to SQL_C_NUMERIC", "[datatype][boolean][conver
 // NULL handling
 // ============================================================================
 
-TEST_CASE("should handle NULL boolean with numeric and binary C types", "[datatype][boolean][conversion][real]") {
+TEST_CASE("should handle NULL boolean with c_type", "[datatype][boolean][conversion][real]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -72,7 +72,7 @@ TEST_CASE("should handle NULL boolean with numeric and binary C types", "[dataty
     REQUIRE(indicator == SQL_NULL_DATA);
   };
 
-  // Then SQL_C_FLOAT should return SQL_NULL_DATA indicator
+  // Then <c_type> should return SQL_NULL_DATA indicator
   check_null(SQL_C_FLOAT);
   // And SQL_C_DOUBLE should return SQL_NULL_DATA indicator
   check_null(SQL_C_DOUBLE);
