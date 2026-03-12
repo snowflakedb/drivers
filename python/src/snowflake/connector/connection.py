@@ -395,7 +395,8 @@ class Connection:
     @property
     def port(self) -> int | None:
         """The port number of the Snowflake instance."""
-        return self._get_connection_info().port or None
+        port = self._get_connection_info().port
+        return port if port else None
 
     @property
     def region(self) -> str | None:

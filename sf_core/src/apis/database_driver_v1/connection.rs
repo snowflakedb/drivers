@@ -265,10 +265,7 @@ impl Connection {
         response_parameters: Option<
             &Vec<crate::rest::snowflake::query_response::NameValueParameter>,
         >,
-        final_database_name: Option<&String>,
-        final_schema_name: Option<&String>,
-        final_warehouse_name: Option<&String>,
-        final_role_name: Option<&String>,
+        final_names: &FinalSessionNames,
     ) {
         let mut cache = match self.session_parameters.write() {
             Ok(cache) => cache,
@@ -318,16 +315,16 @@ impl Connection {
 
         // 3. Server-echoed final names: update DATABASE/SCHEMA/WAREHOUSE/ROLE so that
         //    conn.database etc. reflect changes from USE DATABASE, USE SCHEMA, etc.
-        if let Some(db) = final_database_name {
+        if let Some(db) = &final_names.database {
             cache.insert("DATABASE".into(), db.clone());
         }
-        if let Some(sc) = final_schema_name {
+        if let Some(sc) = &final_names.schema {
             cache.insert("SCHEMA".into(), sc.clone());
         }
-        if let Some(wh) = final_warehouse_name {
+        if let Some(wh) = &final_names.warehouse {
             cache.insert("WAREHOUSE".into(), wh.clone());
         }
-        if let Some(rl) = final_role_name {
+        if let Some(rl) = &final_names.role {
             cache.insert("ROLE".into(), rl.clone());
         }
     }
@@ -512,6 +509,15 @@ impl RefreshContext {
             },
         }
     }
+}
+
+/// Server-echoed final names from query responses (e.g. after USE DATABASE).
+#[derive(Debug, Clone, Default)]
+pub struct FinalSessionNames {
+    pub database: Option<String>,
+    pub schema: Option<String>,
+    pub warehouse: Option<String>,
+    pub role: Option<String>,
 }
 
 /// Connection information returned by connection_get_info

@@ -2,6 +2,8 @@
 Integration tests for PEP 249 Connection objects.
 """
 
+import uuid
+
 from io import StringIO
 from unittest.mock import Mock
 
@@ -28,47 +30,13 @@ class TestConnectionInfo:
 class TestConnectionInfoProperties:
     """Integration tests for Connection properties backed by _get_connection_info."""
 
-    def test_account_is_set(self, connection):
-        """After connecting, account should return the account name."""
-        assert connection.account is not None
-        assert isinstance(connection.account, str)
-        assert len(connection.account) > 0
-
-    def test_user_is_set(self, connection):
-        """After connecting, user should return the authenticated user name."""
-        assert connection.user is not None
-        assert isinstance(connection.user, str)
-        assert len(connection.user) > 0
-
-    def test_host_is_set(self, connection):
-        """After connecting, host should return the Snowflake host."""
-        assert connection.host is not None
-        assert isinstance(connection.host, str)
-        assert len(connection.host) > 0
-
-    def test_role_is_set(self, connection):
-        """After connecting, role should return the active role."""
-        assert connection.role is not None
-        assert isinstance(connection.role, str)
-        assert len(connection.role) > 0
-
-    def test_database_is_set(self, connection):
-        """After connecting, database should return the active database."""
-        assert connection.database is not None
-        assert isinstance(connection.database, str)
-        assert len(connection.database) > 0
-
-    def test_schema_is_set(self, connection):
-        """After connecting, schema should return the active schema."""
-        assert connection.schema is not None
-        assert isinstance(connection.schema, str)
-        assert len(connection.schema) > 0
-
-    def test_warehouse_is_set(self, connection):
-        """After connecting, warehouse should return the active warehouse."""
-        assert connection.warehouse is not None
-        assert isinstance(connection.warehouse, str)
-        assert len(connection.warehouse) > 0
+    @pytest.mark.parametrize("prop", ["account", "user", "host", "role", "database", "schema", "warehouse"])
+    def test_string_property_is_set(self, connection, prop):
+        """After connecting, string properties should return a non-empty string."""
+        value = getattr(connection, prop)
+        assert value is not None, f"connection.{prop} should not be None"
+        assert isinstance(value, str), f"connection.{prop} should be a str"
+        assert len(value) > 0, f"connection.{prop} should not be empty"
 
     def test_session_id_is_set(self, connection):
         """After connecting, session_id should return a positive integer."""
@@ -89,8 +57,6 @@ class TestConnectionInfoReflectsSessionChanges:
 
     def test_database_reflects_use_database(self, connection):
         """After USE DATABASE, the database property should reflect the new database."""
-        import uuid
-
         original_db = connection.database
         assert original_db is not None
 

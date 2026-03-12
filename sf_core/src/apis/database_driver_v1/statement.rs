@@ -357,10 +357,12 @@ impl DatabaseDriverV1 {
         conn.update_session_params_cache(
             query,
             response.data.parameters.as_ref(),
-            response.data.final_database_name.as_ref(),
-            response.data.final_schema_name.as_ref(),
-            response.data.final_warehouse_name.as_ref(),
-            response.data.final_role_name.as_ref(),
+            &super::connection::FinalSessionNames {
+                database: response.data.final_database_name.clone(),
+                schema: response.data.final_schema_name.clone(),
+                warehouse: response.data.final_warehouse_name.clone(),
+                role: response.data.final_role_name.clone(),
+            },
         );
     }
 
