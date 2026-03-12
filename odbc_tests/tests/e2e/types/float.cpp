@@ -2,6 +2,7 @@
 // Based on: tests/definitions/shared/types/float.feature
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 #include <catch2/catch_approx.hpp>
@@ -36,14 +37,21 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
   auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT, 123.456::FLOAT, 1.23e10::FLOAT, 'NaN'::FLOAT, 'inf'::FLOAT");
 
   // Then All values should be returned as appropriate type
+  double val1 = get_data<SQL_C_DOUBLE>(stmt, 1);
+  double val2 = get_data<SQL_C_DOUBLE>(stmt, 2);
+  double val3 = get_data<SQL_C_DOUBLE>(stmt, 3);
+  double val4 = get_data<SQL_C_DOUBLE>(stmt, 4);
+  double val5 = get_data<SQL_C_DOUBLE>(stmt, 5);
+
   // And Regular values should have approximately 15 decimal digits precision
-  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
-  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(123.456));
-  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == Catch::Approx(1.23e10));
+  CHECK(val1 == 0.0);
+  CHECK(val2 == Catch::Approx(123.456));
+  CHECK(val3 == Catch::Approx(1.23e10));
 
   // And NaN and inf values should be identified correctly
-  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "NaN");
-  CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt, 5)));
+  CHECK(std::isnan(val4));
+  CHECK(std::isinf(val5));
+  CHECK(val5 > 0);
 }
 
 // ============================================================================
@@ -129,8 +137,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain 50000 rows
-  // And All values should be returned as appropriate float type
+  // Then Result should contain 50000 rows with all values returned as appropriate float type
   int row_count = 0;
   double expected = 0.0;
 
@@ -239,8 +246,7 @@ TEST_CASE("should handle float boundary values from table for float and synonyms
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.execute_fetch("SELECT * FROM float_boundary");
 
-  // Then Result should contain maximum, minimum, and precision boundary values
-  // And All values should be preserved within float precision limits
+  // Then Result should contain maximum, minimum, and precision boundary values preserved within float precision limits
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(1.7976931348623157e308));
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
@@ -304,8 +310,7 @@ TEST_CASE("should select large result set from table for float and synonyms", "[
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM float_large ORDER BY col", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain 50000 rows
-  // And All values should be returned as appropriate float type
+  // Then Result should contain 50000 rows with all values returned as appropriate float type
   int row_count = 0;
   double expected = 0.0;
 

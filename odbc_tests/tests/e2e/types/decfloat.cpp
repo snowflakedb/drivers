@@ -33,13 +33,13 @@ TEST_CASE("should cast decfloat values to appropriate type", "[decfloat]") {
       "'12345678901234567890123456789012345678'::DECFLOAT");
 
   // Then All values should be returned as appropriate type
-  // And Values should maintain full 38-digit precision
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "123.456");
 
   std::string large_val = get_data<SQL_C_CHAR>(stmt, 3);
   CHECK(!large_val.empty());
 
+  // And Values should maintain full 38-digit precision
   std::string full_precision = get_data<SQL_C_CHAR>(stmt, 4);
   CHECK(full_precision.find("12345678901234567890123456789012345678") != std::string::npos);
 }
@@ -149,8 +149,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain consecutive numbers from 0 to 19999
-  // And All values should be returned as appropriate type
+  // Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
   int row_count = 0;
 
   while (true) {
@@ -334,8 +333,7 @@ TEST_CASE("should download large result set with multiple chunks from table", "[
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_large ORDER BY col", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain consecutive numbers from 0 to 19999
-  // And All values should be returned as appropriate type
+  // Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
   int row_count = 0;
 
   while (true) {
