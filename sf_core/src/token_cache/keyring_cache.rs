@@ -76,7 +76,7 @@ impl TokenCache for KeyringTokenCache {
 
         let entry = self.create_entry(host, username, token_type)?;
         entry
-            .set_secret(token_value.as_bytes())
+            .set_password(token_value)
             .boxed()
             .context(TokenStorageSnafu)
     }
