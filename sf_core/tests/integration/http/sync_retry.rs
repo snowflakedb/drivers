@@ -201,6 +201,141 @@ async fn should_use_sync_mode_by_default() {
     }
 }
 
+#[tokio::test]
+async fn should_retry_sync_query_on_503_service_unavailable() {
+    // Given a server that returns 503 on first attempt, then succeeds
+    let captured_requests = Arc::new(Mutex::new(Vec::<String>::new()));
+    let captured_clone = captured_requests.clone();
+    let attempt_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let attempt_clone = attempt_count.clone();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let attempt = attempt_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            captured_clone.lock().unwrap().push(request);
+
+            if attempt == 1 {
+                let response = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nService Unavailable";
+                let _ = stream.write_all(response).await;
+            } else {
+                let body = r#"{"success":true,"data":{"queryId":"recovered-query","rowtype":[],"rowset":[]}}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+            let _ = stream.shutdown().await;
+
+            if attempt >= 2 {
+                break;
+            }
+        }
+    });
+
+    let client = reqwest::Client::new();
+    let query_params = test_query_params(&addr);
+
+    // When a query is submitted and the server returns 503 first
+    let result = snowflake_query_with_client(
+        &client,
+        query_params,
+        "test-token",
+        QueryInput {
+            sql: "SELECT 1".to_string(),
+            bindings: None,
+            describe_only: None,
+        },
+        &RetryPolicy::default(),
+        QueryExecutionMode::Blocking,
+    )
+    .await;
+
+    // Then the query should succeed after retry
+    assert!(result.is_ok(), "Query should succeed after 503 retry");
+    let response = result.unwrap();
+    assert_eq!(response.data.query_id.as_deref(), Some("recovered-query"));
+    server.await.ok();
+
+    // And should have retried with the same requestId and retry=true
+    let requests = captured_requests.lock().unwrap();
+    assert_eq!(requests.len(), 2, "Should have exactly 2 requests");
+
+    let first_request_id = extract_query_param(&requests[0], "requestId");
+    let second_request_id = extract_query_param(&requests[1], "requestId");
+    assert_eq!(
+        first_request_id, second_request_id,
+        "Retry should use same requestId"
+    );
+    assert!(
+        requests[1].contains("retry=true"),
+        "Retry request should include retry=true"
+    );
+}
+
+#[tokio::test]
+async fn should_not_retry_sync_query_on_400_bad_request() {
+    // Given a server that returns 400 (should not trigger retry)
+    let attempt_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let attempt_clone = attempt_count.clone();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        attempt_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+        let mut buf = vec![0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+
+        let body = "Bad Request";
+        let response = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+        let _ = stream.shutdown().await;
+    });
+
+    let client = reqwest::Client::new();
+    let query_params = test_query_params(&addr);
+
+    // When a query results in a 400
+    let result = snowflake_query_with_client(
+        &client,
+        query_params,
+        "test-token",
+        QueryInput {
+            sql: "INVALID SQL".to_string(),
+            bindings: None,
+            describe_only: None,
+        },
+        &RetryPolicy::default(),
+        QueryExecutionMode::Blocking,
+    )
+    .await;
+
+    // Then it should fail immediately without retrying
+    assert!(result.is_err(), "Query should fail on 400");
+    assert_eq!(
+        attempt_count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "Should NOT retry on 400"
+    );
+    server.await.ok();
+}
+
 // Helper functions
 
 fn test_query_params(addr: &SocketAddr) -> QueryParameters {

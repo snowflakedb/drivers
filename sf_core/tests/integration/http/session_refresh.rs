@@ -114,7 +114,119 @@ async fn should_fail_when_refresh_returns_error() {
     server.await.unwrap();
 }
 
+#[tokio::test]
+async fn should_retry_refresh_on_503_then_succeed() {
+    // Given a server that returns 503 on first attempt, then succeeds
+    let (addr, attempts, server) =
+        spawn_refresh_server_with_max_connections(2, |attempt| async move {
+            if attempt == 1 {
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\nConnection: close\r\n\r\nService Unavailable"
+                    .to_vec()
+            } else {
+                let body = r#"{"success":true,"data":{"sessionToken":"retried-token","masterToken":"retried-master","sessionId":99999}}"#;
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .into_bytes()
+            }
+        })
+        .await;
+
+    let client = reqwest::Client::new();
+    let server_url = format!("http://{}", addr);
+
+    // When we refresh the session
+    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+    // Then it should succeed after retrying
+    let new_tokens = result.expect("refresh should succeed after 503 retry");
+    assert_eq!(new_tokens.session_token.reveal(), "retried-token");
+    assert_eq!(new_tokens.master_token.reveal(), "retried-master");
+    assert_eq!(new_tokens.session_id, 99999);
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        2,
+        "Should have made exactly 2 attempts"
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_retry_refresh_on_429_then_succeed() {
+    // Given a server that returns 429 Too Many Requests on first attempt, then succeeds
+    let (addr, attempts, server) =
+        spawn_refresh_server_with_max_connections(2, |attempt| async move {
+            if attempt == 1 {
+                b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 17\r\nConnection: close\r\n\r\nToo Many Requests"
+                    .to_vec()
+            } else {
+                let body = r#"{"success":true,"data":{"sessionToken":"after-429","masterToken":"after-429-master","sessionId":42900}}"#;
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+                .into_bytes()
+            }
+        })
+        .await;
+
+    let client = reqwest::Client::new();
+    let server_url = format!("http://{}", addr);
+
+    // When we refresh the session
+    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+    // Then it should succeed after retrying
+    let new_tokens = result.expect("refresh should succeed after 429 retry");
+    assert_eq!(new_tokens.session_token.reveal(), "after-429");
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        2,
+        "Should have made exactly 2 attempts"
+    );
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_not_retry_refresh_on_401() {
+    // Given a server that returns 401 (should not be retried)
+    let (addr, attempts, server) = spawn_refresh_server_with_max_connections(2, |_| async move {
+        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 12\r\nConnection: close\r\n\r\nUnauthorized"
+            .to_vec()
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let server_url = format!("http://{}", addr);
+
+    // When we try to refresh the session
+    let result = refresh_session(&client, &server_url, &test_client_info(), &test_tokens()).await;
+
+    // Then it should fail immediately without retrying
+    assert!(result.is_err());
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "Should NOT retry on 401"
+    );
+    server.abort();
+}
+
 async fn spawn_refresh_server<F, Fut>(
+    responder: F,
+) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
+where
+    F: Fn(usize) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Vec<u8>> + Send + 'static,
+{
+    spawn_refresh_server_with_max_connections(1, responder).await
+}
+
+async fn spawn_refresh_server_with_max_connections<F, Fut>(
+    max_connections: usize,
     responder: F,
 ) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
 where
@@ -128,17 +240,17 @@ where
     let responder = Arc::new(responder);
 
     let handle = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
+        for _ in 0..max_connections {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
 
-        // Read the request
-        let mut buf = [0u8; 4096];
-        let _ = stream.read(&mut buf).await;
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf).await;
 
-        // Send the response
-        let response = responder(attempt).await;
-        stream.write_all(&response).await.unwrap();
-        let _ = stream.shutdown().await;
+            let response = responder(attempt).await;
+            stream.write_all(&response).await.unwrap();
+            let _ = stream.shutdown().await;
+        }
     });
 
     (addr, attempts, handle)

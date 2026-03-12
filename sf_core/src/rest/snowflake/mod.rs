@@ -12,6 +12,7 @@ use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
+use crate::http::retry::{is_retryable_transport, should_retry_status};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
@@ -248,132 +249,177 @@ pub async fn snowflake_login_with_client(
 
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
-    let request = client
-        .post(&login_url)
-        .query(&[
-            (
-                "databaseName",
-                login_parameters.database.as_deref().unwrap_or_default(),
-            ),
-            (
-                "schemaName",
-                login_parameters.schema.as_deref().unwrap_or_default(),
-            ),
-            (
-                "warehouse",
-                login_parameters.warehouse.as_deref().unwrap_or_default(),
-            ),
-            (
-                "roleName",
-                login_parameters.role.as_deref().unwrap_or_default(),
-            ),
-        ])
-        .json(&login_request)
-        .header("accept", "application/snowflake")
-        .header(
-            "User-Agent",
-            format!(
-                "{}/{} ({}) CPython/3.11.6",
-                login_parameters.client_info.application,
-                login_parameters.client_info.version.clone(),
-                login_parameters.client_info.os.clone()
-            ),
-        )
-        .header("Authorization", "Snowflake Token=\"None\"")
-        .build()
-        .context(RequestConstructionSnafu { request: "login" })?;
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute login request",
-    })?;
+    let retry_policy = RetryPolicy::default();
+    let max_attempts = retry_policy.max_attempts;
 
-    let auth_response = read_response_json::<AuthResponse>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    for attempt in 0..max_attempts {
+        if attempt > 0 {
+            let backoff = std::time::Duration::from_millis(
+                (retry_policy.backoff.base.as_millis() as f64
+                    * retry_policy.backoff.factor.powi(attempt as i32)) as u64,
+            )
+            .min(retry_policy.backoff.cap);
+            tracing::info!(
+                attempt,
+                backoff_ms = backoff.as_millis(),
+                "Retrying login request after retryable error"
+            );
+            tokio::time::sleep(backoff).await;
+        }
 
-    if !auth_response.success {
-        let message = auth_response
-            .message
-            .unwrap_or_else(|| "Unknown error".to_string());
-        tracing::error!(message = %message, "Snowflake login failed");
-        let code = auth_response
-            ._code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
-        LoginSnafu { message, code }.fail()?;
+        let request = client
+            .post(&login_url)
+            .query(&[
+                (
+                    "databaseName",
+                    login_parameters.database.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "schemaName",
+                    login_parameters.schema.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "warehouse",
+                    login_parameters.warehouse.as_deref().unwrap_or_default(),
+                ),
+                (
+                    "roleName",
+                    login_parameters.role.as_deref().unwrap_or_default(),
+                ),
+            ])
+            .json(&login_request)
+            .header("accept", "application/snowflake")
+            .header(
+                "User-Agent",
+                format!(
+                    "{}/{} ({}) CPython/3.11.6",
+                    login_parameters.client_info.application,
+                    login_parameters.client_info.version.clone(),
+                    login_parameters.client_info.os.clone()
+                ),
+            )
+            .header("Authorization", "Snowflake Token=\"None\"")
+            .build()
+            .context(RequestConstructionSnafu { request: "login" })?;
+
+        let response = match client.execute(request).await {
+            Ok(r) => r,
+            Err(e) => {
+                if attempt + 1 < max_attempts && is_retryable_transport(&e) {
+                    tracing::warn!(
+                        attempt,
+                        error = %e,
+                        "Transport error on login request; will retry"
+                    );
+                    continue;
+                }
+                return Err(CommunicationSnafu {
+                    context: "Failed to execute login request",
+                }
+                .into_error(e));
+            }
+        };
+
+        let auth_response = match read_response_json::<AuthResponse>(response).await {
+            Ok(r) => r,
+            Err(e) => {
+                if attempt + 1 < max_attempts && e.is_retryable() {
+                    tracing::warn!(
+                        attempt,
+                        error = %e,
+                        "Retryable server error on login; will retry"
+                    );
+                    continue;
+                }
+                return Err(e).context(InvalidSnowflakeResponseSnafu);
+            }
+        };
+
+        if !auth_response.success {
+            let message = auth_response
+                .message
+                .unwrap_or_else(|| "Unknown error".to_string());
+            tracing::error!(message = %message, "Snowflake login failed");
+            let code = auth_response
+                ._code
+                .as_deref()
+                .and_then(|c| c.parse::<i32>().ok())
+                .unwrap_or(-1);
+            LoginSnafu { message, code }.fail()?;
+        }
+
+        tracing::debug!("Login successful, extracting session tokens");
+
+        let session_token = auth_response
+            .data
+            .token
+            .context(MissingResponseFieldSnafu {
+                field: "session token",
+            })?;
+
+        let master_token = auth_response
+            .data
+            .master_token
+            .context(MissingResponseFieldSnafu {
+                field: "master token",
+            })?;
+
+        let session_id = auth_response
+            .data
+            .session_id
+            .context(MissingResponseFieldSnafu {
+                field: "session ID",
+            })?;
+
+        let now = std::time::Instant::now();
+        let session_expires_at = auth_response.data.validity.map(|d| now + d);
+        let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
+
+        let session_params = auth_response.data._parameters.map(|params| {
+            params
+                .iter()
+                .filter_map(|param| {
+                    let value_str = match &param._value {
+                        serde_json::Value::String(s) => Some(s.clone()),
+                        serde_json::Value::Number(n) => Some(n.to_string()),
+                        serde_json::Value::Bool(b) => Some(b.to_string()),
+                        serde_json::Value::Null => None,
+                        other => {
+                            tracing::debug!(
+                                param_name = %param._name,
+                                param_value = ?other,
+                                "Unexpected JSON type for session parameter, skipping"
+                            );
+                            None
+                        }
+                    };
+
+                    value_str.map(|v| (param._name.to_uppercase(), v))
+                })
+                .collect::<HashMap<String, String>>()
+        });
+
+        tracing::info!(
+            session_id,
+            session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
+            master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
+            session_params_count = session_params.as_ref().map(|p| p.len()),
+            "Snowflake login completed successfully"
+        );
+        return Ok(LoginResult {
+            tokens: SessionTokens {
+                session_token: session_token.into(),
+                master_token: master_token.into(),
+                session_id,
+                session_expires_at,
+                master_expires_at,
+            },
+            session_parameters: session_params,
+        });
     }
 
-    tracing::debug!("Login successful, extracting session tokens");
-
-    let session_token = auth_response
-        .data
-        .token
-        .context(MissingResponseFieldSnafu {
-            field: "session token",
-        })?;
-
-    let master_token = auth_response
-        .data
-        .master_token
-        .context(MissingResponseFieldSnafu {
-            field: "master token",
-        })?;
-
-    let session_id = auth_response
-        .data
-        .session_id
-        .context(MissingResponseFieldSnafu {
-            field: "session ID",
-        })?;
-
-    let now = std::time::Instant::now();
-    let session_expires_at = auth_response.data.validity.map(|d| now + d);
-    let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
-
-    // Extract session parameters from auth response
-    let session_params = auth_response.data._parameters.map(|params| {
-        params
-            .iter()
-            .filter_map(|param| {
-                // Convert JSON value to string
-                let value_str = match &param._value {
-                    serde_json::Value::String(s) => Some(s.clone()),
-                    serde_json::Value::Number(n) => Some(n.to_string()),
-                    serde_json::Value::Bool(b) => Some(b.to_string()),
-                    serde_json::Value::Null => None,
-                    other => {
-                        tracing::debug!(
-                            param_name = %param._name,
-                            param_value = ?other,
-                            "Unexpected JSON type for session parameter, skipping"
-                        );
-                        None
-                    }
-                };
-
-                value_str.map(|v| (param._name.to_uppercase(), v))
-            })
-            .collect::<HashMap<String, String>>()
-    });
-
-    tracing::info!(
-        session_id,
-        session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
-        master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
-        session_params_count = session_params.as_ref().map(|p| p.len()),
-        "Snowflake login completed successfully"
-    );
-    Ok(LoginResult {
-        tokens: SessionTokens {
-            session_token: session_token.into(),
-            master_token: master_token.into(),
-            session_id,
-            session_expires_at,
-            master_expires_at,
-        },
-        session_parameters: session_params,
-    })
+    unreachable!("login retry loop must return within {max_attempts} attempts")
 }
 
 /// Refresh an expired session token using the master token.
@@ -395,84 +441,125 @@ pub async fn refresh_session(
             path: TOKEN_REQUEST_PATH,
         })?;
 
-    // Build request body per gosnowflake: {"oldSessionToken": "...", "requestType": "RENEW"}
     let body = serde_json::json!({
         "oldSessionToken": tokens.session_token.reveal(),
         "requestType": "RENEW"
     });
 
-    let request = client
-        .post(refresh_url)
-        .query(&[
-            ("requestId", uuid::Uuid::new_v4().to_string()),
-            ("request_guid", uuid::Uuid::new_v4().to_string()),
-        ])
-        // Authenticate with master token, not session token
-        .header(
-            header::AUTHORIZATION,
-            format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
-        )
-        .header(header::ACCEPT, "application/json")
-        .header("User-Agent", user_agent(client_info))
-        .json(&body)
-        .build()
-        .context(RequestConstructionSnafu {
-            request: "session refresh",
-        })?;
+    let retry_policy = RetryPolicy::default();
+    let max_attempts = retry_policy.max_attempts;
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute session refresh request",
-    })?;
+    for attempt in 0..max_attempts {
+        if attempt > 0 {
+            let backoff = std::time::Duration::from_millis(
+                (retry_policy.backoff.base.as_millis() as f64
+                    * retry_policy.backoff.factor.powi(attempt as i32)) as u64,
+            )
+            .min(retry_policy.backoff.cap);
+            tracing::info!(
+                attempt,
+                backoff_ms = backoff.as_millis(),
+                "Retrying session refresh after retryable error"
+            );
+            tokio::time::sleep(backoff).await;
+        }
 
-    let status = response.status();
-    if !status.is_success() {
-        tracing::error!(status = %status, "Session refresh request failed");
-        return SessionRefreshSnafu { status }.fail();
-    }
-
-    let refresh_response =
-        response
-            .json::<RefreshSessionResponse>()
-            .await
-            .context(CommunicationSnafu {
-                context: "Failed to parse session refresh response",
+        let request = client
+            .post(refresh_url.as_str())
+            .query(&[
+                ("requestId", uuid::Uuid::new_v4().to_string()),
+                ("request_guid", uuid::Uuid::new_v4().to_string()),
+            ])
+            .header(
+                header::AUTHORIZATION,
+                format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
+            )
+            .header(header::ACCEPT, "application/json")
+            .header("User-Agent", user_agent(client_info))
+            .json(&body)
+            .build()
+            .context(RequestConstructionSnafu {
+                request: "session refresh",
             })?;
 
-    if !refresh_response.success {
-        let message = refresh_response
-            .message
-            .unwrap_or_else(|| "Unknown error".to_string());
-        let code = refresh_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
-        tracing::error!(code, message = %message, "Session refresh failed");
-        return SessionRefreshFailedSnafu { message, code }.fail();
+        let response = match client.execute(request).await {
+            Ok(r) => r,
+            Err(e) => {
+                if attempt + 1 < max_attempts && is_retryable_transport(&e) {
+                    tracing::warn!(
+                        attempt,
+                        error = %e,
+                        "Transport error on session refresh; will retry"
+                    );
+                    continue;
+                }
+                return Err(CommunicationSnafu {
+                    context: "Failed to execute session refresh request",
+                }
+                .into_error(e));
+            }
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            if attempt + 1 < max_attempts && should_retry_status(status) {
+                tracing::warn!(
+                    attempt,
+                    status = %status,
+                    "Retryable HTTP status on session refresh; will retry"
+                );
+                continue;
+            }
+            tracing::error!(status = %status, "Session refresh request failed");
+            return SessionRefreshSnafu { status }.fail();
+        }
+
+        let refresh_response =
+            response
+                .json::<RefreshSessionResponse>()
+                .await
+                .context(CommunicationSnafu {
+                    context: "Failed to parse session refresh response",
+                })?;
+
+        if !refresh_response.success {
+            let message = refresh_response
+                .message
+                .unwrap_or_else(|| "Unknown error".to_string());
+            let code = refresh_response
+                .code
+                .as_deref()
+                .and_then(|c| c.parse::<i32>().ok())
+                .unwrap_or(-1);
+            tracing::error!(code, message = %message, "Session refresh failed");
+            return SessionRefreshFailedSnafu { message, code }.fail();
+        }
+
+        let data = refresh_response.data.context(MissingResponseFieldSnafu {
+            field: "session refresh data",
+        })?;
+
+        let now = std::time::Instant::now();
+        let session_expires_at = data.validity.map(|d| now + d);
+        let master_expires_at = data.master_validity.map(|d| now + d);
+
+        tracing::info!(
+            session_id = data.session_id,
+            session_validity_secs = data.validity.map(|d| d.as_secs()),
+            master_validity_secs = data.master_validity.map(|d| d.as_secs()),
+            "Session refreshed successfully"
+        );
+
+        return Ok(SessionTokens {
+            session_token: data.session_token.into(),
+            master_token: data.master_token.into(),
+            session_id: data.session_id,
+            session_expires_at,
+            master_expires_at,
+        });
     }
 
-    let data = refresh_response.data.context(MissingResponseFieldSnafu {
-        field: "session refresh data",
-    })?;
-
-    let now = std::time::Instant::now();
-    let session_expires_at = data.validity.map(|d| now + d);
-    let master_expires_at = data.master_validity.map(|d| now + d);
-
-    tracing::info!(
-        session_id = data.session_id,
-        session_validity_secs = data.validity.map(|d| d.as_secs()),
-        master_validity_secs = data.master_validity.map(|d| d.as_secs()),
-        "Session refreshed successfully"
-    );
-
-    Ok(SessionTokens {
-        session_token: data.session_token.into(),
-        master_token: data.master_token.into(),
-        session_id: data.session_id,
-        session_expires_at,
-        master_expires_at,
-    })
+    unreachable!("refresh retry loop must return within {max_attempts} attempts")
 }
 
 #[tracing::instrument(skip(query_parameters, session_token, query_input), fields(sql))]
@@ -611,11 +698,12 @@ async fn execute_async_with_fallback<'a>(
     Ok(response)
 }
 
-/// Execute query synchronously with requestId-based retry on transport failures.
+/// Execute query synchronously with requestId-based retry on retryable failures.
 ///
-/// On connection errors (network timeout, connection reset), the query is retried
-/// with the same `requestId` and `retry=true`. Snowflake uses requestId for
-/// idempotency - if the original query completed, the retry returns the existing result.
+/// On connection errors (network timeout, connection reset) or retryable server
+/// responses (503, 429, other 5xx), the query is retried with the same `requestId`
+/// and `retry=true`. Snowflake uses requestId for idempotency - if the original
+/// query completed, the retry returns the existing result.
 async fn execute_sync_with_retry<'a>(
     client: &reqwest::Client,
     query_parameters: &QueryParameters,
@@ -645,15 +733,11 @@ async fn execute_sync_with_retry<'a>(
     .await
     {
         Ok(response) => return Ok(response),
-        Err(RestError::Communication {
-            context, source, ..
-        }) => {
-            // Transport error - retry with same requestId
+        Err(e) if e.is_retryable() => {
             tracing::warn!(
                 request_id = %request_id,
-                error = %source,
-                context,
-                "Transport error on sync query; retrying with same requestId"
+                error = %e,
+                "Retryable error on sync query; will retry with same requestId"
             );
         }
         Err(e) => return Err(e),
@@ -699,17 +783,14 @@ async fn execute_sync_with_retry<'a>(
                 );
                 return Ok(response);
             }
-            Err(RestError::Communication {
-                context, source, ..
-            }) => {
+            Err(e) if e.is_retryable() => {
                 tracing::warn!(
                     request_id = %request_id,
                     attempt,
-                    error = %source,
-                    context,
-                    "Transport error on retry; will try again"
+                    error = %e,
+                    "Retryable error on sync query retry; will try again"
                 );
-                last_error = Some(CommunicationSnafu { context }.into_error(source));
+                last_error = Some(e);
             }
             Err(e) => return Err(e),
         }
@@ -1007,4 +1088,150 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+impl SnowflakeResponseError {
+    fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            SnowflakeResponseError::ResponseStatus { status, .. }
+                if status.is_server_error()
+                    || *status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    || *status == reqwest::StatusCode::REQUEST_TIMEOUT
+        )
+    }
+}
+
+impl RestError {
+    fn is_retryable(&self) -> bool {
+        match self {
+            RestError::Communication { .. } => true,
+            RestError::InvalidSnowflakeResponse { source, .. } => source.is_retryable(),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_503_is_retryable() {
+        let err: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            message: "Service Unavailable",
+        }
+        .build();
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn response_500_is_retryable() {
+        let err: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            message: "Internal Server Error",
+        }
+        .build();
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn response_502_is_retryable() {
+        let err: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::BAD_GATEWAY,
+            message: "Bad Gateway",
+        }
+        .build();
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn response_429_is_retryable() {
+        let err: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            message: "Too Many Requests",
+        }
+        .build();
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn response_408_is_retryable() {
+        let err: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::REQUEST_TIMEOUT,
+            message: "Request Timeout",
+        }
+        .build();
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn response_400_is_not_retryable() {
+        let err: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::BAD_REQUEST,
+            message: "Bad Request",
+        }
+        .build();
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn response_404_is_not_retryable() {
+        let err: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::NOT_FOUND,
+            message: "Not Found",
+        }
+        .build();
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn session_expired_is_not_retryable() {
+        let err: SnowflakeResponseError = SessionExpiredSnafu.build();
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn rest_error_invalid_response_503_is_retryable() {
+        let source: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            message: "Service Unavailable",
+        }
+        .build();
+        let err: RestError = InvalidSnowflakeResponseSnafu.into_error(source);
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn rest_error_invalid_response_400_is_not_retryable() {
+        let source: SnowflakeResponseError = ResponseStatusSnafu {
+            status: reqwest::StatusCode::BAD_REQUEST,
+            message: "Bad Request",
+        }
+        .build();
+        let err: RestError = InvalidSnowflakeResponseSnafu.into_error(source);
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn rest_error_login_is_not_retryable() {
+        let err: RestError = LoginSnafu {
+            message: "Invalid credentials",
+            code: 390100,
+        }
+        .build();
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn rest_error_query_failed_is_not_retryable() {
+        let err: RestError = QueryFailedSnafu {
+            message: "Syntax error",
+            code: Some(1003),
+            sql_state: Some("42000".to_string()),
+        }
+        .build();
+        assert!(!err.is_retryable());
+    }
 }

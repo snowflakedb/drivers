@@ -157,7 +157,7 @@ where
     }
 }
 
-fn should_retry_status(status: StatusCode) -> bool {
+pub(crate) fn should_retry_status(status: StatusCode) -> bool {
     status == StatusCode::REQUEST_TIMEOUT
         || status == StatusCode::TOO_MANY_REQUESTS
         || status == StatusCode::TEMPORARY_REDIRECT
@@ -201,7 +201,7 @@ fn parse_retry_after(resp: &Response) -> Option<Duration> {
     Some(Duration::from_secs(secs))
 }
 
-fn is_retryable_transport(e: &reqwest::Error) -> bool {
+pub(crate) fn is_retryable_transport(e: &reqwest::Error) -> bool {
     e.is_timeout() || e.is_connect() || e.is_request() || e.is_body() || e.is_decode()
 }
 
