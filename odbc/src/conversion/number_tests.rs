@@ -1478,4 +1478,29 @@ mod tests {
             assert_eq!(value, 42);
         }
     }
+
+    // ========================================================================
+    // Unsupported target type returns UnsupportedOdbcType error
+    // ========================================================================
+
+    #[test]
+    fn unsupported_target_type_returns_error() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = make_decimal(0, 10);
+        let mut value = [0u8; 16];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Guid,
+            target_value_ptr: value.as_mut_ptr() as sql::Pointer,
+            buffer_length: value.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        let result = sn.write_odbc_type(42i128, &binding, &mut None);
+        assert!(matches!(
+            result.unwrap_err(),
+            WriteOdbcError::UnsupportedOdbcType { .. }
+        ));
+    }
 }

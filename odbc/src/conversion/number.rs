@@ -410,7 +410,7 @@ impl WriteODBCType for SnowflakeNumber {
                         interval.interval_type = sql::Interval::Minute as i32;
                         interval.interval_value.day_second.minute = field_val;
                     }
-                    _ => unreachable!(),
+                    _ => return UnsupportedOdbcTypeSnafu { target_type }.fail(),
                 }
                 binding.write_fixed(interval);
                 Ok(Self::fractional_warning(has_fractional))
