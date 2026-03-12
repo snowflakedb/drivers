@@ -665,8 +665,9 @@ mod tests {
 
         #[test]
         fn transient_error_access_denied_only_when_lock_dir_exists() {
-            let existing = std::env::temp_dir(); // guaranteed to exist
-            let missing = existing.join(format!("nonexistent_{}", std::process::id()));
+            let temp_dir = tempfile::tempdir().expect("failed to create temp dir for test");
+            let existing = temp_dir.path().to_path_buf(); // guaranteed to exist for the duration of the test
+            let missing = existing.join("nonexistent_child");
             assert!(!missing.exists(), "test precondition: path must not exist");
 
             let err = std::io::Error::from_raw_os_error(5); // ERROR_ACCESS_DENIED
