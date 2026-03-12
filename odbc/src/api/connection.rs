@@ -262,41 +262,51 @@ async fn apply_pre_connection_attrs_async(
     if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
         use base64::{Engine as _, engine::general_purpose};
         let encoded = general_purpose::STANDARD.encode(content.as_bytes());
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn_handle),
-            key: "private_key".to_owned(),
-            value: encoded,
-        }).await?;
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: "private_key".to_owned(),
+                value: encoded,
+            })
+            .await?;
     } else if let Some(base64_key) = attrs.get(&ConnectionAttribute::PrivKeyBase64) {
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn_handle),
-            key: "private_key".to_owned(),
-            value: base64_key.clone(),
-        }).await?;
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: "private_key".to_owned(),
+                value: base64_key.clone(),
+            })
+            .await?;
     }
 
     if let Some(password) = attrs.get(&ConnectionAttribute::PrivKeyPassword) {
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn_handle),
-            key: "private_key_password".to_owned(),
-            value: password.clone(),
-        }).await?;
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: "private_key_password".to_owned(),
+                value: password.clone(),
+            })
+            .await?;
     }
 
     if let Some(app) = attrs.get(&ConnectionAttribute::Application) {
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn_handle),
-            key: "application".to_owned(),
-            value: app.clone(),
-        }).await?;
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: "application".to_owned(),
+                value: app.clone(),
+            })
+            .await?;
     }
 
     if let Some(timeout) = attrs.get(&ConnectionAttribute::LoginTimeout) {
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn_handle),
-            key: "authentication_timeout".to_owned(),
-            value: timeout.clone(),
-        }).await?;
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: "authentication_timeout".to_owned(),
+                value: timeout.clone(),
+            })
+            .await?;
         return Ok(true);
     }
 
@@ -330,14 +340,22 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     {
         let g = global();
         g.runtime.block_on(async {
-            if let Err(e) = g.client.connection_release(ConnectionReleaseRequest {
-                conn_handle: Some(conn_handle),
-            }).await {
+            if let Err(e) = g
+                .client
+                .connection_release(ConnectionReleaseRequest {
+                    conn_handle: Some(conn_handle),
+                })
+                .await
+            {
                 tracing::warn!("Failed to release core connection handle: {e:?}");
             }
-            if let Err(e) = g.client.database_release(DatabaseReleaseRequest {
-                db_handle: Some(db_handle),
-            }).await {
+            if let Err(e) = g
+                .client
+                .database_release(DatabaseReleaseRequest {
+                    db_handle: Some(db_handle),
+                })
+                .await
+            {
                 tracing::warn!("Failed to release core database handle: {e:?}");
             }
         });

@@ -48,7 +48,11 @@ pub fn connection_load_from_config_with_paths(
 }
 
 impl DatabaseDriverV1 {
-    pub async fn connection_init(&self, conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
+    pub async fn connection_init(
+        &self,
+        conn_handle: Handle,
+        _db_handle: Handle,
+    ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr
@@ -101,7 +105,8 @@ impl DatabaseDriverV1 {
                         login_parameters.server_url.clone(),
                         login_parameters.client_info.clone(),
                         merged_params,
-                    ).await;
+                    )
+                    .await;
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -231,7 +236,11 @@ impl Connection {
         >,
     ) {
         let mut cache = self.session_parameters.write().await;
-        cache.extend(super::alter_session_parser::parse_all_alter_sessions(query).into_iter().map(|p| (p.name.clone(), p.value.clone())));
+        cache.extend(
+            super::alter_session_parser::parse_all_alter_sessions(query)
+                .into_iter()
+                .map(|p| (p.name.clone(), p.value.clone())),
+        );
 
         // 2. Response parameters: merge any server-returned session parameters into the cache.
         if let Some(parameters) = response_parameters {
@@ -522,10 +531,7 @@ impl DatabaseDriverV1 {
                     .lock()
                     .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-                let cache = conn
-                    .session_parameters
-                    .read()
-                    .await;
+                let cache = conn.session_parameters.read().await;
 
                 let normalized_key = key.to_uppercase();
                 Ok(cache.get(&normalized_key).cloned())

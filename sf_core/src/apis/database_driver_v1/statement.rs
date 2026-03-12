@@ -204,7 +204,9 @@ pub struct PrepareResult {
 
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
-        let result = self.execute_query_internal(stmt_handle, None, Some(true)).await?;
+        let result = self
+            .execute_query_internal(stmt_handle, None, Some(true))
+            .await?;
         Ok(PrepareResult {
             stream: result.stream,
             columns: result.columns,
@@ -239,7 +241,8 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
     ) -> Result<ExecuteResult, ApiError> {
-        self.execute_query_internal(stmt_handle, bindings, None).await
+        self.execute_query_internal(stmt_handle, bindings, None)
+            .await
     }
 
     async fn execute_query_internal<'a>(

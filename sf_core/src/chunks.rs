@@ -109,9 +109,9 @@ impl Iterator for ChunkReader {
                 let handle = match &self.rt_handle {
                     Some(h) => h,
                     None => {
-                        return Some(Err(ArrowError::ExternalError(
-                            Box::new(MissingRuntimeHandleSnafu.build()),
-                        )));
+                        return Some(Err(ArrowError::ExternalError(Box::new(
+                            MissingRuntimeHandleSnafu.build(),
+                        ))));
                     }
                 };
                 let chunk_data_result = handle.block_on(get_chunk_data(client, &chunk));

@@ -6,12 +6,37 @@ use jni::sys::{jint, jobject};
 use proto_utils::{ProtoError, Transport};
 use sf_core::protobuf::apis::RustTransport;
 
-static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create tokio runtime")
-});
+struct JdbcBridge {
+    runtime: tokio::runtime::Runtime,
+    transport: RustTransport,
+}
+
+impl JdbcBridge {
+    pub fn new() -> Self {
+        Self {
+            runtime: tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime"),
+            transport: RustTransport::new(),
+        }
+    }
+
+    pub fn handle_message_sync(
+        &self,
+        service_name: &str,
+        method_name: &str,
+        request_bytes: Vec<u8>,
+    ) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
+        self.runtime.block_on(self.transport.handle_message(
+            service_name,
+            method_name,
+            request_bytes,
+        ))
+    }
+}
+
+static JDBC_BRIDGE: LazyLock<JdbcBridge> = LazyLock::new(JdbcBridge::new);
 
 mod slf4j_layer;
 
@@ -71,12 +96,11 @@ pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICore
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let transport = RustTransport::new();
-    let result = RUNTIME.block_on(transport.handle_message(
+    let result = JDBC_BRIDGE.handle_message_sync(
         &service_name_str.to_string_lossy(),
         &method_name_str.to_string_lossy(),
         request_bytes_vec,
-    ));
+    );
 
     // Find the TransportResponse class
     let response_class = match env

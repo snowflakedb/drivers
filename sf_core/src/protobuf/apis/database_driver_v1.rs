@@ -1,13 +1,13 @@
 use crate::apis::database_driver_v1::ApiError;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
+use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
-use crate::apis::database_driver_v1::DatabaseDriverV1;
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
@@ -503,14 +503,20 @@ impl DatabaseDriverImpl {
 
 impl DatabaseDriver for DatabaseDriverImpl {
     #[instrument(name = "DatabaseDriverV1::database_new", skip(self, _input))]
-    async fn database_new(&self, _input: DatabaseNewRequest) -> Result<DatabaseNewResponse, DriverException> {
+    async fn database_new(
+        &self,
+        _input: DatabaseNewRequest,
+    ) -> Result<DatabaseNewResponse, DriverException> {
         let handle = self.driver.database_new();
         Ok(DatabaseNewResponse {
             db_handle: Some(DatabaseHandle::from(handle)),
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_set_option_string", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::database_set_option_string",
+        skip(self, input)
+    )]
     async fn database_set_option_string(
         &self,
         input: DatabaseSetOptionStringRequest,
@@ -524,7 +530,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(DatabaseSetOptionStringResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_set_option_bytes", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::database_set_option_bytes",
+        skip(self, input)
+    )]
     async fn database_set_option_bytes(
         &self,
         input: DatabaseSetOptionBytesRequest,
@@ -552,7 +561,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(DatabaseSetOptionIntResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::database_set_option_double", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::database_set_option_double",
+        skip(self, input)
+    )]
     async fn database_set_option_double(
         &self,
         input: DatabaseSetOptionDoubleRequest,
@@ -567,12 +579,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(name = "DatabaseDriverV1::database_init", skip(self, input))]
-    async fn database_init(&self, input: DatabaseInitRequest) -> Result<DatabaseInitResponse, DriverException> {
+    async fn database_init(
+        &self,
+        input: DatabaseInitRequest,
+    ) -> Result<DatabaseInitResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        self.driver
-            .database_init(db_handle.into())
-            .to_protobuf()?;
+        self.driver.database_init(db_handle.into()).to_protobuf()?;
         Ok(DatabaseInitResponse {})
     }
 
@@ -600,7 +613,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_string", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_set_option_string",
+        skip(self, input)
+    )]
     async fn connection_set_option_string(
         &self,
         input: ConnectionSetOptionStringRequest,
@@ -614,7 +630,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionSetOptionStringResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_bytes", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_set_option_bytes",
+        skip(self, input)
+    )]
     async fn connection_set_option_bytes(
         &self,
         input: ConnectionSetOptionBytesRequest,
@@ -628,7 +647,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionSetOptionBytesResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_int", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_set_option_int",
+        skip(self, input)
+    )]
     async fn connection_set_option_int(
         &self,
         input: ConnectionSetOptionIntRequest,
@@ -642,7 +664,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionSetOptionIntResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_double", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_set_option_double",
+        skip(self, input)
+    )]
     async fn connection_set_option_double(
         &self,
         input: ConnectionSetOptionDoubleRequest,
@@ -692,7 +717,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionGetInfoResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let info = self.driver
+        let info = self
+            .driver
             .connection_get_info(conn_handle.into())
             .to_protobuf()?;
 
@@ -709,7 +735,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_table_schema", skip(self, _input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_get_table_schema",
+        skip(self, _input)
+    )]
     async fn connection_get_table_schema(
         &self,
         _input: ConnectionGetTableSchemaRequest,
@@ -719,7 +748,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_table_types", skip(self, _input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_get_table_types",
+        skip(self, _input)
+    )]
     async fn connection_get_table_types(
         &self,
         _input: ConnectionGetTableTypesRequest,
@@ -771,7 +803,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionGetParameterResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let value = self.driver
+        let value = self
+            .driver
             .connection_get_parameter(conn_handle.into(), input.key)
             .await
             .to_protobuf()?;
@@ -780,10 +813,14 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]
-    async fn statement_new(&self, input: StatementNewRequest) -> Result<StatementNewResponse, DriverException> {
+    async fn statement_new(
+        &self,
+        input: StatementNewRequest,
+    ) -> Result<StatementNewResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let handle = self.driver
+        let handle = self
+            .driver
             .statement_new(conn_handle.into())
             .to_protobuf()?;
         Ok(StatementNewResponse {
@@ -817,7 +854,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementSetSqlQueryResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_substrait_plan", skip(self, _input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_set_substrait_plan",
+        skip(self, _input)
+    )]
     async fn statement_set_substrait_plan(
         &self,
         _input: StatementSetSubstraitPlanRequest,
@@ -834,7 +874,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: StatementPrepareRequest,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-        let result = self.driver
+        let result = self
+            .driver
             .statement_prepare(stmt_handle.into())
             .await
             .to_protobuf()?;
@@ -847,7 +888,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_string", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_set_option_string",
+        skip(self, input)
+    )]
     async fn statement_set_option_string(
         &self,
         input: StatementSetOptionStringRequest,
@@ -861,7 +905,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementSetOptionStringResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_bytes", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_set_option_bytes",
+        skip(self, input)
+    )]
     async fn statement_set_option_bytes(
         &self,
         input: StatementSetOptionBytesRequest,
@@ -889,7 +936,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementSetOptionIntResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_double", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_set_option_double",
+        skip(self, input)
+    )]
     async fn statement_set_option_double(
         &self,
         input: StatementSetOptionDoubleRequest,
@@ -928,7 +978,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .and_then(|b| b.binding_type)
             .map(BindingType::from);
 
-        let result = self.driver
+        let result = self
+            .driver
             .statement_execute_query(stmt_handle.into(), bindings_opt)
             .await
             .to_protobuf()?;
@@ -951,7 +1002,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(self, _input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_execute_partitions",
+        skip(self, _input)
+    )]
     async fn statement_execute_partitions(
         &self,
         _input: StatementExecutePartitionsRequest,
@@ -961,7 +1015,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_read_partition", skip(self, _input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_read_partition",
+        skip(self, _input)
+    )]
     async fn statement_read_partition(
         &self,
         _input: StatementReadPartitionRequest,

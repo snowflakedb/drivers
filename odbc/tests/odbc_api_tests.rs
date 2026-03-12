@@ -90,52 +90,62 @@ static TEST_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 fn smoke_connection_set_tls_config() {
     TEST_RUNTIME.block_on(async {
         let client = database_driver_client();
-        let db = client.database_new(DatabaseNewRequest {}).await.expect("database_new ok");
-        client.database_init(DatabaseInitRequest {
-            db_handle: db.db_handle,
-        })
-        .await
-        .expect("database_init ok");
-        let conn = client.connection_new(ConnectionNewRequest {})
+        let db = client
+            .database_new(DatabaseNewRequest {})
+            .await
+            .expect("database_new ok");
+        client
+            .database_init(DatabaseInitRequest {
+                db_handle: db.db_handle,
+            })
+            .await
+            .expect("database_init ok");
+        let conn = client
+            .connection_new(ConnectionNewRequest {})
             .await
             .unwrap()
             .conn_handle
             .unwrap();
 
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn),
-            key: "verify_hostname".to_string(),
-            value: "true".to_string(),
-        })
-        .await
-        .expect("set verify_hostname");
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn),
-            key: "verify_certificates".to_string(),
-            value: "true".to_string(),
-        })
-        .await
-        .expect("set verify_certificates");
-        client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn),
-            key: "crl_mode".to_string(),
-            value: "ENABLED".to_string(),
-        })
-        .await
-        .expect("set crl_mode");
-        client.connection_set_option_int(ConnectionSetOptionIntRequest {
-            conn_handle: Some(conn),
-            key: "crl_http_timeout".to_string(),
-            value: 30,
-        })
-        .await
-        .expect("set crl_http_timeout");
-        client.connection_set_option_int(ConnectionSetOptionIntRequest {
-            conn_handle: Some(conn),
-            key: "crl_connection_timeout".to_string(),
-            value: 10,
-        })
-        .await
-        .expect("set crl_connection_timeout");
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn),
+                key: "verify_hostname".to_string(),
+                value: "true".to_string(),
+            })
+            .await
+            .expect("set verify_hostname");
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn),
+                key: "verify_certificates".to_string(),
+                value: "true".to_string(),
+            })
+            .await
+            .expect("set verify_certificates");
+        client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn),
+                key: "crl_mode".to_string(),
+                value: "ENABLED".to_string(),
+            })
+            .await
+            .expect("set crl_mode");
+        client
+            .connection_set_option_int(ConnectionSetOptionIntRequest {
+                conn_handle: Some(conn),
+                key: "crl_http_timeout".to_string(),
+                value: 30,
+            })
+            .await
+            .expect("set crl_http_timeout");
+        client
+            .connection_set_option_int(ConnectionSetOptionIntRequest {
+                conn_handle: Some(conn),
+                key: "crl_connection_timeout".to_string(),
+                value: 10,
+            })
+            .await
+            .expect("set crl_connection_timeout");
     });
 }

@@ -220,8 +220,16 @@ pub unsafe extern "C" fn SQLDriverConnect(
 ) -> sql::RetCode {
     match std::panic::catch_unwind(|| {
         api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
-        let result = api::connection::driver_connect(connection_handle, in_connection_string, in_string_length);
-        api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+        let result = api::connection::driver_connect(
+            connection_handle,
+            in_connection_string,
+            in_string_length,
+        );
+        api::diagnostic::set_diag_info_from_result(
+            sql::HandleType::Dbc,
+            connection_handle,
+            &result,
+        );
         result.to_sql_code()
     }) {
         Ok(result) => result,

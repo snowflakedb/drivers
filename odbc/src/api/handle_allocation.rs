@@ -44,9 +44,11 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
             conn_handle,
         } => {
             let g = global();
-            let response = g.runtime.block_on(g.client.statement_new(StatementNewRequest {
-                conn_handle: Some(*conn_handle),
-            }))?;
+            let response = g
+                .runtime
+                .block_on(g.client.statement_new(StatementNewRequest {
+                    conn_handle: Some(*conn_handle),
+                }))?;
             let stmt_handle = response
                 .stmt_handle
                 .required("Statement handle is required")?;
@@ -112,9 +114,12 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     let stmt = unsafe { Box::from_raw(handle as *mut Statement) };
 
     let g = global();
-    if let Err(e) = g.runtime.block_on(g.client.statement_release(StatementReleaseRequest {
-        stmt_handle: Some(stmt.stmt_handle),
-    })) {
+    if let Err(e) = g
+        .runtime
+        .block_on(g.client.statement_release(StatementReleaseRequest {
+            stmt_handle: Some(stmt.stmt_handle),
+        }))
+    {
         tracing::warn!("Failed to release server-side statement handle: {:?}", e);
     }
     Ok(())
@@ -209,9 +214,7 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
             tracing::info!("Freeing stmt: SQLFreeHandle: handle_type={:?}", handle_type);
             free_statement(handle)
         }
-        sql::HandleType::Desc => {
-            InvalidHandleSnafu.fail()
-        }
+        sql::HandleType::Desc => InvalidHandleSnafu.fail(),
         _ => InvalidHandleSnafu.fail(),
     }
 }

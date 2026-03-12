@@ -52,15 +52,19 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
 
             let g = global();
             let response = g.runtime.block_on(async {
-                g.client.statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    query: statement_text.to_string(),
-                }).await?;
+                g.client
+                    .statement_set_sql_query(StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt.stmt_handle),
+                        query: statement_text.to_string(),
+                    })
+                    .await?;
 
-                g.client.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    bindings,
-                }).await
+                g.client
+                    .statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt.stmt_handle),
+                        bindings,
+                    })
+                    .await
             });
 
             tracing::info!("exec_direct: response={:?}", response);
@@ -85,11 +89,13 @@ use crate::conversion::NumericSettings;
 fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut NumericSettings) {
     let g = global();
     g.runtime.block_on(async {
-        if let Ok(resp) =
-            g.client.connection_get_parameter(ConnectionGetParameterRequest {
+        if let Ok(resp) = g
+            .client
+            .connection_get_parameter(ConnectionGetParameterRequest {
                 conn_handle: Some(*conn_handle),
                 key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
-            }).await
+            })
+            .await
             && let Some(value) = resp.value
         {
             let bool_value = value.eq_ignore_ascii_case("true");
@@ -100,11 +106,13 @@ fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut Numeri
             );
         }
 
-        if let Ok(resp) =
-            g.client.connection_get_parameter(ConnectionGetParameterRequest {
+        if let Ok(resp) = g
+            .client
+            .connection_get_parameter(ConnectionGetParameterRequest {
                 conn_handle: Some(*conn_handle),
                 key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
-            }).await
+            })
+            .await
             && let Some(value) = resp.value
         {
             let bool_value = value.eq_ignore_ascii_case("true");
@@ -171,14 +179,18 @@ pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 
             let g = global();
             let prepare_result = g.runtime.block_on(async {
-                g.client.statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    query: query.to_string(),
-                }).await?;
+                g.client
+                    .statement_set_sql_query(StatementSetSqlQueryRequest {
+                        stmt_handle: Some(stmt.stmt_handle),
+                        query: query.to_string(),
+                    })
+                    .await?;
 
-                g.client.statement_prepare(StatementPrepareRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                }).await
+                g.client
+                    .statement_prepare(StatementPrepareRequest {
+                        stmt_handle: Some(stmt.stmt_handle),
+                    })
+                    .await
             })?;
 
             let result = prepare_result.result.required("Result is required")?;
@@ -217,10 +229,12 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
             let g = global();
-            let response = g.runtime.block_on(g.client.statement_execute_query(StatementExecuteQueryRequest {
-                stmt_handle: Some(stmt.stmt_handle),
-                bindings,
-            }))?;
+            let response = g.runtime.block_on(g.client.statement_execute_query(
+                StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt.stmt_handle),
+                    bindings,
+                },
+            ))?;
 
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
