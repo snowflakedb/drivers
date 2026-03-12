@@ -1,4 +1,4 @@
-@python @jdbc @core_not_needed
+@python @jdbc @odbc @core_not_needed
 Feature: BINARY type support
   # Snowflake Binary types: BINARY, VARBINARY
   # Stores binary data (byte sequences) in hexadecimal format
@@ -9,7 +9,7 @@ Feature: BINARY type support
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should cast binary values to appropriate type
     # Python: Values should be cast to 'bytearray' type
     Given Snowflake client is logged in
@@ -23,7 +23,7 @@ Feature: BINARY type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select binary literals
     Given Snowflake client is logged in
     When Queries selecting binary literals are executed:
@@ -35,7 +35,7 @@ Feature: BINARY type support
       | 0x48656C6C6F | 0x48656C6C6F | 0x0123456789ABCDEF |
 
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle binary corner case values from literals
     # Corner cases for binary:
     #   - Empty binary: X'' (0 bytes)
@@ -48,7 +48,7 @@ Feature: BINARY type support
     When Query selecting corner case binary literals is executed
     Then the result should contain expected corner case binary values
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should handle NULL binary values from literals
     Given Snowflake client is logged in
     When Query "SELECT NULL::{type}, X'ABCD', NULL::{type}" is executed
@@ -58,7 +58,7 @@ Feature: BINARY type support
   #                     SELECT FROM TABLE (Happy path, Corner cases)            #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select binary values from table
     Given Snowflake client is logged in
     And A temporary table with BINARY column is created
@@ -70,7 +70,7 @@ Feature: BINARY type support
       | 0x48656C6C6F       |
       | 0x576F726C64       |
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select corner case binary values from table
     Given Snowflake client is logged in
     And A temporary table with BINARY column is created
@@ -84,7 +84,7 @@ Feature: BINARY type support
     When Query "SELECT * FROM {table} ORDER BY 1" is executed
     Then the result should contain the inserted corner case binary values
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select NULL binary values from table
     Given Snowflake client is logged in
     And A temporary table with BINARY column is created
@@ -94,7 +94,7 @@ Feature: BINARY type support
     And 2 rows should contain NULL values
     And 1 row should contain 0xABCD
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select binary with specified length from table
     # Tests BINARY(n) with specific length constraints
     Given Snowflake client is logged in
@@ -107,7 +107,7 @@ Feature: BINARY type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should select binary literals using parameter binding
     # SELECT binding test: Uses SELECT ?::BINARY to bind binary values
     Given Snowflake client is logged in
@@ -137,10 +137,22 @@ Feature: BINARY type support
     Then the result should match the bound corner case value
 
   # =========================================================================== #
+  #                    VARBINARY synonym equivalence                            #
+  # =========================================================================== #
+
+  @odbc_e2e
+  Scenario: should handle VARBINARY as synonym for BINARY
+    Given Snowflake client is logged in
+    And A temporary table with VARBINARY column is created
+    And The table is populated with binary values via VARBINARY column
+    When Query "SELECT * FROM {table} ORDER BY col" is executed
+    Then the result should match the equivalent BINARY behavior
+
+  # =========================================================================== #
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should download binary data in multiple chunks using GENERATOR
     # ~30000 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
@@ -148,7 +160,7 @@ Feature: BINARY type support
     Then there are 30000 rows returned
     And all returned binary values should match the generated values in order
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @jdbc_e2e @odbc_e2e
   Scenario: should download binary data in multiple chunks from table
     Given Snowflake client is logged in
     And Table with (bin_data BINARY) exists with 30000 sequential binary values

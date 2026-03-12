@@ -6,6 +6,8 @@ mod traits;
 pub mod warning;
 
 mod binary;
+#[cfg(test)]
+mod binary_tests;
 mod boolean;
 #[cfg(test)]
 mod boolean_tests;
@@ -180,7 +182,15 @@ impl SnowflakeFieldType {
             "DATE" => Ok(Self::Date(date::SnowflakeDate)),
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz)),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
-            "BINARY" => Ok(Self::Binary(binary::SnowflakeBinary)),
+            "BINARY" => {
+                let len = match get_field_metadata(field, "byteLength") {
+                    Ok(len) => len,
+                    // byteLength is optional; default to Snowflake's max (8 MB).
+                    Err(ConversionError::MissingFieldMetadata { .. }) => 8_388_608,
+                    Err(e) => return Err(e),
+                };
+                Ok(Self::Binary(binary::SnowflakeBinary { len }))
+            }
             "REAL" => Ok(Self::Real(real::SnowflakeReal)),
             lt => IncompatibleFieldMetadataSnafu {
                 logical_type: lt.to_string(),
