@@ -1,11 +1,9 @@
 package net.snowflake.client.internal.api.implementation.datasource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -27,7 +25,7 @@ public class SnowflakeBasicDataSourceTest {
   @BeforeEach
   public void setUp() {
     dataSource = new SnowflakeBasicDataSource();
-    dataSource.setServerName("testaccount.snowflakecomputing.com");
+    dataSource.setUrl("jdbc:snowflake://testaccount.snowflakecomputing.com");
   }
 
   @Test
@@ -115,35 +113,6 @@ public class SnowflakeBasicDataSourceTest {
   }
 
   @Test
-  public void testGetUrlBuildsFromServerNameAndPort() {
-    dataSource.setPortNumber(443);
-
-    assertEquals("jdbc:snowflake://testaccount.snowflakecomputing.com:443", dataSource.getUrl());
-  }
-
-  @Test
-  public void testGetUrlBuildsFromServerNameWithoutPort() {
-    assertEquals("jdbc:snowflake://testaccount.snowflakecomputing.com", dataSource.getUrl());
-  }
-
-  @Test
-  public void testGetUrlThrowsWhenNeitherUrlNorServerNameIsSet() {
-    SnowflakeBasicDataSource unconfigured = new SnowflakeBasicDataSource();
-
-    IllegalStateException ex = assertThrows(IllegalStateException.class, unconfigured::getUrl);
-    assertTrue(ex.getMessage().contains("url"));
-    assertTrue(ex.getMessage().contains("serverName"));
-  }
-
-  @Test
-  public void testGetUrlThrowsWhenServerNameIsEmpty() {
-    SnowflakeBasicDataSource ds = new SnowflakeBasicDataSource();
-    ds.setServerName("");
-
-    assertThrows(IllegalStateException.class, ds::getUrl);
-  }
-
-  @Test
   public void testGetLogWriterThrowsSQLFeatureNotSupportedException() {
     assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.getLogWriter());
   }
@@ -174,12 +143,13 @@ public class SnowflakeBasicDataSourceTest {
 
   @Test
   public void testIsWrapperForReturnsFalse() {
-    assertFalse(dataSource.isWrapperFor(Object.class));
+    assertThrows(
+        SQLFeatureNotSupportedException.class, () -> dataSource.isWrapperFor(Object.class));
   }
 
   @Test
   public void testUnwrapReturnsNull() {
-    assertNull(dataSource.unwrap(Object.class));
+    assertThrows(SQLFeatureNotSupportedException.class, () -> dataSource.unwrap(Object.class));
   }
 
   @Test

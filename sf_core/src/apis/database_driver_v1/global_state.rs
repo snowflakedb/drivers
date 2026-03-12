@@ -1,10 +1,28 @@
-use super::{connection::Connection, database::Database, statement::Statement};
-use crate::handle_manager::HandleManager;
 use std::sync::{LazyLock, Mutex};
 
-pub static DB_HANDLE_MANAGER: LazyLock<HandleManager<Mutex<Database>>> =
-    LazyLock::new(HandleManager::new);
-pub static CONN_HANDLE_MANAGER: LazyLock<HandleManager<Mutex<Connection>>> =
-    LazyLock::new(HandleManager::new);
-pub static STMT_HANDLE_MANAGER: LazyLock<HandleManager<Mutex<Statement>>> =
-    LazyLock::new(HandleManager::new);
+use super::connection::Connection;
+use super::database::Database;
+use super::statement::Statement;
+use crate::handle_manager::HandleManager;
+
+pub struct DatabaseDriverV1 {
+    pub(super) databases: HandleManager<Mutex<Database>>,
+    pub(super) connections: HandleManager<Mutex<Connection>>,
+    pub(super) statements: HandleManager<Mutex<Statement>>,
+}
+
+static INSTANCE: LazyLock<DatabaseDriverV1> = LazyLock::new(DatabaseDriverV1::new);
+
+pub fn driver_state() -> &'static DatabaseDriverV1 {
+    &INSTANCE
+}
+
+impl DatabaseDriverV1 {
+    const fn new() -> Self {
+        Self {
+            databases: HandleManager::new(),
+            connections: HandleManager::new(),
+            statements: HandleManager::new(),
+        }
+    }
+}

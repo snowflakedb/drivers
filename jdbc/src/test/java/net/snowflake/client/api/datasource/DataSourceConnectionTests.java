@@ -32,22 +32,6 @@ public class DataSourceConnectionTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
-  public void testConnectUsingDataSourceWithServerName() throws Exception {
-    Properties props = loadConnectionProperties();
-    SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
-    ds.setServerName(props.getProperty("account") + ".snowflakecomputing.com");
-    ds.setUser(props.getProperty("user"));
-    ds.setPassword(props.getProperty("password"));
-    ds.setAccount(props.getProperty("account"));
-
-    try (Connection connection = ds.getConnection()) {
-      assertNotNull(connection, "Connection should not be null");
-      assertFalse(connection.isClosed(), "Connection should be open");
-      assertQueryReturnsCurrentRole(connection);
-    }
-  }
-
-  @Test
   public void testConnectUsingDataSourceWithExplicitCredentials() throws Exception {
     Properties props = loadConnectionProperties();
     SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
@@ -126,17 +110,6 @@ public class DataSourceConnectionTests extends SnowflakeIntegrationTestBase {
     ds.setAccount(props.getProperty("account"));
 
     assertThrows(SQLException.class, () -> ds.getConnection(props.getProperty("user"), null));
-  }
-
-  @Test
-  public void testFailToConnectWithInvalidServerName() {
-    SnowflakeDataSource ds = SnowflakeDataSourceFactory.createDataSource();
-    ds.setServerName("nonexistent-account-xyz-99999.snowflakecomputing.com");
-    ds.setUser("someuser");
-    ds.setPassword("somepassword");
-    ds.setAccount("nonexistent-account-xyz-99999");
-
-    assertThrows(SQLException.class, ds::getConnection);
   }
 
   @Test

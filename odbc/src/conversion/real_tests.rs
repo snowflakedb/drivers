@@ -66,6 +66,7 @@ mod tests {
             indicator_ptr: str_len as *mut sql::Len,
             precision,
             scale,
+            datetime_interval_precision: None,
         }
     }
 

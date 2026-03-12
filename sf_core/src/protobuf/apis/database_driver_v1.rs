@@ -7,17 +7,7 @@ use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
-use crate::apis::database_driver_v1::{
-    connection_get_info, connection_get_parameter, connection_init, connection_new,
-    connection_release, connection_set_option, connection_set_session_parameters,
-};
-use crate::apis::database_driver_v1::{
-    database_init, database_new, database_release, database_set_option,
-};
-use crate::apis::database_driver_v1::{
-    statement_execute_query, statement_new, statement_prepare, statement_release,
-    statement_set_option, statement_set_sql_query,
-};
+use crate::apis::database_driver_v1::{DatabaseDriverV1, driver_state};
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
@@ -499,12 +489,18 @@ impl<T> ToProtobuf<T> for Result<T, ApiError> {
     }
 }
 
-pub struct DatabaseDriverImpl {}
+pub struct DatabaseDriverImpl;
+
+impl DatabaseDriverImpl {
+    fn state() -> &'static DatabaseDriverV1 {
+        driver_state()
+    }
+}
 
 impl DatabaseDriver for DatabaseDriverImpl {
     #[instrument(name = "DatabaseDriverV1::database_new", skip(_input))]
     fn database_new(_input: DatabaseNewRequest) -> Result<DatabaseNewResponse, DriverException> {
-        let handle = database_new();
+        let handle = Self::state().database_new();
         Ok(DatabaseNewResponse {
             db_handle: Some(DatabaseHandle::from(handle)),
         })
@@ -516,7 +512,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<DatabaseSetOptionStringResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        database_set_option(db_handle.into(), input.key, Setting::String(input.value))
+        Self::state()
+            .database_set_option(db_handle.into(), input.key, Setting::String(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionStringResponse {})
@@ -528,7 +525,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<DatabaseSetOptionBytesResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        database_set_option(db_handle.into(), input.key, Setting::Bytes(input.value))
+        Self::state()
+            .database_set_option(db_handle.into(), input.key, Setting::Bytes(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionBytesResponse {})
@@ -540,7 +538,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<DatabaseSetOptionIntResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        database_set_option(db_handle.into(), input.key, Setting::Int(input.value))
+        Self::state()
+            .database_set_option(db_handle.into(), input.key, Setting::Int(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionIntResponse {})
@@ -552,7 +551,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<DatabaseSetOptionDoubleResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        database_set_option(db_handle.into(), input.key, Setting::Double(input.value))
+        Self::state()
+            .database_set_option(db_handle.into(), input.key, Setting::Double(input.value))
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionDoubleResponse {})
@@ -562,7 +562,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     fn database_init(input: DatabaseInitRequest) -> Result<DatabaseInitResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        database_init(db_handle.into()).to_protobuf()?;
+        Self::state()
+            .database_init(db_handle.into())
+            .to_protobuf()?;
         Ok(DatabaseInitResponse {})
     }
 
@@ -572,7 +574,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<DatabaseReleaseResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        database_release(db_handle.into()).to_protobuf()?;
+        Self::state()
+            .database_release(db_handle.into())
+            .to_protobuf()?;
         Ok(DatabaseReleaseResponse {})
     }
 
@@ -580,7 +584,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     fn connection_new(
         _input: ConnectionNewRequest,
     ) -> Result<ConnectionNewResponse, DriverException> {
-        let handle = connection_new();
+        let handle = Self::state().connection_new();
         Ok(ConnectionNewResponse {
             conn_handle: Some(ConnectionHandle::from(handle)),
         })
@@ -592,7 +596,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionSetOptionStringResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        connection_set_option(conn_handle.into(), input.key, Setting::String(input.value))
+        Self::state()
+            .connection_set_option(conn_handle.into(), input.key, Setting::String(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionStringResponse {})
@@ -604,7 +609,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionSetOptionBytesResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        connection_set_option(conn_handle.into(), input.key, Setting::Bytes(input.value))
+        Self::state()
+            .connection_set_option(conn_handle.into(), input.key, Setting::Bytes(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionBytesResponse {})
@@ -616,7 +622,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionSetOptionIntResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        connection_set_option(conn_handle.into(), input.key, Setting::Int(input.value))
+        Self::state()
+            .connection_set_option(conn_handle.into(), input.key, Setting::Int(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionIntResponse {})
@@ -628,7 +635,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionSetOptionDoubleResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        connection_set_option(conn_handle.into(), input.key, Setting::Double(input.value))
+        Self::state()
+            .connection_set_option(conn_handle.into(), input.key, Setting::Double(input.value))
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionDoubleResponse {})
@@ -642,7 +650,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let db_handle = required(input.db_handle, "Database handle is required")?;
 
-        connection_init(conn_handle.into(), db_handle.into()).to_protobuf()?;
+        Self::state()
+            .connection_init(conn_handle.into(), db_handle.into())
+            .to_protobuf()?;
         Ok(ConnectionInitResponse {})
     }
 
@@ -652,7 +662,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionReleaseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        connection_release(conn_handle.into()).to_protobuf()?;
+        Self::state()
+            .connection_release(conn_handle.into())
+            .to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
     }
 
@@ -662,7 +674,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionGetInfoResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let info = connection_get_info(conn_handle.into()).to_protobuf()?;
+        let info = Self::state()
+            .connection_get_info(conn_handle.into())
+            .to_protobuf()?;
 
         Ok(ConnectionGetInfoResponse::from(info))
     }
@@ -719,7 +733,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionSetSessionParametersResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        connection_set_session_parameters(conn_handle.into(), input.parameters).to_protobuf()?;
+        Self::state()
+            .connection_set_session_parameters(conn_handle.into(), input.parameters)
+            .to_protobuf()?;
 
         Ok(ConnectionSetSessionParametersResponse {})
     }
@@ -730,7 +746,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionGetParameterResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let value = connection_get_parameter(conn_handle.into(), input.key).to_protobuf()?;
+        let value = Self::state()
+            .connection_get_parameter(conn_handle.into(), input.key)
+            .to_protobuf()?;
 
         Ok(ConnectionGetParameterResponse { value })
     }
@@ -739,7 +757,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        let handle = statement_new(conn_handle.into()).to_protobuf()?;
+        let handle = Self::state()
+            .statement_new(conn_handle.into())
+            .to_protobuf()?;
         Ok(StatementNewResponse {
             stmt_handle: Some(StatementHandle::from(handle)),
         })
@@ -751,7 +771,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementReleaseResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        statement_release(stmt_handle.into()).to_protobuf()?;
+        Self::state()
+            .statement_release(stmt_handle.into())
+            .to_protobuf()?;
         Ok(StatementReleaseResponse {})
     }
 
@@ -761,7 +783,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementSetSqlQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        statement_set_sql_query(stmt_handle.into(), input.query).to_protobuf()?;
+        Self::state()
+            .statement_set_sql_query(stmt_handle.into(), input.query)
+            .to_protobuf()?;
         Ok(StatementSetSqlQueryResponse {})
     }
 
@@ -780,7 +804,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: StatementPrepareRequest,
     ) -> Result<StatementPrepareResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
-        let result = statement_prepare(stmt_handle.into()).to_protobuf()?;
+        let result = Self::state()
+            .statement_prepare(stmt_handle.into())
+            .to_protobuf()?;
         let result_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
         Ok(StatementPrepareResponse {
             result: Some(PrepareResult {
@@ -796,7 +822,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementSetOptionStringResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        statement_set_option(stmt_handle.into(), input.key, Setting::String(input.value))
+        Self::state()
+            .statement_set_option(stmt_handle.into(), input.key, Setting::String(input.value))
             .to_protobuf()?;
 
         Ok(StatementSetOptionStringResponse {})
@@ -808,7 +835,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementSetOptionBytesResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        statement_set_option(stmt_handle.into(), input.key, Setting::Bytes(input.value))
+        Self::state()
+            .statement_set_option(stmt_handle.into(), input.key, Setting::Bytes(input.value))
             .to_protobuf()?;
 
         Ok(StatementSetOptionBytesResponse {})
@@ -820,7 +848,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementSetOptionIntResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        statement_set_option(stmt_handle.into(), input.key, Setting::Int(input.value))
+        Self::state()
+            .statement_set_option(stmt_handle.into(), input.key, Setting::Int(input.value))
             .to_protobuf()?;
 
         Ok(StatementSetOptionIntResponse {})
@@ -832,7 +861,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementSetOptionDoubleResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        statement_set_option(stmt_handle.into(), input.key, Setting::Double(input.value))
+        Self::state()
+            .statement_set_option(stmt_handle.into(), input.key, Setting::Double(input.value))
             .to_protobuf()?;
 
         Ok(StatementSetOptionDoubleResponse {})
@@ -861,7 +891,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .and_then(|b| b.binding_type)
             .map(BindingType::from);
 
-        let result = statement_execute_query(stmt_handle.into(), bindings_opt).to_protobuf()?;
+        let result = Self::state()
+            .statement_execute_query(stmt_handle.into(), bindings_opt)
+            .to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
 
         Ok(StatementExecuteQueryResponse {
