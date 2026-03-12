@@ -47,6 +47,9 @@ public final class ArrowVectorConverterUtil {
         case BOOLEAN:
           return new BitToBooleanConverter(vector, idx, context);
 
+        case DATE:
+          return new DateConverter(vector, idx, context);
+
         case FIXED:
           String scaleStr = vector.getField().getMetadata().get("scale");
           int sfScale = Integer.parseInt(scaleStr);

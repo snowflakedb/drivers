@@ -16,6 +16,7 @@ odbc-sys = "0.25.1"
 arrow = { version = "56.0.0", features = ["ffi"] }
 chrono = "0.4.43"
 base64 = "0.22.1"
+serde_json = "1.0"
 
 proto_utils = { path = "../proto_utils" }
 error_trace = { path = "../error_trace" }

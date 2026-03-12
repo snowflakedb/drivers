@@ -256,8 +256,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: SQL_ATTR_LOGIN_TIMEOUT can be set befo
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify the attribute was set
-  SQLUINTEGER timeout = 0;
-  ret = SQLGetConnectAttr(dbc_handle(), SQL_ATTR_LOGIN_TIMEOUT, &timeout, 0, nullptr);
+  SQLULEN timeout = 0;
+  ret = SQLGetConnectAttr(dbc_handle(), SQL_ATTR_LOGIN_TIMEOUT, SQLPOINTER(&timeout), 0, nullptr);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
   REQUIRE(timeout == 5);
 

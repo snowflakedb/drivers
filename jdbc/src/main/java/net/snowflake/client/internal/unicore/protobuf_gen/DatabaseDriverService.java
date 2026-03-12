@@ -169,16 +169,6 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.StatementGetParameterSchemaResponse statementGetParameterSchema(DatabaseDriverV1.StatementGetParameterSchemaRequest request) throws ServiceException, TransportException;
 
     /**
-     * Method: statementBind
-     */
-    DatabaseDriverV1.StatementBindResponse statementBind(DatabaseDriverV1.StatementBindRequest request) throws ServiceException, TransportException;
-
-    /**
-     * Method: statementBindStream
-     */
-    DatabaseDriverV1.StatementBindStreamResponse statementBindStream(DatabaseDriverV1.StatementBindStreamRequest request) throws ServiceException, TransportException;
-
-    /**
      * Method: statementExecuteQuery
      */
     DatabaseDriverV1.StatementExecuteQueryResponse statementExecuteQuery(DatabaseDriverV1.StatementExecuteQueryRequest request) throws ServiceException, TransportException;

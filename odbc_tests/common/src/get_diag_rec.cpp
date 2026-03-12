@@ -1,6 +1,5 @@
 #include "get_diag_rec.hpp"
 
-#include <iostream>
 #include <string>
 #include <vector>
 
@@ -18,14 +17,10 @@ std::vector<DiagRec> get_diag_rec(const SQLSMALLINT handle_type, const SQLHANDLE
     const SQLRETURN ret = SQLGetDiagRec(handle_type, handle, recNumber, sqlState, &nativeError, messageText,
                                         sizeof(messageText), &textLength);
     if (ret == SQL_NO_DATA) {
-      break;  // No more data
+      break;
     }
 
-    if (ret != SQL_SUCCESS) {
-      // SQLGetDiagRec itself failed - unable to retrieve diagnostic details
-      // This is rare but can occur with invalid handles or driver issues
-      std::cerr << "Warning: SQLGetDiagRec failed (returned " << ret << ") when retrieving diagnostic record #"
-                << recNumber << std::endl;
+    if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
       break;
     }
 

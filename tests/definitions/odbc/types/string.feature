@@ -33,5 +33,4 @@ Feature: ODBC-specific string datatype handling
     And Expected row count is defined
     When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY 1" is executed
     And Columns are bound using SQLBindCol
-    Then there are 10000 rows returned
-    And all returned string values should match the generated values in order
+    Then there are 10000 rows returned and all string values should match the generated values in order

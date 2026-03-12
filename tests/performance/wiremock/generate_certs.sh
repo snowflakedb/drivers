@@ -47,7 +47,8 @@ keytool -importkeystore \
     -deststoretype jks \
     -destkeystore "$CERTS_DIR/wiremock.jks"
 
-# Clean up intermediate files
+# Clean up intermediate files (keep .crt for CA cert export to driver containers)
 rm "$CERTS_DIR/wiremock.p12" "$CERTS_DIR/wiremock.key"
 
 echo "✓ Static CA certificate generated at $CERTS_DIR/wiremock.jks"
+echo "✓ CA cert PEM available at $CERTS_DIR/wiremock.crt"

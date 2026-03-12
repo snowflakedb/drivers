@@ -14,8 +14,8 @@ try {
         $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
     }
     cmake @cmakeArgs .
-    cmake --build cmake-build --config Debug --parallel $NPROC
-    $ctestArgs = @("-j", $NPROC, "-C", "Debug", "--test-dir", "cmake-build", "--output-on-failure")
+    cmake --build cmake-build --config Debug --parallel ($NPROC)
+    $ctestArgs = @("-j", ($NPROC * 4), "-C", "Debug", "--test-dir", "cmake-build", "--output-on-failure")
     if ($env:CTEST_FILTER) {
         $ctestArgs += @("-R", $env:CTEST_FILTER)
     }

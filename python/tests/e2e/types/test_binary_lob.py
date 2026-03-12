@@ -7,6 +7,9 @@ This module tests large BINARY values at the following limits:
 Reference: https://docs.snowflake.com/en/release-notes/bcr-bundles/2025_03/bcr-1942
 """
 
+from .utils import assert_connection_is_open
+
+
 # =============================================================================
 # LOB SIZE LIMITS
 # =============================================================================
@@ -50,6 +53,7 @@ class TestBinaryLob:
         # This is the limit before enabling the 2025_03 behavior change bundle
 
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with BINARY column exists
         table_name = f"{tmp_schema}.lob_8mb_table"
@@ -77,6 +81,7 @@ class TestBinaryLob:
         # Requires 2025_03 behavior change bundle
 
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with BINARY(67108864) column exists
         table_name = f"{tmp_schema}.lob_64mb_table"

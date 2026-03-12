@@ -10,7 +10,7 @@ build/reports
 jdbc/.gradle
 jdbc/build
 odbc_tests/cmake-build
-parameters.json
+parameters*.json
 **/rsa_key.p8
 .DS_Store
 /.tmp

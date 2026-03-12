@@ -42,6 +42,25 @@ extern DRIVER_TYPE get_driver_type();
     }                                            \
   } while (0)
 
+// On Windows the ODBC driver interprets UTF-8 wire bytes as Windows-1252 and
+// re-encodes them to UTF-8 (double-encoding).  SQL_C_BINARY therefore returns
+// different byte sequences than on Unix/Linux where raw UTF-8 is preserved.
+// Use WINDOWS_ONLY / UNIX_ONLY to gate platform-specific assertions.
+#ifdef _WIN32
+#define WINDOWS_ONLY
+#define UNIX_ONLY if (false)
+#else
+#define WINDOWS_ONLY if (false)
+#define UNIX_ONLY
+#endif
+
+#ifdef _WIN32
+#define SKIP_WINDOWS_STRING_ENCODING() \
+  SKIP("String encoding not yet supported on Windows (UTF-8 vs Windows-1252 issue)")
+#else
+#define SKIP_WINDOWS_STRING_ENCODING() ((void)0)
+#endif
+
 #define REQUIRE_VPN(message)                              \
   do {                                                    \
     if (std::getenv("JENKINS_URL") == nullptr) {          \

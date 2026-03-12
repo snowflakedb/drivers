@@ -142,7 +142,8 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void setDate(int parameterIndex, Date x) throws SQLException {
     checkClosed();
-    throw new SQLFeatureNotSupportedException("setDate not supported");
+    setNullableParameter(
+        parameterIndex, Types.DATE, "TEXT", x, date -> date.toLocalDate().toString());
   }
 
   @Override

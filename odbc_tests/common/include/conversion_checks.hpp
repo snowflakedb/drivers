@@ -103,6 +103,14 @@ static void check_interval_precision_lost(const StatementHandleWrapper& stmt, in
   CHECK(records[0].sqlState == "22015");
 }
 
+inline void check_null_via_get_data(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT c_type) {
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, c_type, buffer, sizeof(buffer), &indicator);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
 inline std::string check_char_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   char buffer[8192];
   SQLLEN indicator = -999;

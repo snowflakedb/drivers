@@ -1,5 +1,5 @@
 use snafu::{OptionExt, ResultExt};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
 use super::Handle;
 use super::connection::RefreshContext;
@@ -12,18 +12,13 @@ use crate::{
     rest::snowflake::{self, QueryExecutionMode, QueryInput, snowflake_query_with_client},
 };
 
-use arrow::array::{RecordBatch, StructArray};
-use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use arrow::{
-    array::{Int32Array, StringArray},
-    datatypes::DataType,
-};
 use serde_json::value::RawValue;
 use snafu::Snafu;
 use std::{collections::HashMap, sync::Arc};
 
 use super::connection::Connection;
+#[cfg(test)]
 use crate::rest::snowflake::query_request;
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -209,53 +204,6 @@ pub fn statement_prepare(stmt_handle: Handle) -> Result<PrepareResult, ApiError>
     })
 }
 
-fn with_statement<T>(
-    handle: Handle,
-    f: impl FnOnce(MutexGuard<Statement>) -> Result<T, ApiError>,
-) -> Result<T, ApiError> {
-    let stmt = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
-        }
-        .build()
-    })?;
-    let guard = stmt.lock().map_err(|_| {
-        InvalidArgumentSnafu {
-            argument: "Statement cannot be locked".to_string(),
-        }
-        .build()
-    })?;
-    f(guard)
-}
-
-/// # Safety
-///
-/// This function is unsafe because it dereferences raw pointers to FFI_ArrowSchema and FFI_ArrowArray.
-/// The caller must ensure that:
-/// - The pointers are valid and properly aligned
-/// - The pointers point to valid FFI_ArrowSchema and FFI_ArrowArray structs
-/// - The structs referenced by the pointers will not be freed by the caller
-/// - No other code is concurrently modifying the memory referenced by these pointers
-pub unsafe fn statement_bind(
-    stmt_handle: Handle,
-    schema: *mut FFI_ArrowSchema,
-    array: *mut FFI_ArrowArray,
-) -> Result<(), ApiError> {
-    let schema = unsafe { FFI_ArrowSchema::from_raw(schema) };
-    let array = unsafe { FFI_ArrowArray::from_raw(array) };
-    let array = unsafe { arrow::ffi::from_ffi(array, &schema) }.map_err(|_| {
-        InvalidArgumentSnafu {
-            argument: "Failed to convert ArrowArray".to_string(),
-        }
-        .build()
-    })?;
-    let record_batch = RecordBatch::from(StructArray::from(array));
-    with_statement(stmt_handle, |mut stmt| {
-        stmt.bind_parameters(record_batch);
-        Ok(())
-    })
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ColumnMetadata {
     pub name: String,
@@ -323,20 +271,9 @@ fn execute_query_internal<'a>(
 
     let execution_mode = stmt.execution_mode(Some(query));
 
-    // Get bindings from request or from statement's Arrow bindings.
-    //
-    // JSON path (from language wrappers): **ZERO COPY** - borrows directly from wrapper memory.
-    // Arrow path (ODBC backwards compat): builds HashMap and serializes to JSON (allocations),
-    //   stored in `owned_bindings` so `query_bindings` can borrow it.
-    // Arrow path produces owned Box<RawValue>; keep it alive so query_bindings can borrow it.
-    let owned_bindings = if bindings.is_none() {
-        stmt.get_query_parameter_bindings()
-            .context(StatementSnafu)?
-    } else {
-        None
-    };
+    // Get bindings from request.
+    // JSON path: zero-copy — borrows directly from wrapper memory.
     let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
-        // Handle bindings from request
         match &binding_type {
             BindingType::Json(data_ptr) => {
                 // True zero-copy: pointer → &'static RawValue (no allocation, no validation).
@@ -352,7 +289,7 @@ fn execute_query_internal<'a>(
             }
         }
     } else {
-        owned_bindings.as_deref()
+        None
     };
 
     let query_input = QueryInput {
@@ -442,81 +379,10 @@ fn execute_query_internal<'a>(
     Ok(result)
 }
 
-/// Convert Arrow RecordBatch parameter bindings to `Cow::Owned(Box<RawValue>)`.
-///
-/// This is the backwards-compatibility path used by ODBC's `StatementBind` API.
-/// Unlike the JSON path (which borrows wrapper memory with zero copy), this path
-/// must allocate:
-///   1. A `HashMap<String, BindParameter>` is built from Arrow column data.
-///   2. `serde_json::to_string()` serializes the HashMap into a JSON `String`
-///      (one heap allocation for the output buffer).
-///   3. `RawValue::from_string()` validates the JSON syntax and wraps the string
-///      (no additional copy -- RawValue takes ownership of the String).
-///   4. `Cow::Owned` wraps the Box (no allocation, just an enum tag).
-fn parameters_from_record_batch(record_batch: &RecordBatch) -> Result<String, StatementError> {
-    let mut parameters = HashMap::new();
-    for i in 0..record_batch.num_columns() {
-        let column = record_batch.column(i);
-        match column.data_type() {
-            DataType::Int32 => {
-                let value = column
-                    .as_any()
-                    .downcast_ref::<Int32Array>()
-                    .unwrap()
-                    .value(0);
-                let json_value = serde_json::Value::String(value.to_string());
-                parameters.insert(
-                    format!("{}", i + 1),
-                    query_request::BindParameter {
-                        type_: "FIXED".to_string(),
-                        value: json_value,
-                        format: None,
-                        schema: None,
-                    },
-                );
-            }
-            DataType::Utf8 => {
-                let value = column
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap()
-                    .value(0);
-                let json_value = serde_json::Value::String(value.to_string());
-                parameters.insert(
-                    format!("{}", i + 1),
-                    query_request::BindParameter {
-                        type_: "TEXT".to_string(),
-                        value: json_value,
-                        format: None,
-                        schema: None,
-                    },
-                );
-            }
-            _ => {
-                UnsupportedBindParameterTypeSnafu {
-                    type_: column.data_type().to_string(),
-                }
-                .fail()?;
-            }
-        }
-    }
-    // Serialize HashMap to a JSON string, then wrap as RawValue.
-    // serde_json::to_string allocates the output buffer; RawValue::from_string
-    // takes ownership of that String without copying.
-    let json_string = serde_json::to_string(&parameters).map_err(|_| {
-        UnsupportedBindParameterTypeSnafu {
-            type_: "Failed to serialize parameters".to_string(),
-        }
-        .build()
-    })?;
-    Ok(json_string)
-}
-
 pub struct Statement {
     pub state: StatementState,
     pub settings: HashMap<String, Setting>,
     pub query: Option<String>,
-    pub parameter_bindings: Option<RecordBatch>,
     pub conn: Arc<Mutex<Connection>>,
 }
 
@@ -532,28 +398,7 @@ impl Statement {
             settings: HashMap::new(),
             state: StatementState::Initialized,
             query: None,
-            parameter_bindings: None,
             conn,
-        }
-    }
-
-    pub fn bind_parameters(&mut self, record_batch: RecordBatch) {
-        self.parameter_bindings = Some(record_batch);
-    }
-
-    pub fn get_query_parameter_bindings(&self) -> Result<Option<Box<RawValue>>, StatementError> {
-        match self.parameter_bindings.as_ref() {
-            Some(parameters) => {
-                let json_string = parameters_from_record_batch(parameters)?;
-                let raw = RawValue::from_string(json_string).map_err(|_| {
-                    UnsupportedBindParameterTypeSnafu {
-                        type_: "Failed to create RawValue from serialized parameters".to_string(),
-                    }
-                    .build()
-                })?;
-                Ok(Some(raw))
-            }
-            None => Ok(None),
         }
     }
 
@@ -1065,97 +910,6 @@ mod tests {
         let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
         assert_eq!(params.as_object().unwrap().len(), 20);
-    }
-
-    // ---------------------------------------------------------------
-    // parameters_from_record_batch (Arrow backwards-compat path)
-    // ---------------------------------------------------------------
-
-    #[test]
-    fn test_parameters_from_record_batch_int32() {
-        use arrow::array::Int32Array;
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![Field::new("1", DataType::Int32, false)]);
-        let batch =
-            RecordBatch::try_new(Arc::new(schema), vec![Arc::new(Int32Array::from(vec![42]))])
-                .unwrap();
-
-        let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let obj = params.as_object().unwrap();
-        assert_eq!(obj.len(), 1);
-        assert_eq!(obj["1"]["type"], "FIXED");
-        assert_eq!(obj["1"]["value"], "42");
-    }
-
-    #[test]
-    fn test_parameters_from_record_batch_utf8() {
-        use arrow::array::StringArray;
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![Field::new("1", DataType::Utf8, false)]);
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(StringArray::from(vec!["hello"]))],
-        )
-        .unwrap();
-
-        let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let obj = params.as_object().unwrap();
-        assert_eq!(obj.len(), 1);
-        assert_eq!(obj["1"]["type"], "TEXT");
-        assert_eq!(obj["1"]["value"], "hello");
-    }
-
-    #[test]
-    fn test_parameters_from_record_batch_mixed_columns() {
-        use arrow::array::{Int32Array, StringArray};
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![
-            Field::new("1", DataType::Int32, false),
-            Field::new("2", DataType::Utf8, false),
-        ]);
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![
-                Arc::new(Int32Array::from(vec![99])),
-                Arc::new(StringArray::from(vec!["world"])),
-            ],
-        )
-        .unwrap();
-
-        let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let obj = params.as_object().unwrap();
-        assert_eq!(obj.len(), 2);
-
-        assert_eq!(obj["1"]["type"], "FIXED");
-        assert_eq!(obj["1"]["value"], "99");
-
-        assert_eq!(obj["2"]["type"], "TEXT");
-        assert_eq!(obj["2"]["value"], "world");
-    }
-
-    #[test]
-    fn test_parameters_from_record_batch_unsupported_type() {
-        use arrow::array::Float64Array;
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![Field::new("1", DataType::Float64, false)]);
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(Float64Array::from(vec![1.234]))],
-        )
-        .unwrap();
-
-        let result = parameters_from_record_batch(&batch);
-        assert!(
-            result.is_err(),
-            "Float64 is not a supported bind parameter type"
-        );
     }
 
     // ---------------------------------------------------------------
