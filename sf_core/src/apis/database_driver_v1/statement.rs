@@ -116,7 +116,7 @@ pub(crate) fn calculate_rows_affected(data: &Data) -> Option<i64> {
                     || DML_AFFECTED_ROWS_COLUMN_PREFIXES
                         .iter()
                         .any(|p| col_name.starts_with(p)))
-                    && let Some(value) = rowset[0].get(idx)
+                    && let Some(Some(value)) = rowset[0].get(idx)
                     && let Ok(count) = value.parse::<i64>()
                 {
                     affected_rows += count;
@@ -980,6 +980,75 @@ mod tests {
             serialized.contains(json),
             "Serialized request must contain the raw JSON verbatim.\nSerialized: {serialized}"
         );
+    }
+
+    #[test]
+    fn calculate_rows_affected_sums_non_null_dml_columns() {
+        let json = r#"{
+            "rowset": [["5", "3"]],
+            "rowtype": [
+                {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                {"name": "number of rows updated", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10}
+            ],
+            "statementTypeId": 12288
+        }"#;
+        let data: Data = serde_json::from_str(json).unwrap();
+        assert_eq!(calculate_rows_affected(&data), Some(8));
+    }
+
+    #[test]
+    fn calculate_rows_affected_skips_null_values() {
+        let json = r#"{
+            "rowset": [["5", null]],
+            "rowtype": [
+                {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                {"name": "number of rows updated", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+            ],
+            "statementTypeId": 12288
+        }"#;
+        let data: Data = serde_json::from_str(json).unwrap();
+        assert_eq!(calculate_rows_affected(&data), Some(5));
+    }
+
+    #[test]
+    fn calculate_rows_affected_all_null_returns_zero() {
+        let json = r#"{
+            "rowset": [[null]],
+            "rowtype": [
+                {"name": "number of rows inserted", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+            ],
+            "statementTypeId": 12288
+        }"#;
+        let data: Data = serde_json::from_str(json).unwrap();
+        assert_eq!(calculate_rows_affected(&data), Some(0));
+    }
+
+    #[test]
+    fn calculate_rows_affected_ignores_non_matching_null_column() {
+        let json = r#"{
+            "rowset": [["5", null]],
+            "rowtype": [
+                {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                {"name": "some_other_column", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+            ],
+            "statementTypeId": 12288
+        }"#;
+        let data: Data = serde_json::from_str(json).unwrap();
+        assert_eq!(calculate_rows_affected(&data), Some(5));
+    }
+
+    #[test]
+    fn calculate_rows_affected_non_dml_uses_total() {
+        let json = r#"{
+            "rowset": [[null]],
+            "rowtype": [
+                {"name": "result", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+            ],
+            "statementTypeId": 4096,
+            "total": 42
+        }"#;
+        let data: Data = serde_json::from_str(json).unwrap();
+        assert_eq!(calculate_rows_affected(&data), Some(42));
     }
 
     #[test]

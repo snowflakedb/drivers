@@ -6,6 +6,9 @@ use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
+/// A JSON rowset: each inner Vec is one row, each element is a nullable column value.
+pub type JsonRowset = Vec<Vec<Option<String>>>;
+
 #[derive(Deserialize)]
 pub struct Response {
     pub data: Data,
@@ -20,7 +23,7 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<String>>>,
+    pub rowset: Option<JsonRowset>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
@@ -490,7 +493,7 @@ impl Data {
         if value.is_empty() { None } else { Some(value) }
     }
 
-    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<String>>, &Vec<RowType>)> {
+    pub fn to_json_rowset(&self) -> Option<(&JsonRowset, &Vec<RowType>)> {
         match (self.rowset.as_ref(), self.row_type.as_ref()) {
             (Some(rowset), Some(row_type)) => Some((rowset, row_type)),
             (Some(_), None) => {
@@ -519,7 +522,7 @@ pub enum RowsetData<'a> {
         chunk_base64: &'a str,
     },
     JsonRowset {
-        rowset: &'a Vec<Vec<String>>,
+        rowset: &'a JsonRowset,
         rowtype: &'a Vec<RowType>,
     },
     NoData,
