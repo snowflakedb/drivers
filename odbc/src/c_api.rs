@@ -69,6 +69,7 @@ pub unsafe extern "C" fn SQLAllocHandle(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLExecDirect(
     statement_handle: sql::Handle,
@@ -135,6 +136,7 @@ pub unsafe extern "C" fn SQLFreeStmt(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLConnect(
     connection_handle: sql::Handle,
@@ -225,6 +227,7 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetInfo(
     connection_handle: sql::Handle,
@@ -281,6 +284,7 @@ pub unsafe extern "C" fn SQLGetInfoW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLSetConnectAttr(
     connection_handle: sql::Handle,
@@ -325,6 +329,7 @@ pub unsafe extern "C" fn SQLSetConnectAttrW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetConnectAttr(
     connection_handle: sql::Handle,
@@ -395,6 +400,7 @@ pub unsafe extern "C" fn SQLGetConnectAttrW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLDriverConnect(
     connection_handle: sql::Handle,
@@ -581,6 +587,7 @@ pub unsafe extern "C" fn SQLGetData(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLColAttribute(
     statement_handle: sql::Handle,
@@ -645,6 +652,7 @@ pub unsafe extern "C" fn SQLColAttributeW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLDescribeCol(
     statement_handle: sql::Handle,
@@ -801,6 +809,7 @@ pub unsafe extern "C" fn SQLBindParameter(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLPrepare(
     statement_handle: sql::Handle,
@@ -857,6 +866,7 @@ pub unsafe extern "C" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCo
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetDiagRec(
     handle_type: sql::HandleType,
@@ -921,6 +931,7 @@ pub unsafe extern "C" fn SQLGetDiagRecW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetDiagField(
     handle_type: sql::HandleType,
@@ -997,6 +1008,7 @@ pub unsafe extern "C" fn SQLBindCol(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLSetStmtAttr(
     statement_handle: sql::Handle,
@@ -1063,6 +1075,7 @@ pub unsafe extern "C" fn SQLSetStmtAttrW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetStmtAttr(
     statement_handle: sql::Handle,
@@ -1107,6 +1120,7 @@ pub unsafe extern "C" fn SQLGetStmtAttrW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetDescField(
     descriptor_handle: sql::Handle,
@@ -1155,6 +1169,7 @@ pub unsafe extern "C" fn SQLGetDescFieldW(
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+#[cfg(not(target_os = "windows"))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLSetDescField(
     descriptor_handle: sql::Handle,
