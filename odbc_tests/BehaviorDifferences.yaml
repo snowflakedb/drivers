@@ -220,3 +220,11 @@ behavior_differences:
       Impact: Applications converting NUMBER values >= 100 to single-field
       interval types will now receive 22015 unless they explicitly set a higher
       leading precision via SQLSetDescField.
+  
+  23:
+    name: "DECFLOAT values are returned in scientific notation and properly normalized"
+    description: |
+      OLD driver: DECFLOAT values are not properly normalized, when using scientific notation. (e.g. "12e199" is returned instead of "1.2e200")
+      NEW driver: Returns the values in proper scientific notation (e.g. "1.2e200").
+      Impact: Applications that parse the DECFLOAT values will now receive values in properly formatted scientific notation.
+      TODO: To be fixed in old driver (SNOW-3229401)

@@ -6,19 +6,11 @@
 //
 // The new driver does not yet support DECFLOAT Arrow format; all tests
 // are skipped via SKIP_NEW_DRIVER_NOT_IMPLEMENTED() until support lands.
-//
-// NOTE: Extreme exponent and scientific notation values may be returned by the
-// old driver in a normalized form (e.g. "1e16384" instead of "1E+16384",
-// "-1234e7997" instead of "-1.234E+8000"). The expected strings in these tests
-// reflect the old driver's actual output. A Behavior Difference entry may be
-// needed once the new driver is implemented.
 #include <sql.h>
 #include <sqlext.h>
 #include <sqltypes.h>
 
 #include <cstring>
-#include <optional>
-#include <set>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -47,14 +39,8 @@ TEST_CASE("should cast decfloat values to appropriate type", "[decfloat]") {
 
   // Then All values should be returned as appropriate type
   for (SQLUSMALLINT col = 1; col <= 4; ++col) {
-    SQLCHAR col_name[128] = {0};
-    SQLSMALLINT name_length = 0;
     SQLSMALLINT data_type = 0;
-    SQLULEN col_size = 0;
-    SQLSMALLINT decimal_digits = 0;
-    SQLSMALLINT nullable = 0;
-    SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, col_name, sizeof(col_name), &name_length, &data_type,
-                                   &col_size, &decimal_digits, &nullable);
+    SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
     CHECK_ODBC(ret, stmt);
     CHECK(data_type == SQL_NUMERIC);
   }
@@ -91,6 +77,8 @@ TEST_CASE("should select decfloat literals", "[decfloat]") {
 
 TEST_CASE("should handle full 38-digit precision values from literals", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  SKIP_OLD_DRIVER(
+      "BD#20", "SNOW-3229401: SQL_C_CHAR on DECFLOAT values are returned in improperly normalized scientific notation");
 
   // Given Snowflake client is logged in
   Connection conn;
@@ -105,12 +93,14 @@ TEST_CASE("should handle full 38-digit precision values from literals", "[decflo
 
   // Then Result should preserve all 38 digits for each value
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2).find("2345678901234567890123456789012345678") != std::string::npos);
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3).find("2345678901234567890123456789012345678") != std::string::npos);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "1.2345678901234567890123456789012345678e100");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "1.2345678901234567890123456789012345678e-100");
 }
 
 TEST_CASE("should handle extreme exponent values from literals", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  SKIP_OLD_DRIVER(
+      "BD#20", "SNOW-3229401: SQL_C_CHAR on DECFLOAT values are returned in improperly normalized scientific notation");
 
   // Given Snowflake client is logged in
   Connection conn;
@@ -126,8 +116,8 @@ TEST_CASE("should handle extreme exponent values from literals", "[decfloat]") {
   auto stmt2 = conn.execute_fetch("SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT");
 
   // Then Result should contain [-1.234E+8000, 9.876E-8000]
-  CHECK(get_data<SQL_C_CHAR>(stmt2, 1) == "-1234e7997");
-  CHECK(get_data<SQL_C_CHAR>(stmt2, 2) == "9876e-8003");
+  CHECK(get_data<SQL_C_CHAR>(stmt2, 1) == "-1.234e8000");
+  CHECK(get_data<SQL_C_CHAR>(stmt2, 2) == "9.876e-8000");
 }
 
 TEST_CASE("should handle NULL values from literals", "[decfloat]") {
@@ -153,8 +143,9 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
 
   // When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
   auto stmt = conn.createStatement();
-  const auto sql = "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v ORDER BY 1";
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt.getHandle(), (SQLCHAR*)"SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v ORDER BY 1",
+      SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
@@ -169,7 +160,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
 
     row_count++;
   }
-  
+
   REQUIRE(row_count == 20000);
 }
 
@@ -197,19 +188,19 @@ TEST_CASE("should select decfloats from table", "[decfloat]") {
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "123.456");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-789.012");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "123000000000000000000");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-0.00000000000000987");
@@ -217,6 +208,8 @@ TEST_CASE("should select decfloats from table", "[decfloat]") {
 
 TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  SKIP_OLD_DRIVER(
+      "BD#20", "SNOW-3229401: SQL_C_CHAR on DECFLOAT values are returned in improperly normalized scientific notation");
 
   // Given Snowflake client is logged in
   Connection conn;
@@ -240,18 +233,20 @@ TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1).find("2345678901234567890123456789012345678") != std::string::npos);
-  
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1.2345678901234567890123456789012345678e100");
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1).find("2345678901234567890123456789012345678") != std::string::npos);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1.2345678901234567890123456789012345678e-100");
 }
 
 TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  SKIP_OLD_DRIVER(
+      "BD#20", "SNOW-3229401: SQL_C_CHAR on DECFLOAT values are returned in improperly normalized scientific notation");
 
   // Given Snowflake client is logged in
   Connection conn;
@@ -272,18 +267,18 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e-16383");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997");
-  
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9876e-8003");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9.876e-8000");
 }
 
 TEST_CASE("should handle NULL values from table", "[decfloat]") {
@@ -306,15 +301,15 @@ TEST_CASE("should handle NULL values from table", "[decfloat]") {
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "123.456");
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
-  
+
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "-789.012");
@@ -352,7 +347,7 @@ TEST_CASE("should download large result set with multiple chunks from table", "[
 
     row_count++;
   }
-  
+
   REQUIRE(row_count == 20000);
 }
 
@@ -416,6 +411,8 @@ TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
 
 TEST_CASE("should select extreme decfloat values using parameter binding", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  SKIP_OLD_DRIVER(
+      "BD#20", "SNOW-3229401: SQL_C_CHAR on DECFLOAT values are returned in improperly normalized scientific notation");
 
   // Given Snowflake client is logged in
   Connection conn;
@@ -459,7 +456,7 @@ TEST_CASE("should select extreme decfloat values using parameter binding", "[dec
     CHECK_ODBC(ret, stmt);
 
     // Then Result should contain [-1.234E+8000]
-    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997");
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
   }
 }
 
@@ -506,18 +503,27 @@ TEST_CASE("should insert decfloat using parameter binding", "[decfloat]") {
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_bind_insert", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  std::set<std::optional<std::string>> expected = {"0", "123.456", "-789.012", std::nullopt};
-  std::set<std::optional<std::string>> actual;
-  for (int i = 0; i < 4; ++i) {
-    ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
-    actual.insert(get_data_optional<SQL_C_CHAR>(stmt, 1));
-  }
-  CHECK(actual == expected);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "0");
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "123.456");
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "-789.012");
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
 }
 
 TEST_CASE("should insert extreme decfloat values using parameter binding", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  SKIP_OLD_DRIVER(
+      "BD#20", "SNOW-3229401: SQL_C_CHAR on DECFLOAT values are returned in improperly normalized scientific notation");
 
   // Given Snowflake client is logged in
   Connection conn;
@@ -547,15 +553,15 @@ TEST_CASE("should insert extreme decfloat values using parameter binding", "[dec
   CHECK_ODBC(ret, stmt);
 
   // Then SELECT should return the same exact values
-  std::set<std::string> expected = {"1e16384", "1e-16383", "-1234e7997"};
-  std::set<std::string> actual;
-  while (true) {
-    ret = SQLFetch(stmt.getHandle());
-    if (ret == SQL_NO_DATA) {
-      break;
-    }
-    CHECK_ODBC(ret, stmt);
-    actual.insert(get_data<SQL_C_CHAR>(stmt, 1));
-  }
-  CHECK(actual == expected);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e-16383");
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
 }
