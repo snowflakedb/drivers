@@ -18,7 +18,16 @@ use std::{collections::HashMap, sync::Arc};
 #[cfg(test)]
 use crate::rest::snowflake::query_request;
 
-/// Pointer to raw bytes in memory - used by query bindings
+/// Pointer to raw bytes in memory - used by query bindings.
+///
+/// # Safety
+///
+/// The caller (language wrapper) guarantees that the pointed-to memory remains
+/// valid and immutable for the entire duration of the synchronous
+/// `statement_execute_query` call. Because the ODBC C API is blocking, the
+/// wrapper thread is parked until the Rust side completes, so the buffer cannot
+/// be freed or mutated concurrently. This makes it safe to send to a worker
+/// thread for the duration of the call.
 #[derive(Debug)]
 pub struct DataPtr<'a> {
     /// Pointer to the data
@@ -28,6 +37,10 @@ pub struct DataPtr<'a> {
     /// Phantom data to enforce lifetime
     _phantom: std::marker::PhantomData<&'a [u8]>,
 }
+
+// SAFETY: see DataPtr doc comment above.
+unsafe impl Send for DataPtr<'_> {}
+unsafe impl Sync for DataPtr<'_> {}
 
 impl<'a> DataPtr<'a> {
     /// Create a new DataPtr from a raw pointer and length

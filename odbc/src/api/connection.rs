@@ -1,7 +1,7 @@
 use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::error::Required;
-use crate::api::runtime::global;
+use crate::api::runtime;
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcResult, api_utils, conn_from_handle,
     error::{
@@ -106,12 +106,18 @@ pub fn driver_connect(
 
     let pre_attrs = connection.pre_connection_attrs.clone();
 
-    let g = global();
-    let (db_handle, conn_handle) = g.runtime.block_on(async {
-        let db_handle = g.client.database_new(DatabaseNewRequest {}).await?
+    let (db_handle, conn_handle) = runtime::run(async move {
+        let g = runtime::global();
+        let db_handle = g
+            .client
+            .database_new(DatabaseNewRequest {})
+            .await?
             .db_handle
             .required("Database handle is required")?;
-        let conn_handle = g.client.connection_new(ConnectionNewRequest {}).await?
+        let conn_handle = g
+            .client
+            .connection_new(ConnectionNewRequest {})
+            .await?
             .conn_handle
             .required("Connection handle is required")?;
 
@@ -127,11 +133,13 @@ pub fn driver_connect(
                 .find(|(k, _)| *k == key)
                 .map(|(_, v)| *v)
             {
-                g.client.connection_set_option_string(ConnectionSetOptionStringRequest {
-                    conn_handle: Some(conn_handle),
-                    key: core_key.to_owned(),
-                    value,
-                }).await?;
+                g.client
+                    .connection_set_option_string(ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: core_key.to_owned(),
+                        value,
+                    })
+                    .await?;
                 continue;
             }
 
@@ -140,30 +148,32 @@ pub fn driver_connect(
                     let port_int: i64 = value.parse().context(InvalidPortSnafu {
                         port: value.clone(),
                     })?;
-                    g.client.connection_set_option_int(ConnectionSetOptionIntRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "port".to_owned(),
-                        value: port_int,
-                    }).await?;
+                    g.client
+                        .connection_set_option_int(ConnectionSetOptionIntRequest {
+                            conn_handle: Some(conn_handle),
+                            key: "port".to_owned(),
+                            value: port_int,
+                        })
+                        .await?;
                 }
                 "CRL_MODE" => {
-                    g.client.connection_set_option_string(
-                        ConnectionSetOptionStringRequest {
+                    g.client
+                        .connection_set_option_string(ConnectionSetOptionStringRequest {
                             conn_handle: Some(conn_handle),
                             key: "crl_mode".to_owned(),
                             value: value.to_uppercase(),
-                        },
-                    ).await?;
+                        })
+                        .await?;
                 }
                 "LOGIN_TIMEOUT" => {
                     login_timeout_set = true;
-                    g.client.connection_set_option_string(
-                        ConnectionSetOptionStringRequest {
+                    g.client
+                        .connection_set_option_string(ConnectionSetOptionStringRequest {
                             conn_handle: Some(conn_handle),
                             key: "authentication_timeout".to_owned(),
                             value,
-                        },
-                    ).await?;
+                        })
+                        .await?;
                 }
                 "PRIV_KEY_FILE" => {
                     if attr_key_set {
@@ -171,13 +181,13 @@ pub fn driver_connect(
                             "driver_connect: skipping PRIV_KEY_FILE — attribute-based key takes priority"
                         );
                     } else {
-                        g.client.connection_set_option_string(
-                            ConnectionSetOptionStringRequest {
+                        g.client
+                            .connection_set_option_string(ConnectionSetOptionStringRequest {
                                 conn_handle: Some(conn_handle),
                                 key: "private_key_file".to_owned(),
                                 value,
-                            },
-                        ).await?;
+                            })
+                            .await?;
                     }
                 }
                 "PRIV_KEY_BASE64" => {
@@ -186,13 +196,13 @@ pub fn driver_connect(
                             "driver_connect: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
                         );
                     } else {
-                        g.client.connection_set_option_string(
-                            ConnectionSetOptionStringRequest {
+                        g.client
+                            .connection_set_option_string(ConnectionSetOptionStringRequest {
                                 conn_handle: Some(conn_handle),
                                 key: "private_key".to_owned(),
                                 value,
-                            },
-                        ).await?;
+                            })
+                            .await?;
                     }
                 }
                 "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
@@ -202,13 +212,13 @@ pub fn driver_connect(
                             key
                         );
                     } else {
-                        g.client.connection_set_option_string(
-                            ConnectionSetOptionStringRequest {
+                        g.client
+                            .connection_set_option_string(ConnectionSetOptionStringRequest {
                                 conn_handle: Some(conn_handle),
                                 key: "private_key_password".to_owned(),
                                 value,
-                            },
-                        ).await?;
+                            })
+                            .await?;
                     }
                 }
                 _ => {
@@ -217,26 +227,33 @@ pub fn driver_connect(
             }
         }
 
-        let login_timeout_from_attr = apply_pre_connection_attrs_async(&g.client, &pre_attrs, conn_handle).await?;
+        let login_timeout_from_attr =
+            apply_pre_connection_attrs_async(&g.client, &pre_attrs, conn_handle).await?;
 
         if !login_timeout_set && !login_timeout_from_attr {
-            g.client.connection_set_option_string(ConnectionSetOptionStringRequest {
-                conn_handle: Some(conn_handle),
-                key: "authentication_timeout".to_owned(),
-                value: DEFAULT_LOGIN_TIMEOUT_SECS.to_owned(),
-            }).await?;
+            g.client
+                .connection_set_option_string(ConnectionSetOptionStringRequest {
+                    conn_handle: Some(conn_handle),
+                    key: "authentication_timeout".to_owned(),
+                    value: DEFAULT_LOGIN_TIMEOUT_SECS.to_owned(),
+                })
+                .await?;
         }
 
-        g.client.connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn_handle),
-            key: "client_app_id".to_owned(),
-            value: "ODBC".to_owned(),
-        }).await?;
+        g.client
+            .connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: "client_app_id".to_owned(),
+                value: "ODBC".to_owned(),
+            })
+            .await?;
 
-        g.client.connection_init(ConnectionInitRequest {
-            conn_handle: Some(conn_handle),
-            db_handle: Some(db_handle),
-        }).await?;
+        g.client
+            .connection_init(ConnectionInitRequest {
+                conn_handle: Some(conn_handle),
+                db_handle: Some(db_handle),
+            })
+            .await?;
 
         Ok::<_, crate::api::OdbcError>((db_handle, conn_handle))
     })?;
@@ -338,8 +355,8 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
         conn_handle,
     } = std::mem::replace(&mut connection.state, ConnectionState::Disconnected)
     {
-        let g = global();
-        g.runtime.block_on(async {
+        runtime::run(async move {
+            let g = runtime::global();
             if let Err(e) = g
                 .client
                 .connection_release(ConnectionReleaseRequest {

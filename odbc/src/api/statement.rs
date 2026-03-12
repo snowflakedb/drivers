@@ -4,7 +4,7 @@ use crate::api::error::{
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
     NoMoreDataSnafu, Required,
 };
-use crate::api::runtime::global;
+use crate::api::runtime;
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
@@ -50,18 +50,20 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
         } => {
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
-            let g = global();
-            let response = g.runtime.block_on(async {
+            let stmt_handle = stmt.stmt_handle;
+            let query = statement_text.to_string();
+            let response = runtime::run(async move {
+                let g = runtime::global();
                 g.client
                     .statement_set_sql_query(StatementSetSqlQueryRequest {
-                        stmt_handle: Some(stmt.stmt_handle),
-                        query: statement_text.to_string(),
+                        stmt_handle: Some(stmt_handle),
+                        query,
                     })
                     .await?;
 
                 g.client
                     .statement_execute_query(StatementExecuteQueryRequest {
-                        stmt_handle: Some(stmt.stmt_handle),
+                        stmt_handle: Some(stmt_handle),
                         bindings,
                     })
                     .await
@@ -87,42 +89,47 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
 use crate::conversion::NumericSettings;
 
 fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut NumericSettings) {
-    let g = global();
-    g.runtime.block_on(async {
+    let conn_handle = *conn_handle;
+    let (treat_decimal, treat_big_number) = runtime::run(async move {
+        let g = runtime::global();
+        let mut decimal = None;
+        let mut big_number = None;
+
         if let Ok(resp) = g
             .client
             .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
+                conn_handle: Some(conn_handle),
                 key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
             })
             .await
             && let Some(value) = resp.value
         {
-            let bool_value = value.eq_ignore_ascii_case("true");
-            settings.treat_decimal_as_int = bool_value;
-            tracing::info!(
-                "Server parameter ODBC_TREAT_DECIMAL_AS_INT = {}",
-                bool_value
-            );
+            decimal = Some(value.eq_ignore_ascii_case("true"));
         }
 
         if let Ok(resp) = g
             .client
             .connection_get_parameter(ConnectionGetParameterRequest {
-                conn_handle: Some(*conn_handle),
+                conn_handle: Some(conn_handle),
                 key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
             })
             .await
             && let Some(value) = resp.value
         {
-            let bool_value = value.eq_ignore_ascii_case("true");
-            settings.treat_big_number_as_string = bool_value;
-            tracing::info!(
-                "Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {}",
-                bool_value
-            );
+            big_number = Some(value.eq_ignore_ascii_case("true"));
         }
+
+        (decimal, big_number)
     });
+
+    if let Some(val) = treat_decimal {
+        settings.treat_decimal_as_int = val;
+        tracing::info!("Server parameter ODBC_TREAT_DECIMAL_AS_INT = {}", val);
+    }
+    if let Some(val) = treat_big_number {
+        settings.treat_big_number_as_string = val;
+        tracing::info!("Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {}", val);
+    }
 }
 
 pub fn prepare_n(
@@ -177,18 +184,20 @@ pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
         } => {
             tracing::debug!("prepare: query = {query}");
 
-            let g = global();
-            let prepare_result = g.runtime.block_on(async {
+            let stmt_handle = stmt.stmt_handle;
+            let query_owned = query.to_string();
+            let prepare_result = runtime::run(async move {
+                let g = runtime::global();
                 g.client
                     .statement_set_sql_query(StatementSetSqlQueryRequest {
-                        stmt_handle: Some(stmt.stmt_handle),
-                        query: query.to_string(),
+                        stmt_handle: Some(stmt_handle),
+                        query: query_owned,
                     })
                     .await?;
 
                 g.client
                     .statement_prepare(StatementPrepareRequest {
-                        stmt_handle: Some(stmt.stmt_handle),
+                        stmt_handle: Some(stmt_handle),
                     })
                     .await
             })?;
@@ -228,13 +237,16 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         } => {
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
 
-            let g = global();
-            let response = g.runtime.block_on(g.client.statement_execute_query(
-                StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    bindings,
-                },
-            ))?;
+            let stmt_handle = stmt.stmt_handle;
+            let response = runtime::run(async move {
+                let g = runtime::global();
+                g.client
+                    .statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                    })
+                    .await
+            })?;
 
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);

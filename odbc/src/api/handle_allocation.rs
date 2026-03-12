@@ -3,7 +3,7 @@ use crate::api::{
     StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
     error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
-    runtime::{env_allocated, env_freed, global},
+    runtime::{self, env_allocated, env_freed},
 };
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
@@ -43,12 +43,15 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
             db_handle: _,
             conn_handle,
         } => {
-            let g = global();
-            let response = g
-                .runtime
-                .block_on(g.client.statement_new(StatementNewRequest {
-                    conn_handle: Some(*conn_handle),
-                }))?;
+            let conn_handle_val = *conn_handle;
+            let response = runtime::run(async move {
+                let g = runtime::global();
+                g.client
+                    .statement_new(StatementNewRequest {
+                        conn_handle: Some(conn_handle_val),
+                    })
+                    .await
+            })?;
             let stmt_handle = response
                 .stmt_handle
                 .required("Statement handle is required")?;
@@ -113,13 +116,15 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     tracing::info!("Freeing statement handle");
     let stmt = unsafe { Box::from_raw(handle as *mut Statement) };
 
-    let g = global();
-    if let Err(e) = g
-        .runtime
-        .block_on(g.client.statement_release(StatementReleaseRequest {
-            stmt_handle: Some(stmt.stmt_handle),
-        }))
-    {
+    let stmt_handle = stmt.stmt_handle;
+    if let Err(e) = runtime::run(async move {
+        let g = runtime::global();
+        g.client
+            .statement_release(StatementReleaseRequest {
+                stmt_handle: Some(stmt_handle),
+            })
+            .await
+    }) {
         tracing::warn!("Failed to release server-side statement handle: {:?}", e);
     }
     Ok(())
