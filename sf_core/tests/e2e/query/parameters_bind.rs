@@ -1,6 +1,5 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use arrow::datatypes::Int32Type;
 
 #[test]
 fn should_bind_single_parameter_to_statement() {
@@ -12,8 +11,8 @@ fn should_bind_single_parameter_to_statement() {
 
     // When Query with single parameter is executed
     client.set_sql_query(&stmt, "SELECT ? as value");
-    client.bind_parameters::<Int32Type>(&stmt, &[42]);
-    let result = client.execute_statement_query(&stmt);
+    let json = client.bind_int_parameters_json(&[42]);
+    let result = client.execute_statement_query_with_bindings(&stmt, Some(&json));
 
     // Then Query execution should return the bound parameter value
     let mut arrow_helper = ArrowResultHelper::from_result(result);
@@ -33,8 +32,8 @@ fn should_bind_multiple_parameters_to_statement() {
 
     // When Query with multiple parameters is executed
     client.set_sql_query(&stmt, "SELECT ?, ? as value");
-    client.bind_parameters::<Int32Type>(&stmt, &[42, 1]);
-    let result = client.execute_statement_query(&stmt);
+    let json = client.bind_int_parameters_json(&[42, 1]);
+    let result = client.execute_statement_query_with_bindings(&stmt, Some(&json));
 
     // Then Query execution should return the bound parameter values
     let mut arrow_helper = ArrowResultHelper::from_result(result);

@@ -57,6 +57,13 @@ fn main() -> anyhow::Result<()> {
         total_features += 1;
         println!("\n📋 Feature: {}", result.feature_file.display());
 
+        if !result.scenario_structure_errors.is_empty() {
+            has_failures = true;
+            for error in &result.scenario_structure_errors {
+                println!("  ❌ {error}");
+            }
+        }
+
         for validation in &result.validations {
             if validation.test_file_found {
                 // Check if this validation has any issues
@@ -65,8 +72,9 @@ fn main() -> anyhow::Result<()> {
                     .iter()
                     .any(|w| w.contains("No test method found for scenario"));
                 let has_missing_steps = !validation.missing_steps.is_empty();
+                let has_empty_steps = !validation.empty_steps.is_empty();
 
-                if has_missing_methods || has_missing_steps {
+                if has_missing_methods || has_missing_steps || has_empty_steps {
                     has_failures = true;
                     println!(
                         "  ❌ {:?}: {} (validation failed)",
@@ -81,30 +89,49 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
 
-                if !validation.missing_steps.is_empty() {
+                if !validation.missing_steps.is_empty() || !validation.empty_steps.is_empty() {
                     if !validation.missing_steps_by_method.is_empty() {
-                        println!("     ⚠️  Missing steps by method:");
                         for method_validation in &validation.missing_steps_by_method {
                             let line_info = if let Some(line_number) = method_validation.line_number
                             {
-                                format!(" at line {}", line_number)
+                                format!(" at line {line_number}")
                             } else {
                                 String::new()
                             };
-                            println!(
-                                "       In method '{}'{} (scenario: {}):",
-                                method_validation.method_name,
-                                line_info,
-                                method_validation.scenario_name
-                            );
-                            for step in &method_validation.missing_steps {
-                                println!("         - {}", step);
+                            if !method_validation.missing_steps.is_empty() {
+                                println!("     ⚠️  Missing steps by method:");
+                                println!(
+                                    "       In method '{}'{} (scenario: {}):",
+                                    method_validation.method_name,
+                                    line_info,
+                                    method_validation.scenario_name
+                                );
+                                for step in &method_validation.missing_steps {
+                                    println!("         - {step}");
+                                }
+                            }
+                            if !method_validation.empty_steps.is_empty() {
+                                println!(
+                                    "     ⚠️  Empty steps (no implementation code after step comment):"
+                                );
+                                println!(
+                                    "       In method '{}'{} (scenario: {}):",
+                                    method_validation.method_name,
+                                    line_info,
+                                    method_validation.scenario_name
+                                );
+                                for step in &method_validation.empty_steps {
+                                    println!("         - {step}");
+                                }
                             }
                         }
                     } else {
                         println!("     ⚠️  Issues:");
                         for step in &validation.missing_steps {
-                            println!("       - {}", step);
+                            println!("       - {step}");
+                        }
+                        for step in &validation.empty_steps {
+                            println!("       - EMPTY STEP: {step}");
                         }
                     }
                 }
@@ -112,7 +139,7 @@ fn main() -> anyhow::Result<()> {
                 if args.verbose && !validation.implemented_steps.is_empty() {
                     println!("     ✅ Implemented steps:");
                     for step in &validation.implemented_steps {
-                        println!("       - {}", step);
+                        println!("       - {step}");
                     }
                 }
             } else {

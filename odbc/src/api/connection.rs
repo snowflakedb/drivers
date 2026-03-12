@@ -60,7 +60,7 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
 }
 /// Internal implementation of driver_connect logic (used by both ANSI and Unicode variants)
 fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) -> OdbcResult<()> {
-    let connection_string_map = parse_connection_string(&connection_string);
+    let connection_string_map = parse_connection_string(connection_string);
     {
         const REDACTED_KEYS: &[&str] = &[
             "PWD",
@@ -228,6 +228,8 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
         db_handle: Some(db_handle),
     })?;
 
+    tracing::info!("driver_connect: connection_init completed");
+
     connection.state = ConnectionState::Connected {
         db_handle,
         conn_handle,
@@ -332,9 +334,27 @@ pub fn connect(
 }
 
 /// Disconnect from the database
-pub fn disconnect(_connection_handle: sql::Handle) -> OdbcResult<()> {
+pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
-    // TODO: Implement proper disconnect functionality
+
+    let connection = conn_from_handle(connection_handle);
+    if let ConnectionState::Connected {
+        db_handle,
+        conn_handle,
+    } = std::mem::replace(&mut connection.state, ConnectionState::Disconnected)
+    {
+        if let Err(e) = DatabaseDriverClient::connection_release(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        }) {
+            tracing::warn!("Failed to release core connection handle: {e:?}");
+        }
+        if let Err(e) = DatabaseDriverClient::database_release(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        }) {
+            tracing::warn!("Failed to release core database handle: {e:?}");
+        }
+    }
+
     Ok(())
 }
 
@@ -516,7 +536,7 @@ pub fn get_info(
     connection_handle: sql::Handle,
     info_type: sql::USmallInt,
     info_value_ptr: sql::Pointer,
-    _buffer_length: sql::SmallInt,
+    buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
@@ -526,6 +546,40 @@ pub fn get_info(
     let info_type = InfoType::try_from(info_type)?;
 
     match info_type {
+        InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => {
+            // SQL_CB_CLOSE (1): Cursors are closed on commit/rollback.
+            let cb_close: u16 = 1;
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u16) = cb_close;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u16>() as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
+        InfoType::DriverOdbcVer => {
+            let ver = b"03.00\0";
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        ver.as_ptr(),
+                        info_value_ptr as *mut u8,
+                        std::cmp::min(buffer_length as usize, ver.len()),
+                    );
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    // String length excludes null terminator
+                    *string_length_ptr = (ver.len() - 1) as sql::SmallInt;
+                }
+            }
+            Ok(())
+        }
         InfoType::GetDataExtensions => {
             let extensions = [
                 GetDataExtensions::AnyColumn,

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import warnings
 
+from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -155,7 +157,17 @@ class BuildHook(BuildHookInterface):
         scripts_dir = str(Path(sys.executable).parent)
         env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
 
-        with TemporaryDirectory() as temp_dir:
+        # Use a stable target dir when PROTO_CARGO_TARGET_DIR is set (enables
+        # incremental Rust compilation and CI caching). Otherwise fall back to a
+        # temporary directory that is cleaned up after the build.
+        stable_target = os.environ.get("PROTO_CARGO_TARGET_DIR")
+        if stable_target:
+            Path(stable_target).mkdir(parents=True, exist_ok=True)
+            dir_ctx = nullcontext(stable_target)
+        else:
+            dir_ctx = TemporaryDirectory()
+
+        with dir_ctx as target_dir:
             cargo_args = [
                 "cargo",
                 "run",
@@ -164,7 +176,7 @@ class BuildHook(BuildHookInterface):
                 "--manifest-path",
                 str(cargo_manifest),
                 "--target-dir",
-                str(temp_dir),
+                target_dir,
                 "--",
                 "--generator",
                 "python",
@@ -320,7 +332,13 @@ class BuildHook(BuildHookInterface):
         # Ensure target directory exists
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build the Rust core library in release mode with optimizations
+        # Build the Rust core library in release mode with optimizations.
+        # On Windows ARM64, disable strip — strip=true on a cdylib removes
+        # the .pdata exception-unwind tables, causing WinError 127 at load time.
+        extra_cargo_args: list[str] = []
+        if sys.platform == "win32" and platform.machine() == "ARM64":
+            extra_cargo_args = ["--config", "profile.release.strip=false"]
+
         with TemporaryDirectory() as temp_dir:
             cargo_args = [
                 "cargo",
@@ -332,6 +350,7 @@ class BuildHook(BuildHookInterface):
                 str(cargo_manifest),
                 "--target-dir",
                 str(temp_dir),
+                *extra_cargo_args,
             ]
 
             try:
@@ -348,10 +367,34 @@ class BuildHook(BuildHookInterface):
                 print(f"stderr: {e.stderr}")
                 raise
 
-            # Copy built artifacts from release directory to _core directory
+            # Copy built artifacts from release directory to _core directory.
             release_dir = Path(temp_dir) / "release"
             if not release_dir.exists():
                 raise Exception("Core binary not present")
-            for file in release_dir.rglob("*"):
+            # Use iterdir(), not rglob() — release/deps/ contains proc-macro DLLs
+            # built for the host (build-time tools, not runtime deps).
+            # Bundling them into the wheel causes spurious load errors.
+            found_core = False
+            for file in release_dir.iterdir():
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
                     shutil.copy2(file, target_dir)
+                    found_core = True
+            if not found_core:
+                raise Exception(
+                    f"No shared library (.dll/.so/.dylib) found in {release_dir}"
+                )
+
+            # sf_core.dll is built with OPENSSL_STATIC=1 (arm64-windows-static-md triplet),
+            # which embeds OpenSSL at link time — sf_core.dll has no runtime OpenSSL DLL dep.
+            # Dynamic OpenSSL (arm64-windows triplet) would require these DLLs to be
+            # co-located with sf_core.dll, because Python 3.8+ ctypes uses restricted DLL
+            # search (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) that does NOT include PATH.
+            # The bundling code below is a safety net for non-static builds.
+            if sys.platform == "win32":
+                openssl_bin = os.environ.get("OPENSSL_DIR", "")
+                if openssl_bin:
+                    openssl_bin_dir = Path(openssl_bin) / "bin"
+                    if openssl_bin_dir.is_dir():
+                        for dll in openssl_bin_dir.glob("*.dll"):
+                            shutil.copy2(dll, target_dir)
+                            print(f"Bundled OpenSSL DLL: {dll.name}")

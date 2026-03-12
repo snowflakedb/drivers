@@ -105,6 +105,16 @@ jobs:
           Copy-Item "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" $targetDir
           $env:PARAMETER_PATH = Join-Path ${{ github.workspace }} "parameters.json"
           $env:CORE_PATH = Join-Path $targetDir "jdbc_bridge.dll"
+          # Find dumpbin
+          $dumpbin = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if ($dumpbin) {
+            Write-Host "=== DLL Exports (jdbc_bridge.dll) ==="
+            & $dumpbin /exports "$env:CORE_PATH" | Where-Object { $_ -match "Java_|JNI_" }
+          } else {
+            Write-Host "dumpbin not found"
+          }
+          Write-Host "=== CORE_PATH ==="
+          Write-Host "CORE_PATH = $env:CORE_PATH"
           cd jdbc
           .\gradlew.bat test --stacktrace
 

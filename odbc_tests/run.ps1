@@ -12,6 +12,10 @@ if ($vcpkgRoot) {
     $env:OPENSSL_DIR = Join-Path $vcpkgRoot "installed\x64-windows"
     $env:OPENSSL_LIB_DIR = Join-Path $vcpkgRoot "installed\x64-windows\lib"
     $env:OPENSSL_INCLUDE_DIR = Join-Path $vcpkgRoot "installed\x64-windows\include"
+    $vcpkgBinDir = Join-Path $vcpkgRoot "installed\x64-windows\bin"
+    if ($env:PATH -notlike "*$vcpkgBinDir*") {
+        $env:PATH = "$vcpkgBinDir;$env:PATH"
+    }
 }
 
 try {
@@ -36,11 +40,23 @@ try {
     if ($vcpkgRoot) {
         $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake"
     }
+    Write-Host "`n=== CMake Configuration ===" -ForegroundColor Cyan
+    Write-Host "Working directory: $(Get-Location)" -ForegroundColor Yellow
+    Write-Host "cmake $($cmakeArgs -join ' ') ." -ForegroundColor Yellow
+    Write-Host "`n=== Environment Variables ===" -ForegroundColor Cyan
+    $envPairs = @("PARAMETER_PATH", "DRIVER_PATH", "OPENSSL_DIR", "OPENSSL_LIB_DIR", "OPENSSL_INCLUDE_DIR", "RUST_BACKTRACE") | ForEach-Object {
+        $val = [System.Environment]::GetEnvironmentVariable($_)
+        if ($val) { "$_=$val" }
+    }
+    Write-Host ($envPairs -join ";") -ForegroundColor Yellow
+    Write-Host "==============================`n" -ForegroundColor Cyan
+
     & "C:\Program Files\CMake\bin\cmake" @cmakeArgs .
     if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
     & "C:\Program Files\CMake\bin\cmake" --build cmake-build --config Debug --parallel $NPROC
     if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+    $env:RUST_BACKTRACE = "1"
 
     & "C:\Program Files\CMake\bin\ctest" -j $NPROC -C Debug --test-dir cmake-build --output-on-failure @args
     if ($LASTEXITCODE -ne 0) { throw "ctest failed" }

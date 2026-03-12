@@ -60,14 +60,6 @@ void check_integer_columns(const StatementHandleWrapper& stmt, const std::vector
   }
 }
 
-inline void check_null_via_get_data(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT c_type) {
-  char buffer[100] = {};
-  SQLLEN indicator = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, c_type, buffer, sizeof(buffer), &indicator);
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(indicator == SQL_NULL_DATA);
-}
-
 // ============================================================================
 // Basic decimal conversion across all C integer types
 // ============================================================================

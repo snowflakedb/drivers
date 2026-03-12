@@ -32,6 +32,9 @@ jobs:
         run: echo 'Dummy step to pass required check'
 
   # Build Python wheel with compiled extensions for each OS/Python version
+  # NOTE: All Windows runners in this matrix are ARM64 (windows-11-arm).
+  # Steps conditioned on runner.os=='Windows' assume ARM64 semantics.
+  # If a non-ARM64 Windows runner is added, review all runner.os=='Windows' steps.
   build_wheel:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
@@ -41,12 +44,13 @@ jobs:
         os: [ubuntu-latest, windows-11-arm]
         py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude:
-          # Python 3.9 and 3.10 don't have Windows ARM64 builds
+          # Python 3.9 and 3.10 have no native ARM64 Windows builds in uv
           - os: windows-11-arm
             py: "3.9"
           - os: windows-11-arm
             py: "3.10"
-          # Python 3.14 doesn't have Windows ARM64 build yet
+          # TODO: Remove when Python 3.14 ARM64 Windows builds are available in uv
+          # (check https://github.com/astral-sh/uv/releases after 3.14 final release)
           - os: windows-11-arm
             py: "3.14"
     runs-on: ${{ matrix.os }}
@@ -68,22 +72,39 @@ jobs:
           version: "0.9.28"
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+        # On ARM64 Windows, uv defaults to x86_64 Python ("support for the native
+        # architecture (aarch64) is not yet mature"). This causes Cython extension
+        # linking to fail with unresolved Python C API symbols. Request ARM64 Python
+        # explicitly as uv suggests: cpython-X.Y-windows-aarch64-none
+        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Build python wheel (Linux)
         if: runner.os == 'Linux'
         working-directory: ./python
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
+      - name: Install ARM64 OpenSSL (static) via vcpkg
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows-static-md
+
+      - name: Configure ARM64 OpenSSL (static)
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
       - name: Build python wheel (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         working-directory: ./python
-        shell: pwsh
+        shell: cmd
         run: |
-          # Use Rust LLD linker to avoid MSVC linker finding wrong (x64) libraries
-          # CMAKE_GENERATOR_PLATFORM is set at job level to tell CMake we want ARM64
-          $env:RUSTFLAGS = "-C linker=rust-lld"
-          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
       - name: Inspect wheel (Linux)
         if: runner.os == 'Linux'
@@ -133,9 +154,16 @@ jobs:
     strategy: *matrix
     runs-on: ${{ matrix.os }}
     name: python_tests (${{ matrix.os }}, py${{ matrix.py }})
-    env:
-      UV_CACHE_DIR: ${{ runner.os == 'Windows' && format('{0}\.uv-cache', runner.temp) || '/tmp/.uv-cache' }}
     steps:
+      - name: Set UV cache dir
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "UV_CACHE_DIR=$RUNNER_TEMP/.uv-cache" >> $GITHUB_ENV
+          else
+            echo "UV_CACHE_DIR=/tmp/.uv-cache" >> $GITHUB_ENV
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Install uv
@@ -164,7 +192,8 @@ jobs:
             uv-${{ matrix.os }}-
 
       - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+        # See comment in build_wheel job — ARM64 Windows needs explicit arch request
+        run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Download Python wheel
         uses: actions/download-artifact@v4
@@ -178,12 +207,45 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
+      # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
+      # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
+      # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
+      # the same reason we use static OpenSSL for sf_core in the build_wheel job.
+      - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows-static-md
+
+      - name: Configure ARM64 build environment
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          echo "RUSTFLAGS=-C linker=rust-lld" >> $env:GITHUB_ENV
+          echo "CMAKE_GENERATOR_PLATFORM=ARM64" >> $env:GITHUB_ENV
+
       - name: Install Hatch
         run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
-      - name: Install snowflake ud driver from wheel
+      - name: Install snowflake ud driver from wheel (Linux)
+        if: runner.os == 'Linux'
         working-directory: python
         run: hatch run test.py${{ matrix.py }}:install-wheel
+
+      - name: Install snowflake ud driver from wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: python
+        shell: pwsh
+        run: |
+          # On Windows, the dist/*.whl glob isn't expanded by the shell.
+          # Resolve the wheel path explicitly and pass via WHEEL_PATH env var.
+          $wheel = (Get-ChildItem dist/*.whl).FullName
+          $env:WHEEL_PATH = $wheel
+          hatch run test.py${{ matrix.py }}:install-wheel
 
       - name: Run all tests with coverage (Linux)
         if: runner.os == 'Linux'
@@ -193,7 +255,8 @@ jobs:
           hatch run test.py${{ matrix.py }}:all-cov \
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
+            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -207,7 +270,8 @@ jobs:
           hatch run test.py${{ matrix.py }}:all-cov `
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json `
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml `
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml `
+            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -236,10 +300,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          # Key uses REFERENCE_OS_VERSION (= "ubuntu-latest") to match the matrix.os-based
+          # key written by python_tests, enabling cross-job cache sharing.
+          key: uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
-            uv-${{ runner.os }}-
+            uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-
+            uv-${{ env.REFERENCE_OS_VERSION }}-
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
 
@@ -310,6 +376,7 @@ jobs:
 
       - name: Compare integration test results
         working-directory: python
+        shell: bash
         run: |
           hatch run reference:compare \
             --py ${{ env.REFERENCE_PYTHON_VERSION }} \

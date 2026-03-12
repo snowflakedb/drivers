@@ -110,16 +110,22 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Empty cursor name suc
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  // Reference driver accepts empty cursor name
   SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar(""), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  WINDOWS_ONLY {
+    // Windows DM rejects empty cursor name
+    REQUIRE(ret == SQL_ERROR);
+  }
+  UNIX_ONLY {
+    // Reference driver accepts empty cursor name
+    REQUIRE(ret == SQL_SUCCESS);
 
-  SQLCHAR cursor_name[128] = {};
-  SQLSMALLINT name_len = 0;
-  ret = SQLGetCursorName(stmt_handle(), cursor_name, sizeof(cursor_name), &name_len);
-  REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(name_len == 0);
-  REQUIRE(cursor_name[0] == '\0');
+    SQLCHAR cursor_name[128] = {};
+    SQLSMALLINT name_len = 0;
+    ret = SQLGetCursorName(stmt_handle(), cursor_name, sizeof(cursor_name), &name_len);
+    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(name_len == 0);
+    REQUIRE(cursor_name[0] == '\0');
+  }
 }
 
 // ============================================================================
@@ -190,9 +196,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: HY009 for negative Na
                  "[odbc-api][cursorname][preparing][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  // Note: Reference driver returns HY009 instead of ODBC spec-defined HY090 for negative NameLength
   SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("Test"), -5);
-  REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+  WINDOWS_ONLY {
+    // Windows DM returns HY090 (Invalid string or buffer length) for negative NameLength
+    REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  UNIX_ONLY {
+    // Note: Reference driver returns HY009 instead of ODBC spec-defined HY090 for negative NameLength
+    REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: 24000 when cursor is open",

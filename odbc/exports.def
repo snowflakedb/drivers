@@ -2,38 +2,38 @@
 ; Only export the ODBC API functions, not internal symbols
 LIBRARY sfodbc
 EXPORTS
-    SQLAllocEnv
     SQLAllocConnect
+    SQLAllocEnv
     SQLAllocHandle
-    SQLExecDirect
-    SQLExecDirectW
-    SQLFreeHandle
-    SQLFreeStmt
+    SQLBindCol
+    SQLBindParameter
+    SQLColAttribute
     SQLConnect
-    SQLSetEnvAttr
-    SQLGetEnvAttr
-    SQLSetConnectAttr
-    SQLGetConnectAttr
-    SQLGetInfo
+    SQLDescribeCol
+    SQLDisconnect
     SQLDriverConnect
     SQLDriverConnectW
-    SQLDisconnect
+    SQLExecDirect
+    SQLExecDirectW
+    SQLExecute
+    SQLExtendedFetch
     SQLFetch
     SQLFetchScroll
-    SQLExtendedFetch
+    SQLFreeHandle
+    SQLFreeStmt
+    SQLGetConnectAttr
     SQLGetData
-    SQLColAttribute
-    SQLDescribeCol
+    SQLGetDescField
+    SQLGetDiagField
+    SQLGetDiagRec
+    SQLGetEnvAttr
+    SQLGetInfo
+    SQLGetStmtAttr
     SQLNumResultCols
-    SQLRowCount
-    SQLBindParameter
-    SQLBindCol
     SQLPrepare
     SQLPrepareW
-    SQLExecute
-    SQLGetDiagRec
-    SQLGetDiagField
-    SQLSetStmtAttr
-    SQLGetStmtAttr
-    SQLGetDescField
+    SQLRowCount
+    SQLSetConnectAttr
     SQLSetDescField
+    SQLSetEnvAttr
+    SQLSetStmtAttr

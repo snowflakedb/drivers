@@ -41,6 +41,7 @@ docker run --rm \
     ./scripts/old_odbc/build.sh
 
 echo "=== Step 2: Building and running tests ==="
+# Don't abort if tests fail — we still want the coverage report from whatever ran.
 docker run --rm \
     -v "$PROJECT_DIR":/workspace \
     -v "$OLD_ODBC_PATH":/workspace/old_odbc \
@@ -48,7 +49,7 @@ docker run --rm \
     -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
     -w /workspace \
     rocky-old-odbc-test \
-    ./scripts/old_odbc/test.sh
+    ./scripts/old_odbc/test.sh || echo "WARNING: test step exited with non-zero status"
 
 echo "=== Step 3: Generating coverage report ==="
 docker run --rm \

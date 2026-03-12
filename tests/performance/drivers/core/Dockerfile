@@ -106,4 +106,9 @@ RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)
 
 ENV RUST_LOG=${RUST_LOG:-warn}
 
-CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && core-perf-driver
+CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && \
+    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+        CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+    fi && \
+    core-perf-driver

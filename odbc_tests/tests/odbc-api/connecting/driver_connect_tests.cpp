@@ -238,9 +238,14 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_PROMPT mode
   const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                          SQL_DRIVER_PROMPT);
 
-  // Per ODBC spec: SQL_DRIVER_PROMPT with NULL window handle returns HY092
-  // unixODBC follows spec and returns HY092
-  REQUIRE_EXPECTED_ERROR(ret, "HY092", dbc_handle(), SQL_HANDLE_DBC);
+  WINDOWS_ONLY {
+    // Windows DM returns HY024 (Invalid argument value) for SQL_DRIVER_PROMPT with NULL hwnd
+    REQUIRE_EXPECTED_ERROR(ret, "HY024", dbc_handle(), SQL_HANDLE_DBC);
+  }
+  UNIX_ONLY {
+    // unixODBC follows spec and returns HY092
+    REQUIRE_EXPECTED_ERROR(ret, "HY092", dbc_handle(), SQL_HANDLE_DBC);
+  }
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: 08002 - Connection already in use",

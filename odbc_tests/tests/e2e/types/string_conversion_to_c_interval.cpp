@@ -613,7 +613,6 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval value is executed with SQLBindCol for SQL_C_INTERVAL_YEAR
-  // Then the bound interval value should match the string representation
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '5' AS interval_year", SQL_NTS);
@@ -627,6 +626,7 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
+    // Then the bound interval value should match the string representation
     CHECK(interval.interval_type == SQL_IS_YEAR);
     CHECK(interval.intval.year_month.year == 5);
     CHECK(indicator == sizeof(SQL_INTERVAL_STRUCT));

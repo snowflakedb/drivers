@@ -32,10 +32,7 @@ Feature: Native Okta Authentication
 
   @core_int
   Scenario: should login with native okta using saml flow
-    Given Wiremock is running
-    And Wiremock has Snowflake and Okta mappings
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
+    Given Wiremock is running with Snowflake and Okta mappings
     When Trying to Connect
     Then Login is successful
 
@@ -45,21 +42,15 @@ Feature: Native Okta Authentication
 
   @core_int
   Scenario: should fail with bad credentials when okta returns 401
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token endpoint returning 401 Unauthorized
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Connection fails with bad credentials error
 
   @core_int
   Scenario: should fail with bad credentials when okta returns 403
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token endpoint returning 403 Forbidden
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Connection fails with bad credentials error
 
@@ -69,11 +60,8 @@ Feature: Native Okta Authentication
 
   @core_int
   Scenario: should fail when okta returns MFA_REQUIRED status
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token endpoint returning MFA_REQUIRED status
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Connection fails with MFA required error
 
@@ -85,8 +73,6 @@ Feature: Native Okta Authentication
   Scenario: should fail when tokenUrl does not match configured okta url origin
     Given Wiremock is running
     And Wiremock has Snowflake authenticator-request with mismatched tokenUrl
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Connection fails with IdP URL mismatch error
 
@@ -94,8 +80,6 @@ Feature: Native Okta Authentication
   Scenario: should fail when ssoUrl does not match configured okta url origin
     Given Wiremock is running
     And Wiremock has Snowflake authenticator-request with mismatched ssoUrl
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Connection fails with IdP URL mismatch error
 
@@ -105,35 +89,27 @@ Feature: Native Okta Authentication
 
   @core_int
   Scenario: should fail when saml postback url does not match snowflake server
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token success mapping
     And Wiremock has Okta SSO returning SAML with mismatched postback URL
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Connection fails with SAML destination mismatch error
 
   @core_int
   Scenario: should succeed with mismatched postback when disable_saml_url_check is true
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token success mapping
     And Wiremock has Okta SSO returning SAML with mismatched postback URL
     And Wiremock has Snowflake login success for Okta
     And Snowflake client is configured for native Okta with disable_saml_url_check
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Login is successful
 
   @core_int
   Scenario: should fail when saml html is missing form action
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token success mapping
     And Wiremock has Okta SSO returning SAML HTML without form action
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Connection fails with missing SAML postback error
 
@@ -143,13 +119,10 @@ Feature: Native Okta Authentication
 
   @core_int
   Scenario: should use cookieToken when sessionToken is missing
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token endpoint returning cookieToken instead of sessionToken
     And Wiremock has Okta SSO success mapping
     And Wiremock has Snowflake login success for Okta
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Login is successful
 
@@ -159,13 +132,10 @@ Feature: Native Okta Authentication
 
   @core_int
   Scenario: should retry saml fetch with fresh token on transient error
-    Given Wiremock is running
-    And Wiremock has Snowflake authenticator-request mapping
+    Given Wiremock is running with Snowflake authenticator-request mapping
     And Wiremock has Okta token success mapping
     And Wiremock has Okta SSO returning 503 on first attempt
     And Wiremock has Okta SSO returning success on retry
     And Wiremock has Snowflake login success for Okta
-    And Snowflake client is configured for native Okta
-    And TLS certificate verification is disabled for the Okta HTTPS mock
     When Trying to Connect
     Then Login is successful

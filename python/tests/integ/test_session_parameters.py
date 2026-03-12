@@ -6,7 +6,7 @@ import pytest
 
 
 # this module is heavily dependent on _get_session_parameter, which is not a part of the reference driver
-pytestmark = pytest.mark.skip_reference
+pytestmark = pytest.mark.skip_reference(reason="Reference driver has no _get_session_parameter method")
 
 
 class TestSessionParametersGet:
