@@ -10,7 +10,8 @@ from typing import Any
 from ..logging import get_sf_core_logger
 
 
-_CORE_LIB_NAME = "libsf_core"
+_CORE_LIB_STEM = "sf_core"
+_CORE_LIB_NAME = f"lib{_CORE_LIB_STEM}"
 
 
 class CORE_API(Enum):
@@ -26,7 +27,7 @@ def _get_core_path() -> Any:
     # On Windows, cdylib crates produce "sf_core.dll" (no lib prefix).
     # On Unix, they produce "libsf_core.so" / "libsf_core.dylib".
     if sys.platform.startswith("win"):
-        lib_name = "sf_core.dll"
+        lib_name = f"{_CORE_LIB_STEM}.dll"
     elif sys.platform.startswith("darwin"):
         lib_name = f"{_CORE_LIB_NAME}.dylib"
     else:
@@ -44,7 +45,10 @@ def _load_core() -> ctypes.CDLL:
             # ctypes.CDLL on Python 3.8+ uses restricted DLL search; register
             # _core/ so the Windows loader finds sf_core.dll's co-located deps.
             os.add_dll_directory(os.fspath(lib_path.parent))
-        return ctypes.CDLL(lib_path_str)
+        try:
+            return ctypes.CDLL(lib_path_str)
+        except OSError as err:
+            raise OSError(f"Couldn't load core driver (path={lib_path_str})") from err
 
 
 try:
