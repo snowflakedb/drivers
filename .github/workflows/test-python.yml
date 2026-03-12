@@ -83,8 +83,43 @@ jobs:
         working-directory: ./python
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
-      - name: Install ARM64 OpenSSL (static) via vcpkg
+      # Cache Cargo registry: avoids re-downloading crate sources on every run.
+      - name: Cache Cargo registry (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ matrix.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-cargo-registry-
+
+      # Cache Cargo target dir: enables incremental compilation across runs.
+      # Used via PROTO_CARGO_TARGET_DIR so proto_generator is not rebuilt from
+      # scratch every push.
+      - name: Cache Cargo target directory (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        uses: actions/cache@v4
+        with:
+          path: cargo-target
+          key: ${{ matrix.os }}-cargo-target-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-cargo-target-release-
+
+      # Cache vcpkg OpenSSL: avoids rebuilding from C source (~7 min per run).
+      # Key is versioned (v1); bump to v2 to force a fresh build if the triplet
+      # or vcpkg baseline changes.
+      - name: Cache vcpkg ARM64 static OpenSSL (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        id: vcpkg-cache-build
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-v1
+
+      - name: Install ARM64 OpenSSL (static) via vcpkg
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
@@ -97,6 +132,9 @@ jobs:
           echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          # Point proto_generator at the stable cached target dir so incremental
+          # Rust compilation works across runs (hatch_build.py honours this env var).
+          echo "PROTO_CARGO_TARGET_DIR=${{ github.workspace }}\cargo-target" >> $env:GITHUB_ENV
 
       - name: Build python wheel (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
@@ -211,8 +249,32 @@ jobs:
       # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
       # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
       # the same reason we use static OpenSSL for sf_core in the build_wheel job.
-      - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
+
+      # Cache Cargo registry: avoids re-downloading crates for the cryptography
+      # maturin build (and any other Rust source builds triggered by uv).
+      - name: Cache Cargo registry (Windows ARM64, dep builds)
         if: matrix.os == 'windows-11-arm'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ matrix.os }}-cargo-registry-deps-${{ hashFiles('python/pyproject.toml') }}
+          restore-keys: |
+            ${{ matrix.os }}-cargo-registry-deps-
+            ${{ matrix.os }}-cargo-registry-
+
+      # Share the vcpkg cache with build_wheel so OpenSSL is not rebuilt here either.
+      - name: Cache vcpkg ARM64 static OpenSSL (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        id: vcpkg-cache-test
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-v1
+
+      - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
