@@ -332,19 +332,13 @@ class BuildHook(BuildHookInterface):
         target_dir.mkdir(parents=True, exist_ok=True)
 
         # Build the Rust core library in release mode with optimizations.
-        # On Windows ARM64, pass --target explicitly (the Rust host may be
-        # x86_64 under emulation) and disable strip (strip=true + cdylib on
-        # ARM64 Windows causes WinError 127 at LoadLibrary time).
+        # On Windows ARM64, disable strip — strip=true on a cdylib removes
+        # the .pdata exception-unwind tables, causing WinError 127 at load time.
         import platform
 
-        rust_target = None
         extra_cargo_args: list[str] = []
         if sys.platform == "win32" and platform.machine() == "ARM64":
-            rust_target = "aarch64-pc-windows-msvc"
-            extra_cargo_args = [
-                "--target", rust_target,
-                "--config", "profile.release.strip=false",
-            ]
+            extra_cargo_args = ["--config", "profile.release.strip=false"]
 
         with TemporaryDirectory() as temp_dir:
             cargo_args = [
@@ -375,17 +369,12 @@ class BuildHook(BuildHookInterface):
                 raise
 
             # Copy built artifacts from release directory to _core directory.
-            # When --target is specified, cargo puts output under <target>/.
-            if rust_target:
-                release_dir = Path(temp_dir) / rust_target / "release"
-            else:
-                release_dir = Path(temp_dir) / "release"
+            release_dir = Path(temp_dir) / "release"
             if not release_dir.exists():
                 raise Exception("Core binary not present")
             # Use iterdir(), not rglob() — release/deps/ contains proc-macro DLLs
-            # compiled for the host architecture (x64 under emulation on ARM64).
-            # Bundling those into the wheel causes spurious load failures when
-            # the pre-loading loop tries to open x64 DLLs in an ARM64 process.
+            # built for the host (build-time tools, not runtime deps).
+            # Bundling them into the wheel causes spurious load errors.
             found_core = False
             for file in release_dir.iterdir():
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
@@ -396,10 +385,12 @@ class BuildHook(BuildHookInterface):
                     f"No shared library (.dll/.so/.dylib) found in {release_dir}"
                 )
 
-            # On Windows, sf_core.dll dynamically links against OpenSSL
-            # (libcrypto-3-arm64.dll, libssl-3-arm64.dll). Since Python 3.8+,
-            # ctypes.CDLL uses restricted DLL search that does NOT include PATH.
-            # Bundle the OpenSSL DLLs next to sf_core.dll so the loader finds them.
+            # sf_core.dll is built with OPENSSL_STATIC=1 (arm64-windows-static-md triplet),
+            # which embeds OpenSSL at link time — sf_core.dll has no runtime OpenSSL DLL dep.
+            # Dynamic OpenSSL (arm64-windows triplet) would require these DLLs to be
+            # co-located with sf_core.dll, because Python 3.8+ ctypes uses restricted DLL
+            # search (LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) that does NOT include PATH.
+            # The bundling code below is a safety net for non-static builds.
             if sys.platform == "win32":
                 openssl_bin = os.environ.get("OPENSSL_DIR", "")
                 if openssl_bin:
