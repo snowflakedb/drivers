@@ -4,69 +4,6 @@ use crate::cdata_types::{CDataType, SQL_NO_TOTAL};
 use crate::conversion::error::{IndicatorRequiredSnafu, ReadArrowError, WriteOdbcError};
 use crate::conversion::warning::{Warning, Warnings};
 
-/// Convert a UTF-8 string to the system's ANSI code page (ACP) bytes.
-///
-/// Uses `WideCharToMultiByte(CP_ACP, …)` via UTF-8 → UTF-16 → ACP.
-/// Characters that cannot be represented in the ACP are replaced with the
-/// code page's default substitution character.
-#[cfg(windows)]
-fn utf8_to_acp_bytes(src: &str) -> Vec<u8> {
-    if src.is_empty() {
-        return Vec::new();
-    }
-
-    unsafe extern "system" {
-        fn WideCharToMultiByte(
-            code_page: u32,
-            dw_flags: u32,
-            lp_wide_char_str: *const u16,
-            cch_wide_char: i32,
-            lp_multi_byte_str: *mut u8,
-            cb_multi_byte: i32,
-            lp_default_char: *const u8,
-            lp_used_default_char: *mut i32,
-        ) -> i32;
-    }
-
-    const CP_ACP: u32 = 0;
-
-    let wide: Vec<u16> = src.encode_utf16().collect();
-
-    unsafe {
-        let byte_len = WideCharToMultiByte(
-            CP_ACP,
-            0,
-            wide.as_ptr(),
-            wide.len() as i32,
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null(),
-            std::ptr::null_mut(),
-        );
-        if byte_len <= 0 {
-            return src.as_bytes().to_vec();
-        }
-
-        let mut buf = vec![0u8; byte_len as usize];
-        let written = WideCharToMultiByte(
-            CP_ACP,
-            0,
-            wide.as_ptr(),
-            wide.len() as i32,
-            buf.as_mut_ptr(),
-            byte_len,
-            std::ptr::null(),
-            std::ptr::null_mut(),
-        );
-        if written <= 0 {
-            return src.as_bytes().to_vec();
-        }
-
-        buf.truncate(written as usize);
-        buf
-    }
-}
-
 pub enum LengthOrNull {
     Null,
     Length(sql::Len),
@@ -130,15 +67,7 @@ impl Binding {
     }
 
     pub fn write_char_string(&self, src: &str, get_data_offset: &mut Option<usize>) -> Warnings {
-        #[cfg(windows)]
-        {
-            let acp_bytes = utf8_to_acp_bytes(src);
-            self.write_char_bytes(&acp_bytes, get_data_offset)
-        }
-        #[cfg(not(windows))]
-        {
-            self.write_char_bytes(src.as_bytes(), get_data_offset)
-        }
+        self.write_char_bytes(src.as_bytes(), get_data_offset)
     }
 
     fn write_char_bytes(&self, src: &[u8], get_data_offset: &mut Option<usize>) -> Warnings {
