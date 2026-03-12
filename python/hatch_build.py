@@ -338,10 +338,11 @@ class BuildHook(BuildHookInterface):
         import platform
 
         rust_target = None
-        extra_cargo_config: list[str] = []
+        extra_cargo_args: list[str] = []
         if sys.platform == "win32" and platform.machine() == "ARM64":
             rust_target = "aarch64-pc-windows-msvc"
-            extra_cargo_config = [
+            extra_cargo_args = [
+                "--target", rust_target,
                 "--config", "profile.release.strip=false",
             ]
 
@@ -356,10 +357,8 @@ class BuildHook(BuildHookInterface):
                 str(cargo_manifest),
                 "--target-dir",
                 str(temp_dir),
-                *extra_cargo_config,
+                *extra_cargo_args,
             ]
-            if rust_target:
-                cargo_args.extend(["--target", rust_target])
 
             try:
                 result = subprocess.run(
