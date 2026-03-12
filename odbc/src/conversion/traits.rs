@@ -28,6 +28,10 @@ pub struct Binding {
     /// Numeric scale, set via SQLSetDescField(SQL_DESC_SCALE) on the ARD.
     /// Used for SQL_C_NUMERIC conversions.
     pub scale: Option<i16>,
+    /// Interval leading field precision, set via
+    /// SQLSetDescField(SQL_DESC_DATETIME_INTERVAL_PRECISION) on the ARD.
+    /// ODBC default is 2 when not explicitly set.
+    pub datetime_interval_precision: Option<i16>,
 }
 
 impl Binding {

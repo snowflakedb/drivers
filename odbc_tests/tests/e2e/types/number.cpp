@@ -192,6 +192,64 @@ TEST_CASE("should handle scale and precision boundaries from table for number an
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 0);
 }
 
+TEST_CASE("should handle NULL values from literals for number and synonyms", "[number]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT NULL::<type>(10,0), 42::<type>(10,0), NULL::<type>(10,2), 42.50::<type>(10,2)" is executed
+  auto stmt =
+      conn.execute_fetch("SELECT NULL::NUMBER(10,0), 42::NUMBER(10,0), NULL::NUMBER(10,2), 42.50::NUMBER(10,2)");
+
+  // Then Result should contain [NULL, 42, NULL, 42.50]
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 2) == std::optional<SQLINTEGER>(42));
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 4) == std::optional<double>(42.50));
+}
+
+TEST_CASE("should handle NULL values from table with multiple scales for number and synonyms", "[number]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
+  conn.execute("CREATE TABLE number_null_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3))");
+  // And Row (NULL, NULL, NULL) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (NULL, NULL, NULL)");
+  // And Row (123, 123.45, 123.456) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (123, 123.45, 123.456)");
+  // And Row (NULL, NULL, NULL) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (NULL, NULL, NULL)");
+  // And Row (-456, -67.89, -789.012) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (-456, -67.89, -789.012)");
+
+  // When Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM number_null_table");
+
+  // Then Result should contain 4 rows with 2 NULL rows and 2 non-NULL rows with expected values
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 123.45);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 123.456);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == -456);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == -67.89);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == -789.012);
+}
+
 TEST_CASE("should download large result set from table for number and synonyms", "[number]") {
   // Given Snowflake client is logged in
   Connection conn;

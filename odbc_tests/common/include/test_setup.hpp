@@ -102,7 +102,11 @@ inline void read_default_params(std::stringstream& ss, const picojson::object& p
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
+  if (params.count("SNOWFLAKE_TEST_WAREHOUSE_ODBC")) {
+    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE_ODBC", "WAREHOUSE");
+  } else {
+    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
+  }
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_ROLE", "ROLE");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_SCHEMA", "SCHEMA");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_DATABASE", "DATABASE");

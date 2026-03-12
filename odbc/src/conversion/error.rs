@@ -50,6 +50,13 @@ pub enum WriteOdbcError {
         location: Location,
     },
 
+    #[snafu(display("Interval field overflow: {reason}"))]
+    IntervalFieldOverflow {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     /// The target ODBC type is not supported for the given Snowflake/Arrow source type.
     #[snafu(display("Target ODBC type '{target_type:?}' is not supported for this conversion"))]
     UnsupportedOdbcType {

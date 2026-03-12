@@ -22,6 +22,8 @@ pub struct Parameters {
     pub schema: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_WAREHOUSE")]
     pub warehouse: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_WAREHOUSE_CORE")]
+    pub warehouse_core: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_HOST")]
     pub host: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_ROLE")]
@@ -51,6 +53,12 @@ pub struct Parameters {
 }
 
 impl Parameters {
+    pub fn warehouse(&self) -> Option<String> {
+        self.warehouse_core
+            .clone()
+            .or_else(|| self.warehouse.clone())
+    }
+
     /// Get the server URL, constructing from host if not explicitly set.
     pub fn get_server_url(&self) -> Option<String> {
         self.server_url.clone().or_else(|| {
