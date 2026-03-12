@@ -132,11 +132,15 @@ impl FileLock {
                 // On Windows, concurrent create_dir + remove_dir can transiently
                 // fail when the directory is in a pending-delete state.  Treat
                 // these as retryable lock contention rather than fatal errors.
+                // On the final attempt, fall through to the Err(e) arm so the
+                // original OS error is preserved (avoids masking genuine
+                // permission failures behind a generic LockExhausted).
                 #[cfg(windows)]
-                Err(ref e) if Self::is_transient_windows_error(e) => {
-                    if attempt < retry_count - 1 {
-                        std::thread::sleep(retry_delay);
-                    }
+                Err(ref e)
+                    if Self::is_transient_windows_error(e, &lock_path)
+                        && attempt < retry_count - 1 =>
+                {
+                    std::thread::sleep(retry_delay);
                 }
                 Err(e) => {
                     return Err(e).context(LockAcquisitionSnafu);
@@ -152,18 +156,25 @@ impl FileLock {
     /// removal, `CreateDirectory` on the same path can fail with one of several
     /// transient error codes instead of `ERROR_ALREADY_EXISTS`.
     ///
+    /// `ERROR_SHARING_VIOLATION` and `ERROR_DELETE_PENDING` are unambiguously
+    /// transient.  `ERROR_ACCESS_DENIED` is broader (can also mean genuine ACL
+    /// denial), so we only treat it as transient when the lock directory still
+    /// exists — that indicates contention rather than a permission problem on
+    /// the parent directory.
+    ///
     /// See <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-removedirectoryw>
     #[cfg(windows)]
-    fn is_transient_windows_error(e: &std::io::Error) -> bool {
+    fn is_transient_windows_error(e: &std::io::Error, lock_path: &Path) -> bool {
         // Win32 system error codes.
         // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
         const ERROR_ACCESS_DENIED: i32 = 5;
         const ERROR_SHARING_VIOLATION: i32 = 32;
         const ERROR_DELETE_PENDING: i32 = 303;
-        matches!(
-            e.raw_os_error(),
-            Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION | ERROR_DELETE_PENDING)
-        )
+        match e.raw_os_error() {
+            Some(ERROR_SHARING_VIOLATION | ERROR_DELETE_PENDING) => true,
+            Some(ERROR_ACCESS_DENIED) => lock_path.exists(),
+            _ => false,
+        }
     }
 
     fn is_stale(lock_path: &Path, stale_timeout: Duration) -> bool {
@@ -632,6 +643,55 @@ pub(super) fn install_file_credential_fallback() -> Result<(), TokenCacheError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    mod file_lock_tests {
+        use super::*;
+        use std::path::Path;
+
+        #[test]
+        fn transient_error_sharing_violation_and_delete_pending() {
+            let path = Path::new("unused");
+            // ERROR_SHARING_VIOLATION (32) and ERROR_DELETE_PENDING (303)
+            // are unconditionally transient regardless of path existence.
+            for code in [32, 303] {
+                let err = std::io::Error::from_raw_os_error(code);
+                assert!(
+                    FileLock::is_transient_windows_error(&err, path),
+                    "expected code {code} to be transient"
+                );
+            }
+        }
+
+        #[test]
+        fn transient_error_access_denied_only_when_lock_dir_exists() {
+            let existing = std::env::temp_dir(); // exists
+            let missing = Path::new(r"C:\nonexistent_lock_dir_for_test");
+
+            let err = std::io::Error::from_raw_os_error(5); // ERROR_ACCESS_DENIED
+            assert!(
+                FileLock::is_transient_windows_error(&err, &existing),
+                "ACCESS_DENIED should be transient when lock dir exists"
+            );
+            assert!(
+                !FileLock::is_transient_windows_error(&err, missing),
+                "ACCESS_DENIED should NOT be transient when lock dir is absent"
+            );
+        }
+
+        #[test]
+        fn unrelated_error_codes_are_not_transient() {
+            let path = Path::new("unused");
+            // ERROR_FILE_NOT_FOUND (2), ERROR_PATH_NOT_FOUND (3), ERROR_INVALID_HANDLE (6)
+            for code in [2, 3, 6, 123, 9999] {
+                let err = std::io::Error::from_raw_os_error(code);
+                assert!(
+                    !FileLock::is_transient_windows_error(&err, path),
+                    "expected code {code} to NOT be transient"
+                );
+            }
+        }
+    }
 
     mod file_token_cache_tests {
         use super::*;
