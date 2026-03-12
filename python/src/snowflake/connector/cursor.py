@@ -46,6 +46,9 @@ if TYPE_CHECKING:
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
+# Backward compatibility: async retry pattern used by Snowpark
+ASYNC_RETRY_PATTERN = [1, 1, 2, 3, 4, 8, 10]
+
 
 class ResultMetadata(NamedTuple):
     """PEP 249 column description entry.

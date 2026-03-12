@@ -40,3 +40,4 @@ def _import_or_missing_pandas() -> tuple[ModuleLikeObject, ModuleLikeObject, boo
 
 
 pandas, pyarrow, installed_pandas = _import_or_missing_pandas()
+installed_pyarrow = installed_pandas  # pyarrow availability matches pandas

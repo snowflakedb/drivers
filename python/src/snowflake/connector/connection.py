@@ -138,6 +138,7 @@ class Connection:
         self._closed = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
+        self._session_parameters: dict[str, Any] = {}
 
     @pep249
     def close(self) -> None:
@@ -412,8 +413,7 @@ class Connection:
     @property
     def session_id(self) -> int:
         """The Snowflake session ID for this connection."""
-        # TODO: SNOW-3155976 Read from connection details
-        raise NotImplementedError("session_id is not yet implemented")
+        return self._get_connection_info().session_id
 
     @property
     def login_timeout(self) -> int | None:

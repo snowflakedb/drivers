@@ -4,6 +4,9 @@ from enum import Enum
 
 
 class TelemetryData:
+    TRUE = "true"
+    FALSE = "false"
+
     def __init__(self, message: str, timestamp: int) -> None:
         self.message = message
         self.timestamp = timestamp

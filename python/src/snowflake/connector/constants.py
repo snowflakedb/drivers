@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from .config_manager import CONNECTIONS_FILE, CONFIG_FILE  # noqa
+from .config_manager import CONFIG_FILE, CONNECTIONS_FILE  # noqa
 
 
 # Maps Snowflake type IDs to type name strings.
