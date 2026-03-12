@@ -44,7 +44,7 @@ class Connection {
 
   StatementHandleWrapper execute(const std::string& query) {
     auto stmt = createStatement();
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query.c_str(), query.size());
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query.c_str(), SQL_NTS);
     CHECK_ODBC(ret, stmt);
     return stmt;
   }

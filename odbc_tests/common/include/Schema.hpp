@@ -12,17 +12,11 @@
 
 #include "Connection.hpp"
 #include "odbc_cast.hpp"
-#include <locale>
-#include <codecvt>
 
 class Schema {
  public:
   Schema(Connection& conn, const std::string& schema_name)
-      : execute_fn([&conn](const std::string& sql) {
-        std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
-        std::u16string wstr = converter.from_bytes(sql);
-        conn.executew(wstr);
-      }), schema_name(schema_name) {
+      : execute_fn([&conn](const std::string& sql) { conn.execute(sql); }), schema_name(schema_name) {
     execute_fn("CREATE SCHEMA IF NOT EXISTS " + schema_name);
     execute_fn("USE SCHEMA " + schema_name);
   }
