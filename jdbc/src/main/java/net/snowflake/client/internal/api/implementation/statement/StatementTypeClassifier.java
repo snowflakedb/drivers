@@ -1,13 +1,11 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import lombok.experimental.UtilityClass;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
 
-final class StatementTypeClassifier {
+@UtilityClass
+class StatementTypeClassifier {
   public static final long NO_UPDATE_COUNT = -1L;
-
-  private StatementTypeClassifier() {
-    // Utility class.
-  }
 
   static boolean producesResultSet(ExecuteResult executeResult) {
     return lookupType(executeResult).producesResultSet();

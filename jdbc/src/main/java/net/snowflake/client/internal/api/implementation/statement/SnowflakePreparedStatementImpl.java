@@ -52,18 +52,19 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public ResultSet executeQuery() throws SQLException {
     checkClosed();
-    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
-        PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      return executeQueryWithBindings(sql, serializedBindings.bindings());
+    // Native bindings own the off-heap payload until the RPC has consumed the pointer.
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(parameterValues)) {
+      return executeQueryWithBindings(sql, nativeBindings.bindings());
     }
   }
 
   @Override
   public int executeUpdate() throws SQLException {
     checkClosed();
-    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
-        PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      return executeUpdateWithBindings(sql, serializedBindings.bindings());
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(parameterValues)) {
+      return executeUpdateWithBindings(sql, nativeBindings.bindings());
     }
   }
 
@@ -281,9 +282,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public boolean execute() throws SQLException {
     checkClosed();
-    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
-        PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      return executeWithBindings(sql, serializedBindings.bindings());
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(parameterValues)) {
+      return executeWithBindings(sql, nativeBindings.bindings());
     }
   }
 

@@ -306,6 +306,7 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public boolean supportsMultipleResultSets() throws SQLException {
     connection.checkClosed();
+    // TODO: it should be true when we support multi statements
     return false;
   }
 

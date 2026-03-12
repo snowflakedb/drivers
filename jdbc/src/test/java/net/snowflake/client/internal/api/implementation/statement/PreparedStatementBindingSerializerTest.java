@@ -22,9 +22,9 @@ public class PreparedStatementBindingSerializerTest {
     PreparedStatementBindingSerializer.ParameterValue[] params =
         new PreparedStatementBindingSerializer.ParameterValue[0];
 
-    try (PreparedStatementBindingSerializer.SerializedBindings serialized =
-        PreparedStatementBindingSerializer.serialize(params)) {
-      assertNull(serialized.bindings(), "Expected null bindings for empty parameter list");
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(params)) {
+      assertNull(nativeBindings.bindings(), "Expected null bindings for empty parameter list");
     }
   }
 
@@ -36,7 +36,8 @@ public class PreparedStatementBindingSerializerTest {
 
     SQLException ex =
         assertThrows(
-            SQLException.class, () -> PreparedStatementBindingSerializer.serialize(params));
+            SQLException.class,
+            () -> PreparedStatementBindingSerializer.serializeToNativeBindings(params));
     assertTrue(
         ex.getMessage().contains("Missing value for parameter index: 2"),
         "Expected missing-parameter index in error message");
@@ -54,9 +55,9 @@ public class PreparedStatementBindingSerializerTest {
         "{\"1\":{\"type\":\"FIXED\",\"value\":\"42\"},\"2\":{\"type\":\"TEXT\",\"value\":\"hello\"}}";
     byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
 
-    try (PreparedStatementBindingSerializer.SerializedBindings serialized =
-        PreparedStatementBindingSerializer.serialize(params)) {
-      QueryBindings bindings = serialized.bindings();
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(params)) {
+      QueryBindings bindings = nativeBindings.bindings();
       assertNotNull(bindings, "Expected non-null bindings");
       assertTrue(bindings.hasJson(), "Expected JSON query bindings");
 

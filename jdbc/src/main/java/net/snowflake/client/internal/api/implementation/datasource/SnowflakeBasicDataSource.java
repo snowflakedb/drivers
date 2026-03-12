@@ -63,7 +63,7 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
         properties.setProperty(SnowflakeSessionProperty.PASSWORD.getPropertyKey(), password);
       }
 
-      Connection con = DriverManager.getConnection(getUrl(), properties);
+      Connection con = openConnection(getUrl(), properties);
       logger.trace(
           "Created a connection for {} at {}", effectiveUser, (Supplier<String>) this::getUrl);
       return con;
@@ -71,6 +71,10 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
       logger.error("Failed to create a connection for {} at {}: {}", effectiveUser, getUrl(), e);
       throw e;
     }
+  }
+
+  protected Connection openConnection(String url, Properties properties) throws SQLException {
+    return DriverManager.getConnection(url, properties);
   }
 
   // CommonDataSource methods ----------------------------------------------------------------------
