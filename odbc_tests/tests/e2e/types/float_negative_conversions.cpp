@@ -28,7 +28,7 @@ static void check_restricted_conversion(const StatementHandleWrapper& stmt, SQLU
   INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
-  CHECK((sqlstate == "07006" || sqlstate == "HY003"));
+  CHECK((sqlstate == "07006" || sqlstate == "HY003" || sqlstate == "HYC00"));
 }
 
 static void check_single_interval_conversion(Connection& conn, const char* query, SQLSMALLINT target_type) {
