@@ -39,13 +39,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-11-arm]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude:
           # Python 3.9 and 3.10 have no native ARM64 Windows builds in uv
           - os: windows-11-arm
             py: "3.9"
           - os: windows-11-arm
             py: "3.10"
+          # Python 3.14 pre-release has no ARM64 Windows build yet
+          - os: windows-11-arm
+            py: "3.14"
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
@@ -248,7 +251,8 @@ jobs:
           hatch run test.py${{ matrix.py }}:all-cov \
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
+            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -262,7 +266,8 @@ jobs:
           hatch run test.py${{ matrix.py }}:all-cov `
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json `
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml `
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml `
+            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
