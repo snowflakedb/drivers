@@ -19,6 +19,7 @@ pub struct GherkinValidator {
 pub struct ValidationResult {
     pub feature_file: PathBuf,
     pub validations: Vec<LanguageValidation>,
+    pub scenario_structure_errors: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,6 +31,7 @@ pub struct LanguageValidation {
     pub implemented_steps: Vec<String>,
     pub warnings: Vec<String>,
     pub missing_steps_by_method: Vec<MethodValidation>,
+    pub empty_steps: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,6 +39,7 @@ pub struct MethodValidation {
     pub method_name: String,
     pub scenario_name: String,
     pub missing_steps: Vec<String>,
+    pub empty_steps: Vec<String>,
     pub line_number: Option<usize>,
 }
 
@@ -183,6 +186,69 @@ impl GherkinValidator {
         Ok(untagged_features)
     }
 
+    /// Get a unique feature ID that includes the relative path to distinguish
+    /// features with the same name in different directories (e.g., shared/session/logout vs core/session/logout)
+    fn get_feature_id(&self, feature_path: &Path) -> String {
+        // Get path relative to features_dir
+        let raw_id = if let Ok(relative) = feature_path.strip_prefix(&self.features_dir) {
+            // Remove .feature extension and convert to string (lossy to avoid panics on non-UTF8 paths)
+            relative.with_extension("").to_string_lossy().into_owned()
+        } else if let Some(stem) = feature_path.file_stem() {
+            // Fall back to the file stem if we cannot get a relative path
+            stem.to_string_lossy().into_owned()
+        } else {
+            // As a last resort, use the full path as a string (lossy) to avoid panicking
+            feature_path.to_string_lossy().into_owned()
+        };
+
+        // Normalize path separators to forward slashes for cross-platform consistency.
+        // On Windows, PathBuf::to_str() returns backslashes, but our prefix checks
+        // (e.g., starts_with("shared/")) expect forward slashes.
+        raw_id.replace('\\', "/")
+    }
+
+    /// Extract just the feature name (file stem) from a feature ID
+    fn get_feature_name_from_id(feature_id: &str) -> String {
+        std::path::Path::new(feature_id)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(feature_id)
+            .to_string()
+    }
+
+    /// Validate that a feature file is in a valid top-level directory.
+    ///
+    /// This catches misconfigurations early (e.g., typos like `shares/` instead of `shared/`,
+    /// or incorrect paths like `rust/` instead of `core/`). Without this validation,
+    /// features in unknown directories would be silently ignored during orphan detection,
+    /// leading to false positives.
+    ///
+    /// Uses `TestDiscovery::get_language_from_path()` as the single source of truth for
+    /// valid language-specific folders, plus explicit handling for `shared/`.
+    fn validate_feature_prefix(&self, feature_path: &Path, feature_id: &str) -> Result<()> {
+        let first_component = feature_id.split('/').next().unwrap_or("");
+
+        // shared/ is valid for all languages
+        if first_component == "shared" {
+            return Ok(());
+        }
+
+        // Check if it's a known language folder using existing detection logic
+        // (get_language_from_path returns Some for core/, python/, odbc/, jdbc/, csharp/, javascript/)
+        if TestDiscovery::get_language_from_path(feature_path).is_some() {
+            return Ok(());
+        }
+
+        // Unknown folder - error
+        anyhow::bail!(
+            "Feature file '{}' is in an invalid directory '{}'. \
+             Feature files must be under 'shared/' or a language-specific folder \
+             (core/, python/, odbc/, jdbc/, csharp/, javascript/).",
+            feature_path.display(),
+            first_component,
+        );
+    }
+
     fn collect_all_scenarios_and_languages(
         &self,
     ) -> Result<(
@@ -206,12 +272,11 @@ impl GherkinValidator {
         {
             let feature_path = entry.path();
             let feature = Feature::parse_from_file(feature_path)?;
-            let feature_name = feature_path
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string();
+            // Use unique feature ID (relative path) instead of just file stem
+            let feature_id = self.get_feature_id(feature_path);
+
+            // Validate feature is in a known directory structure
+            self.validate_feature_prefix(feature_path, &feature_id)?;
 
             // Get generic languages declared at feature level
             let mut feature_declared_languages =
@@ -226,7 +291,7 @@ impl GherkinValidator {
             let mut required_languages = std::collections::HashSet::new();
 
             for scenario in &feature.scenarios {
-                scenarios.push((feature_name.clone(), scenario.name.clone()));
+                scenarios.push((feature_id.clone(), scenario.name.clone()));
 
                 // Collect languages required by this scenario
                 let scenario_excluded = TestDiscovery::get_excluded_languages(&scenario.tags);
@@ -248,14 +313,14 @@ impl GherkinValidator {
 
                 // Store languages required by this specific scenario
                 scenario_language_requirements.insert(
-                    (feature_name.clone(), scenario.name.clone()),
+                    (feature_id.clone(), scenario.name.clone()),
                     scenario_required_languages,
                 );
             }
 
             // Store required languages for this feature
             feature_language_requirements
-                .insert(feature_name, required_languages.into_iter().collect());
+                .insert(feature_id, required_languages.into_iter().collect());
         }
 
         Ok((
@@ -304,24 +369,45 @@ impl GherkinValidator {
                     .unwrap()
                     .to_string();
 
-                // Check if the file matches a feature AND that feature requires this language
-                let matching_feature = all_scenarios
+                // Find ALL features that match this test file name
+                // (language relevance is determined by tags in feature_language_requirements)
+                let mut matching_feature_ids: Vec<&String> = all_scenarios
                     .iter()
-                    .find(|(feature_name, _)| {
-                        self.file_name_matches_feature(&file_name, feature_name)
+                    .filter(|(feature_id, _)| {
+                        let feature_name = Self::get_feature_name_from_id(feature_id);
+                        self.file_name_matches_feature(&file_name, &feature_name)
                     })
-                    .map(|(feature_name, _)| feature_name);
+                    .map(|(feature_id, _)| feature_id)
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
 
-                if let Some(feature_name) = matching_feature {
-                    // File matches a feature - check if that feature requires this language
-                    let feature_requires_language = feature_language_requirements
-                        .get(feature_name)
-                        .map(|langs| langs.contains(language))
-                        .unwrap_or(false);
+                // Sort for deterministic ordering: prefer language-specific folders over shared/
+                // (non-shared sorts before shared alphabetically, then by full path)
+                matching_feature_ids.sort_by(|a, b| {
+                    let a_shared = a.starts_with("shared/");
+                    let b_shared = b.starts_with("shared/");
+                    match (a_shared, b_shared) {
+                        (false, true) => std::cmp::Ordering::Less,
+                        (true, false) => std::cmp::Ordering::Greater,
+                        _ => a.cmp(b),
+                    }
+                });
 
-                    if !feature_requires_language {
-                        // Feature doesn't require this language - determine why by checking the feature file directly
-                        let reason = self.determine_orphan_reason(feature_name, language)?;
+                if !matching_feature_ids.is_empty() {
+                    // Check if ANY of the matching features require this language
+                    let any_feature_requires_language = matching_feature_ids.iter().any(|fid| {
+                        feature_language_requirements
+                            .get(*fid)
+                            .map(|langs| langs.contains(language))
+                            .unwrap_or(false)
+                    });
+
+                    if !any_feature_requires_language {
+                        // No matching feature requires this language - determine why
+                        // Use the first matching feature (language-specific preferred over shared)
+                        let reason =
+                            self.determine_orphan_reason(matching_feature_ids[0], language)?;
 
                         orphaned_files.push(OrphanedTestFile {
                             file_path: test_file_path.to_path_buf(),
@@ -337,7 +423,7 @@ impl GherkinValidator {
                         });
                     }
                 } else {
-                    // File doesn't match any feature
+                    // File doesn't match any relevant feature
                     orphaned_files.push(OrphanedTestFile {
                         file_path: test_file_path.to_path_buf(),
                         orphaned_methods: vec![],
@@ -381,7 +467,7 @@ impl GherkinValidator {
             Language::Rust => vec![self._workspace_root.join("sf_core/tests/e2e")],
             Language::Jdbc => vec![
                 self._workspace_root
-                    .join("jdbc/src/test/java/com/snowflake/jdbc/e2e"),
+                    .join("jdbc/src/test/java/net/snowflake/jdbc/e2e"),
             ],
             Language::Odbc => vec![self._workspace_root.join("odbc_tests/tests/e2e")],
             Language::Python => vec![self._workspace_root.join("python/tests/e2e")],
@@ -437,32 +523,37 @@ impl GherkinValidator {
         // Determine which feature this test file corresponds to
         let file_name = file_path.file_stem().unwrap().to_str().unwrap().to_string();
 
-        let matching_feature = all_scenarios
+        // Find ALL matching features by name
+        // (language relevance is determined by tags in scenario_language_requirements)
+        let matching_feature_ids: Vec<&String> = all_scenarios
             .iter()
-            .find(|(feature_name, _)| self.file_name_matches_feature(&file_name, feature_name))
-            .map(|(feature_name, _)| feature_name);
+            .filter(|(feature_id, _)| {
+                let feature_name = Self::get_feature_name_from_id(feature_id);
+                self.file_name_matches_feature(&file_name, &feature_name)
+            })
+            .map(|(feature_id, _)| feature_id)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
 
         for method_name in all_methods {
-            // Check if method matches a scenario in THIS SPECIFIC feature that requires this language
-            let method_matches_valid_scenario = if let Some(feature) = matching_feature {
+            // Check if method matches a scenario in ANY of the matching features that requires this language
+            let method_matches_valid_scenario = matching_feature_ids.iter().any(|feature_id| {
                 all_scenarios
                     .iter()
-                    .filter(|(feature_name, _)| feature_name == feature) // Only scenarios from THIS feature
-                    .any(|(feature_name, scenario_name)| {
+                    .filter(|(fid, _)| fid == *feature_id)
+                    .any(|(fid, scenario_name)| {
                         if self.method_name_matches_scenario(&method_name, scenario_name) {
                             // Method name matches, check if scenario requires this language
                             scenario_language_requirements
-                                .get(&(feature_name.clone(), scenario_name.clone()))
+                                .get(&(fid.clone(), scenario_name.clone()))
                                 .map(|langs| langs.contains(language))
                                 .unwrap_or(false)
                         } else {
                             false
                         }
                     })
-            } else {
-                // No matching feature at all - all methods are orphaned
-                false
-            };
+            });
 
             if !method_matches_valid_scenario {
                 orphaned_methods.push(method_name);
@@ -488,8 +579,9 @@ impl GherkinValidator {
                 }
             }
             Language::Jdbc => {
-                let test_regex =
-                    Regex::new(r"@Test\s*(?:\n\s*)?(?:public\s+)?(?:void\s+)?(\w+)\s*\(")?;
+                let test_regex = Regex::new(
+                    r"@(?:Test|ParameterizedTest)\b(?:\s*\n\s*@\w+(?:\([^)]*\))?)*\s*\n\s*(?:public|protected|private)?\s*(?:static\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+                )?;
                 for captures in test_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }
@@ -518,23 +610,24 @@ impl GherkinValidator {
     }
 
     fn method_name_matches_scenario(&self, method_name: &str, scenario_name: &str) -> bool {
-        use crate::utils::{strings_match_normalized, to_pascal_case, to_snake_case};
+        use crate::utils::{
+            clean_method_name, strings_match_normalized, to_pascal_case, to_snake_case,
+        };
 
-        // Remove test_ prefix for Python test methods
-        let clean_method_name = method_name.trim_start_matches("test_");
+        let clean = clean_method_name(method_name);
 
-        strings_match_normalized(clean_method_name, scenario_name)
-            || strings_match_normalized(clean_method_name, &to_pascal_case(scenario_name))
-            || strings_match_normalized(clean_method_name, &to_snake_case(scenario_name))
+        strings_match_normalized(clean, scenario_name)
+            || strings_match_normalized(clean, &to_pascal_case(scenario_name))
+            || strings_match_normalized(clean, &to_snake_case(scenario_name))
     }
 
     fn determine_orphan_reason(
         &self,
-        feature_name: &str,
+        feature_id: &str,
         language: &Language,
     ) -> Result<OrphanReason> {
-        // Find the feature file
-        let feature_path = self.find_feature_file(feature_name)?;
+        // Find the feature file using the feature ID (relative path)
+        let feature_path = self.find_feature_file_by_id(feature_id)?;
         let feature = Feature::parse_from_file(&feature_path)?;
 
         // Check if feature has generic language tag OR is in a language-specific folder for this language
@@ -567,6 +660,19 @@ impl GherkinValidator {
             // Feature exists but scenarios don't have level tags
             OrphanReason::FeatureExistsButNoScenarioTags
         })
+    }
+
+    /// Find a feature file by its ID (relative path without .feature extension)
+    fn find_feature_file_by_id(&self, feature_id: &str) -> Result<PathBuf> {
+        // Feature ID is the relative path, so we can reconstruct the full path
+        let feature_path = self.features_dir.join(format!("{}.feature", feature_id));
+        if feature_path.exists() {
+            return Ok(feature_path);
+        }
+
+        // Fallback: search by file stem (for backward compatibility)
+        let feature_name = Self::get_feature_name_from_id(feature_id);
+        self.find_feature_file(&feature_name)
     }
 
     fn find_feature_file(&self, feature_name: &str) -> Result<PathBuf> {
@@ -668,8 +774,16 @@ impl GherkinValidator {
         let mut language_set = std::collections::HashSet::new();
 
         // If feature is in a language-specific folder, only validate that language
+        // BUT only if there are scenarios with implementation tags for it
         if let Some(only_lang) = &folder_language {
-            language_set.insert(only_lang.clone());
+            // Check if any scenario has implementation tags for this language
+            let has_implementation_tags = feature.scenarios.iter().any(|scenario| {
+                let scenario_languages = TestDiscovery::get_target_languages(&scenario.tags);
+                scenario_languages.contains(only_lang)
+            });
+            if has_implementation_tags {
+                language_set.insert(only_lang.clone());
+            }
         } else {
             // Collect all unique languages from scenario tags
             // BUT only if the feature declares that language at feature level
@@ -767,6 +881,7 @@ impl GherkinValidator {
                     implemented_steps: Vec::new(),
                     warnings: Vec::new(),
                     missing_steps_by_method: Vec::new(),
+                    empty_steps: Vec::new(),
                 });
             }
         } else if validations.is_empty() && !tag_errors.is_empty() {
@@ -779,12 +894,20 @@ impl GherkinValidator {
                 implemented_steps: Vec::new(),
                 warnings: Vec::new(),
                 missing_steps_by_method: Vec::new(),
+                empty_steps: Vec::new(),
             });
         }
+
+        let scenario_structure_errors: Vec<String> = feature
+            .scenarios
+            .iter()
+            .flat_map(|scenario| scenario.validate_mandatory_steps())
+            .collect();
 
         Ok(ValidationResult {
             feature_file: feature.file_path.clone(),
             validations,
+            scenario_structure_errors,
         })
     }
 
@@ -805,6 +928,7 @@ impl GherkinValidator {
             // Check if we need to validate specific scenarios or the whole file
             let mut all_implemented_steps = Vec::new();
             let mut all_missing_steps = Vec::new();
+            let mut all_empty_steps = Vec::new();
             let mut warnings = Vec::new();
             let mut missing_steps_by_method = Vec::new();
 
@@ -931,7 +1055,10 @@ impl GherkinValidator {
                         let mut method_missing_steps = Vec::new();
 
                         for step_text in &scenario_steps {
-                            if !method_steps.contains(step_text) {
+                            let step_found = method_steps
+                                .iter()
+                                .any(|impl_step| self.steps_match(impl_step, step_text));
+                            if !step_found {
                                 method_missing_steps.push(step_text.clone());
                                 if !all_missing_steps.contains(step_text) {
                                     all_missing_steps.push(step_text.clone());
@@ -946,12 +1073,21 @@ impl GherkinValidator {
                             }
                         }
 
-                        // If there are missing steps in this method, record them
-                        if !method_missing_steps.is_empty() {
+                        // Check for empty steps (step comments with no implementation code)
+                        let method_empty_steps = step_finder
+                            .find_empty_steps_in_method(actual_test_file_path, &method_name)?;
+                        for empty_step in &method_empty_steps {
+                            if !all_empty_steps.contains(empty_step) {
+                                all_empty_steps.push(empty_step.clone());
+                            }
+                        }
+
+                        if !method_missing_steps.is_empty() || !method_empty_steps.is_empty() {
                             missing_steps_by_method.push(MethodValidation {
                                 method_name: method_name.clone(),
                                 scenario_name: scenario.name.clone(),
                                 missing_steps: method_missing_steps,
+                                empty_steps: method_empty_steps,
                                 line_number: Some(line_number),
                             });
                         }
@@ -967,16 +1103,18 @@ impl GherkinValidator {
                 implemented_steps: all_implemented_steps,
                 warnings,
                 missing_steps_by_method,
+                empty_steps: all_empty_steps,
             })
         } else {
             Ok(LanguageValidation {
                 language,
                 test_file_found: false,
                 test_file_path: None,
-                missing_steps: Vec::new(), // Don't list individual steps when file doesn't exist
+                missing_steps: Vec::new(),
                 implemented_steps: Vec::new(),
                 warnings: vec![format!("No test file found for feature: {}", feature.name)],
                 missing_steps_by_method: Vec::new(),
+                empty_steps: Vec::new(),
             })
         }
     }

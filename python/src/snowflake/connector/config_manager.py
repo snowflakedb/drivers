@@ -1,43 +1,46 @@
+"""
+ConfigManager implementation that wraps the Rust sf_core config management API.
+
+This module provides backward compatibility with the old Python Snowflake driver's
+ConfigManager while using the Rust core for actual configuration management.
+All file I/O, TOML parsing, and permission checks are performed by sf_core.
+"""
+
 from __future__ import annotations
 
-import itertools
+import json
 import logging
 import os
-import stat
-import warnings
 
 from collections.abc import Iterable
-from operator import methodcaller
 from pathlib import Path
 from typing import Any, Callable, Literal, NamedTuple, TypeVar
-from warnings import warn
 
 import tomlkit
 
-from tomlkit.items import Table
-
-from snowflake.connector.compat import IS_WINDOWS
-from snowflake.connector.constants import CONFIG_FILE, CONNECTIONS_FILE
+from snowflake.connector._internal.api_client.client_api import (
+    database_driver_client,
+)
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConfigGetPathsRequest,
+    ConfigLoadAllSectionsRequest,
+)
+from snowflake.connector._internal.protobuf_gen.proto_exception import (
+    ProtoApplicationException,
+)
 from snowflake.connector.errors import (
     ConfigManagerError,
     ConfigSourceError,
-    Error,
     MissingConfigOptionError,
+)
+from snowflake.connector.errors import (
+    Error as DriverError,
 )
 
 
 _T = TypeVar("_T")
 
 LOGGER = logging.getLogger(__name__)
-READABLE_BY_OTHERS = stat.S_IRGRP | stat.S_IROTH
-WRITABLE_BY_OTHERS = stat.S_IWGRP | stat.S_IWOTH
-
-SKIP_WARNING_ENV_VAR = "SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE"
-
-
-def _should_skip_warning_for_read_permissions_on_config_file() -> bool:
-    """Check if the warning should be skipped based on environment variable."""
-    return os.getenv(SKIP_WARNING_ENV_VAR, "false").lower() == "true"
 
 
 class ConfigSliceOptions(NamedTuple):
@@ -53,34 +56,61 @@ class ConfigSlice(NamedTuple):
     section: str
 
 
+def _dict_to_tomlkit_container(data: dict[str, Any]) -> Any:
+    """Wrap a nested plain dict in tomlkit types for CLI backward compatibility."""
+    doc = tomlkit.document()
+    _populate_tomlkit(doc, data)
+    return doc
+
+
+def _populate_tomlkit(target: Any, source: dict[str, Any]) -> None:
+    """Recursively copy *source* into a tomlkit container *target*."""
+    for key, value in source.items():
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            table = tomlkit.table()
+            _populate_tomlkit(table, value)
+            target.add(key, table)
+        elif isinstance(value, bytes):
+            target.add(key, value.decode("utf-8", errors="replace"))
+        else:
+            target.add(key, value)
+
+
+def _extract_error_msg(exc: Exception) -> str:
+    """Extract the raw error message from a proto or PEP 249 exception."""
+    if hasattr(exc, "message"):
+        return str(exc.message)
+    if hasattr(exc, "raw_msg"):
+        return str(exc.raw_msg)
+    return str(exc)
+
+
+def _translate_core_error(
+    exc: Exception,
+    file_path: Path | None = None,
+) -> ConfigManagerError:
+    """Translate a Rust core DriverException into the appropriate Python error.
+
+    Maps sf_core error messages to backward-compatible Python exception types.
+    Accepts both raw ``ProtoApplicationException`` and PEP 249 ``Error``
+    subclasses (produced by the error_handler in the generated client).
+    """
+    msg = _extract_error_msg(exc)
+
+    if "parse TOML" in msg or "Failed to parse" in msg or "Failed to read config file" in msg:
+        display_path = str(file_path) if file_path else "unknown"
+        return ConfigSourceError(f"An unknown error happened while loading '{display_path}'")
+
+    return ConfigManagerError(msg)
+
+
 class ConfigOption:
     """ConfigOption represents a flag/setting.
 
-    This class knows how to read the value out of all different sources and implements
-    order of precedence between them.
-
-    It also provides value parsing and verification.
-
-    Attributes:
-        name: Name of this ConfigOption.
-        parse_str: A function that can turn str to the desired type, useful
-          for reading value from environmental variable.
-        choices: An iterable of all possible values that are allowed for
-          this option.
-        env_name: Environmental variable value should be read from, if not
-          supplied, we'll construct this. False disables reading from
-          environmental variables, None uses the auto generated variable name
-          and explicitly provided string overwrites the default one.
-        default: The value we should resolve to when the option is not defined
-          in any of the sources. When it's None we treat that as there's no
-          default value.
-        _root_manager: Reference to the root manager. Used to efficiently
-          refer to cached config file. Is supplied by the parent
-          ConfigManager.
-        _nest_path: The names of the ConfigManagers that this option is
-          nested in. Used to be able to efficiently resolve where to retrieve
-          value out of the configuration file and construct environment
-          variable name. This is supplied by the parent ConfigManager.
+    This class is backward compatible with the old Python driver's ConfigOption
+    but uses the Rust core for actual configuration retrieval.
     """
 
     def __init__(
@@ -92,29 +122,13 @@ class ConfigOption:
         env_name: str | None | Literal[False] = None,
         default: Any | None = None,
         _root_manager: ConfigManager | None = None,
-        _nest_path: list[str] | None,
+        _nest_path: list[str] | None = None,
     ) -> None:
-        """Create a config option that can read values from different sources.
-
-        Args:
-            name: Name to assign to this ConfigOption.
-            parse_str: String parser function for this instance.
-            choices: List of possible values for this instance.
-            env_name: Environmental variable name value should be read from.
-              Providing a string will use that environment variable, False disables
-              reading value from environmental variables and the default None generates
-              an environmental variable name for it using the _nest_path and name.
-            default: Default value for the option. Used in case the value is
-              is not defined in any of the sources.
-            _root_manager: Reference to the root manager. Should be supplied by
-              the parent ConfigManager.
-            _nest_path: The names of the ConfigManagers that this option is
-              nested in. This is supplied by the parent ConfigManager.
-        """
         if _root_manager is None:
             raise TypeError("_root_manager cannot be None")
         if _nest_path is None:
             raise TypeError("_nest_path cannot be None")
+
         self.name = name
         self.parse_str = parse_str
         self.choices = choices
@@ -126,11 +140,20 @@ class ConfigOption:
     def value(self) -> Any:
         """Retrieve a value of option.
 
-        This function implements order of precedence between different sources.
+        Priority: Custom Environment Variable > Config File > Default
         """
-        source = "environment variable"
-        loaded_env, value = self._get_env()
-        if not loaded_env:
+        source = "configuration file"
+        value = None
+
+        if self.env_name is not False:
+            env_name = self.env_name or self.default_env_name
+            if env_name:
+                env_var = os.environ.get(env_name)
+                if env_var is not None:
+                    source = "environment variable"
+                    value = self.parse_str(env_var) if self.parse_str else env_var
+
+        if value is None:
             try:
                 value = self._get_config()
                 source = "configuration file"
@@ -140,115 +163,58 @@ class ConfigOption:
                     value = self.default
                 else:
                     raise
+
         if self.choices and value not in self.choices:
             raise ConfigSourceError(f"The value of {self.option_name} read from {source} is not part of {self.choices}")
+
         return value
 
     @property
     def option_name(self) -> str:
-        """User-friendly name of the config option. Includes self._nest_path."""
         return ".".join(self._nest_path[1:])
 
     @property
     def default_env_name(self) -> str:
-        """The default environmental variable name for this option."""
-        pieces = map(methodcaller("upper"), self._nest_path[1:])
+        pieces = [p.upper() for p in self._nest_path[1:]]
         return f"SNOWFLAKE_{'_'.join(pieces)}"
 
-    def _get_env(self) -> tuple[bool, Any]:
-        """Get value from environment variable if possible.
-
-        Returns whether it was able to load the data and the loaded value
-        itself.
-        """
-        if self.env_name is False:
-            return False, None
-        if self.env_name is not None:
-            env_name = self.env_name
-        else:
-            # Generate environment name if it was not explicitly supplied,
-            #  and isn't disabled
-            env_name = self.default_env_name
-        env_var = os.environ.get(env_name)
-        if env_var is None:
-            return False, None
-        loaded_var: Any = env_var
-        if self.parse_str is not None:
-            loaded_var = self.parse_str(env_var)
-        if isinstance(loaded_var, (Table, tomlkit.TOMLDocument)):
-            # If we got a TOML table we probably want it in dictionary form
-            return True, loaded_var.value
-        return True, loaded_var
-
     def _get_config(self) -> Any:
-        """Get value from the cached config file if possible.
+        """Get value from the nested cached configuration loaded by sf_core.
 
-        Since this is the last resource for retrieving the value it raises
-        a MissingConfigOptionError if it's unable to find this option.
+        Dict values that contain sub-dicts are wrapped in tomlkit types so
+        that the CLI's ``isinstance(section, Container)`` / ``Table`` gates
+        work for environment-variable merging.
         """
-        if self._root_manager.conf_file_cache is None and self._root_manager.file_path is not None:
-            self._root_manager.read_config()
-        e = self._root_manager.conf_file_cache
-        if e is None:
-            raise ConfigManagerError(
-                f"Root manager '{self._root_manager.name}' is missing file_path",
+        nested_config = self._root_manager._get_cached_config()
+
+        if not nested_config:
+            raise MissingConfigOptionError(
+                f"Configuration option '{self.option_name}' is not defined anywhere, "
+                "have you forgotten to set it in a configuration file, or "
+                "environmental variable?"
             )
-        for k in self._nest_path[1:]:
+
+        path_parts = self._nest_path[1:]
+        current = nested_config
+        for part in path_parts:
             try:
-                e = e[k]  # type: ignore[assignment]
-            except tomlkit.exceptions.NonExistentKey as err:
-                raise MissingConfigOptionError(  # TOOO: maybe a child Exception for missing option?
+                current = current[part]
+            except (KeyError, TypeError) as err:
+                raise MissingConfigOptionError(
                     f"Configuration option '{self.option_name}' is not defined anywhere, "
-                    "have you forgotten to set it in a configuration file, "
-                    "or environmental variable?"
+                    "have you forgotten to set it in a configuration file, or "
+                    "environmental variable?"
                 ) from err
 
-        if isinstance(e, (Table, tomlkit.TOMLDocument)):
-            # If we got a TOML table we probably want it in dictionary form
-            return e.value
-        return e  # type: ignore[unreachable]
+        return _dict_to_tomlkit_container(current) if isinstance(current, dict) else current
 
 
 class ConfigManager:
     """Read a TOML configuration file with managed multi-source precedence.
 
-    Note that multi-source precedence is actually implemented by ConfigOption.
-    This is done to make sure that special handling can be done for special options.
-    As an example, think of not allowing to provide passwords by command line arguments.
-
-    This class is updatable at run-time, allowing other libraries to add their
-    own configuration options and sub-managers before resolution.
-
-    This class can simply be thought of as nestable containers for ConfigOptions.
-    It holds extra information necessary for efficient nesting purposes.
-
-    Sub-managers allow option groups to exist, e.g. the group "snowflake.cli.output"
-    could have 2 options in it: debug (boolean flag) and format (a string like "json",
-    or "csv").
-
-    When a ConfigManager tries to retrieve ConfigOptions' value the _root_manager
-    will read and cache the TOML file from the file it's pointing at, afterwards
-    updating the read cache can be forced by calling read_config.
-
-    Attributes:
-        name: The name of the ConfigManager. Used for nesting and emitting
-          useful error messages.
-        file_path: Path to the file where this and all child ConfigManagers
-          should read their values out of. Can be omitted for all child
-          managers. Root manager could also miss this value, but this will
-          result in an exception when a value is read that isn't available from
-          a preceding config source.
-        conf_file_cache: Cache to store what we read from the TOML file.
-        _sub_managers: List of ConfigManagers that are nested under the current manager.
-        _sub_parsers: Alias for the old name of _sub_managers in the first release, please use
-          the new name now, as this might get deprecated in the future.
-        _options: List of ConfigOptions that are under the current manager.
-        _root_manager: Reference to the root manager. Used to efficiently propagate to
-          child options.
-        _nest_path: The names of the ConfigManagers that this manager is nested
-          under. Used to efficiently propagate to child options.
-        _slices: List of config slices, where optional sections could be read from.
-          Note that this feature might become deprecated soon.
+    This class provides backward compatibility with the old Python driver's
+    ConfigManager while using the Rust sf_core for actual file I/O,
+    TOML parsing, and permission checks.
     """
 
     def __init__(
@@ -258,121 +224,81 @@ class ConfigManager:
         file_path: Path | None = None,
         _slices: list[ConfigSlice] | None = None,
     ):
-        """Create a new ConfigManager.
-
-        Args:
-            name: Name of this ConfigManager.
-            file_path: File this manager should read values from. Can be omitted
-              for all child managers.
-            _slices: List of ConfigSlices to consider. A configuration file's slice is a
-              section that can optionally reside in a different file. Note that this
-              feature might get deprecated soon.
-        """
         if _slices is None:
             _slices = list()
+
         self.name = name
         self.file_path = file_path
         self._slices = _slices
-        # Objects holding sub-managers and options
+
         self._options: dict[str, ConfigOption] = dict()
         self._sub_managers: dict[str, ConfigManager] = dict()
-        # Dictionary to cache read in config file
-        self.conf_file_cache: tomlkit.TOMLDocument | None = None
-        # Information necessary to be able to nest elements
-        #  and add options in O(1)
+
+        self.conf_file_cache: dict[str, Any] | None = None
+
         self._root_manager: ConfigManager = self
         self._nest_path = [name]
-
-    @property
-    def _sub_parsers(self) -> dict[str, ConfigManager]:
-        """
-        Alias for the old name of ``_sub_managers``.
-
-        This used to be the original name  in the first release, please use the
-        new name, as this might get deprecated in the future.
-        """
-        warnings.warn(
-            "_sub_parsers has been deprecated, use _sub_managers instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._sub_managers
 
     def read_config(
         self,
         skip_file_permissions_check: bool = False,
     ) -> None:
-        """Read and cache config file contents.
+        """Read and cache config file contents from sf_core.
 
-        This function should be explicitly called if the ConfigManager's cache is
-        outdated. Most likely when someone's doing development and are interactively
-        adding new options to their configuration file.
+        Passes file_path and slice paths to the Rust core so it reads
+        the correct files. Translates core errors to Python exceptions.
         """
         if self.file_path is None:
             raise ConfigManagerError("ConfigManager is trying to read config file, but it doesn't have one")
-        read_config_file = tomlkit.TOMLDocument()
 
-        # Read in all of the config slices
-        config_slice_options = ConfigSliceOptions(check_permissions=not skip_file_permissions_check)
-        for filep, sliceoptions, section in itertools.chain(
-            ((self.file_path, config_slice_options, None),),
-            self._slices,
-        ):
-            if sliceoptions.only_in_slice:
-                del read_config_file[section]  # type: ignore[arg-type]
-            try:
-                if not filep.exists():
-                    continue
-            except PermissionError:
+        request = ConfigLoadAllSectionsRequest()
+        request.config_file = str(self.file_path)
+
+        connections_file = self._get_connections_file_path()
+        if connections_file is not None:
+            request.connections_file = str(connections_file)
+
+        try:
+            client = database_driver_client()
+            response = client.config_load_all_sections(request)
+        except (ProtoApplicationException, DriverError) as e:
+            msg = _extract_error_msg(e)
+            if "permission" in msg.lower() or "Permission denied" in msg:
                 LOGGER.debug(
-                    f"Fail to read configuration file from {str(filep)} due to no permission on its parent directory"
+                    "Config file '%s' could not be read due to no permission on its parent directory",
+                    self.file_path,
                 )
-                continue
+                self.conf_file_cache = {}
+                return
+            raise _translate_core_error(e, self.file_path) from e
 
-            # Check for writable by others - this should raise an error
-            if (
-                not IS_WINDOWS  # Skip checking on Windows
-                and sliceoptions.check_permissions  # Skip checking if this file couldn't hold sensitive information
-                and filep.stat().st_mode & WRITABLE_BY_OTHERS != 0
-            ):
-                file_stat = filep.stat()
-                file_permissions = oct(file_stat.st_mode)[-3:]
-                raise ConfigSourceError(
-                    f"file '{str(filep)}' is writable by group or others — this poses a "
-                    f"security risk because it allows unauthorized users to modify sensitive settings. "
-                    f"Your Permission: {file_permissions}"
-                )
+        nested_config: dict[str, Any] = json.loads(response.config_json) if response.config_json else {}
 
-            # Check for readable by others or wrong ownership - this should warn
-            if (
-                not IS_WINDOWS  # Skip checking on Windows
-                and sliceoptions.check_permissions  # Skip checking if this file couldn't hold sensitive information
-                # Same check as openssh does for permissions
-                # https://github.com/openssh/openssh-portable/blob/2709809fd616a0991dc18e3a58dea10fb383c3f0/readconf.c#LL2264C1-L2264C1
-                and filep.stat().st_mode & READABLE_BY_OTHERS != 0
-                or (
-                    # Windows doesn't have getuid, skip checking
-                    hasattr(os, "getuid") and filep.stat().st_uid != 0 and filep.stat().st_uid != os.getuid()
-                )
-            ):
-                chmod_message = (
-                    f'.\n * To change owner, run `chown $USER "{str(filep)}"`.'
-                    f'\n * To restrict permissions, run `chmod 0600 "{str(filep)}"`.'
-                    f"\n * To skip this warning, set environment variable {SKIP_WARNING_ENV_VAR}=true.\n"
-                )
+        for slice_info in self._slices:
+            _slice_path, slice_options, slice_section = slice_info
+            if slice_options.only_in_slice:
+                nested_config.pop(slice_section, None)
 
-                if not _should_skip_warning_for_read_permissions_on_config_file():
-                    warn(f"Bad owner or permissions on {str(filep)}{chmod_message}", stacklevel=2)
-            LOGGER.debug(f"reading configuration file from {str(filep)}")
-            try:
-                read_config_piece = tomlkit.parse(filep.read_text())
-            except Exception as e:
-                raise ConfigSourceError(f"An unknown error happened while loading '{str(filep)}'") from e
-            if section is None:
-                read_config_file = read_config_piece
-            else:
-                read_config_file[section] = read_config_piece
-        self.conf_file_cache = read_config_file
+        self.conf_file_cache = nested_config
+
+    def _get_connections_file_path(self) -> Path | None:
+        """Extract connections file path from slices configuration."""
+        for slice_info in self._slices:
+            slice_path, _slice_options, slice_section = slice_info
+            if slice_section == "connections":
+                return slice_path
+        return None
+
+    def _get_cached_config(self) -> dict[str, Any]:
+        """Get cached config, loading from sf_core if cache is empty."""
+        if self.conf_file_cache is None:
+            if self.file_path is None:
+                return {}
+            self.read_config()
+        return self.conf_file_cache or {}
+
+    def clear_cache(self) -> None:
+        self.conf_file_cache = None
 
     def add_option(
         self,
@@ -380,116 +306,93 @@ class ConfigManager:
         option_cls: type[ConfigOption] = ConfigOption,
         **kwargs: Any,
     ) -> None:
-        """Add a ConfigOption to this ConfigManager.
-
-        Args:
-            option_cls: The class that should be instantiated. This class
-              should be a child class of ConfigOption. Mainly useful for cases
-              where the default ConfigOption needs to be extended, for example
-              if a new configuration option source needs to be supported.
-        """
         kwargs["_root_manager"] = self._root_manager
         kwargs["_nest_path"] = self._nest_path
-        new_option = option_cls(
-            **kwargs,
-        )
+        new_option = option_cls(**kwargs)
         self._check_child_conflict(new_option.name)
         self._options[new_option.name] = new_option
 
     def _check_child_conflict(self, name: str) -> None:
-        """Check if a sub-manager, or ConfigOption conflicts with given name.
-
-        Args:
-            name: Name to check against children.
-        """
         if name in (self._options.keys() | self._sub_managers.keys()):
             raise ConfigManagerError(f"'{name}' sub-manager, or option conflicts with a child element of '{self.name}'")
 
     def add_submanager(self, new_child: ConfigManager) -> None:
-        """Nest another ConfigManager under this one.
-
-        This function recursively updates _nest_path and _root_manager of all
-        children under new_child.
-
-        Args:
-            new_child: The ConfigManager to be nested under the current one.
-        Notes:
-            We currently don't support re-nesting a ConfigManager. Only nest a
-            manager under another one once.
-        """
         self._check_child_conflict(new_child.name)
         self._sub_managers[new_child.name] = new_child
 
         def _root_setter_helper(node: ConfigManager) -> None:
-            # Deal with ConfigManagers
             node._root_manager = self._root_manager
             node._nest_path = self._nest_path + node._nest_path
             for sub_manager in node._sub_managers.values():
                 _root_setter_helper(sub_manager)
-            # Deal with ConfigOptions
             for option in node._options.values():
                 option._root_manager = self._root_manager
                 option._nest_path = self._nest_path + option._nest_path
 
         _root_setter_helper(new_child)
 
-    def add_subparser(self, *args: Any, **kwargs: Any) -> None:
-        warnings.warn(
-            "add_subparser has been deprecated, use add_submanager instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.add_submanager(*args, **kwargs)
-
-    def __getitem__(self, name: str) -> Any:
-        """Get either sub-manager, or option in this manager with name.
-
-        If an option is retrieved, we call get() on it to return its value instead.
-
-        Args:
-            name: Name to retrieve.
-        """
+    def __getitem__(self, name: str) -> ConfigOption | ConfigManager | Any:
+        self._root_manager._get_cached_config()
         if name in self._options:
             return self._options[name].value()
-        if name not in self._sub_managers:
-            raise ConfigSourceError(f"No ConfigManager, or ConfigOption can be found with the name '{name}'")
-        return self._sub_managers[name]
+        if name in self._sub_managers:
+            return self._sub_managers[name]
+        raise ConfigSourceError(f"No ConfigManager, or ConfigOption can be found with the name '{name}'")
+
+
+def _get_config_paths_from_core() -> tuple[Path, Path]:
+    """Retrieve config file paths from sf_core via protobuf."""
+    client = database_driver_client()
+    response = client.config_get_paths(ConfigGetPathsRequest())
+    return Path(response.config_file), Path(response.connections_file)
+
+
+# TODO: These paths are resolved at import time via an RPC to sf_core, which
+# introduces I/O during module import. This can fail or hang if the native
+# transport isn't available yet. Consider lazily resolving paths on first access
+# (e.g., via a module-level getter or descriptor) with a safe fallback.
+CONFIG_FILE, CONNECTIONS_FILE = _get_config_paths_from_core()
+
+CONFIG_MANAGER = ConfigManager(
+    name="CONFIG_MANAGER",
+    file_path=CONFIG_FILE,
+    _slices=[
+        ConfigSlice(
+            CONNECTIONS_FILE,
+            ConfigSliceOptions(
+                check_permissions=True,
+            ),
+            "connections",
+        ),
+    ],
+)
+
+CONFIG_MANAGER.add_option(
+    name="connections",
+    default=dict(),
+)
+
+CONFIG_MANAGER.add_option(
+    name="default_connection_name",
+    default="default",
+)
 
 
 def _get_default_connection_params() -> dict[str, Any]:
-    def_connection_name = CONFIG_MANAGER["default_connection_name"]
-    connections = CONFIG_MANAGER["connections"]
+    """Get default connection parameters from configuration."""
+    from snowflake.connector.errors import Error
+
+    def_connection_name = str(CONFIG_MANAGER["default_connection_name"])
+    connections: dict[str, Any] = CONFIG_MANAGER["connections"]  # type: ignore[assignment]
+
     if def_connection_name not in connections:
         raise Error(
             f"Default connection with name '{def_connection_name}' "
             "cannot be found, known ones are "
             f"{list(connections.keys())}"
         )
-    return {**connections[def_connection_name]}
 
-
-CONFIG_MANAGER = ConfigManager(
-    name="CONFIG_MANAGER",
-    file_path=CONFIG_FILE,
-    _slices=[
-        ConfigSlice(  # Optional connections file to read in connections from
-            CONNECTIONS_FILE,
-            ConfigSliceOptions(
-                check_permissions=True,  # connections could live here, check permissions
-            ),
-            "connections",
-        ),
-    ],
-)
-CONFIG_MANAGER.add_option(
-    name="connections",
-    parse_str=tomlkit.parse,
-    default=dict(),
-)
-CONFIG_MANAGER.add_option(
-    name="default_connection_name",
-    default="default",
-)
+    return dict(connections[def_connection_name])
 
 
 __all__ = [

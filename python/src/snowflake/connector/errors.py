@@ -4,6 +4,8 @@ PEP 249 Database API 2.0 Exception Classes
 This module defines the exception hierarchy as specified in PEP 249.
 """
 
+from __future__ import annotations
+
 
 class Warning(Warning):  # type: ignore[misc]
     """Exception raised for important warnings like data truncations while inserting, etc."""
@@ -14,7 +16,26 @@ class Warning(Warning):  # type: ignore[misc]
 class Error(Exception):
     """Exception that is the base class of all other error exceptions."""
 
-    pass
+    def __init__(
+        self,
+        msg: str = "",
+        errno: int = -1,
+        sqlstate: str | None = None,
+        sfqid: str | None = None,
+        query: str | None = None,
+    ) -> None:
+        self.errno = errno
+        self.sqlstate = sqlstate
+        self.sfqid = sfqid
+        self.query = query
+        self.raw_msg = msg
+        self.msg = self._format_message(msg)
+        super().__init__(self.msg)
+
+    def _format_message(self, msg: str) -> str:
+        code_str = f"{self.errno:06d}" if isinstance(self.errno, int) and self.errno >= 0 else "------"
+        sqlstate_str = f" ({self.sqlstate})" if self.sqlstate else ""
+        return f"{code_str}{sqlstate_str}: {msg}" if msg else ""
 
 
 class InterfaceError(Error):
@@ -83,29 +104,25 @@ class NotSupportedError(DatabaseError):
     pass
 
 
-###### BACK-COMPAT  ######
-
-
-# Confi related exceptions
-class ConfigSourceError(Error):
-    """Configuration source related errors.
-
-    Examples are environmental variable and configuration file.
-    """
-
-
-class MissingConfigOptionError(ConfigSourceError):
-    """When a configuration option is missing from the final, resolved configurations.
-
-    This is a special-case of ConfigSourceError.
-    """
+# Configuration-related errors (for ConfigManager)
 
 
 class ConfigManagerError(Error):
-    """Configuration manager related errors.
+    """Exception raised for configuration manager errors."""
 
-    This means that ConfigManager is misused by a developer.
-    """
+    pass
+
+
+class ConfigSourceError(ConfigManagerError):
+    """Exception raised when a configuration source has invalid values."""
+
+    pass
+
+
+class MissingConfigOptionError(ConfigSourceError):
+    """Exception raised when a required configuration option is missing."""
+
+    pass
 
 
 class MissingDependencyError(Error):
@@ -115,5 +132,16 @@ class MissingDependencyError(Error):
         super().__init__(f"Missing optional dependency: {dependency}")
 
 
+###### BACK-COMPAT  ######
+
+
+class BadRequest(Error):
+    """Exception for 400 HTTP error for retry."""
+
+
 class ForbiddenError(Error):
     """Exception for 403 HTTP error for retry."""
+
+
+class BadGatewayError(Error):
+    """Exception for 502 HTTP error for retry."""

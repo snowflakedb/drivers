@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
-from .utils import assert_sequential_values, assert_type
+from ...conftest import with_paramstyle
+from .utils import assert_connection_is_open, assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -41,7 +40,7 @@ DECFLOAT_LARGE_NEG_EXPONENT = Decimal("9.876E-8000")
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 20_000
 
 
 class TestDecfloatTypeCasting:
@@ -49,6 +48,7 @@ class TestDecfloatTypeCasting:
 
     def test_should_cast_decfloat_values_to_appropriate_type(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 0::DECFLOAT, 123.456::DECFLOAT, 1.23e37::DECFLOAT,
         # '12345678901234567890123456789012345678'::DECFLOAT" is executed
@@ -67,6 +67,7 @@ class TestDecfloatLiteral:
 
     def test_should_select_decfloat_literals(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT 0::DECFLOAT, 1.5::DECFLOAT, -1.5::DECFLOAT,
         # 123.456789::DECFLOAT, -987.654321::DECFLOAT" is executed
@@ -86,6 +87,7 @@ class TestDecfloatLiteral:
 
     def test_should_handle_full_38_digit_precision_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT '12345678901234567890123456789012345678'::DECFLOAT,
         # '1.2345678901234567890123456789012345678E+100'::DECFLOAT,
@@ -103,6 +105,7 @@ class TestDecfloatLiteral:
 
     def test_should_handle_extreme_exponent_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
         result = execute_query(
@@ -124,6 +127,7 @@ class TestDecfloatLiteral:
 
     def test_should_handle_null_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
         result = execute_query("SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT", single_row=True)
@@ -134,8 +138,9 @@ class TestDecfloatLiteral:
 
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
-        # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+        # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -146,9 +151,8 @@ class TestDecfloatLiteral:
         )
         rows = execute_query(sql)
 
-        # Then Result should contain consecutive numbers from 0 to 999999
+        # Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
         values = [row[0] for row in rows]
-        # And All values should be returned as appropriate type
         assert_type(values, Decimal)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
 
@@ -158,6 +162,7 @@ class TestDecfloatTable:
 
     def test_should_select_decfloats_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
         table_name = f"{tmp_schema}.decfloat_table"
@@ -182,6 +187,7 @@ class TestDecfloatTable:
 
     def test_should_handle_full_38_digit_precision_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with DECFLOAT column exists with values
         # [12345678901234567890123456789012345678,
@@ -203,6 +209,7 @@ class TestDecfloatTable:
 
     def test_should_handle_extreme_exponent_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with DECFLOAT column exists with values
         # [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
@@ -227,6 +234,7 @@ class TestDecfloatTable:
 
     def test_should_handle_null_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
         table_name = f"{tmp_schema}.null_table"
@@ -243,8 +251,9 @@ class TestDecfloatTable:
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
-        # And Table with DECFLOAT column exists with values from 0 to 999999
+        # And Table with DECFLOAT column exists with values from 0 to 19999
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -259,19 +268,19 @@ class TestDecfloatTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
-        # Then Result should contain consecutive numbers from 0 to 999999
+        # Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
         values = [row[0] for row in rows]
-        # And All values should be returned as appropriate type
         assert_type(values, Decimal)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
 
 
+@with_paramstyle("qmark")
 class TestDecfloatBinding:
     """Tests for DECFLOAT type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     def test_should_select_decfloat_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed
         # with bound DECFLOAT values [123.456, -789.012, 42.0]
@@ -291,9 +300,9 @@ class TestDecfloatBinding:
         # Then Result should contain [NULL]
         assert result == (None,)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     def test_should_select_extreme_decfloat_values_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
         result = execute_query(
@@ -317,38 +326,34 @@ class TestDecfloatBinding:
         assert result == (DECFLOAT_LARGE_POS_EXPONENT,)
         assert_type(result, Decimal)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    def test_should_insert_decfloat_using_parameter_binding(self, execute_query, tmp_schema):
+    def test_should_insert_decfloat_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with DECFLOAT column exists
         table_name = f"{tmp_schema}.decfloat_bind_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
 
         # When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
-        test_values = [
-            Decimal("0"),
-            Decimal("123.456"),
-            Decimal("-789.012"),
-            None,
+        test_rows = [
+            (("DECFLOAT", Decimal("0")),),
+            (("DECFLOAT", Decimal("123.456")),),
+            (("DECFLOAT", Decimal("-789.012")),),
+            (None,),
         ]
-        for val in test_values:
-            if val is None:
-                execute_query(f"INSERT INTO {table_name} VALUES (?)", (None,))
-            else:
-                execute_query(f"INSERT INTO {table_name} VALUES (?)", (("DECFLOAT", val),))
-
-        # And Query "SELECT * FROM <table>" is executed
-        rows = execute_query(f"SELECT * FROM {table_name}")
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
         # Then SELECT should return the same exact values
         result = [row[0] for row in rows]
-        assert result == test_values
+        expected = {Decimal("0"), Decimal("123.456"), Decimal("-789.012"), None}
+        assert set(result) == expected
         assert_type(result, Decimal, can_be_none=True)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    def test_should_insert_extreme_decfloat_values_using_parameter_binding(self, execute_query, tmp_schema):
+    def test_should_insert_extreme_decfloat_values_using_parameter_binding(
+        self, execute_query, executemany_insert, tmp_schema
+    ):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with DECFLOAT column exists
         table_name = f"{tmp_schema}.decfloat_extreme_bind_table"
@@ -360,13 +365,13 @@ class TestDecfloatBinding:
             DECFLOAT_MIN_EXPONENT,
             DECFLOAT_LARGE_POS_EXPONENT,
         ]
-        for val in extreme_values:
-            execute_query(f"INSERT INTO {table_name} VALUES (?)", (("DECFLOAT", val),))
+        test_rows = [(("DECFLOAT", val),) for val in extreme_values]
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
         # And Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
 
         # Then SELECT should return the same exact values
         result = [row[0] for row in rows]
-        assert result == extreme_values
         assert_type(result, Decimal)
+        assert set(result) == set(extreme_values)

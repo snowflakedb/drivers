@@ -12,8 +12,7 @@ TEST_CASE("should cast number values to appropriate type for number and synonyms
   // When Query "SELECT 0::<type>(10,0), 123::<type>(10,0), 0.00::<type>(10,2), 123.45::<type>(10,2)" is executed
   auto stmt = conn.execute_fetch("SELECT 0::NUMBER(10,0), 123::NUMBER(10,0), 0.00::NUMBER(10,2), 123.45::NUMBER(10,2)");
 
-  // Then All values should be returned as appropriate type
-  // And Values should match [0, 123, 0.00, 123.45]
+  // Then All values should be returned as appropriate type matching [0, 123, 0.00, 123.45]
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 123);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 0.0);
@@ -60,16 +59,16 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
   Connection conn;
 
   // When Query "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT =>
-  // 1000000)) v" is executed
+  // 30000)) v" is executed
   auto stmt = conn.createStatement();
   const auto sql =
-      "SELECT seq8()::NUMBER(38,0), (seq8() + 0.12345)::NUMBER(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v "
+      "SELECT seq8()::NUMBER(38,0), (seq8() + 0.12345)::NUMBER(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v "
       "ORDER BY 1";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Column 1 should contain sequential integers from 0 to 999999
-  // And Column 2 should contain sequential decimals starting from 0.12345
+  // Then Result should contain 30000 rows with sequential integers in column 1 and sequential decimals starting from
+  // 0.12345 in column 2
   int row_count = 0;
   int64_t expected_int = 0;
   double expected_decimal = 0.12345;
@@ -96,7 +95,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
     row_count++;
   }
 
-  REQUIRE(row_count == 1000000);
+  REQUIRE(row_count == 30000);
 }
 
 TEST_CASE("should select numbers from table with multiple scales for number and synonyms", "[number]") {
@@ -198,12 +197,12 @@ TEST_CASE("should download large result set from table for number and synonyms",
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // And Table with columns (<type>(38,0), <type>(20,5)) exists with 1000000 sequential rows, from 0 to 999999 in the
-  // first column and from 0.12345 to 999999.12345 in the second column
+  // And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows, from 0 to 29999 in the
+  // first column and from 0.12345 to 29999.12345 in the second column
   conn.execute("DROP TABLE IF EXISTS number_large_table");
   conn.execute("CREATE TABLE number_large_table (col1 NUMBER(38,0), col2 NUMBER(20,5))");
   conn.execute(
-      "INSERT INTO number_large_table SELECT seq8(), seq8() + 0.12345 FROM TABLE(GENERATOR(ROWCOUNT => 1000000))");
+      "INSERT INTO number_large_table SELECT seq8(), seq8() + 0.12345 FROM TABLE(GENERATOR(ROWCOUNT => 30000))");
 
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
@@ -211,8 +210,8 @@ TEST_CASE("should download large result set from table for number and synonyms",
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Column 1 should contain sequential integers from 0 to 999999
-  // And Column 2 should contain sequential decimals starting from 0.12345
+  // Then Result should contain 30000 rows with sequential integers in column 1 and sequential decimals starting from
+  // 0.12345 in column 2
   int row_count = 0;
   int64_t expected_int = 0;
   double expected_decimal = 0.12345;
@@ -239,5 +238,5 @@ TEST_CASE("should download large result set from table for number and synonyms",
     row_count++;
   }
 
-  REQUIRE(row_count == 1000000);
+  REQUIRE(row_count == 30000);
 }

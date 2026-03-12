@@ -1,5 +1,5 @@
 # PEP 440 compliant version string (used by hatch for packaging)
-__version__ = "0.1.0"
+__version__ = "2026.0.0"
 
-# Compatibility with old driver pattern: tuple of (major, minor, patch, None)
+# Compatibility with old driver pattern
 VERSION = (*[int(n) for n in __version__.split(".")], None)

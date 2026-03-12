@@ -16,4 +16,4 @@ class TelemetryField(Enum):
 
 class TelemetryClient:
     def try_add_log_to_batch(self, *args, **kwargs):  # type: ignore
-        pass
+        raise NotImplementedError()

@@ -29,5 +29,5 @@ Feature: Session Token Refresh
   Scenario: should only refresh once with concurrent 401 errors
     Given a connection with an expired session token
     When multiple concurrent requests receive 401 errors
-    Then only one refresh attempt should be made
-    And all requests should succeed after the refresh
+    Then all requests should succeed after the refresh
+    And only one refresh attempt should be made

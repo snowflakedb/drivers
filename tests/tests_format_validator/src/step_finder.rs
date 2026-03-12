@@ -1,5 +1,5 @@
 use crate::test_discovery::Language;
-use crate::utils::{strings_match_normalized, to_pascal_case, to_snake_case};
+use crate::utils::{clean_method_name, strings_match_normalized, to_pascal_case, to_snake_case};
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::path::Path;
@@ -92,6 +92,14 @@ impl LanguageConfig {
     }
 }
 
+/// Parsed step position within method lines, tracking where the comment starts
+/// and where the code region after it begins.
+struct StepPosition {
+    text: String,
+    comment_start: usize,
+    code_search_start: usize,
+}
+
 /// Generic method boundary finder that works across languages
 struct MethodBoundaryFinder {
     config: LanguageConfig,
@@ -112,7 +120,10 @@ impl MethodBoundaryFinder {
         let catch2_regex = Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)""#)?;
         // Rust: support optional async before fn
         let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
-        let method_regex = Regex::new(r"(?:public\s+)?(?:void\s+)?(\w+)\s*\(")?;
+        // Match Java method declarations (not annotation lines like @MethodSource(...))
+        let method_regex = Regex::new(
+            r"^(?:public|protected|private)?\s*(?:static\s+)?(?:async\s+)?(?:final\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+        )?;
         let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
 
         for (i, line) in lines.iter().enumerate() {
@@ -173,8 +184,8 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "@Test" => {
-                    // Java: @Test followed by method declaration
-                    if trimmed == "@Test" {
+                    // Java: @Test/@ParameterizedTest followed by method declaration
+                    if trimmed == "@Test" || trimmed == "@ParameterizedTest" {
                         // Look ahead for the method declaration
                         for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(4) {
                             if let Some(captures) = method_regex.captures(method_line.trim()) {
@@ -233,6 +244,7 @@ impl MethodBoundaryFinder {
             }
             // Look for test annotation
             else if trimmed == self.config.test_annotation
+                || (self.config.test_annotation == "@Test" && trimmed == "@ParameterizedTest")
                 || (self.config.test_annotation == "#[test]"
                     && (trimmed.starts_with("#[rstest") || trimmed.starts_with("#[test_case")))
                 || (self.config.test_annotation.contains("pytest")
@@ -414,15 +426,25 @@ impl MethodBoundaryFinder {
                 }
 
                 // Fallback: Check if any end pattern matches (mainly for Python)
+                // Only match if the line is at the same or lower indentation level as the method start
                 if !self.config.method_end_patterns.is_empty() {
-                    for pattern in self.config.method_end_patterns {
-                        if line == *pattern || line.starts_with(pattern) {
-                            method_end_line = Some(i);
+                    // Note: `line` is shadowed to trimmed above, use lines[i] for indent
+                    let original_line = lines[i];
+                    let line_indent = original_line.len() - original_line.trim_start().len();
+                    let start_line_indent =
+                        lines[start_idx].len() - lines[start_idx].trim_start().len();
+
+                    // Only consider end patterns at same or lower indentation (not nested code)
+                    if line_indent <= start_line_indent {
+                        for pattern in self.config.method_end_patterns {
+                            if line == *pattern || line.starts_with(pattern) {
+                                method_end_line = Some(i);
+                                break;
+                            }
+                        }
+                        if method_end_line.is_some() {
                             break;
                         }
-                    }
-                    if method_end_line.is_some() {
-                        break;
                     }
                 }
             }
@@ -432,7 +454,62 @@ impl MethodBoundaryFinder {
         Ok(Some((start_idx, end_idx)))
     }
 
-    /// Generic method to extract steps from boundaries with custom comment prefix
+    /// Parse all Gherkin step comments (with continuation line handling) from a slice
+    /// of method lines. Returns normalized step positions that both step extraction
+    /// and empty-step detection can consume.
+    fn parse_step_positions(
+        method_lines: &[&str],
+        comment_prefix: &str,
+    ) -> Result<Vec<StepPosition>> {
+        let gherkin_comment_regex = Regex::new(&format!(
+            r"{}\s*(Given|When|Then|And|But)\s+(.+)",
+            regex::escape(comment_prefix)
+        ))?;
+        let continuation_regex = Regex::new(&format!(r"{}\s+(.+)", regex::escape(comment_prefix)))?;
+
+        let mut step_positions: Vec<StepPosition> = Vec::new();
+        let mut i = 0;
+        while i < method_lines.len() {
+            let line = method_lines[i].trim();
+            if let Some(captures) = gherkin_comment_regex.captures(line) {
+                let comment_start = i;
+                let step_type = &captures[1];
+                let mut step_text = captures[2].to_string();
+
+                i += 1;
+                while i < method_lines.len() {
+                    let next_line = method_lines[i].trim();
+                    if next_line.starts_with(comment_prefix) {
+                        if let Some(cont_captures) = continuation_regex.captures(next_line) {
+                            if !gherkin_comment_regex.is_match(next_line) {
+                                step_text.push(' ');
+                                step_text.push_str(cont_captures[1].trim());
+                                i += 1;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                step_positions.push(StepPosition {
+                    text: format!("{step_type} {step_text}"),
+                    comment_start,
+                    code_search_start: i,
+                });
+            } else {
+                i += 1;
+            }
+        }
+
+        Ok(step_positions)
+    }
+
+    /// Extract step text strings from method boundaries.
     fn extract_steps_from_boundaries_generic(
         &self,
         content: &str,
@@ -441,97 +518,57 @@ impl MethodBoundaryFinder {
         comment_prefix: &str,
     ) -> Result<Vec<String>> {
         let lines: Vec<&str> = content.lines().collect();
-        let mut steps = Vec::new();
-
-        // Create regex for Gherkin comments
-        let comment_regex = format!(
-            r"{}\s*(Given|When|Then|And|But)\s+(.+)",
-            regex::escape(comment_prefix)
-        );
-        let gherkin_comment_regex = Regex::new(&comment_regex)?;
-
-        let continuation_regex = format!(r"{}\s+(.+)", regex::escape(comment_prefix));
-        let continuation_comment_regex = Regex::new(&continuation_regex)?;
-
-        // Extract steps only from within the method boundaries, handling multiline comments
         let method_lines: Vec<&str> = lines
             .iter()
             .take(end_idx)
             .skip(start_idx)
             .cloned()
             .collect();
-        let mut i = 0;
-        while i < method_lines.len() {
-            let line = method_lines[i].trim();
-            if let Some(captures) = gherkin_comment_regex.captures(line) {
-                let step_type = &captures[1];
-                let mut step_text = captures[2].to_string();
 
-                // Check for continuation lines - only if next line is purely a comment
-                i += 1;
-                while i < method_lines.len() {
-                    let next_line = method_lines[i].trim();
-                    // Only treat as continuation if the line starts with comment prefix (no code before comment)
-                    if next_line.starts_with(comment_prefix) {
-                        if let Some(cont_captures) = continuation_comment_regex.captures(next_line)
-                        {
-                            // Check if this is a continuation (doesn't start with Given/When/Then/And/But)
-                            let cont_text = cont_captures[1].trim();
-                            if !gherkin_comment_regex.is_match(next_line) {
-                                step_text.push(' ');
-                                step_text.push_str(cont_text);
-                                i += 1;
-                            } else {
-                                // This is a new step, don't consume it
-                                break;
-                            }
-                        } else {
-                            // No more continuation lines
-                            break;
-                        }
-                    } else {
-                        // Next line is not a pure comment line, stop looking for continuations
-                        break;
-                    }
-                }
-
-                steps.push(format!("{} {}", step_type, step_text));
-            } else {
-                i += 1;
-            }
-        }
-
-        Ok(steps)
+        let step_positions = Self::parse_step_positions(&method_lines, comment_prefix)?;
+        Ok(step_positions.into_iter().map(|sp| sp.text).collect())
     }
 
-    /// Generic method to find steps within a specific method with custom comment prefix
-    fn find_steps_in_method_generic(
+    /// Find Gherkin step comments that are not followed by any implementation code
+    /// before the next step comment or end of method.
+    fn find_empty_steps_from_boundaries_generic(
         &self,
         content: &str,
-        method_name: &str,
+        start_idx: usize,
+        end_idx: usize,
         comment_prefix: &str,
     ) -> Result<Vec<String>> {
-        if let Some((start_idx, end_idx)) = self.find_method_boundaries(content, method_name)? {
-            let steps = self.extract_steps_from_boundaries_generic(
-                content,
-                start_idx,
-                end_idx,
-                comment_prefix,
-            )?;
-            if steps.is_empty() {
-                // Fallback: search from method start to file end (handles async blocks/macros)
-                let lines: Vec<&str> = content.lines().collect();
-                return self.extract_steps_from_boundaries_generic(
-                    content,
-                    start_idx,
-                    lines.len(),
-                    comment_prefix,
-                );
+        let lines: Vec<&str> = content.lines().collect();
+        let method_lines: Vec<&str> = lines
+            .iter()
+            .take(end_idx)
+            .skip(start_idx)
+            .cloned()
+            .collect();
+
+        let step_positions = Self::parse_step_positions(&method_lines, comment_prefix)?;
+        let mut empty_steps = Vec::new();
+
+        for (idx, step) in step_positions.iter().enumerate() {
+            let code_end = if idx + 1 < step_positions.len() {
+                step_positions[idx + 1].comment_start
+            } else {
+                method_lines.len()
+            };
+
+            let has_code = method_lines[step.code_search_start..code_end]
+                .iter()
+                .any(|line| {
+                    let trimmed = line.trim();
+                    !trimmed.is_empty() && !trimmed.starts_with(comment_prefix)
+                });
+
+            if !has_code {
+                empty_steps.push(step.text.clone());
             }
-            Ok(steps)
-        } else {
-            Ok(vec![]) // Method not found
         }
+
+        Ok(empty_steps)
     }
 }
 
@@ -615,27 +652,81 @@ impl StepFinder {
         Ok(steps)
     }
 
-    /// Find implemented steps within a specific test method
-    pub fn find_steps_in_method(&self, file_path: &Path, method_name: &str) -> Result<Vec<String>> {
-        let content = std::fs::read_to_string(file_path)
-            .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
-
-        let comment_prefix = match self.language {
+    fn comment_prefix(&self) -> &'static str {
+        match self.language {
             Language::Python => "#",
-            _ => "//", // Rust, ODBC, JDBC, CSharp, JavaScript all use //
-        };
+            _ => "//",
+        }
+    }
 
-        let config = match self.language {
+    fn language_config(&self) -> LanguageConfig {
+        match self.language {
             Language::Rust => LanguageConfig::rust(),
             Language::Odbc => LanguageConfig::odbc(),
             Language::Jdbc => LanguageConfig::jdbc(),
             Language::Python => LanguageConfig::python(),
             Language::CSharp => LanguageConfig::csharp(),
             Language::JavaScript => LanguageConfig::javascript(),
-        };
+        }
+    }
 
-        let boundary_finder = MethodBoundaryFinder::new(config);
-        boundary_finder.find_steps_in_method_generic(&content, method_name, comment_prefix)
+    /// Find implemented steps within a specific test method
+    pub fn find_steps_in_method(&self, file_path: &Path, method_name: &str) -> Result<Vec<String>> {
+        let (steps, _) = self.find_steps_and_empty_steps_in_method(file_path, method_name)?;
+        Ok(steps)
+    }
+
+    /// Find Gherkin step comments in a method that have no implementation code following them
+    pub fn find_empty_steps_in_method(
+        &self,
+        file_path: &Path,
+        method_name: &str,
+    ) -> Result<Vec<String>> {
+        let (_, empty_steps) = self.find_steps_and_empty_steps_in_method(file_path, method_name)?;
+        Ok(empty_steps)
+    }
+
+    /// Find both implemented steps and empty steps in a single pass, reading the file
+    /// and computing method boundaries only once.
+    pub fn find_steps_and_empty_steps_in_method(
+        &self,
+        file_path: &Path,
+        method_name: &str,
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        let content = std::fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read test file: {}", file_path.display()))?;
+
+        let comment_prefix = self.comment_prefix();
+        let boundary_finder = MethodBoundaryFinder::new(self.language_config());
+
+        if let Some((start_idx, end_idx)) =
+            boundary_finder.find_method_boundaries(&content, method_name)?
+        {
+            let mut steps = boundary_finder.extract_steps_from_boundaries_generic(
+                &content,
+                start_idx,
+                end_idx,
+                comment_prefix,
+            )?;
+            if steps.is_empty() {
+                let lines: Vec<&str> = content.lines().collect();
+                steps = boundary_finder.extract_steps_from_boundaries_generic(
+                    &content,
+                    start_idx,
+                    lines.len(),
+                    comment_prefix,
+                )?;
+            }
+            let empty_steps = boundary_finder.find_empty_steps_from_boundaries_generic(
+                &content,
+                start_idx,
+                end_idx,
+                comment_prefix,
+            )?;
+            Ok((steps, empty_steps))
+        } else {
+            Ok((vec![], vec![]))
+        }
     }
 
     /// Find test functions/methods with line numbers that match a scenario name
@@ -670,10 +761,14 @@ impl StepFinder {
         // Generate possible function names from scenario name
         let snake_scenario = to_snake_case(scenario_name);
 
-        // Filter methods that match the scenario name
         let matching_methods = all_methods
             .into_iter()
-            .filter(|(method_name, _line)| strings_match_normalized(method_name, &snake_scenario))
+            .filter(|(method_name, _line)| {
+                strings_match_normalized(
+                    clean_method_name(method_name),
+                    clean_method_name(&snake_scenario),
+                )
+            })
             .collect();
 
         Ok(matching_methods)
@@ -781,5 +876,153 @@ impl StepFinder {
         }
 
         Ok(methods)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that Python method boundary detection correctly handles nested constructs.
+    /// This is a regression test for the fix where nested `import` or `def` statements
+    /// inside a test method were incorrectly terminating the method boundary.
+    #[test]
+    fn test_python_method_boundary_with_nested_constructs() {
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::python());
+
+        // Python test with nested import and nested def - these should NOT end the method
+        let content = r#"
+import pytest
+
+def test_something_with_nested_constructs():
+    # Given the system is ready
+    value = 42
+    
+    # Nested import inside the function (e.g., lazy import)
+    import json
+    
+    # Nested function definition
+    def helper():
+        return "helper result"
+    
+    # When we process the data
+    result = helper()
+    
+    # Then we should get the expected result
+    assert result == "helper result"
+    
+    # Nested async def
+    async def async_helper():
+        return "async result"
+
+def test_next_method():
+    # This is a different test
+    pass
+"#;
+
+        // Find boundaries for test_something_with_nested_constructs
+        let boundaries = boundary_finder
+            .find_method_boundaries(content, "test_something_with_nested_constructs")
+            .expect("Should find method boundaries");
+
+        assert!(boundaries.is_some(), "Should find the method");
+        let (start, end) = boundaries.unwrap();
+
+        // The method should include all the nested constructs
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Method should start at the def line
+        assert!(
+            lines[start].contains("def test_something_with_nested_constructs"),
+            "Start line should be the method definition"
+        );
+
+        // Method should end at or before the next top-level def (test_next_method)
+        // The end should be after the nested async def but before the next test
+        let method_content: String = lines[start..end].join("\n");
+
+        // Verify the nested import is included
+        assert!(
+            method_content.contains("import json"),
+            "Method should include nested import"
+        );
+
+        // Verify the nested def is included
+        assert!(
+            method_content.contains("def helper():"),
+            "Method should include nested def"
+        );
+
+        // Verify the nested async def is included
+        assert!(
+            method_content.contains("async def async_helper():"),
+            "Method should include nested async def"
+        );
+
+        // Verify the next test method is NOT included
+        assert!(
+            !method_content.contains("def test_next_method"),
+            "Method should NOT include the next test method"
+        );
+    }
+
+    /// Test that top-level constructs still correctly end methods
+    #[test]
+    fn test_python_method_boundary_ends_at_top_level_def() {
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::python());
+
+        let content = r#"
+def test_first():
+    # Given something
+    x = 1
+    # Then check
+    assert x == 1
+
+def test_second():
+    # Given something else
+    y = 2
+"#;
+
+        let boundaries = boundary_finder
+            .find_method_boundaries(content, "test_first")
+            .expect("Should find method boundaries");
+
+        assert!(boundaries.is_some());
+        let (start, end) = boundaries.unwrap();
+
+        let lines: Vec<&str> = content.lines().collect();
+        let method_content: String = lines[start..end].join("\n");
+
+        // Should include the first test's content
+        assert!(method_content.contains("x = 1"));
+        assert!(method_content.contains("assert x == 1"));
+
+        // Should NOT include the second test
+        assert!(!method_content.contains("def test_second"));
+        assert!(!method_content.contains("y = 2"));
+    }
+
+    #[test]
+    fn test_jdbc_parameterized_test_with_method_source_extracts_real_method_name() {
+        let finder = MethodBoundaryFinder::new(LanguageConfig::jdbc());
+        let content = r#"
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+public class IntTests {
+    @ParameterizedTest
+    @MethodSource("intTypeSynonyms")
+    public void shouldSelectIntegerLiteralsForIntAndSynonyms(String typeName) throws Exception {
+        // Given Snowflake client is logged in
+    }
+}
+"#;
+
+        let methods = finder
+            .find_all_test_methods_with_lines(content)
+            .expect("Should parse methods");
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].0, "shouldSelectIntegerLiteralsForIntAndSynonyms");
     }
 }

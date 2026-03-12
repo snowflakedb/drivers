@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
-from .utils import assert_type
+from ...conftest import with_paramstyle
+from .utils import assert_connection_is_open, assert_type
 
 
 # =============================================================================
@@ -18,6 +17,7 @@ class TestBooleanTypeCasting:
 
     def test_should_cast_boolean_values_to_appropriate_type(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN" is executed
         result = execute_query("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN", single_row=True)
@@ -34,6 +34,7 @@ class TestBooleanLiteral:
 
     def test_should_select_boolean_literals(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
         result = execute_query("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN", single_row=True)
@@ -44,6 +45,7 @@ class TestBooleanLiteral:
 
     def test_should_handle_null_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN" is executed
         result = execute_query("SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN", single_row=True)
@@ -54,6 +56,7 @@ class TestBooleanLiteral:
 
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
 
@@ -73,6 +76,7 @@ class TestBooleanTable:
 
     def test_should_select_boolean_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
         table_name = f"{tmp_schema}.boolean_table"
@@ -90,6 +94,7 @@ class TestBooleanTable:
 
     def test_should_handle_null_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with BOOLEAN column exists
         table_name = f"{tmp_schema}.null_table"
@@ -108,6 +113,7 @@ class TestBooleanTable:
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
 
@@ -130,12 +136,13 @@ class TestBooleanTable:
         assert num_true == LARGE_RESULT_SET_SIZE // 2
 
 
+@with_paramstyle("qmark")
 class TestBooleanBinding:
     """Tests for BOOLEAN type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     def test_should_select_boolean_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed
         # with bound boolean values [TRUE, FALSE, TRUE]
@@ -151,21 +158,19 @@ class TestBooleanBinding:
         # Then Result should contain [NULL]
         assert result == (None,)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    def test_should_insert_boolean_using_parameter_binding(self, execute_query, tmp_schema):
+    def test_should_insert_boolean_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
         # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
 
         # And Table with BOOLEAN column exists
         table_name = f"{tmp_schema}.boolean_bind_table"
         execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
 
-        # When Boolean values [TRUE, FALSE, NULL] are inserted using binding
-        test_values = [True, False, None]
-        for val in test_values:
-            execute_query(f"INSERT INTO {table_name} VALUES (?)", (val,))
+        # When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
+        test_values = [(True,), (False,), (None,)]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_values)
 
         # Then SELECT should return the same values in any order
-        rows = execute_query(f"SELECT * FROM {table_name}")
         result = [row[0] for row in rows]
-        assert set(result) == set(test_values)
+        assert set(result) == {True, False, None}
         assert_type(result, bool, can_be_none=True)

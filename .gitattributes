@@ -1,0 +1,3 @@
+# Force LF line endings for test data files so sizes and content match
+# cross-platform expectations in PUT/GET tests.
+tests/test_data/**/*.csv text eol=lf

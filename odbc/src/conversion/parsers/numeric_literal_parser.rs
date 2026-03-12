@@ -601,7 +601,7 @@ mod tests {
         // 1.5e2 -> 150 (moves 5 to whole, adds one 0)
         let result = parse_numeric_literal("1.5e2").unwrap().normalize().unwrap();
         assert_eq!(result.whole_part, "150");
-        assert_eq!(result.fractional_part, "");
+        assert_eq!(result.fractional_part, "0");
     }
 
     #[test]
@@ -620,7 +620,7 @@ mod tests {
         // 5e3 -> 5000 (adds three 0s to whole)
         let result = parse_numeric_literal("5e3").unwrap().normalize().unwrap();
         assert_eq!(result.whole_part, "5000");
-        assert_eq!(result.fractional_part, "");
+        assert_eq!(result.fractional_part, "0");
     }
 
     #[test]
@@ -638,7 +638,7 @@ mod tests {
     fn test_normalize_negative_exponent_adds_zeros() {
         // 5e-3 -> 0.005 (whole becomes empty, fractional gets 005)
         let result = parse_numeric_literal("5e-3").unwrap().normalize().unwrap();
-        assert_eq!(result.whole_part, "");
+        assert_eq!(result.whole_part, "0");
         assert_eq!(result.fractional_part, "005");
     }
 
@@ -670,7 +670,7 @@ mod tests {
             .unwrap();
         assert!(is_negative(&result.sign));
         assert_eq!(result.whole_part, "150");
-        assert_eq!(result.fractional_part, "");
+        assert_eq!(result.fractional_part, "0");
     }
 
     #[test]
@@ -689,14 +689,14 @@ mod tests {
         // 1.2e5 -> 120000
         let result = parse_numeric_literal("1.2e5").unwrap().normalize().unwrap();
         assert_eq!(result.whole_part, "120000");
-        assert_eq!(result.fractional_part, "");
+        assert_eq!(result.fractional_part, "0");
     }
 
     #[test]
     fn test_normalize_large_negative_exponent() {
         // 1e-5 -> 0.00001
         let result = parse_numeric_literal("1e-5").unwrap().normalize().unwrap();
-        assert_eq!(result.whole_part, "");
+        assert_eq!(result.whole_part, "0");
         assert_eq!(result.fractional_part, "00001");
     }
 }

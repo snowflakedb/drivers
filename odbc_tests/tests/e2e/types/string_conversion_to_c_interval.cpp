@@ -33,22 +33,6 @@
 #include "macros.hpp"
 #include "test_setup.hpp"
 
-// Helper to get raw data with error checking for expected failures
-template <typename T>
-static SQLRETURN get_data_raw(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type, T* value,
-                              SQLLEN* indicator) {
-  return SQLGetData(stmt.getHandle(), col, target_type, value, sizeof(*value), indicator);
-}
-
-// Helper to check SQLSTATE from diagnostic records
-static std::string get_sqlstate(const StatementHandleWrapper& stmt) {
-  auto records = get_diag_rec(stmt);
-  if (!records.empty()) {
-    return records[0].sqlState;
-  }
-  return "";
-}
-
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - Single-component interval types (no truncation)
 // ============================================================================
@@ -300,9 +284,7 @@ TEST_CASE("should truncate trailing fields when converting interval strings",
   }
 
   // And minute-second to minute will lose precision since driver treats it as hour-minute
-  {
-    check_interval_precision_lost<SQL_C_INTERVAL_MINUTE>(stmt, 4);
-  }
+  check_interval_precision_lost<SQL_C_INTERVAL_MINUTE>(stmt, 4);
 }
 
 TEST_CASE("should truncate trailing fields in day-time intervals",
@@ -631,7 +613,6 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval value is executed with SQLBindCol for SQL_C_INTERVAL_YEAR
-  // Then the bound interval value should match the string representation
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '5' AS interval_year", SQL_NTS);
@@ -645,6 +626,7 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
+    // Then the bound interval value should match the string representation
     CHECK(interval.interval_type == SQL_IS_YEAR);
     CHECK(interval.intval.year_month.year == 5);
     CHECK(indicator == sizeof(SQL_INTERVAL_STRUCT));

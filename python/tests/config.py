@@ -35,6 +35,7 @@ def get_test_parameters() -> dict[str, Any]:
         "SNOWFLAKE_TEST_HOST",
         "SNOWFLAKE_TEST_PORT",
         "SNOWFLAKE_TEST_PROTOCOL",
+        "SNOWFLAKE_TEST_PRIVATE_KEY_FILE",
         "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS",
         "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
     ]

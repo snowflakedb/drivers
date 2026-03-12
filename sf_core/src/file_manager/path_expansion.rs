@@ -45,7 +45,7 @@ impl ValidatedFilePath {
     }
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum PathExpansionError {
     #[snafu(display("Pattern matched an invalid path {path}"))]
     InvalidPath {

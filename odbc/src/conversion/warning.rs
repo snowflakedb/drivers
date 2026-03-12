@@ -4,4 +4,6 @@ pub type Warnings = Vec<Warning>;
 pub enum Warning {
     StringDataTruncated,
     NumericValueTruncated,
+    RowError,
+    OptionValueChanged,
 }

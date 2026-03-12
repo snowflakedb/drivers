@@ -384,13 +384,13 @@ impl TestDiscovery {
                 let base_path = if let Some(subdir) = subdir {
                     self.workspace_root
                         .join(format!(
-                            "jdbc/src/test/java/com/snowflake/jdbc/{}",
+                            "jdbc/src/test/java/net/snowflake/jdbc/{}",
                             test_dir
                         ))
                         .join(subdir)
                 } else {
                     self.workspace_root.join(format!(
-                        "jdbc/src/test/java/com/snowflake/jdbc/{}",
+                        "jdbc/src/test/java/net/snowflake/jdbc/{}",
                         test_dir
                     ))
                 };
@@ -408,9 +408,9 @@ impl TestDiscovery {
                     // Test workspace paths (for unit tests)
                     simple_base_path.join(format!("{}Test.java", pascal_name)),
                     simple_base_path.join(format!("{}Tests.java", pascal_name)),
-                    // jdbc/src/test/java/com/snowflake/jdbc/[e2e|integration]/[subdir/]FeatureNameTest.java
+                    // jdbc/src/test/java/net/snowflake/jdbc/[e2e|integration]/[subdir/]FeatureNameTest.java
                     base_path.join(format!("{}Test.java", pascal_name)),
-                    // jdbc/src/test/java/com/snowflake/jdbc/[e2e|integration]/[subdir/]FeatureNameTests.java
+                    // jdbc/src/test/java/net/snowflake/jdbc/[e2e|integration]/[subdir/]FeatureNameTests.java
                     base_path.join(format!("{}Tests.java", pascal_name)),
                 ]
             }

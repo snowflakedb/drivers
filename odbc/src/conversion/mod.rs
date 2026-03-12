@@ -4,20 +4,35 @@ mod parsers;
 mod traits;
 pub mod warning;
 
+mod binary;
+mod boolean;
+#[cfg(test)]
+mod boolean_tests;
+mod date;
 mod nullable;
 mod number;
+#[cfg(test)]
+mod number_tests;
+mod real;
+#[cfg(test)]
+mod real_tests;
+#[cfg(test)]
+mod test_utils;
+mod timestamp;
 mod varchar;
 
 use arrow::array::Array;
 use arrow::datatypes::{
-    DataType, Decimal128Type, Field, Int8Type, Int16Type, Int32Type, Int64Type,
+    DataType, Date32Type, Decimal128Type, Field, Float64Type, Int8Type, Int16Type, Int32Type,
+    Int64Type,
 };
 use snafu::ResultExt;
-pub use traits::{Binding, ReadArrowType, SnowflakeType, WriteODBCType};
+pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,
 };
+pub use number::NumericSettings;
 
 use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,
@@ -30,6 +45,7 @@ pub trait Converter<'a> {
         &self,
         row_idx: usize,
         binding: &Binding,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, ConversionError>;
 }
 
@@ -38,13 +54,14 @@ struct GenericConverter<'a, ArrowArrayType, T> {
     arrow_array: &'a ArrowArrayType,
 }
 
-impl<'a, ArrowArrayType, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>>
+impl<'a, ArrowArrayType: Array, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>>
     Converter<'a> for GenericConverter<'a, ArrowArrayType, T>
 {
     fn convert_arrow_value(
         &self,
         row_idx: usize,
         binding: &Binding,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, ConversionError> {
         tracing::debug!(
             "convert_arrow_value: row_idx={}, binding={:?}",
@@ -56,7 +73,7 @@ impl<'a, ArrowArrayType, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowA
             .read_arrow_type(self.arrow_array, row_idx)
             .context(ReadArrowValueSnafu)?;
         self.snowflake_type
-            .write_odbc_type(value, binding)
+            .write_odbc_type(value, binding, get_data_offset)
             .context(WriteOdbcValueSnafu)
     }
 }
@@ -88,7 +105,7 @@ macro_rules! make_converter {
     }};
 }
 
-macro_rules! make_number_converter {
+macro_rules! make_primitive_data_converter {
     ($arrow_type:ty, $snowflake_type:expr, $arrow_array:expr, $nullable:expr) => {{
         make_converter!(
             arrow::array::PrimitiveArray<$arrow_type>,
@@ -118,20 +135,105 @@ fn get_field_metadata(field: &Field, key: &str) -> Result<u32, ConversionError> 
     Ok(parsed)
 }
 
+/// Parsed Snowflake type from an Arrow field's metadata.
+enum SnowflakeFieldType {
+    Varchar(varchar::SnowflakeVarchar),
+    Number(number::SnowflakeNumber),
+    Date(date::SnowflakeDate),
+    TimestampNtz(timestamp::SnowflakeTimestampNtz),
+    Boolean(boolean::SnowflakeBoolean),
+    Binary(binary::SnowflakeBinary),
+    Real(real::SnowflakeReal),
+}
+
+impl SnowflakeFieldType {
+    fn from_field(
+        field: &Field,
+        numeric_settings: &NumericSettings,
+    ) -> Result<Self, ConversionError> {
+        let logical_type = field
+            .metadata()
+            .get("logicalType")
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        match logical_type {
+            "TEXT" => {
+                let len = get_field_metadata(field, "charLength")?;
+                Ok(Self::Varchar(varchar::SnowflakeVarchar { len }))
+            }
+            "FIXED" => {
+                let scale = get_field_metadata(field, "scale")?;
+                let precision = get_field_metadata(field, "precision")?;
+                let sql_type = number::NumericSqlType::from_scale_and_precision(
+                    scale,
+                    precision,
+                    numeric_settings,
+                );
+                Ok(Self::Number(number::SnowflakeNumber {
+                    scale,
+                    precision,
+                    sql_type,
+                }))
+            }
+            "DATE" => Ok(Self::Date(date::SnowflakeDate)),
+            "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz)),
+            "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
+            "BINARY" => Ok(Self::Binary(binary::SnowflakeBinary)),
+            "REAL" => Ok(Self::Real(real::SnowflakeReal)),
+            lt => IncompatibleFieldMetadataSnafu {
+                logical_type: lt.to_string(),
+                data_type: field.data_type().clone(),
+            }
+            .fail(),
+        }
+    }
+
+    fn sql_type(&self) -> odbc_sys::SqlDataType {
+        match self {
+            Self::Varchar(t) => t.sql_type(),
+            Self::Number(t) => t.sql_type(),
+            Self::Date(t) => t.sql_type(),
+            Self::TimestampNtz(t) => t.sql_type(),
+            Self::Boolean(t) => t.sql_type(),
+            Self::Binary(t) => t.sql_type(),
+            Self::Real(t) => t.sql_type(),
+        }
+    }
+
+    fn column_size(&self) -> odbc_sys::ULen {
+        match self {
+            Self::Varchar(t) => t.column_size(),
+            Self::Number(t) => t.column_size(),
+            Self::Date(t) => t.column_size(),
+            Self::TimestampNtz(t) => t.column_size(),
+            Self::Boolean(t) => t.column_size(),
+            Self::Binary(t) => t.column_size(),
+            Self::Real(t) => t.column_size(),
+        }
+    }
+
+    fn decimal_digits(&self) -> odbc_sys::SmallInt {
+        match self {
+            Self::Varchar(t) => t.decimal_digits(),
+            Self::Number(t) => t.decimal_digits(),
+            Self::Date(t) => t.decimal_digits(),
+            Self::TimestampNtz(t) => t.decimal_digits(),
+            Self::Boolean(t) => t.decimal_digits(),
+            Self::Binary(t) => t.decimal_digits(),
+            Self::Real(t) => t.decimal_digits(),
+        }
+    }
+}
+
 pub fn make_converter<'a>(
     field: &Field,
     arrow_array: &'a dyn Array,
+    numeric_settings: &NumericSettings,
 ) -> Result<Box<dyn Converter<'a> + 'a>, ConversionError> {
-    let logical_type = field
-        .metadata()
-        .get("logicalType")
-        .map(|s| s.as_str())
-        .unwrap_or("");
+    let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
     let nullable = field.is_nullable();
-    match (logical_type, field.data_type()) {
-        ("TEXT", DataType::Utf8) => {
-            let len = get_field_metadata(field, "charLength")?;
-            let snowflake_type = varchar::SnowflakeVarchar { len };
+    match field_type {
+        SnowflakeFieldType::Varchar(snowflake_type) => {
             make_converter!(
                 arrow::array::GenericByteArray<arrow::datatypes::Utf8Type>,
                 snowflake_type,
@@ -139,36 +241,83 @@ pub fn make_converter<'a>(
                 nullable
             )
         }
-        ("FIXED", _) => {
-            let scale = get_field_metadata(field, "scale")?;
-            let precision = get_field_metadata(field, "precision")?;
-            let snowflake_type = number::SnowflakeNumber { scale, precision };
-            match field.data_type() {
-                DataType::Int8 => {
-                    make_number_converter!(Int8Type, snowflake_type, arrow_array, nullable)
-                }
-                DataType::Int16 => {
-                    make_number_converter!(Int16Type, snowflake_type, arrow_array, nullable)
-                }
-                DataType::Int32 => {
-                    make_number_converter!(Int32Type, snowflake_type, arrow_array, nullable)
-                }
-                DataType::Int64 => {
-                    make_number_converter!(Int64Type, snowflake_type, arrow_array, nullable)
-                }
-                DataType::Decimal128(_, _) => {
-                    make_number_converter!(Decimal128Type, snowflake_type, arrow_array, nullable)
-                }
-                dt => UnsupportedArrowDataTypeSnafu {
-                    data_type: dt.clone(),
-                }
-                .fail(),
+        SnowflakeFieldType::Number(snowflake_type) => match field.data_type() {
+            DataType::Int8 => {
+                make_primitive_data_converter!(Int8Type, snowflake_type, arrow_array, nullable)
             }
+            DataType::Int16 => {
+                make_primitive_data_converter!(Int16Type, snowflake_type, arrow_array, nullable)
+            }
+            DataType::Int32 => {
+                make_primitive_data_converter!(Int32Type, snowflake_type, arrow_array, nullable)
+            }
+            DataType::Int64 => {
+                make_primitive_data_converter!(Int64Type, snowflake_type, arrow_array, nullable)
+            }
+            DataType::Decimal128(_, _) => {
+                make_primitive_data_converter!(
+                    Decimal128Type,
+                    snowflake_type,
+                    arrow_array,
+                    nullable
+                )
+            }
+            dt => UnsupportedArrowDataTypeSnafu {
+                data_type: dt.clone(),
+            }
+            .fail(),
+        },
+        SnowflakeFieldType::Date(snowflake_type) => {
+            make_primitive_data_converter!(Date32Type, snowflake_type, arrow_array, nullable)
         }
-        (lt, dt) => IncompatibleFieldMetadataSnafu {
-            logical_type: lt.to_string(),
-            data_type: dt.clone(),
+        SnowflakeFieldType::TimestampNtz(snowflake_type) => {
+            make_converter!(
+                arrow::array::StructArray,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
         }
-        .fail(),
+        SnowflakeFieldType::Boolean(snowflake_type) => {
+            make_converter!(
+                arrow::array::BooleanArray,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
+        }
+        SnowflakeFieldType::Binary(snowflake_type) => {
+            make_converter!(
+                arrow::array::GenericByteArray<arrow::datatypes::GenericBinaryType<i32>>,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
+        }
+        SnowflakeFieldType::Real(snowflake_type) => {
+            make_primitive_data_converter!(Float64Type, snowflake_type, arrow_array, nullable)
+        }
     }
+}
+
+/// Map a Snowflake Arrow field to the corresponding SQL data type.
+pub fn sql_type_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::SqlDataType, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
+}
+
+pub fn column_size_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::ULen, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.column_size())
+}
+
+pub fn decimal_digits_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::SmallInt, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.decimal_digits())
 }

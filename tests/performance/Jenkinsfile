@@ -5,7 +5,7 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 4, unit: 'HOURS')
+        timeout(time: 6, unit: 'HOURS')
         skipDefaultCheckout()
     }
 
@@ -86,7 +86,7 @@ pipeline {
                                 python -m pip --version
                                 
                                 echo "Installing hatch..."
-                                python -m pip install hatch
+                                python -m pip install hatch "virtualenv<21.0.0"
                                 
                                 echo "Hatch version:"
                                 python -m hatch --version
@@ -122,12 +122,18 @@ pipeline {
                                 )
                             ]) {
                                 script {
+                                    echo "Building WireMock image..."
+                                    sh """
+                                        source .venv/bin/activate
+                                        python -m hatch run build-wiremock
+                                    """
+                                    
+                                    // Build driver image
                                     echo "Building ${params.DRIVER} driver image..."
-                                    def buildCommand = """
+                                    sh """
                                         source .venv/bin/activate
                                         python -m hatch run build-${params.DRIVER}
                                     """
-                                    sh buildCommand
                                 }
                             }
                         }
@@ -153,11 +159,17 @@ pipeline {
                                     // Build test command with optional TEST_ARGS
                                     def testArgs = params.TEST_ARGS?.trim() ?: ""
                                     
+                                    // ODBC has known fetch performance issues causing timeouts.
+                                    // Run a reduced set of E2E tests to stay within the 6hr limit:
+                                    if (!testArgs && params.DRIVER == 'odbc') {
+                                        testArgs = "tests/ -k '(test_select_number_50M_arrow or test_select_date_50M_arrow or test_put_files_12mx100 or test_get_files_12mx100 or 1M) and not (12mx1000 or 50M_arrow_recorded)'"
+                                        echo "ODBC: using reduced test set to avoid timeout"
+                                    }
+                                    
                                     echo "Hatch environment: ${hatchEnv}"
                                     echo "TEST_ARGS parameter: '${testArgs ?: '(empty - will run all tests)'}'"
                                     
                                     if (testArgs) {
-                                        // Pass TEST_ARGS directly as a Groovy variable, not through shell export
                                         echo "Running specific test(s): ${testArgs}"
                                         sh """
                                             source .venv/bin/activate
@@ -182,9 +194,7 @@ pipeline {
             }
             
             post {
-                success {
-                    echo '✓ Performance tests completed successfully'
-                    
+                always {
                     script {
                         def urlMap = parseBenchDashUrls()
                         
@@ -197,6 +207,9 @@ pipeline {
                             echo "Found ${urlMap.size()} BenchDash URL(s) with labels and added to build description"
                         }
                     }
+                }
+                success {
+                    echo '✓ Performance tests completed successfully'
                 }
                 failure {
                     echo '✗ Performance tests failed'

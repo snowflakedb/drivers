@@ -1,16 +1,12 @@
 """Connection management and connector selection."""
-import importlib.util
 from importlib.metadata import version, PackageNotFoundError
-from pathlib import Path
 
 
 def create_connection(driver_type, conn_params):
     """Create and return a connection."""
-    connector = _get_connector(driver_type)
+    connector = _get_connector()
     driver_version = _get_driver_version(driver_type)
-    
     conn = connector.connect(**conn_params)
-    
     return conn, driver_version
 
 
@@ -22,10 +18,10 @@ def get_server_version(cursor):
         if server_version_result:
             return server_version_result[0]
         else:
-            print("⚠️  Warning: Could not retrieve server version (empty result)")
+            print("Warning: Could not retrieve server version (empty result)")
             return "UNKNOWN"
     except Exception as err:
-        print(f"⚠️  Warning: Could not retrieve server version: {err}")
+        print(f"Warning: Could not retrieve server version: {err}")
         return "UNKNOWN"
 
 
@@ -39,38 +35,22 @@ def execute_setup_queries(cursor, setup_queries):
         print(f"  Setup query {i}: {query}")
         try:
             cursor.execute(query)
-            # Consume any results to ensure the query completes
             try:
                 cursor.fetchall()
             except Exception:
-                pass  # Some queries don't return results
+                pass
         except Exception as e:
-            print(f"\n❌ ERROR: Setup query {i} failed: {query}")
+            print(f"\nERROR: Setup query {i} failed: {query}")
             print(f"   Error: {e}")
             raise
     
-    print("✓ Setup queries completed")
+    print("Setup queries completed")
 
 
-def _load_from_sources():
-    legacy_path = Path(__file__).parent.parent / "old_driver_src"
-
-    package_name = "snowflake.connector"
-    spec = importlib.util.find_spec(package_name, [legacy_path])
-    if spec is None:
-        raise ImportError(f"Could not find '{package_name}' in {legacy_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _get_connector(driver_type):
-    """Get the appropriate connector module based on driver type."""
-    if driver_type == "old":
-        return _load_from_sources()
-    else:  # universal
-        from snowflake import connector
-        return connector
+def _get_connector():
+    """Get the snowflake connector module (whichever is installed in this image)."""
+    from snowflake import connector
+    return connector
 
 
 def _get_driver_version(driver_type):
@@ -78,8 +58,8 @@ def _get_driver_version(driver_type):
     try:
         if driver_type == "old":
             return version("snowflake-connector-python")
-        else:  # universal
+        else:
             return version("snowflake-connector-python-ud")
     except PackageNotFoundError as err:
-        print(f"⚠️  Warning: Could not determine driver version: {err}")
+        print(f"Warning: Could not determine driver version: {err}")
         return "UNKNOWN"

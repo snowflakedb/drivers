@@ -1,6 +1,5 @@
 # Rust build artifacts
 target/
-Cargo.lock
 
 # IDE files
 .idea/
@@ -26,3 +25,4 @@ Thumbs.db
 
 results/
 drivers/python/old_driver_src/
+mappings/

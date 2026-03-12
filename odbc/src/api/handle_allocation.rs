@@ -1,12 +1,14 @@
 use crate::api::{
-    Connection, ConnectionState, Environment, OdbcResult, Statement, StatementState,
-    conn_from_handle,
+    ArdDescriptor, Connection, ConnectionState, Environment, IrdDescriptor, OdbcResult, Statement,
+    StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
     error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
 };
 use odbc_sys as sql;
-use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf_gen::database_driver_v1::StatementNewRequest;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf::generated::database_driver_v1::{
+    StatementNewRequest, StatementReleaseRequest,
+};
 use tracing;
 
 /// Allocate a new environment handle
@@ -25,6 +27,8 @@ pub fn alloc_connection() -> OdbcResult<*mut Connection> {
     let dbc = Box::new(Connection {
         state: ConnectionState::Disconnected,
         diagnostic_info: DiagnosticInfo::default(),
+        pre_connection_attrs: Default::default(),
+        numeric_settings: Default::default(),
     });
     Ok(Box::into_raw(dbc))
 }
@@ -50,8 +54,15 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 stmt_handle,
                 state: StatementState::Created.into(),
                 parameter_bindings: std::collections::HashMap::new(),
-                column_bindings: std::collections::HashMap::new(),
+                ard: ArdDescriptor::new(),
+                ird: IrdDescriptor::new(),
+                apd: ArdDescriptor::new_apd(),
+                ipd: IrdDescriptor::new_ipd(),
                 diagnostic_info: DiagnosticInfo::default(),
+                get_data_state: None,
+                cursor_type: crate::api::CursorType::ForwardOnly,
+                max_length: 0,
+                used_extended_fetch: false,
             });
             Ok(Box::into_raw(stmt))
         }
@@ -95,21 +106,29 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing statement handle");
-    unsafe {
-        drop(Box::from_raw(handle as *mut Statement));
+    let stmt = unsafe { Box::from_raw(handle as *mut Statement) };
+
+    if let Err(e) = DatabaseDriverClient::statement_release(StatementReleaseRequest {
+        stmt_handle: Some(stmt.stmt_handle),
+    }) {
+        tracing::warn!("Failed to release server-side statement handle: {:?}", e);
     }
     Ok(())
 }
 
 /// Initialize logging (helper function for allocation)
 pub fn init_logging() {
-    use lazy_static::lazy_static;
+    use std::sync::LazyLock;
 
-    lazy_static! {
-        // TODO: This is a hack to initialize the logging system.
-        // We should find a better way to do this.
-        static ref LOGGING_RESULT: Result<(), sf_core::logging::LogError> = sf_core::logging::init(sf_core::logging::LoggingConfig::new(Some("odbc.log".into()), true, false));
-    }
+    // TODO: This is a hack to initialize the logging system.
+    // We should find a better way to do this.
+    static LOGGING_RESULT: LazyLock<Result<(), sf_core::logging::LogError>> = LazyLock::new(|| {
+        sf_core::logging::init(sf_core::logging::LoggingConfig::new(
+            Some("odbc.log".into()),
+            true,
+            false,
+        ))
+    });
 
     if let Err(e) = LOGGING_RESULT.as_ref() {
         eprintln!("Failed to initialize logging: {e:?}");

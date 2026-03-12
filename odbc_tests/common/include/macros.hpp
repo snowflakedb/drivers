@@ -27,7 +27,7 @@ inline std::string return_code_to_string(SQLRETURN ret) {
 #define CHECK_ODBC_ERROR(ret, handle, handleType)                                                                   \
   if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {                                                         \
     if (ret == SQL_INVALID_HANDLE) {                                                                                \
-      FAIL("ODBC Error Status:" << return_code_to_string(ret) << " (SQL_INVALID_HANDLE). "                          \
+      FAIL("ODBC Error Status:" << return_code_to_string(ret) << " (SQL_INVALID_HANDLE).\n "                        \
                                 << "HandleType=" << handleType << " Handle=" << handle);                            \
     }                                                                                                               \
     SQLINTEGER nativeError = 0;                                                                                     \
@@ -35,11 +35,15 @@ inline std::string return_code_to_string(SQLRETURN ret) {
     SQLCHAR message[1024] = {0};                                                                                    \
     SQLRETURN diag_ret = SQLGetDiagRec(handleType, handle, 1, state, &nativeError, message, sizeof(message), NULL); \
     if (diag_ret == SQL_SUCCESS || diag_ret == SQL_SUCCESS_WITH_INFO) {                                             \
-      FAIL("ODBC Error Status:" << ret << " Error: " << message << " State: " << state                              \
-                                << " NativeError: " << nativeError);                                                \
+      FAIL("ODBC Error Status:" << ret << '\n'                                                                      \
+                                << "Error: " << message << '\n'                                                     \
+                                << "State: " << state << '\n'                                                       \
+                                << "NativeError: " << nativeError);                                                 \
     } else {                                                                                                        \
-      FAIL("ODBC Error Status:" << ret << " (no diagnostics; SQLGetDiagRec ret=" << diag_ret                        \
-                                << "). HandleType=" << handleType << " Handle=" << handle);                         \
+      FAIL("ODBC Error Status:" << ret << '\n'                                                                      \
+                                << "No diagnostics; SQLGetDiagRec ret=" << diag_ret << '\n'                         \
+                                << "HandleType=" << handleType << '\n'                                              \
+                                << "Handle=" << handle);                                                            \
     }                                                                                                               \
   }
 

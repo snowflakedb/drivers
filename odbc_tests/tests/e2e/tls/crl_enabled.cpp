@@ -5,15 +5,12 @@
 // Scenario: Should connect and select with CRL enabled
 TEST_CASE("Should connect and select with CRL enabled") {
   // Given Snowflake client is logged in
-  auto params = get_test_parameters("testconnection");
-  std::stringstream ss;
-  read_default_params(ss, params);
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
+  auto connection_string = get_connection_string();
   // And CRL is enabled
-  ss << "CRL_MODE=ENABLED;";
+  connection_string += "CRL_MODE=ENABLED;";
 
   // When Query "SELECT 1" is executed
-  Connection conn(ss.str());
+  Connection conn(connection_string);
   auto stmt = conn.execute_fetch("SELECT 1");
 
   // Then the request attempt should be successful

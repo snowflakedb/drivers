@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from snowflake.connector._internal.sf_dirs import CONFIG_FILE, CONNECTIONS_FILE, DIRS  # noqa
+from .config_manager import CONNECTIONS_FILE, CONFIG_FILE  # noqa
 
 
 # Maps Snowflake type IDs to type name strings.

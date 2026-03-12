@@ -14,6 +14,7 @@ else
 fi
 
 export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.${DYLIB_EXT}
+export PARAMETER_PATH=${PARAMETER_PATH:-$(pwd)/parameters.json}
 
 pushd odbc_tests
     if [ ! -d cmake-build ]; then
