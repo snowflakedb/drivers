@@ -9,6 +9,9 @@ mod boolean;
 #[cfg(test)]
 mod boolean_tests;
 mod date;
+mod decfloat;
+#[cfg(test)]
+mod decfloat_tests;
 mod nullable;
 mod number;
 #[cfg(test)]
@@ -23,8 +26,8 @@ mod varchar;
 
 use arrow::array::Array;
 use arrow::datatypes::{
-    DataType, Date32Type, Decimal128Type, Field, Float64Type, Int8Type, Int16Type, Int32Type,
-    Int64Type,
+    DataType, Date32Type, Decimal128Type, Field, Float64Type, Int16Type, Int32Type, Int64Type,
+    Int8Type,
 };
 use snafu::ResultExt;
 pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType};
@@ -144,6 +147,7 @@ enum SnowflakeFieldType {
     Boolean(boolean::SnowflakeBoolean),
     Binary(binary::SnowflakeBinary),
     Real(real::SnowflakeReal),
+    Decfloat(decfloat::SnowflakeDecfloat),
 }
 
 impl SnowflakeFieldType {
@@ -180,6 +184,10 @@ impl SnowflakeFieldType {
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => Ok(Self::Binary(binary::SnowflakeBinary)),
             "REAL" => Ok(Self::Real(real::SnowflakeReal)),
+            "DECFLOAT" => {
+                let precision = get_field_metadata(field, "precision")?;
+                Ok(Self::Decfloat(decfloat::SnowflakeDecfloat { precision }))
+            }
             lt => IncompatibleFieldMetadataSnafu {
                 logical_type: lt.to_string(),
                 data_type: field.data_type().clone(),
@@ -197,6 +205,7 @@ impl SnowflakeFieldType {
             Self::Boolean(t) => t.sql_type(),
             Self::Binary(t) => t.sql_type(),
             Self::Real(t) => t.sql_type(),
+            Self::Decfloat(t) => t.sql_type(),
         }
     }
 
@@ -209,6 +218,7 @@ impl SnowflakeFieldType {
             Self::Boolean(t) => t.column_size(),
             Self::Binary(t) => t.column_size(),
             Self::Real(t) => t.column_size(),
+            Self::Decfloat(t) => t.column_size(),
         }
     }
 
@@ -221,6 +231,7 @@ impl SnowflakeFieldType {
             Self::Boolean(t) => t.decimal_digits(),
             Self::Binary(t) => t.decimal_digits(),
             Self::Real(t) => t.decimal_digits(),
+            Self::Decfloat(t) => t.decimal_digits(),
         }
     }
 }
@@ -296,6 +307,14 @@ pub fn make_converter<'a>(
         }
         SnowflakeFieldType::Real(snowflake_type) => {
             make_primitive_data_converter!(Float64Type, snowflake_type, arrow_array, nullable)
+        }
+        SnowflakeFieldType::Decfloat(snowflake_type) => {
+            make_converter!(
+                arrow::array::StructArray,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
         }
     }
 }
