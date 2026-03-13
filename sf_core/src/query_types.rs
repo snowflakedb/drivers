@@ -33,6 +33,11 @@ pub enum RowType {
         nullable: bool,
         scale: u64,
     },
+    TimestampTz {
+        name: String,
+        nullable: bool,
+        scale: u64,
+    },
 }
 
 impl RowType {
@@ -94,6 +99,14 @@ impl RowType {
 
     pub fn timestamp_ltz(name: &str, nullable: bool, scale: u64) -> Self {
         RowType::TimestampLtz {
+            name: name.to_string(),
+            nullable,
+            scale,
+        }
+    }
+
+    pub fn timestamp_tz(name: &str, nullable: bool, scale: u64) -> Self {
+        RowType::TimestampTz {
             name: name.to_string(),
             nullable,
             scale,
