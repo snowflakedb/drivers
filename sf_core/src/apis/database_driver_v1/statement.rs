@@ -130,7 +130,7 @@ pub(crate) fn calculate_rows_affected(data: &Data) -> Option<i64> {
                     || DML_AFFECTED_ROWS_COLUMN_PREFIXES
                         .iter()
                         .any(|p| col_name.starts_with(p)))
-                    && let Some(value) = rowset[0].get(idx)
+                    && let Some(Some(value)) = rowset[0].get(idx)
                     && let Ok(count) = value.parse::<i64>()
                 {
                     affected_rows += count;
@@ -1056,5 +1056,63 @@ mod tests {
             !serialized.contains("bindings"),
             "None bindings should be omitted from serialized output.\nSerialized: {serialized}"
         );
+    }
+
+    fn make_data(json: &str) -> Data {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn calculate_rows_affected_sums_dml_columns() {
+        let data = make_data(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [["10", "3"]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                    {"name": "number of rows updated", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(13));
+    }
+
+    #[test]
+    fn calculate_rows_affected_skips_null_cells() {
+        let data = make_data(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [["5", null]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                    {"name": "number of rows deleted", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(5));
+    }
+
+    #[test]
+    fn calculate_rows_affected_all_null_cells() {
+        let data = make_data(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [[null]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(0));
+    }
+
+    #[test]
+    fn calculate_rows_affected_select_uses_total() {
+        let data = make_data(
+            r#"{
+                "total": 42
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(42));
     }
 }

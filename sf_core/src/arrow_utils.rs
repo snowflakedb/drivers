@@ -344,7 +344,7 @@ fn minimal_twos_complement(bytes: &[u8]) -> Vec<u8> {
 
 /// Creates an Arrow array from column values and data type
 fn create_column_array(
-    values: Vec<&str>,
+    values: Vec<Option<&str>>,
     row_type: &RowType,
 ) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError> {
     match row_type {
@@ -352,41 +352,71 @@ fn create_column_array(
         RowType::Fixed {
             scale, precision, ..
         } => {
-            let decimal_values: Result<Vec<i128>, ArrowUtilsError> = values
+            let len = values.len();
+            let decimal_values: Result<Vec<Option<i128>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| parse_decimal_str(v, *scale as u32))
+                .map(|v| match v {
+                    None => Ok(None),
+                    Some(s) => Ok(Some(parse_decimal_str(s, *scale as u32)?)),
+                })
                 .collect();
 
             let decimal_values = decimal_values?;
-            if decimal_values.is_empty() {
+            let non_null: Vec<i128> = decimal_values.iter().filter_map(|v| *v).collect();
+            if non_null.is_empty() {
+                if *scale > 0 {
+                    return Ok((
+                        create_field_with_type(
+                            row_type,
+                            Some(DataType::Decimal128(*precision as u8, *scale as i8)),
+                        )?,
+                        Arc::new(
+                            arrow::array::Decimal128Array::new_null(len)
+                                .with_precision_and_scale(*precision as u8, *scale as i8)
+                                .context(ArrowSnafu {})?,
+                        ),
+                    ));
+                }
                 return Ok((
-                    create_field_with_type(row_type, Some(DataType::Int64))?, // TODO is it correct? We have to assume something, but it probably doesn't matter.
-                    Arc::new(Int64Array::new_null(0)),
+                    create_field_with_type(row_type, Some(DataType::Int64))?,
+                    Arc::new(Int64Array::new_null(len)),
                 ));
             }
-            let min_value: i128 = decimal_values.iter().min().copied().unwrap();
-            let max_value: i128 = decimal_values.iter().max().copied().unwrap();
+            let min_value: i128 = non_null.iter().min().copied().unwrap();
+            let max_value: i128 = non_null.iter().max().copied().unwrap();
 
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
-                let int8_values: Vec<i8> = decimal_values.into_iter().map(|v| v as i8).collect();
+                let int8_values: Vec<Option<i8>> = decimal_values
+                    .into_iter()
+                    .map(|v| v.map(|x| x as i8))
+                    .collect();
                 Ok((
                     create_field_with_type(row_type, Some(DataType::Int8))?,
                     Arc::new(Int8Array::from(int8_values)),
                 ))
             } else if min_value >= i16::MIN as i128 && max_value <= i16::MAX as i128 {
-                let int16_values: Vec<i16> = decimal_values.into_iter().map(|v| v as i16).collect();
+                let int16_values: Vec<Option<i16>> = decimal_values
+                    .into_iter()
+                    .map(|v| v.map(|x| x as i16))
+                    .collect();
                 Ok((
                     create_field_with_type(row_type, Some(DataType::Int16))?,
                     Arc::new(arrow::array::Int16Array::from(int16_values)),
                 ))
             } else if min_value >= i32::MIN as i128 && max_value <= i32::MAX as i128 {
-                let int32_values: Vec<i32> = decimal_values.into_iter().map(|v| v as i32).collect();
+                let int32_values: Vec<Option<i32>> = decimal_values
+                    .into_iter()
+                    .map(|v| v.map(|x| x as i32))
+                    .collect();
                 Ok((
                     create_field_with_type(row_type, Some(DataType::Int32))?,
                     Arc::new(arrow::array::Int32Array::from(int32_values)),
                 ))
             } else if min_value >= i64::MIN as i128 && max_value <= i64::MAX as i128 {
-                let int64_values: Vec<i64> = decimal_values.into_iter().map(|v| v as i64).collect();
+                let int64_values: Vec<Option<i64>> = decimal_values
+                    .into_iter()
+                    .map(|v| v.map(|x| x as i64))
+                    .collect();
                 Ok((
                     create_field_with_type(row_type, Some(DataType::Int64))?,
                     Arc::new(Int64Array::from(int64_values)),
@@ -406,12 +436,13 @@ fn create_column_array(
             }
         }
         RowType::Boolean { .. } => {
-            let bool_values: Result<Vec<bool>, ArrowUtilsError> = values
+            let bool_values: Result<Vec<Option<bool>>, ArrowUtilsError> = values
                 .into_iter()
                 .map(|v| match v {
-                    "true" => Ok(true),
-                    "false" => Ok(false),
-                    other => BooleanParsingSnafu {
+                    None => Ok(None),
+                    Some("true") | Some("1") => Ok(Some(true)),
+                    Some("false") | Some("0") => Ok(Some(false)),
+                    Some(other) => BooleanParsingSnafu {
                         value: other.to_string(),
                     }
                     .fail(),
@@ -423,12 +454,13 @@ fn create_column_array(
             ))
         }
         RowType::Real { .. } => {
-            let float_values: Result<Vec<f64>, ArrowUtilsError> = values
+            let float_values: Result<Vec<Option<f64>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| {
-                    v.parse::<f64>().context(FloatParsingSnafu {
-                        value: v.to_string(),
-                    })
+                .map(|v| match v {
+                    None => Ok(None),
+                    Some(s) => Ok(Some(s.parse::<f64>().context(FloatParsingSnafu {
+                        value: s.to_string(),
+                    })?)),
                 })
                 .collect();
             Ok((
@@ -437,12 +469,13 @@ fn create_column_array(
             ))
         }
         RowType::Date { .. } => {
-            let day_values: Result<Vec<i32>, ArrowUtilsError> = values
+            let day_values: Result<Vec<Option<i32>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| {
-                    v.parse::<i32>().context(IntegerParsingSnafu {
-                        value: v.to_string(),
-                    })
+                .map(|v| match v {
+                    None => Ok(None),
+                    Some(s) => Ok(Some(s.parse::<i32>().context(IntegerParsingSnafu {
+                        value: s.to_string(),
+                    })?)),
                 })
                 .collect();
             Ok((
@@ -453,18 +486,21 @@ fn create_column_array(
             ))
         }
         RowType::TimestampNtz { scale, .. } | RowType::TimestampLtz { scale, .. } => {
-            let all_values: Result<Vec<(i64, i32)>, ArrowUtilsError> = values
+            let all_values: Result<Vec<Option<(i64, i32)>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| (v, v.split_once(".")))
-                .map(|(orig, split)| match split {
-                    None => (orig, None),
-                    Some((epoch, fraction)) => (epoch, Some(fraction)),
-                })
-                .map(|(epoch, fraction)| {
-                    let epoch: i64 = epoch.parse().context(IntegerParsingSnafu {
-                        value: epoch.to_string(),
+                .map(|v| {
+                    let v = match v {
+                        None => return Ok(None),
+                        Some(s) => s,
+                    };
+                    let (epoch_str, fraction_str) = match v.split_once(".") {
+                        None => (v, None),
+                        Some((epoch, fraction)) => (epoch, Some(fraction)),
+                    };
+                    let epoch: i64 = epoch_str.parse().context(IntegerParsingSnafu {
+                        value: epoch_str.to_string(),
                     })?;
-                    let fraction: i32 = match fraction {
+                    let fraction: i32 = match fraction_str {
                         None => Ok(0),
                         Some(f) => {
                             let filled_with_zeros =
@@ -478,26 +514,30 @@ fn create_column_array(
                             Ok(parsed_fraction)
                         }
                     }?;
-                    Ok((epoch, fraction))
+                    Ok(Some((epoch, fraction)))
                 })
                 .collect();
             let all_values = all_values?;
-            let (epoch_values, fraction_values): (Vec<i64>, Vec<i32>) =
-                all_values.into_iter().unzip();
 
             let field = create_field(row_type)?;
             match field.data_type() {
                 DataType::Int64 => {
-                    let normalized_epoch_values: Vec<i64> = epoch_values
+                    let normalized_epoch_values: Vec<Option<i64>> = all_values
                         .iter()
-                        .zip(fraction_values.iter())
-                        .map(|(epoch, fraction)| {
-                            epoch * 10i64.pow(*scale as u32) + *fraction as i64
+                        .map(|v| {
+                            v.map(|(epoch, fraction)| {
+                                epoch * 10i64.pow(*scale as u32) + fraction as i64
+                            })
                         })
                         .collect();
                     Ok((field, Arc::new(Int64Array::from(normalized_epoch_values))))
                 }
                 DataType::Struct(fields) => {
+                    let null_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
+                    let epoch_values: Vec<i64> =
+                        all_values.iter().map(|v| v.map_or(0, |(e, _)| e)).collect();
+                    let fraction_values: Vec<i32> =
+                        all_values.iter().map(|v| v.map_or(0, |(_, f)| f)).collect();
                     let normalized_fraction_values: Vec<i32> = fraction_values
                         .iter()
                         .map(|f| f * 10i32.pow((9 - *scale) as u32))
@@ -510,11 +550,18 @@ fn create_column_array(
                         Arc::new(arrow::array::PrimitiveArray::<Int32Type>::from(
                             normalized_fraction_values,
                         ));
-                    let values = vec![
+                    let arrays = vec![
                         (fields[0].clone(), epoch_array),
                         (fields[1].clone(), fraction_array),
                     ];
-                    Ok((field, Arc::new(arrow::array::StructArray::from(values))))
+                    let struct_array = arrow::array::StructArray::from(arrays);
+                    let null_buffer = arrow::buffer::NullBuffer::from(null_mask);
+                    let nullable_struct = arrow::array::StructArray::new(
+                        struct_array.fields().clone(),
+                        struct_array.columns().to_vec(),
+                        Some(null_buffer),
+                    );
+                    Ok((field, Arc::new(nullable_struct)))
                 }
                 _ => UnsupportedDataTypeSnafu {
                     data_type: format!("{:?}", field.data_type()),
@@ -720,7 +767,7 @@ fn create_column_array(
 /// Supports TEXT and FIXED (with scale 0) types, converting strings to appropriate Arrow types
 /// Assumes rowset and row_types have been validated to have matching column counts
 pub fn convert_string_rowset_to_arrow_reader(
-    rowset: &[Vec<String>],
+    rowset: &[Vec<Option<String>>],
     row_types: &[RowType],
 ) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowUtilsError> {
     // Create Arrow arrays for each column
@@ -729,7 +776,8 @@ pub fn convert_string_rowset_to_arrow_reader(
         .iter()
         .enumerate()
         .map(|(col_idx, row_type)| {
-            let values: Vec<&str> = rowset.iter().map(|row| row[col_idx].as_str()).collect();
+            let values: Vec<Option<&str>> =
+                rowset.iter().map(|row| row[col_idx].as_deref()).collect();
             create_column_array(values, row_type)
         })
         .collect();
@@ -827,10 +875,10 @@ mod tests {
     fn test_string_rowset_translation_with_metadata_small() {
         // Build a Snowflake-like rowset
         let rowset = vec![
-            vec!["alpha.txt".to_string(), "7".to_string()], // SB1
-            vec!["beta.md".to_string(), "123".to_string()], // SB2
-            vec!["gamma.bin".to_string(), "32767".to_string()], // SB2
-            vec!["delta.png".to_string(), "1024".to_string()], // SB2
+            vec![Some("alpha.txt".to_string()), Some("7".to_string())], // SB1
+            vec![Some("beta.md".to_string()), Some("123".to_string())], // SB2
+            vec![Some("gamma.bin".to_string()), Some("32767".to_string())], // SB2
+            vec![Some("delta.png".to_string()), Some("1024".to_string())], // SB2
         ];
 
         // Describe columns via RowType
@@ -896,13 +944,19 @@ mod tests {
     fn test_string_rowset_translation_with_metadata_large() {
         // Build a Snowflake-like rowset
         let rowset = vec![
-            vec!["alpha/report.csv".to_string(), "7".to_string()], // SB1
-            vec!["beta/readme.md".to_string(), "123".to_string()], // SB2
-            vec!["gamma/data.bin".to_string(), "32767".to_string()], // SB2
-            vec!["delta/image.png".to_string(), "2147483647".to_string()], // SB4
+            vec![Some("alpha/report.csv".to_string()), Some("7".to_string())], // SB1
+            vec![Some("beta/readme.md".to_string()), Some("123".to_string())], // SB2
             vec![
-                "epsilon/archive.tar.gz".to_string(),
-                "9223372036854775807".to_string(), // SB8
+                Some("gamma/data.bin".to_string()),
+                Some("32767".to_string()),
+            ], // SB2
+            vec![
+                Some("delta/image.png".to_string()),
+                Some("2147483647".to_string()),
+            ], // SB4
+            vec![
+                Some("epsilon/archive.tar.gz".to_string()),
+                Some("9223372036854775807".to_string()), // SB8
             ],
         ];
 
@@ -965,5 +1019,242 @@ mod tests {
         } else {
             panic!("Expected one record batch");
         }
+    }
+
+    #[test]
+    fn test_null_values_in_text_column() {
+        let rowset = vec![
+            vec![Some("hello".to_string())],
+            vec![None],
+            vec![Some("world".to_string())],
+        ];
+        let row_types = vec![RowType::text("col", true, 16, 64)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert_eq!(col.value(0), "hello");
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+        assert_eq!(col.value(2), "world");
+    }
+
+    #[test]
+    fn test_null_values_in_fixed_column() {
+        let rowset = vec![
+            vec![Some("42".to_string())],
+            vec![None],
+            vec![Some("100".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col", true, 5, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 3);
+        let col = batch.column(0);
+        let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+        assert!(arr.is_valid(0));
+        assert_eq!(arr.value(0), 42);
+        assert!(arr.is_null(1));
+        assert!(arr.is_valid(2));
+        assert_eq!(arr.value(2), 100);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 10, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int64);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_with_scale() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 10, 2)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Decimal128(10, 2));
+    }
+
+    #[test]
+    fn test_null_values_in_boolean_column() {
+        let rowset = vec![
+            vec![Some("true".to_string())],
+            vec![None],
+            vec![Some("false".to_string())],
+        ];
+        let row_types = vec![RowType::boolean("col", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.value(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+        assert!(!col.value(2));
+    }
+
+    #[test]
+    fn test_null_values_in_real_column() {
+        let rowset = vec![
+            vec![Some("1.5".to_string())],
+            vec![None],
+            vec![Some("2.5".to_string())],
+        ];
+        let row_types = vec![RowType::real("col", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!((col.value(0) - 1.5).abs() < f64::EPSILON);
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+        assert!((col.value(2) - 2.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_null_values_in_date_column() {
+        let rowset = vec![
+            vec![Some("19000".to_string())],
+            vec![None],
+            vec![Some("19500".to_string())],
+        ];
+        let row_types = vec![RowType::date("col", true)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch.column(0);
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_null_values_in_timestamp_ntz_int64() {
+        let rowset = vec![
+            vec![Some("1234567.890".to_string())],
+            vec![None],
+            vec![Some("9876543.210".to_string())],
+        ];
+        // scale <= 7 uses Int64 representation
+        let row_types = vec![RowType::timestamp_ntz("col", true, 3)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_null_values_in_timestamp_ltz_struct() {
+        let rowset = vec![
+            vec![Some("1234567.890000000".to_string())],
+            vec![None],
+            vec![Some("9876543.210000000".to_string())],
+        ];
+        // scale > 7 uses Struct representation
+        let row_types = vec![RowType::timestamp_ltz("col", true, 9)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch.column(0);
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
+    fn test_mixed_nulls_across_multiple_columns() {
+        // Simulates a SHOW SCHEMAS-like result with mixed types and nulls
+        let rowset = vec![
+            vec![
+                Some("schema_a".to_string()),
+                Some("5".to_string()),
+                Some("a comment".to_string()),
+            ],
+            vec![Some("schema_b".to_string()), None, None],
+        ];
+        let row_types = vec![
+            RowType::text("name", false, 64, 256),
+            RowType::fixed("count", true, 5, 0),
+            RowType::text("comment", true, 256, 1024),
+        ];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(batch.num_columns(), 3);
+
+        // name column: no nulls
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(names.is_valid(0));
+        assert!(names.is_valid(1));
+        assert_eq!(names.value(0), "schema_a");
+        assert_eq!(names.value(1), "schema_b");
+
+        // count column: second row null
+        let counts = batch.column(1);
+        assert!(counts.is_valid(0));
+        assert!(counts.is_null(1));
+
+        // comment column: second row null
+        let comments = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(comments.is_valid(0));
+        assert_eq!(comments.value(0), "a comment");
+        assert!(comments.is_null(1));
     }
 }
