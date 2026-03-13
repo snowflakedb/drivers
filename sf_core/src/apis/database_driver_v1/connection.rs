@@ -3,18 +3,17 @@ use std::future::Future;
 use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 
-use super::Handle;
 use super::Setting;
 use super::error::*;
-use super::global_state::CONN_HANDLE_MANAGER;
+use super::global_state::DatabaseDriverV1;
 use crate::config::config_manager;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
+use crate::handle_manager::Handle;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
-use reqwest;
 
 /// Load configuration from TOML files for a named connection.
 ///
@@ -48,120 +47,128 @@ pub fn connection_load_from_config_with_paths(
     Ok(())
 }
 
-pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
-        Some(conn_ptr) => {
-            let mut conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+impl DatabaseDriverV1 {
+    pub fn connection_init(&self, conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr
+                    .lock()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-            // Check if connection_name is set and load from config if present
-            let connection_name = conn.settings.get("connection_name").and_then(|s| {
-                if let Setting::String(name) = s {
-                    Some(name.clone())
-                } else {
-                    None
+                // Check if connection_name is set and load from config if present
+                let connection_name = conn.settings.get("connection_name").and_then(|s| {
+                    if let Setting::String(name) = s {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(name) = connection_name {
+                    connection_load_from_config(&mut conn, &name)?;
                 }
-            });
 
-            if let Some(name) = connection_name {
-                connection_load_from_config(&mut conn, &name)?;
+                let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+
+                let login_parameters =
+                    LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+                let init_params = conn.init_session_parameters.clone();
+                drop(conn);
+
+                let http_client =
+                    create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
+                        .context(TlsClientCreationSnafu)?;
+
+                let login_result = rt
+                    .block_on(async {
+                        crate::rest::snowflake::snowflake_login_with_client(
+                            &http_client,
+                            &login_parameters,
+                            init_params.as_ref(),
+                        )
+                        .await
+                    })
+                    .context(LoginSnafu)?;
+
+                // Initialize connection with session parameters from login response.
+                // The server returns system-level parameters but may not echo back
+                // user-set parameters (e.g. QUERY_TAG), so we merge in the
+                // init_session_parameters the caller explicitly requested.
+                let mut merged_params = init_params.unwrap_or_default();
+                merged_params.extend(login_result.session_parameters.unwrap_or_default());
+
+                conn_ptr
+                    .lock()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?
+                    .initialize(
+                        login_result.tokens,
+                        http_client,
+                        login_parameters.server_url.clone(),
+                        login_parameters.client_info.clone(),
+                        merged_params,
+                    );
+                Ok(())
             }
-
-            let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
-            let login_parameters =
-                LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
-            let init_params = conn.init_session_parameters.clone();
-            drop(conn);
-
-            let http_client =
-                create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
-                    .context(TlsClientCreationSnafu)?;
-
-            let login_result = rt
-                .block_on(async {
-                    crate::rest::snowflake::snowflake_login_with_client(
-                        &http_client,
-                        &login_parameters,
-                        init_params.as_ref(),
-                    )
-                    .await
-                })
-                .context(LoginSnafu)?;
-
-            // Initialize connection with session parameters from login response.
-            // The server returns system-level parameters but may not echo back
-            // user-set parameters (e.g. QUERY_TAG), so we merge in the
-            // init_session_parameters the caller explicitly requested.
-            let mut merged_params = init_params.unwrap_or_default();
-            merged_params.extend(login_result.session_parameters.unwrap_or_default());
-
-            conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?
-                .initialize(
-                    login_result.tokens,
-                    http_client,
-                    login_parameters.server_url.clone(),
-                    login_parameters.client_info.clone(),
-                    merged_params,
-                );
-            Ok(())
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
     }
-}
 
-pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Result<(), ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(handle) {
-        Some(conn_ptr) => {
-            let mut conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
-            conn.settings.insert(key, value);
-            Ok(())
+    pub fn connection_set_option(
+        &self,
+        handle: Handle,
+        key: String,
+        value: Setting,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr
+                    .lock()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                conn.settings.insert(key, value);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
     }
-}
 
-pub fn connection_set_session_parameters(
-    handle: Handle,
-    parameters: HashMap<String, String>,
-) -> Result<(), ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(handle) {
-        Some(conn_ptr) => {
-            let mut conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
-            conn.init_session_parameters = Some(parameters);
-            Ok(())
+    pub fn connection_set_session_parameters(
+        &self,
+        handle: Handle,
+        parameters: HashMap<String, String>,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr
+                    .lock()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                conn.init_session_parameters = Some(parameters);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
     }
-}
 
-pub fn connection_new() -> Handle {
-    CONN_HANDLE_MANAGER.add_handle(Mutex::new(Connection::new()))
-}
+    pub fn connection_new(&self) -> Handle {
+        self.connections.add_handle(Mutex::new(Connection::new()))
+    }
 
-pub fn connection_release(conn_handle: Handle) -> Result<(), ApiError> {
-    match CONN_HANDLE_MANAGER.delete_handle(conn_handle) {
-        true => Ok(()),
-        false => InvalidArgumentSnafu {
-            argument: "Failed to release connection handle".to_string(),
+    pub fn connection_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
+        match self.connections.delete_handle(conn_handle) {
+            true => Ok(()),
+            false => InvalidArgumentSnafu {
+                argument: "Failed to release connection handle".to_string(),
+            }
+            .fail(),
         }
-        .fail(),
     }
 }
 
@@ -201,7 +208,7 @@ impl Connection {
         }
     }
 
-    fn initialize(
+    pub(crate) fn initialize(
         &mut self,
         tokens: SessionTokens,
         http_client: reqwest::Client,
@@ -473,54 +480,84 @@ pub struct ConnectionInfo {
     pub session_id: Option<i64>,
 }
 
-/// Get connection information for the given connection handle
-pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiError> {
-    match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
-        Some(conn_ptr) => {
-            let conn = conn_ptr
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+impl DatabaseDriverV1 {
+    /// Get connection information for the given connection handle
+    pub fn connection_get_info(&self, conn_handle: Handle) -> Result<ConnectionInfo, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr
+                    .lock()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-            // Extract host and port from settings
-            let host = conn.settings.get("host").and_then(|s| {
-                if let Setting::String(v) = s {
-                    Some(v.clone())
-                } else {
-                    None
-                }
-            });
+                // Extract host and port from settings
+                let host = conn.settings.get("host").and_then(|s| {
+                    if let Setting::String(v) = s {
+                        Some(v.clone())
+                    } else {
+                        None
+                    }
+                });
 
-            let port = conn.settings.get("port").and_then(|s| {
-                if let Setting::Int(v) = s {
-                    Some(*v)
-                } else {
-                    None
-                }
-            });
+                let port = conn.settings.get("port").and_then(|s| {
+                    if let Setting::Int(v) = s {
+                        Some(*v)
+                    } else {
+                        None
+                    }
+                });
 
-            // Get server_url
-            let server_url = conn.server_url.clone();
+                // Get server_url
+                let server_url = conn.server_url.clone();
 
-            // Get session token and session ID from tokens
-            let (session_token, session_id) = {
-                let tokens_guard = conn.tokens.blocking_read();
-                match tokens_guard.as_ref() {
-                    Some(tokens) => (Some(tokens.session_token.clone()), Some(tokens.session_id)),
-                    None => (None, None),
-                }
-            };
+                // Get session token and session ID from tokens
+                let (session_token, session_id) = {
+                    let tokens_guard = conn.tokens.blocking_read();
+                    match tokens_guard.as_ref() {
+                        Some(tokens) => {
+                            (Some(tokens.session_token.clone()), Some(tokens.session_id))
+                        }
+                        None => (None, None),
+                    }
+                };
 
-            Ok(ConnectionInfo {
-                host,
-                port,
-                server_url,
-                session_token,
-                session_id,
-            })
+                Ok(ConnectionInfo {
+                    host,
+                    port,
+                    server_url,
+                    session_token,
+                    session_id,
+                })
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
+    }
+
+    pub fn connection_get_parameter(
+        &self,
+        conn_handle: Handle,
+        key: String,
+    ) -> Result<Option<String>, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr
+                    .lock()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+                let cache = conn
+                    .session_parameters
+                    .read()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+                let normalized_key = key.to_uppercase();
+                Ok(cache.get(&normalized_key).cloned())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
         }
-        .fail(),
     }
 }

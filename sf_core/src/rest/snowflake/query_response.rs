@@ -576,6 +576,10 @@ impl TryFrom<&RowType> for query_types::RowType {
                 let scale = value.scale.unwrap_or(9);
                 Ok(query_types::RowType::timestamp_ntz(&name, nullable, scale))
             }
+            "TIMESTAMP_LTZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_ltz(&name, nullable, scale))
+            }
             "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),

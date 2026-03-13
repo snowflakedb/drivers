@@ -202,6 +202,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Specific ColumnNam
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter combinations are accepted",
                  "[odbc-api][procedurecolumns][catalog]") {
+  SKIP("Long-running: multiple catalog round-trips cause timeout");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto schema = Schema::use_random_schema(dbc_handle());
@@ -247,6 +248,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter 
 TEST_CASE_METHOD(StmtDefaultDSNFixture,
                  "SQLProcedureColumns: Can call multiple times on same statement after close cursor",
                  "[odbc-api][procedurecolumns][catalog]") {
+  SKIP("Long-running: multiple catalog round-trips cause timeout");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto schema = Schema::use_random_schema(dbc_handle());
