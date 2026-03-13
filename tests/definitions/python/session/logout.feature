@@ -46,6 +46,7 @@ Feature: Session Logout - Python-specific behavior
     And enable_server_session_keep_alive_auto_detection true is passed to Core
     And No deprecation warning is emitted
 
+  @python_e2e
   Scenario: should send logout when server_session_keep_alive is none and auto_detection false
     # E2E sanity check: Verifies Python wrapper + Core integration works end-to-end
     # Phase 2 (doc for: SNOW-2314152) truth table: None + False → Send logout (no detection), No deprecation

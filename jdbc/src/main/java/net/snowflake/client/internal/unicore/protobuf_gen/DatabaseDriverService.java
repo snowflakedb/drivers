@@ -69,6 +69,11 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.ConnectionSetOptionDoubleResponse connectionSetOptionDouble(DatabaseDriverV1.ConnectionSetOptionDoubleRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: connectionSetOptionBool
+     */
+    DatabaseDriverV1.ConnectionSetOptionBoolResponse connectionSetOptionBool(DatabaseDriverV1.ConnectionSetOptionBoolRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: connectionInit
      */
     DatabaseDriverV1.ConnectionInitResponse connectionInit(DatabaseDriverV1.ConnectionInitRequest request) throws ServiceException, TransportException;
@@ -77,6 +82,16 @@ public interface DatabaseDriverService {
      * Method: connectionRelease
      */
     DatabaseDriverV1.ConnectionReleaseResponse connectionRelease(DatabaseDriverV1.ConnectionReleaseRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: connectionClose
+     */
+    DatabaseDriverV1.ConnectionCloseResponse connectionClose(DatabaseDriverV1.ConnectionCloseRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: connectionIsClosed
+     */
+    DatabaseDriverV1.ConnectionIsClosedResponse connectionIsClosed(DatabaseDriverV1.ConnectionIsClosedRequest request) throws ServiceException, TransportException;
 
     /**
      * Method: connectionGetInfo

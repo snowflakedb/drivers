@@ -51,6 +51,12 @@ enum InfoCode {
   INFO_CODE_DRIVER_ADBC_VERSION = 204;
 }
 
+enum ErrorStrategy {
+  ERROR_STRATEGY_UNSPECIFIED = 0;  // Defaults to STRICT
+  ERROR_STRATEGY_BEST_EFFORT = 1;  // Log errors, always succeed
+  ERROR_STRATEGY_STRICT = 2;       // Raise errors (except SESSION_GONE)
+}
+
 // Error detail message
 message ErrorDetail {
   string key = 1;
@@ -305,6 +311,15 @@ message ConnectionSetOptionDoubleRequest {
 message ConnectionSetOptionDoubleResponse {
 }
 
+message ConnectionSetOptionBoolRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+  bool value = 3;
+}
+
+message ConnectionSetOptionBoolResponse {
+}
+
 message ConnectionInitRequest {
   ConnectionHandle conn_handle = 1;
   DatabaseHandle db_handle = 2;
@@ -318,6 +333,21 @@ message ConnectionReleaseRequest {
 }
 
 message ConnectionReleaseResponse {
+}
+
+message ConnectionCloseRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionCloseResponse {
+}
+
+message ConnectionIsClosedRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionIsClosedResponse {
+  bool is_closed = 1;
 }
 
 message ConnectionGetInfoRequest {
@@ -532,6 +562,7 @@ message ConfigSetting {
     int64 int_value = 2;
     double double_value = 3;
     bytes bytes_value = 4;
+    bool bool_value = 5;
   }
 }
 
@@ -567,8 +598,11 @@ service DatabaseDriver {
   rpc ConnectionSetOptionBytes(ConnectionSetOptionBytesRequest) returns (ConnectionSetOptionBytesResponse);
   rpc ConnectionSetOptionInt(ConnectionSetOptionIntRequest) returns (ConnectionSetOptionIntResponse);
   rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
+  rpc ConnectionSetOptionBool(ConnectionSetOptionBoolRequest) returns (ConnectionSetOptionBoolResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
+  rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse);
+  rpc ConnectionIsClosed(ConnectionIsClosedRequest) returns (ConnectionIsClosedResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
   rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);

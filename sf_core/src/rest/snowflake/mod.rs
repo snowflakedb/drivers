@@ -2,6 +2,7 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+pub mod logout;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
@@ -966,6 +967,13 @@ pub enum RestError {
     #[snafu(display("Query failed: {message}"))]
     QueryFailed {
         message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Logout failed: {message} (code: {code})"))]
+    LogoutFailed {
+        message: String,
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },

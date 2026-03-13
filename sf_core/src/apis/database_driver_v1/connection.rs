@@ -1,16 +1,21 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
 use super::Setting;
+use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
+use super::logout_decision::should_send_logout;
 use crate::config::config_manager;
+use crate::config::logout::{ErrorStrategy, LogoutConfig};
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
+use crate::rest::snowflake::logout::logout_session;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
@@ -71,6 +76,12 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
 
             let login_parameters =
                 LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+
+            // Parse and validate logout configuration from settings
+            // This follows the same pattern as LoginParameters::from_settings
+            conn.logout_config =
+                LogoutConfig::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+
             let init_params = conn.init_session_parameters.clone();
             drop(conn);
 
@@ -121,6 +132,8 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
             let mut conn = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+            // Store setting - validation happens in connection_init via LogoutConfig::from_settings
             conn.settings.insert(key, value);
             Ok(())
         }
@@ -178,6 +191,13 @@ pub struct Connection {
     pub session_parameters: Arc<RwLock<HashMap<String, String>>>,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
+    /// Registry for tracking async queries (for Fire & Forget auto-detection)
+    pub async_query_registry: AsyncQueryRegistry,
+    /// Flag indicating if connection has been closed
+    pub is_closed: Arc<AtomicBool>,
+
+    /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
+    pub logout_config: LogoutConfig,
 }
 
 impl Default for Connection {
@@ -197,6 +217,9 @@ impl Connection {
             client_info: None,
             session_parameters: Arc::new(RwLock::new(HashMap::new())),
             init_session_parameters: None,
+            async_query_registry: AsyncQueryRegistry::new(),
+            is_closed: Arc::new(AtomicBool::new(false)),
+            logout_config: LogoutConfig::default(),
         }
     }
 
@@ -521,5 +544,318 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
             argument: "Connection handle not found".to_string(),
         }
         .fail(),
+    }
+}
+
+/// Check if a connection has been closed
+///
+/// This function returns the current closed state of the connection.
+/// Returns true if close() has been called, false otherwise.
+///
+/// # Arguments
+///
+/// * `conn_handle` - Handle to the connection to check
+///
+/// # Returns
+///
+/// * `Ok(bool)` - true if connection is closed, false if still open
+/// * `Err(ApiError)` - Invalid connection handle
+pub fn connection_is_closed(conn_handle: Handle) -> Result<bool, ApiError> {
+    let conn_ptr = CONN_HANDLE_MANAGER
+        .get_obj(conn_handle)
+        .context(InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        })?;
+
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    Ok(conn.is_closed.load(Ordering::SeqCst))
+}
+
+/// Data extracted from a locked connection needed to perform HTTP logout.
+struct LogoutData {
+    client: reqwest::Client,
+    url: String,
+    info: ClientInfo,
+    retry_policy: RetryPolicy,
+    refresh_ctx: RefreshContext,
+}
+
+/// Validate logout configuration values.
+///
+/// Checks for invalid timeout configurations that would cause immediate failure.
+fn validate_logout_config(config: &LogoutConfig) -> Result<(), ApiError> {
+    // Zero timeout means immediate failure - reject at configuration time
+    if let Some(timeout) = config.logout_request_timeout
+        && timeout.is_zero()
+    {
+        return Err(InvalidArgumentSnafu {
+            argument:
+                "logout_request_timeout: 0s. Zero timeout means immediate failure. Must be positive."
+                    .to_string(),
+        }
+        .build());
+    }
+    Ok(())
+}
+
+/// Atomically mark connection as closed.
+///
+/// Returns true if the connection was already closed (duplicate close attempt).
+/// This provides idempotent close() behavior - multiple calls are safe.
+fn mark_connection_closed(conn_ptr: &Arc<Mutex<Connection>>) -> Result<bool, ApiError> {
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    // Atomic swap returns the previous value
+    Ok(conn.is_closed.swap(true, Ordering::SeqCst))
+}
+
+/// Extract logout data from a locked connection and determine whether to send logout.
+///
+/// Precondition: Connection must not be marked as closed yet (caller should check first).
+fn prepare_logout(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    config: &LogoutConfig,
+) -> Result<(bool, Option<String>, Option<LogoutData>), ApiError> {
+    // Validate config first
+    validate_logout_config(config)?;
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    tracing::info!("Closing connection");
+
+    let (send_logout, skip_reason) = should_send_logout(config, Some(&conn.async_query_registry));
+
+    let logout_data = if send_logout {
+        let http_client = conn.http_client.clone();
+        let server_url = conn.server_url.clone();
+        let client_info = conn.client_info.clone();
+        let refresh_ctx_result = RefreshContext::new(&conn);
+
+        match (http_client, server_url, client_info) {
+            (Some(client), Some(url), Some(info)) => {
+                let mut retry_policy = conn.retry_policy.clone();
+                if let Some(max_attempts) = config.max_attempts {
+                    retry_policy.max_attempts = max_attempts;
+                }
+                retry_policy.max_elapsed = config.logout_total_timeout;
+                retry_policy.per_request_timeout = config.logout_request_timeout;
+
+                tracing::debug!(
+                    total_timeout_secs = config.logout_total_timeout.as_secs(),
+                    max_attempts = retry_policy.max_attempts,
+                    per_request_timeout_secs =
+                        retry_policy.per_request_timeout.map(|t| t.as_secs()),
+                    "Configured logout retry policy"
+                );
+
+                Some(LogoutData {
+                    client,
+                    url,
+                    info,
+                    retry_policy,
+                    refresh_ctx: refresh_ctx_result?,
+                })
+            }
+            _ => {
+                // Connection was never fully initialized, skip logout
+                tracing::debug!(
+                    "Connection missing required fields (http_client, server_url, or client_info), skipping logout"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok((send_logout, skip_reason, logout_data))
+}
+
+/// Send the HTTP logout request with automatic token refresh on 390112.
+/// Uses the same RefreshContext loop pattern as statement.rs.
+fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
+    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+    let mut ctx = data.refresh_ctx;
+
+    let result = rt.block_on(async {
+        let mut last_error: Option<RestError> = None;
+        loop {
+            let session_token = ctx.refresh_token(last_error).await?;
+            match logout_session(
+                &data.client,
+                &data.url,
+                &session_token,
+                &data.info,
+                &data.retry_policy,
+            )
+            .await
+            {
+                Ok(()) => return Ok(()),
+                Err(e) => last_error = Some(e),
+            }
+        }
+    });
+
+    // Remap ApiError::Query (from RefreshContext) to ApiError::LogoutFailed
+    result.map_err(|e| match e {
+        ApiError::Query { source, .. } => LogoutFailedSnafu {
+            message: format!("{source}"),
+        }
+        .build(),
+        other => other,
+    })
+}
+
+/// Clear tokens, HTTP client, and stop background tasks.
+fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
+    let mut conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    *conn.tokens.blocking_write() = None;
+    conn.http_client = None;
+    tracing::debug!("Cleared session tokens and HTTP client");
+
+    // TODO: SNOW-2881763 - Stop heartbeat thread
+    // TODO: SNOW-2912513 - Flush telemetry cache
+    // TODO: Implement QCC (query result cache) clearing
+
+    Ok(())
+}
+
+/// Get logout configuration from a connection.
+fn get_logout_config(conn_ptr: &Arc<Mutex<Connection>>) -> Result<LogoutConfig, ApiError> {
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    Ok(conn.logout_config.clone())
+}
+
+/// Execute logout sequence with error strategy handling.
+///
+/// Handles three cases:
+/// 1. Some(data): Execute HTTP logout request
+/// 2. None with send_logout=false: Skip due to configuration
+/// 3. None with send_logout=true: Connection not initialized
+///
+/// Returns the logout result after applying the error strategy.
+fn execute_logout_with_strategy(
+    logout_data: Option<LogoutData>,
+    send_logout: bool,
+    skip_reason: Option<String>,
+    error_strategy: ErrorStrategy,
+) -> Result<(), ApiError> {
+    let logout_result = match logout_data {
+        Some(data) => {
+            let result = send_logout_request(data);
+            if result.is_ok() {
+                tracing::info!("Logout completed successfully");
+            }
+            result
+        }
+        None if !send_logout => {
+            tracing::info!(?skip_reason, "Skipping logout based on configuration");
+            Ok(())
+        }
+        None => {
+            tracing::debug!("Connection was never fully initialized, skipping logout");
+            Ok(())
+        }
+    };
+
+    error_strategy.handle_failed_logout(logout_result)
+}
+
+/// Close a connection and optionally send logout request.
+///
+/// Behavior depends on `config.error_strategy`:
+/// - `Strict`: surface errors to the caller (close() may fail)
+/// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
+///
+/// Close the connection using logout configuration set during initialization.
+///
+/// Logout behavior is determined by connection fields set via ConnectionSetOption*:
+/// - `server_session_keep_alive`: Control server session lifecycle
+/// - `enable_logout_auto_detection`: Enable async query detection
+/// - `logout_error_strategy`: Error handling (Strict or BestEffort)
+/// - `logout_total_timeout`: Total timeout budget
+/// - `logout_max_attempts`: Maximum total attempts (1 = no retries, 3 = 2 retries)
+/// - `logout_request_timeout`: Per-request timeout
+///
+/// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
+/// which configure logout behavior at connection initialization, not at close time.
+pub fn connection_close(conn_handle: Handle) -> Result<(), ApiError> {
+    let conn_ptr = CONN_HANDLE_MANAGER
+        .get_obj(conn_handle)
+        .context(InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        })?;
+
+    // Check if already closed (idempotent close)
+    let was_already_closed = mark_connection_closed(&conn_ptr)?;
+    if was_already_closed {
+        tracing::debug!("Connection already closed, skipping duplicate close");
+        return Ok(());
+    }
+
+    // Get logout config and prepare logout data
+    let config = get_logout_config(&conn_ptr)?;
+    let (send_logout, skip_reason, logout_data) = prepare_logout(&conn_ptr, &config)?;
+
+    // TODO: SNOW-2912513 - Record telemetry for logout decision
+
+    // Execute logout with error strategy handling
+    let logout_result =
+        execute_logout_with_strategy(logout_data, send_logout, skip_reason, config.error_strategy);
+
+    // Cleanup connection resources
+    cleanup_connection(&conn_ptr)?;
+
+    if logout_result.is_ok() {
+        tracing::info!("Connection closed successfully");
+    }
+    logout_result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_validate_logout_config_accepts_none() {
+        let config = LogoutConfig {
+            logout_request_timeout: None,
+            ..Default::default()
+        };
+        assert!(validate_logout_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_logout_config_accepts_positive_timeout() {
+        let config = LogoutConfig {
+            logout_request_timeout: Some(Duration::from_secs(10)),
+            ..Default::default()
+        };
+        assert!(validate_logout_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_logout_config_rejects_zero_timeout() {
+        let config = LogoutConfig {
+            logout_request_timeout: Some(Duration::ZERO),
+            ..Default::default()
+        };
+        let result = validate_logout_config(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument { .. }));
+        assert!(err.to_string().contains("Zero timeout"));
     }
 }

@@ -2,6 +2,7 @@ use arrow::array::{Array, ArrayRef, ArrowPrimitiveType, PrimitiveArray, StructAr
 use arrow::datatypes::{Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use proto_utils::ProtoError;
+use sf_core::config::logout::ErrorStrategy;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
@@ -260,6 +261,15 @@ impl SnowflakeTestClient {
         .unwrap();
     }
 
+    pub fn set_connection_option_bool(&self, option_name: &str, option_value: bool) {
+        DatabaseDriverClient::connection_set_option_bool(ConnectionSetOptionBoolRequest {
+            conn_handle: Some(self.conn_handle),
+            key: option_name.to_string(),
+            value: option_value,
+        })
+        .unwrap();
+    }
+
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
         DatabaseDriverClient::connection_set_option_bytes(ConnectionSetOptionBytesRequest {
             conn_handle: Some(self.conn_handle),
@@ -267,6 +277,10 @@ impl SnowflakeTestClient {
             value: option_value.to_vec(),
         })
         .unwrap();
+    }
+
+    pub fn set_logout_error_strategy(&self, strategy: ErrorStrategy) {
+        self.set_connection_option_int("logout_error_strategy", strategy.to_protobuf_value());
     }
 
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {

@@ -1,4 +1,5 @@
 pub mod config_manager;
+pub mod logout;
 pub mod path_resolver;
 pub mod rest_parameters;
 pub mod retry;

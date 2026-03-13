@@ -6,16 +6,25 @@ This module defines the Connection class as specified in PEP 249.
 
 from __future__ import annotations
 
+import atexit
+import logging
+import threading
+import warnings
+
 from collections.abc import Generator, Iterable
+from dataclasses import dataclass
 from io import StringIO
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, cast
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
+    ConnectionCloseRequest,
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
     ConnectionGetParameterRequest,
     ConnectionInitRequest,
+    ConnectionIsClosedRequest,
     ConnectionNewRequest,
+    ConnectionSetOptionBoolRequest,
     ConnectionSetOptionBytesRequest,
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
@@ -25,6 +34,10 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseNewRequest,
 )
 from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
+from snowflake.connector.logout_config_mapping import (
+    LogoutConfig,
+    map_logout_config_phase2,
+)
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
@@ -41,8 +54,49 @@ ConnectionParamValue = Union[int, str, float, bytes, SessionParameters]
 ConnectionParameters = dict[str, ConnectionParamValue]
 
 
+# Module-level logger
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ConnectionClassConfig:
+    """Static configuration flags for Connection class behavior.
+
+    Immutable configuration that controls Connection behavior across all instances.
+    """
+
+    # Internal flag for logout semantics migration (SNOW-2314152)
+    # False (default): Phase 2 - server_session_keep_alive=False respects auto-detection
+    # True: Phase 3 - Pass parameters directly to Core without mapping
+    # WARNING: Phase 3 will become default in future release (Breaking Change)
+    USE_PHASE3_LOGOUT_SEMANTICS: bool = False
+
+
+@dataclass
+class ConnectionClassState:
+    """Mutable class-level state shared across all Connection instances in the process.
+
+    This is static/class-level state, NOT instance state.
+    Thread-safety: The lock protects concurrent access to shared state during process exit.
+    """
+
+    # Track if first auto-cleanup warning has been emitted in this process
+    # False = warning already emitted, True = warning not yet emitted
+    first_auto_cleanup_warning_pending: bool = True
+
+    # Lock to protect concurrent access to class state during process exit
+    # This prevents race conditions when multiple connections close simultaneously
+    lock: threading.Lock = threading.Lock()
+
+
 class Connection:
     """Connection objects represent a database connection."""
+
+    # Protected static configuration (immutable class-level settings)
+    _class_config = ConnectionClassConfig()
+
+    # Protected static state (mutable class-level state, shared across all instances)
+    _class_state = ConnectionClassState()
 
     def __init__(self, *, paramstyle: str | None = None, **kwargs: ConnectionParamValue) -> None:
         """
@@ -57,6 +111,15 @@ class Connection:
             port: Port number
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             session_parameters: Optional dict of session parameters to set at connection time
+            server_session_keep_alive: Optional[bool] - Control server session lifecycle
+                - True: Never send logout (Fire & Forget)
+                - False: Respects auto-detection if enabled
+                - None: Delegate to auto-detection setting
+            enable_server_session_keep_alive_auto_detection: Optional[bool]
+                - True: Check async query registry before logout
+                - False: Don't check registry
+                - None: Defaults to True (auto-detection enabled for backward compatibility)
+            auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
             **kwargs: Additional connection parameters
         """
         # paramstyle
@@ -77,6 +140,13 @@ class Connection:
         # Pre-process private_key if present - normalize for Rust core
         if "private_key" in kwargs:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
+
+        # Extract logout configuration parameters before passing to Core
+        self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
+        self.enable_server_session_keep_alive_auto_detection: bool | None = cast(
+            "bool | None", kwargs.pop("enable_server_session_keep_alive_auto_detection", None)
+        )
+        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
 
         for key, value in kwargs.items():
             if isinstance(value, int):
@@ -105,6 +175,65 @@ class Connection:
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
 
+        # Configure logout behavior BEFORE connection_init (init-time configuration)
+        # Map logout parameters using Phase 2 semantics for backward compatibility
+        logout_config = self._map_logout_config()
+
+        # Set logout configuration via ConnectionSetOption* calls
+        if logout_config.server_session_keep_alive is not None:
+            self.db_api.connection_set_option_bool(
+                ConnectionSetOptionBoolRequest(
+                    conn_handle=self.conn_handle,
+                    key="server_session_keep_alive",
+                    value=logout_config.server_session_keep_alive,
+                )
+            )
+
+        if logout_config.enable_auto_detection is not None:
+            self.db_api.connection_set_option_bool(
+                ConnectionSetOptionBoolRequest(
+                    conn_handle=self.conn_handle,
+                    key="enable_logout_auto_detection",
+                    value=logout_config.enable_auto_detection,
+                )
+            )
+
+        # Set error strategy (always set, has default) - send protobuf enum value directly
+        self.db_api.connection_set_option_int(
+            ConnectionSetOptionIntRequest(
+                conn_handle=self.conn_handle,
+                key="logout_error_strategy",
+                value=logout_config.error_strategy,  # Protobuf enum: 1=BEST_EFFORT, 2=STRICT
+            )
+        )
+
+        # Set timeout and retry configuration
+        self.db_api.connection_set_option_int(
+            ConnectionSetOptionIntRequest(
+                conn_handle=self.conn_handle,
+                key="logout_total_timeout_seconds",
+                value=logout_config.logout_total_timeout_seconds,
+            )
+        )
+
+        if logout_config.max_attempts is not None:
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key="logout_max_attempts",  # Renamed for semantic accuracy (total attempts, not retry count)
+                    value=logout_config.max_attempts,
+                )
+            )
+
+        if logout_config.logout_request_timeout_seconds is not None:
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key="logout_request_timeout_seconds",
+                    value=logout_config.logout_request_timeout_seconds,
+                )
+            )
+
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         _sensitive_keys = {"password", "private_key"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
@@ -113,10 +242,84 @@ class Connection:
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
+        # Register atexit handler if auto_cleanup is enabled
+        if self.auto_cleanup:
+            atexit.register(self._close_at_process_exit)
+
+    def _map_logout_config(self) -> LogoutConfig:
+        """Map logout parameters to Core configuration.
+
+        Returns logout configuration with all values resolved (defaults applied,
+        phase-specific mapping done).
+
+        Related: SNOW-2314152
+        """
+        return map_logout_config_phase2(self)
+
     @pep249
-    def close(self) -> None:
-        """Close the connection now."""
-        self._closed = True
+    def close(self, retry: bool = True) -> None:
+        """
+        Close the connection now.
+
+        Sends logout request to server based on configuration set at connection initialization,
+        then cleans up resources.
+
+        Args:
+            retry: If False, overrides max_attempts to 1 (no retries) before closing.
+                   If True (default), uses init-time configuration.
+        """
+        atexit.unregister(self._close_at_process_exit)
+
+        if not retry:
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key="logout_max_attempts",
+                    value=1,
+                )
+            )
+
+        self.db_api.connection_close(
+            ConnectionCloseRequest(
+                conn_handle=self.conn_handle,
+            )
+        )
+
+    def _close_at_process_exit(self) -> None:
+        """
+        Cleanup handler called by atexit when process exits.
+
+        If close() was called successfully, this handler should have been unregistered
+        and should NOT run. If it runs for an already-closed connection, that indicates
+        a potential bug (unregister failed, race condition, or multiple registrations).
+        """
+        if self.is_closed():
+            # This shouldn't happen! If close() succeeded, handler should be unregistered.
+            logger.debug(
+                "atexit handler ran for already-closed connection. "
+                "This may indicate atexit.unregister() failed or a race condition occurred."
+            )
+            return
+
+        # Connection is leaked (not explicitly closed) - emit deprecation warning
+        # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
+        # Use lock to prevent race conditions when multiple connections close concurrently
+        with self.__class__._class_state.lock:
+            if self.__class__._class_state.first_auto_cleanup_warning_pending:
+                warnings.warn(
+                    "Connection was not explicitly closed before process exit. "
+                    "Auto-cleanup at exit will be disabled by default in a future version. "
+                    "Please explicitly call connection.close() or use context manager.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+                self.__class__._class_state.first_auto_cleanup_warning_pending = False
+
+        # Attempt cleanup for leaked connection
+        try:
+            self.close(retry=False)
+        except Exception:
+            pass  # Suppress errors during exit cleanup
 
     @property
     @pep249
@@ -160,7 +363,7 @@ class Connection:
         Returns:
             SnowflakeCursorBase: A new cursor object
         """
-        if self._closed:
+        if self.is_closed():
             raise InterfaceError("Connection is closed")
         return cursor_class(self)
 
@@ -253,10 +456,21 @@ class Connection:
         """
         Check if the connection is closed.
 
+        Queries the Core's authoritative closed state rather than maintaining
+        a separate Python-side flag.
+
         Returns:
-            bool: True if connection is closed, False otherwise
+            bool: True if close() has been called (connection marked as closed atomically),
+                  False if close() has never been called
+
+        Important: Core sets is_closed=True immediately when close() starts, BEFORE
+        attempting logout. This means is_closed() returns True even if:
+        - Logout fails and close() raises an exception (error_strategy=STRICT)
+        - Logout is still in progress
+        This ensures idempotency and prevents double-close attempts.
         """
-        return self._closed
+        response = self.db_api.connection_is_closed(ConnectionIsClosedRequest(conn_handle=self.conn_handle))
+        return bool(response.is_closed)
 
     def _get_session_parameter(self, name: str) -> str | None:
         """
