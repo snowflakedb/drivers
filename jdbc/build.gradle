@@ -103,7 +103,7 @@ tasks.register('generateProtobuf', Exec) {
     inputs.file("${workspaceRoot}/Cargo.lock")
     outputs.dir('src/main/java/net/snowflake/client/internal/unicore/protobuf_gen')
 
-    commandLine 'cargo', 'run',
+    commandLine 'cargo', 'run', '--locked',
         '--bin', 'proto_generator',
         '--manifest-path', "${workspaceRoot}/Cargo.toml",
         '--', '--generator', 'java',
