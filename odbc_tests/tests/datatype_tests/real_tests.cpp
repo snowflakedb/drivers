@@ -1078,30 +1078,29 @@ TEST_CASE("REAL SQL_C_BIT rejects negative fractions", "[datatype][real][bit][ed
 
 // ============================================================================
 // Numeric / Binary — negative fractional values that truncate to zero
-// must NOT produce negative-zero (sign must be 1/positive when val=0).
+// produce negative-zero (sign=0 with val=0), preserving the source sign.
 // ============================================================================
 
-TEST_CASE("REAL SQL_C_NUMERIC no negative zero", "[datatype][real][numeric][edge]") {
-  SKIP_OLD_DRIVER("BD#19", "Old driver produces negative zero in SQL_NUMERIC_STRUCT for negative fractional values");
+TEST_CASE("REAL SQL_C_NUMERIC negative zero", "[datatype][real][numeric][edge]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // -0.5 produces positive zero
+  // -0.5 truncates to negative zero
   {
     auto numeric = check_fractional_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT -0.5::FLOAT"), 1);
-    CHECK(numeric.sign == 1);
+    CHECK(numeric.sign == 0);
     CHECK(numeric.val[0] == 0);
   }
 
-  // -0.001 produces positive zero
+  // -0.001 truncates to negative zero
   {
     auto numeric = check_fractional_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT -0.001::FLOAT"), 1);
-    CHECK(numeric.sign == 1);
+    CHECK(numeric.sign == 0);
     CHECK(numeric.val[0] == 0);
   }
 }
 
-TEST_CASE("REAL SQL_C_BINARY no negative zero", "[datatype][real][binary][edge]") {
+TEST_CASE("REAL SQL_C_BINARY negative zero", "[datatype][real][binary][edge]") {
   SKIP_OLD_DRIVER("BD#12", "SNOW-3127864: Old driver fix to be merged to return the proper size for SQL_NUMERIC");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -1115,7 +1114,7 @@ TEST_CASE("REAL SQL_C_BINARY no negative zero", "[datatype][real][binary][edge]"
   CHECK(get_sqlstate(stmt) == "01S07");
   CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
   auto* numeric = reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
-  CHECK(numeric->sign == 1);
+  CHECK(numeric->sign == 0);
   CHECK(numeric->val[0] == 0);
 }
 

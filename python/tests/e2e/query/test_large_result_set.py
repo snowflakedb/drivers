@@ -1,10 +1,10 @@
-from tests.e2e.types.utils import assert_sequential_values
+from tests.e2e.types.utils import assert_connection_is_open, assert_sequential_values
 
 
 class TestLargeResultSet:
-    def test_should_process_one_million_row_result_set(self, cursor):
+    def test_should_process_one_million_row_result_set(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
+        assert_connection_is_open(execute_query)
 
         # When Query "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
 

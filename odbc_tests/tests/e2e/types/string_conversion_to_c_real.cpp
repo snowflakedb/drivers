@@ -84,12 +84,11 @@ TEST_CASE("should fail converting string literals to floating point types when d
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing floating point numbers is executed
-  // Then values within range should convert successfully
-  // And values exceeding SQL_C_DOUBLE range should fail with numeric out of range
   SECTION("SQL_C_DOUBLE") {
     auto stmt = conn.execute_fetch(
         "SELECT '1.7976931348623157e308' AS max_double, '1.7976931348623157e309' AS more_than_max_double, "
         "'-1.7976931348623157E+308' AS min_double, '-1.7976931348623158e308' AS less_than_min_double");
+    // Then values within range should convert successfully and values exceeding SQL_C_DOUBLE range should fail
     CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 1) == 1.7976931348623157e308);
     check_numeric_out_of_range<SQL_C_DOUBLE>(stmt, 2);
     CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 3) == -1.7976931348623157e308);
@@ -215,8 +214,7 @@ TEST_CASE("should handle NULL string when converting to floating point types",
   // When Query selecting NULL is executed
   auto stmt = conn.execute_fetch("SELECT NULL::STRING AS null_double");
 
-  // And Attempt to get data as SQL_C_DOUBLE
-  // Then NULL should return SQL_NULL_DATA indicator
+  // Then SQL_C_DOUBLE should return SQL_NULL_DATA indicator
   {
     SQLDOUBLE value = 999.0;
     SQLLEN indicator;
@@ -236,7 +234,6 @@ TEST_CASE("should convert strings to floating point types using SQLBindCol", "[d
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string numeric value is executed with SQLBindCol for SQL_C_DOUBLE
-  // Then the bound double value should match the string representation
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '987.654' AS str_num", SQL_NTS);
@@ -250,6 +247,7 @@ TEST_CASE("should convert strings to floating point types using SQLBindCol", "[d
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
+    // Then the bound double value should match the string representation
     CHECK(value == Catch::Approx(987.654).epsilon(0.001));
     CHECK(indicator == sizeof(SQLDOUBLE));
   }

@@ -12,8 +12,7 @@ TEST_CASE("should cast number values to appropriate type for number and synonyms
   // When Query "SELECT 0::<type>(10,0), 123::<type>(10,0), 0.00::<type>(10,2), 123.45::<type>(10,2)" is executed
   auto stmt = conn.execute_fetch("SELECT 0::NUMBER(10,0), 123::NUMBER(10,0), 0.00::NUMBER(10,2), 123.45::NUMBER(10,2)");
 
-  // Then All values should be returned as appropriate type
-  // And Values should match [0, 123, 0.00, 123.45]
+  // Then All values should be returned as appropriate type matching [0, 123, 0.00, 123.45]
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 123);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 0.0);
@@ -68,8 +67,8 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Column 1 should contain sequential integers from 0 to 29999
-  // And Column 2 should contain sequential decimals starting from 0.12345
+  // Then Result should contain 30000 rows with sequential integers in column 1 and sequential decimals starting from
+  // 0.12345 in column 2
   int row_count = 0;
   int64_t expected_int = 0;
   double expected_decimal = 0.12345;
@@ -193,6 +192,64 @@ TEST_CASE("should handle scale and precision boundaries from table for number an
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 0);
 }
 
+TEST_CASE("should handle NULL values from literals for number and synonyms", "[number]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT NULL::<type>(10,0), 42::<type>(10,0), NULL::<type>(10,2), 42.50::<type>(10,2)" is executed
+  auto stmt =
+      conn.execute_fetch("SELECT NULL::NUMBER(10,0), 42::NUMBER(10,0), NULL::NUMBER(10,2), 42.50::NUMBER(10,2)");
+
+  // Then Result should contain [NULL, 42, NULL, 42.50]
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 2) == std::optional<SQLINTEGER>(42));
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 4) == std::optional<double>(42.50));
+}
+
+TEST_CASE("should handle NULL values from table with multiple scales for number and synonyms", "[number]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
+  conn.execute("CREATE TABLE number_null_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3))");
+  // And Row (NULL, NULL, NULL) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (NULL, NULL, NULL)");
+  // And Row (123, 123.45, 123.456) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (123, 123.45, 123.456)");
+  // And Row (NULL, NULL, NULL) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (NULL, NULL, NULL)");
+  // And Row (-456, -67.89, -789.012) is inserted
+  conn.execute("INSERT INTO number_null_table VALUES (-456, -67.89, -789.012)");
+
+  // When Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM number_null_table");
+
+  // Then Result should contain 4 rows with 2 NULL rows and 2 non-NULL rows with expected values
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 123.45);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 123.456);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == -456);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == -67.89);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == -789.012);
+}
+
 TEST_CASE("should download large result set from table for number and synonyms", "[number]") {
   // Given Snowflake client is logged in
   Connection conn;
@@ -211,8 +268,8 @@ TEST_CASE("should download large result set from table for number and synonyms",
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Column 1 should contain sequential integers from 0 to 29999
-  // And Column 2 should contain sequential decimals starting from 0.12345
+  // Then Result should contain 30000 rows with sequential integers in column 1 and sequential decimals starting from
+  // 0.12345 in column 2
   int row_count = 0;
   int64_t expected_int = 0;
   double expected_decimal = 0.12345;

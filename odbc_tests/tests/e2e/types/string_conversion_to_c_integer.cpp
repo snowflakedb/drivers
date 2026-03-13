@@ -306,7 +306,6 @@ TEST_CASE("should convert strings to integer types using SQLBindCol", "[datatype
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string numeric value is executed with SQLBindCol for SQL_C_LONG
-  // Then the bound integer value should match the string representation
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '12345' AS str_num", SQL_NTS);
@@ -320,6 +319,7 @@ TEST_CASE("should convert strings to integer types using SQLBindCol", "[datatype
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
+    // Then the bound integer value should match the string representation
     CHECK(value == 12345);
     CHECK(indicator == sizeof(SQLINTEGER));
   }

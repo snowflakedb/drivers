@@ -142,16 +142,16 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         }));
     }
 
-    // Then only one refresh attempt should be made
-    // And all requests should succeed after the refresh
+    // Then all requests should succeed after the refresh
     let mut success_count = 0;
     for (i, handle) in handles.into_iter().enumerate() {
         let result = handle.await.expect("task panicked");
-        assert!(result.is_ok(), "Request {} failed: {:?}", i, result);
+        assert!(result.is_ok(), "Request {i} failed: {result:?}");
         success_count += 1;
     }
     assert_eq!(success_count, 3, "Expected all 3 requests to succeed");
 
+    // And only one refresh attempt should be made
     assert_eq!(
         refresh_attempts.load(Ordering::SeqCst),
         1,

@@ -301,8 +301,6 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
-
-  // Helper lambda to test a single bound value
   auto test_bound_value = [&](const std::string& value, const std::string& expected) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
@@ -344,8 +342,6 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
   };
 
   // Then the result should match the bound corner case value
-
-  // Test empty string
   test_bound_value("", "");
 
   // Test single character
@@ -419,7 +415,7 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then there are 10000 rows returned
+  // Then there are 10000 rows returned and all string values should match the generated values in order
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());
@@ -432,7 +428,6 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
     row_count++;
   }
 
-  // And all returned string values should match the generated values in order
   CHECK(row_count == num_values);
 }
 
@@ -526,7 +521,7 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, str_buffer, sizeof(str_buffer), &str_indicator);
   CHECK_ODBC(ret, stmt);
 
-  // Then there are 10000 rows returned
+  // Then there are 10000 rows returned and all string values should match the generated values in order
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());
@@ -544,6 +539,5 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
     row_count++;
   }
 
-  // And all returned string values should match the generated values in order
   CHECK(row_count == expected_row_count);
 }

@@ -102,8 +102,11 @@ TEST_CASE("should execute CREATE and DROP TABLE statements", "[query]") {
   auto random_schema = Schema::use_random_schema(conn);
 
   // When CREATE TABLE statement is executed
-  // Then the table should be created successfully
   conn.execute("CREATE TABLE basic_exec_test (id INT, name VARCHAR(100))");
+
+  // Then the table should be created successfully
+  auto verify_stmt = conn.execute_fetch("SELECT COUNT(*) FROM basic_exec_test");
+  CHECK(get_data<SQL_C_LONG>(verify_stmt, 1) == 0);
 
   // And DROP TABLE statement should complete successfully
   conn.execute("DROP TABLE basic_exec_test");

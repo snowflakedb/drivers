@@ -6,9 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Statement;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -24,175 +22,223 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
   @Test
   public void shouldCastFloatValuesToAppropriateTypeForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT 0.0::<type>, 123.456::<type>, 1.23e10::<type>, 'NaN'::<type>,
     // 'inf'::<type>" is executed
-    // Then All values should be returned as appropriate type
-    // And Regular values should have approximately 15 decimal digits precision
-    // And NaN and inf values should be identified correctly
-    Connection connection = getDefaultConnection();
     String sql =
         String.format(
             "SELECT 0.0::%1$s, 123.456::%1$s, 1.23e10::%1$s, 'NaN'::%1$s, 'inf'::%1$s", FLOAT_TYPE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
 
-      assertAllFloatGetters(resultSet, 1, 0.0, "Column 1 mismatch for " + FLOAT_TYPE);
-      assertAllFloatGetters(resultSet, 2, 123.456, "Column 2 mismatch for " + FLOAT_TYPE);
-      assertAllFloatGetters(resultSet, 3, 1.23e10, "Column 3 mismatch for " + FLOAT_TYPE);
+          // Then All values should be returned as appropriate type
+          assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
 
-      assertAllFloatGetters(resultSet, 4, Double.NaN, "Column 4 mismatch for " + FLOAT_TYPE);
-      assertAllFloatGetters(
-          resultSet, 5, Double.POSITIVE_INFINITY, "Column 5 mismatch for " + FLOAT_TYPE);
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
-    }
+          // And Regular values should have approximately 15 decimal digits precision
+          assertAllFloatGetters(resultSet, 1, 0.0, "Column 1 mismatch for " + FLOAT_TYPE);
+          assertAllFloatGetters(resultSet, 2, 123.456, "Column 2 mismatch for " + FLOAT_TYPE);
+          assertAllFloatGetters(resultSet, 3, 1.23e10, "Column 3 mismatch for " + FLOAT_TYPE);
+
+          // And NaN and inf values should be identified correctly
+          assertAllFloatGetters(resultSet, 4, Double.NaN, "Column 4 mismatch for " + FLOAT_TYPE);
+          assertAllFloatGetters(
+              resultSet, 5, Double.POSITIVE_INFINITY, "Column 5 mismatch for " + FLOAT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+        });
   }
 
   @Test
   public void shouldSelectFloatLiteralsForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT 0.0::<type>, 1.0::<type>, -1.0::<type>, 123.456::<type>, -123.456::<type>"
     // is executed
-    // Then Result should contain floats [0.0, 1.0, -1.0, 123.456, -123.456]
-    Connection connection = getDefaultConnection();
-    assertSingleRow(
-        connection,
+    String sql =
         String.format(
-            "SELECT 0.0::%1$s, 1.0::%1$s, -1.0::%1$s, 123.456::%1$s, -123.456::%1$s", FLOAT_TYPE),
-        Arrays.asList(0.0, 1.0, -1.0, 123.456, -123.456));
+            "SELECT 0.0::%1$s, 1.0::%1$s, -1.0::%1$s, 123.456::%1$s, -123.456::%1$s", FLOAT_TYPE);
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain floats [0.0, 1.0, -1.0, 123.456, -123.456]
+          assertSingleRow(resultSet, Arrays.asList(0.0, 1.0, -1.0, 123.456, -123.456));
+        });
   }
 
   @Test
   public void shouldHandleSpecialFloatValuesFromLiteralsForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
-    // Then Result should contain [NaN, positive_infinity, negative_infinity]
     Connection connection = getDefaultConnection();
-    assertSingleRow(
+
+    // When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
+    String sql = String.format("SELECT 'NaN'::%1$s, 'inf'::%1$s, '-inf'::%1$s", FLOAT_TYPE);
+    withQueryResult(
         connection,
-        String.format("SELECT 'NaN'::%1$s, 'inf'::%1$s, '-inf'::%1$s", FLOAT_TYPE),
-        Arrays.asList(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY));
+        sql,
+        resultSet -> {
+
+          // Then Result should contain [NaN, positive_infinity, negative_infinity]
+          assertSingleRow(
+              resultSet,
+              Arrays.asList(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY));
+        });
   }
 
   @Test
   public void shouldHandleFloatBoundaryValuesFromLiteralsForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is
-    // executed
-    // Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
-    // When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
-    // Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
-    // When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
-    // Then Result should verify precision around 15 decimal digits
     Connection connection = getDefaultConnection();
 
-    assertSingleRow(
-        connection,
+    // When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is
+    // executed
+    String maxBoundarySql =
         String.format(
-            "SELECT 1.7976931348623157e308::%1$s, -1.7976931348623157e308::%1$s", FLOAT_TYPE),
-        Arrays.asList(Double.MAX_VALUE, -Double.MAX_VALUE));
+            "SELECT 1.7976931348623157e308::%1$s, -1.7976931348623157e308::%1$s", FLOAT_TYPE);
+    withQueryResult(
+        connection,
+        maxBoundarySql,
+        resultSet -> {
 
+          // Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
+          assertSingleRow(resultSet, Arrays.asList(Double.MAX_VALUE, -Double.MAX_VALUE));
+        });
+
+    // When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
     String minBoundarySql =
         String.format("SELECT 2.2250738585072014e-308::%1$s, 5e-324::%1$s", FLOAT_TYPE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(minBoundarySql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
-      assertFiniteDouble(
-          resultSet.getDouble(1), Double.MIN_NORMAL, "Column 1 mismatch for " + FLOAT_TYPE);
-      double actualSubnormal = resultSet.getDouble(2);
-      assertTrue(actualSubnormal > 0.0, "Column 2 should be positive for " + FLOAT_TYPE);
-      assertTrue(
-          actualSubnormal <= Double.MIN_VALUE, "Column 2 should be subnormal for " + FLOAT_TYPE);
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
-    }
-
-    assertSingleRow(
+    withQueryResult(
         connection,
-        String.format("SELECT 123456789012345.0::%1$s, 1234567890123456.0::%1$s", FLOAT_TYPE),
-        Arrays.asList(123456789012345.0, 1234567890123456.0));
+        minBoundarySql,
+        resultSet -> {
+
+          // Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
+          assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+          assertFiniteDouble(
+              resultSet.getDouble(1), Double.MIN_NORMAL, "Column 1 mismatch for " + FLOAT_TYPE);
+          double actualSubnormal = resultSet.getDouble(2);
+          assertTrue(actualSubnormal > 0.0, "Column 2 should be positive for " + FLOAT_TYPE);
+          assertTrue(
+              actualSubnormal <= Double.MIN_VALUE,
+              "Column 2 should be subnormal for " + FLOAT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+        });
+
+    // When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
+    String precisionSql =
+        String.format("SELECT 123456789012345.0::%1$s, 1234567890123456.0::%1$s", FLOAT_TYPE);
+    withQueryResult(
+        connection,
+        precisionSql,
+        resultSet -> {
+
+          // Then Result should verify precision around 15 decimal digits
+          assertSingleRow(resultSet, Arrays.asList(123456789012345.0, 1234567890123456.0));
+        });
   }
 
   @Test
   public void shouldHandleNULLValuesFromLiteralsForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT NULL::<type>, 42.5::<type>, NULL::<type>" is executed
-    // Then Result should contain [NULL, 42.5, NULL]
     Connection connection = getDefaultConnection();
+
+    // When Query "SELECT NULL::<type>, 42.5::<type>, NULL::<type>" is executed
     String sql = String.format("SELECT NULL::%1$s, 42.5::%1$s, NULL::%1$s", FLOAT_TYPE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
-      assertNull(resultSet.getObject(1), "Column 1 should be NULL for " + FLOAT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for " + FLOAT_TYPE);
-      assertEquals(
-          0.0,
-          resultSet.getDouble(1),
-          "Column 1 getDouble should return 0.0 for NULL " + FLOAT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 1 getDouble should set wasNull() for " + FLOAT_TYPE);
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
 
-      assertAllFloatGetters(resultSet, 2, 42.5, "Column 2 mismatch for " + FLOAT_TYPE);
+          // Then Result should contain [NULL, 42.5, NULL]
+          assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+          assertNull(resultSet.getObject(1), "Column 1 should be NULL for " + FLOAT_TYPE);
+          assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for " + FLOAT_TYPE);
+          assertEquals(
+              0.0,
+              resultSet.getDouble(1),
+              "Column 1 getDouble should return 0.0 for NULL " + FLOAT_TYPE);
+          assertTrue(
+              resultSet.wasNull(), "Column 1 getDouble should set wasNull() for " + FLOAT_TYPE);
 
-      assertNull(resultSet.getObject(3), "Column 3 should be NULL for " + FLOAT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 3 should set wasNull() for " + FLOAT_TYPE);
-      assertEquals(
-          0.0,
-          resultSet.getDouble(3),
-          "Column 3 getDouble should return 0.0 for NULL " + FLOAT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 3 getDouble should set wasNull() for " + FLOAT_TYPE);
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
-    }
+          assertAllFloatGetters(resultSet, 2, 42.5, "Column 2 mismatch for " + FLOAT_TYPE);
+
+          assertNull(resultSet.getObject(3), "Column 3 should be NULL for " + FLOAT_TYPE);
+          assertTrue(resultSet.wasNull(), "Column 3 should set wasNull() for " + FLOAT_TYPE);
+          assertEquals(
+              0.0,
+              resultSet.getDouble(3),
+              "Column 3 getDouble should return 0.0 for NULL " + FLOAT_TYPE);
+          assertTrue(
+              resultSet.wasNull(), "Column 3 getDouble should set wasNull() for " + FLOAT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+        });
   }
 
   @Test
   public void shouldDownloadLargeResultSetWithMultipleChunksFromGeneratorForFloatAndSynonyms()
       throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is
     // executed
-    // Then Result should contain 50000 rows
-    // And All values should be returned as appropriate float type
-    Connection connection = getDefaultConnection();
     String sql =
         String.format(
             "SELECT seq8()::%1$s as id FROM TABLE(GENERATOR(ROWCOUNT => %2$d)) v ORDER BY id",
             FLOAT_TYPE, LARGE_RESULT_SET_SIZE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      int expected = 0;
-      while (resultSet.next()) {
-        assertFiniteDouble(
-            resultSet.getDouble(1),
-            expected,
-            "Value mismatch for " + FLOAT_TYPE + ", row " + expected);
-        expected++;
-      }
-      assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + FLOAT_TYPE);
-    }
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain 50000 rows with all values returned as appropriate float
+          // type
+          int expected = 0;
+          while (resultSet.next()) {
+            assertFiniteDouble(
+                resultSet.getDouble(1),
+                expected,
+                "Value mismatch for " + FLOAT_TYPE + ", row " + expected);
+            expected++;
+          }
+          assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + FLOAT_TYPE);
+        });
   }
 
   @Test
   public void shouldSelectFloatsFromTableForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
-    // When Query "SELECT * FROM float_table" is executed
-    // Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
     Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
     String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
         "INSERT INTO " + tableName + " VALUES (0.0), (123.456), (-789.012), (1.23e5), (-9.87e-3)");
 
-    assertSingleColumnRows(
-        connection, tableName, Arrays.asList(0.0, 123.456, -789.012, 123000.0, -0.00987));
+    // When Query "SELECT * FROM float_table" is executed
+    String sql = "SELECT * FROM " + tableName;
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
+          assertSingleColumnRows(
+              resultSet, Arrays.asList(0.0, 123.456, -789.012, 123000.0, -0.00987));
+        });
   }
 
   @Test
   public void shouldHandleSpecialFloatValuesFromTableForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
-    // When Query "SELECT * FROM <table>" is executed
-    // Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0]
     Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
     String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
@@ -206,49 +252,55 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
             + FLOAT_TYPE
             + "), (42.0), (-42.0)");
 
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery("SELECT * FROM " + tableName)) {
-      Map<String, Integer> counts = new HashMap<>();
-      while (resultSet.next()) {
-        double value = resultSet.getDouble(1);
-        String key;
-        if (Double.isNaN(value)) {
-          key = "NaN";
-        } else if (value == Double.POSITIVE_INFINITY) {
-          key = "POS_INF";
-        } else if (value == Double.NEGATIVE_INFINITY) {
-          key = "NEG_INF";
-        } else if (value == 42.0) {
-          key = "POS_42";
-        } else if (value == -42.0) {
-          key = "NEG_42";
-        } else {
-          key = "UNEXPECTED";
-        }
-        counts.put(key, counts.getOrDefault(key, 0) + 1);
-      }
+    // When Query "SELECT * FROM <table>" is executed
+    String sql = "SELECT * FROM " + tableName;
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
 
-      assertEquals(1, counts.getOrDefault("NaN", 0), "Expected one NaN for " + FLOAT_TYPE);
-      assertEquals(
-          1, counts.getOrDefault("POS_INF", 0), "Expected one +Infinity for " + FLOAT_TYPE);
-      assertEquals(
-          1, counts.getOrDefault("NEG_INF", 0), "Expected one -Infinity for " + FLOAT_TYPE);
-      assertEquals(1, counts.getOrDefault("POS_42", 0), "Expected one 42.0 for " + FLOAT_TYPE);
-      assertEquals(1, counts.getOrDefault("NEG_42", 0), "Expected one -42.0 for " + FLOAT_TYPE);
-      assertEquals(
-          0, counts.getOrDefault("UNEXPECTED", 0), "Unexpected value returned for " + FLOAT_TYPE);
-    }
+          // Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0]
+          Map<String, Integer> counts = new HashMap<>();
+          while (resultSet.next()) {
+            double value = resultSet.getDouble(1);
+            String key;
+            if (Double.isNaN(value)) {
+              key = "NaN";
+            } else if (value == Double.POSITIVE_INFINITY) {
+              key = "POS_INF";
+            } else if (value == Double.NEGATIVE_INFINITY) {
+              key = "NEG_INF";
+            } else if (value == 42.0) {
+              key = "POS_42";
+            } else if (value == -42.0) {
+              key = "NEG_42";
+            } else {
+              key = "UNEXPECTED";
+            }
+            counts.put(key, counts.getOrDefault(key, 0) + 1);
+          }
+
+          assertEquals(1, counts.getOrDefault("NaN", 0), "Expected one NaN for " + FLOAT_TYPE);
+          assertEquals(
+              1, counts.getOrDefault("POS_INF", 0), "Expected one +Infinity for " + FLOAT_TYPE);
+          assertEquals(
+              1, counts.getOrDefault("NEG_INF", 0), "Expected one -Infinity for " + FLOAT_TYPE);
+          assertEquals(1, counts.getOrDefault("POS_42", 0), "Expected one 42.0 for " + FLOAT_TYPE);
+          assertEquals(1, counts.getOrDefault("NEG_42", 0), "Expected one -42.0 for " + FLOAT_TYPE);
+          assertEquals(
+              0,
+              counts.getOrDefault("UNEXPECTED", 0),
+              "Unexpected value returned for " + FLOAT_TYPE);
+        });
   }
 
   @Test
   public void shouldHandleFloatBoundaryValuesFromTableForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // And Table with <type> column exists with boundary values [1.7976931348623157e308,
     // -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 123456789012345.0]
-    // When Query "SELECT * FROM <table>" is executed
-    // Then Result should contain maximum, minimum, and precision boundary values
-    // And All values should be preserved within float precision limits
-    Connection connection = getDefaultConnection();
     String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
@@ -256,61 +308,74 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
             + tableName
             + " VALUES (1.7976931348623157e308), (-1.7976931348623157e308), (2.2250738585072014e-308), (5e-324), (123456789012345.0)");
 
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery("SELECT * FROM " + tableName)) {
-      boolean foundMax = false;
-      boolean foundMin = false;
-      boolean foundMinNormal = false;
-      boolean foundMinSubnormal = false;
-      boolean foundPrecisionValue = false;
-      int rowCount = 0;
-      while (resultSet.next()) {
-        rowCount++;
-        double value = resultSet.getDouble(1);
-        if (approximatelyEquals(value, Double.MAX_VALUE)) {
-          foundMax = true;
-        } else if (approximatelyEquals(value, -Double.MAX_VALUE)) {
-          foundMin = true;
-        } else if (approximatelyEquals(value, Double.MIN_NORMAL)) {
-          foundMinNormal = true;
-        } else if (value > 0.0 && value <= Double.MIN_VALUE) {
-          foundMinSubnormal = true;
-        } else if (approximatelyEquals(value, 123456789012345.0)) {
-          foundPrecisionValue = true;
-        }
-      }
+    // When Query "SELECT * FROM <table>" is executed
+    String sql = "SELECT * FROM " + tableName;
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
 
-      assertEquals(5, rowCount, "Unexpected row count for " + FLOAT_TYPE);
-      assertTrue(foundMax, "Expected Double.MAX_VALUE for " + FLOAT_TYPE);
-      assertTrue(foundMin, "Expected -Double.MAX_VALUE for " + FLOAT_TYPE);
-      assertTrue(foundMinNormal, "Expected Double.MIN_NORMAL for " + FLOAT_TYPE);
-      assertTrue(foundMinSubnormal, "Expected positive subnormal value for " + FLOAT_TYPE);
-      assertTrue(foundPrecisionValue, "Expected 123456789012345.0 for " + FLOAT_TYPE);
-    }
+          // Then Result should contain maximum, minimum, and precision boundary values preserved
+          // within float precision limits
+          boolean foundMax = false;
+          boolean foundMin = false;
+          boolean foundMinNormal = false;
+          boolean foundMinSubnormal = false;
+          boolean foundPrecisionValue = false;
+          int rowCount = 0;
+          while (resultSet.next()) {
+            rowCount++;
+            double value = resultSet.getDouble(1);
+            if (approximatelyEquals(value, Double.MAX_VALUE)) {
+              foundMax = true;
+            } else if (approximatelyEquals(value, -Double.MAX_VALUE)) {
+              foundMin = true;
+            } else if (approximatelyEquals(value, Double.MIN_NORMAL)) {
+              foundMinNormal = true;
+            } else if (value > 0.0 && value <= Double.MIN_VALUE) {
+              foundMinSubnormal = true;
+            } else if (approximatelyEquals(value, 123456789012345.0)) {
+              foundPrecisionValue = true;
+            }
+          }
+
+          assertEquals(5, rowCount, "Unexpected row count for " + FLOAT_TYPE);
+          assertTrue(foundMax, "Expected Double.MAX_VALUE for " + FLOAT_TYPE);
+          assertTrue(foundMin, "Expected -Double.MAX_VALUE for " + FLOAT_TYPE);
+          assertTrue(foundMinNormal, "Expected Double.MIN_NORMAL for " + FLOAT_TYPE);
+          assertTrue(foundMinSubnormal, "Expected positive subnormal value for " + FLOAT_TYPE);
+          assertTrue(foundPrecisionValue, "Expected 123456789012345.0 for " + FLOAT_TYPE);
+        });
   }
 
   @Test
   public void shouldHandleNULLValuesFromTableForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
-    // When Query "SELECT * FROM <table>" is executed
-    // Then Result should contain [NULL, 123.456, NULL, -789.012]
     Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
     String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection, "INSERT INTO " + tableName + " VALUES (NULL), (123.456), (NULL), (-789.012)");
 
-    assertSingleColumnRows(connection, tableName, Arrays.asList(null, 123.456, null, -789.012));
+    // When Query "SELECT * FROM <table>" is executed
+    String sql = "SELECT * FROM " + tableName;
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain [NULL, 123.456, NULL, -789.012]
+          assertSingleColumnRows(resultSet, Arrays.asList(null, 123.456, null, -789.012));
+        });
   }
 
   @Test
   public void shouldSelectLargeResultSetFromTableForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with <type> column exists with 50000 sequential values
-    // When Query "SELECT * FROM <table>" is executed
-    // Then Result should contain 50000 rows
-    // And All values should be returned as appropriate float type
     Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists with 50000 sequential values
     String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
@@ -320,94 +385,99 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
             + FLOAT_TYPE
             + " FROM TABLE(GENERATOR(ROWCOUNT => 50000))");
 
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet =
-            statement.executeQuery("SELECT * FROM " + tableName + " ORDER BY col")) {
-      int expected = 0;
-      while (resultSet.next()) {
-        assertFiniteDouble(
-            resultSet.getDouble(1),
-            expected,
-            "Value mismatch for " + FLOAT_TYPE + ", row " + expected);
-        expected++;
-      }
-      assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + FLOAT_TYPE);
-    }
+    // When Query "SELECT * FROM <table>" is executed
+    String sql = "SELECT * FROM " + tableName + " ORDER BY col";
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain 50000 rows with all values returned as appropriate float
+          // type
+          int expected = 0;
+          while (resultSet.next()) {
+            assertFiniteDouble(
+                resultSet.getDouble(1),
+                expected,
+                "Value mismatch for " + FLOAT_TYPE + ", row " + expected);
+            expected++;
+          }
+          assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + FLOAT_TYPE);
+        });
   }
 
   @Test
   public void shouldSelectFloatUsingParameterBindingForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values
     // [123.456, -789.012, 42.0]
-    // Then Result should contain floats [123.456, -789.012, 42.0]
-    // When Query "SELECT ?::<type>" is executed with bound NULL value
-    // Then Result should contain NULL
-    Connection connection = getDefaultConnection();
     String sql = String.format("SELECT ?::%1$s, ?::%1$s, ?::%1$s", FLOAT_TYPE);
-    try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
-      preparedStatement.setDouble(1, 123.456);
-      preparedStatement.setDouble(2, -789.012);
-      preparedStatement.setDouble(3, 42.0);
-      try (ResultSet resultSet = preparedStatement.executeQuery()) {
-        assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
-        assertAllFloatGetters(resultSet, 1, 123.456, "Column 1 mismatch for " + FLOAT_TYPE);
-        assertAllFloatGetters(resultSet, 2, -789.012, "Column 2 mismatch for " + FLOAT_TYPE);
-        assertAllFloatGetters(resultSet, 3, 42.0, "Column 3 mismatch for " + FLOAT_TYPE);
-        assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
-      }
-    }
+    // When
+    withPreparedQueryResult(
+        connection,
+        sql,
+        ps -> {
+          ps.setDouble(1, 123.456);
+          ps.setDouble(2, -789.012);
+          ps.setDouble(3, 42.0);
+        },
+        resultSet -> {
+          // Then Result should contain floats [123.456, -789.012, 42.0]
+          assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+          assertAllFloatGetters(resultSet, 1, 123.456, "Column 1 mismatch for " + FLOAT_TYPE);
+          assertAllFloatGetters(resultSet, 2, -789.012, "Column 2 mismatch for " + FLOAT_TYPE);
+          assertAllFloatGetters(resultSet, 3, 42.0, "Column 3 mismatch for " + FLOAT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+        });
 
+    // When Query "SELECT ?::<type>" is executed with bound NULL value
     String nullSql = String.format("SELECT ?::%1$s", FLOAT_TYPE);
-    try (PreparedStatement preparedStatement = connection.prepareStatement(nullSql)) {
-      preparedStatement.setNull(1, Types.DOUBLE);
-      try (ResultSet resultSet = preparedStatement.executeQuery()) {
-        assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
-        assertNull(resultSet.getObject(1), "Column 1 should be NULL for " + FLOAT_TYPE);
-        assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for " + FLOAT_TYPE);
-        assertEquals(
-            0.0,
-            resultSet.getDouble(1),
-            "Column 1 getDouble should return 0.0 for NULL " + FLOAT_TYPE);
-        assertTrue(
-            resultSet.wasNull(), "Column 1 getDouble should set wasNull() for " + FLOAT_TYPE);
-        assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
-      }
-    }
+    withPreparedQueryResult(
+        connection,
+        nullSql,
+        ps -> ps.setNull(1, Types.DOUBLE),
+        resultSet -> {
+          // Then Result should contain NULL
+          assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+          assertNull(resultSet.getObject(1), "Column 1 should be NULL for " + FLOAT_TYPE);
+          assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for " + FLOAT_TYPE);
+          assertEquals(
+              0.0,
+              resultSet.getDouble(1),
+              "Column 1 getDouble should return 0.0 for NULL " + FLOAT_TYPE);
+          assertTrue(
+              resultSet.wasNull(), "Column 1 getDouble should set wasNull() for " + FLOAT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+        });
   }
 
-  private static void assertSingleRow(Connection connection, String sql, List<Double> expected)
+  private static void assertSingleRow(ResultSet resultSet, List<Double> expected) throws Exception {
+    assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
+    for (int i = 0; i < expected.size(); i++) {
+      assertAllFloatGetters(
+          resultSet, i + 1, expected.get(i), "Column " + (i + 1) + " mismatch for " + FLOAT_TYPE);
+    }
+    assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
+  }
+
+  private static void assertSingleColumnRows(ResultSet resultSet, List<Double> expectedValues)
       throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
-      for (int i = 0; i < expected.size(); i++) {
+    for (int i = 0; i < expectedValues.size(); i++) {
+      assertTrue(resultSet.next(), "Missing row " + i + " for " + FLOAT_TYPE);
+      Double expected = expectedValues.get(i);
+      if (expected == null) {
+        assertNull(resultSet.getObject(1), "Expected NULL at row " + i + " for " + FLOAT_TYPE);
+        assertTrue(resultSet.wasNull(), "Expected wasNull() after getObject NULL at row " + i);
+        assertEquals(0.0, resultSet.getDouble(1), "Expected getDouble=0.0 for NULL at row " + i);
+        assertTrue(resultSet.wasNull(), "Expected wasNull() after getDouble NULL at row " + i);
+      } else {
         assertAllFloatGetters(
-            resultSet, i + 1, expected.get(i), "Column " + (i + 1) + " mismatch for " + FLOAT_TYPE);
+            resultSet, 1, expected, "Value mismatch for " + FLOAT_TYPE + ", row " + i);
       }
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
     }
-  }
-
-  private static void assertSingleColumnRows(
-      Connection connection, String tableName, List<Double> expectedValues) throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery("SELECT * FROM " + tableName)) {
-      for (int i = 0; i < expectedValues.size(); i++) {
-        assertTrue(resultSet.next(), "Missing row " + i + " for " + FLOAT_TYPE);
-        Double expected = expectedValues.get(i);
-        if (expected == null) {
-          assertNull(resultSet.getObject(1), "Expected NULL at row " + i + " for " + FLOAT_TYPE);
-          assertTrue(resultSet.wasNull(), "Expected wasNull() after getObject NULL at row " + i);
-          assertEquals(0.0, resultSet.getDouble(1), "Expected getDouble=0.0 for NULL at row " + i);
-          assertTrue(resultSet.wasNull(), "Expected wasNull() after getDouble NULL at row " + i);
-        } else {
-          assertAllFloatGetters(
-              resultSet, 1, expected, "Value mismatch for " + FLOAT_TYPE + ", row " + i);
-        }
-      }
-      assertFalse(resultSet.next(), "Unexpected extra rows for " + FLOAT_TYPE);
-    }
+    assertFalse(resultSet.next(), "Unexpected extra rows for " + FLOAT_TYPE);
   }
 
   private static void assertAllFloatGetters(

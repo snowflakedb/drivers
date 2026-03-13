@@ -588,19 +588,6 @@ impl CredentialApi for FileTokenCacheEntry {
     }
 }
 
-/// Checks whether the platform keyring provides persistent storage and
-/// installs the file-based credential store as a fallback if it does not.
-///
-/// Call once at application startup, before creating any `keyring::Entry`.
-pub(super) fn install_file_credential_fallback() -> Result<(), TokenCacheError> {
-    let default_persistence = keyring::default::default_credential_builder().persistence();
-    if !matches!(default_persistence, CredentialPersistence::UntilDelete) {
-        let cache = FileTokenCache::new()?;
-        keyring::set_default_credential_builder(Box::new(cache));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -80,9 +80,10 @@ class TestConfigOption:
         )
 
         # When ConfigManager retrieves the option
+        retrieve = option.value
         # Then ConfigSourceError should be raised
         with pytest.raises(CSError) as exc_info:
-            option.value()
+            retrieve()
         assert "is not part of" in str(exc_info.value)
 
     def test_config_value_from_file(self, config_env):
@@ -144,8 +145,10 @@ mykey = "file_value"
         os.environ["CUSTOM_ENV_VAR"] = "custom_value"
 
         # When ConfigManager retrieves option with env_name set to CUSTOM_ENV_VAR
+        result = option.value()
+
         # Then The custom env var value should be returned
-        assert option.value() == "custom_value"
+        assert result == "custom_value"
 
     def test_custom_env_name_with_parse_str(self, config_env):
         """Test that parse_str is applied to custom env var values."""
@@ -163,9 +166,11 @@ mykey = "file_value"
         os.environ["CUSTOM_ENV_VAR"] = "123"
 
         # When ConfigManager retrieves option with parse_str set to int
+        result = option.value()
+
         # Then The parsed integer value should be returned
-        assert option.value() == 123
-        assert isinstance(option.value(), int)
+        assert result == 123
+        assert isinstance(result, int)
 
 
 class TestDefaultEnvName:
@@ -232,8 +237,10 @@ class TestDefaultEnvName:
         )
 
         # When Retrieving the option value
+        result = option.value()
+
         # Then The explicit env var value should be returned
-        assert option.value() == "from_explicit"
+        assert result == "from_explicit"
 
     def test_default_env_var_priority_over_config_file(self, config_env):
         """Test that default env var takes priority over config file value."""

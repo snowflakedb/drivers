@@ -63,9 +63,6 @@ TEST_CASE("should handle NULL boolean with numeric and binary C types", "[dataty
   Connection conn;
 
   // When Query "SELECT NULL::BOOLEAN" is executed
-  // Then SQL_C_FLOAT should return SQL_NULL_DATA indicator
-  // And SQL_C_DOUBLE should return SQL_NULL_DATA indicator
-  // And SQL_C_NUMERIC should return SQL_NULL_DATA indicator
   auto check_null = [&](SQLSMALLINT c_type) {
     const auto stmt = conn.execute_fetch("SELECT NULL::BOOLEAN");
     char buffer[100] = {};
@@ -75,7 +72,10 @@ TEST_CASE("should handle NULL boolean with numeric and binary C types", "[dataty
     REQUIRE(indicator == SQL_NULL_DATA);
   };
 
+  // Then SQL_C_FLOAT should return SQL_NULL_DATA indicator
   check_null(SQL_C_FLOAT);
+  // And SQL_C_DOUBLE should return SQL_NULL_DATA indicator
   check_null(SQL_C_DOUBLE);
+  // And SQL_C_NUMERIC should return SQL_NULL_DATA indicator
   check_null(SQL_C_NUMERIC);
 }

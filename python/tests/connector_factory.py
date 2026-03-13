@@ -85,7 +85,7 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
         "user": test_params.get("SNOWFLAKE_TEST_USER"),
         "database": test_params.get("SNOWFLAKE_TEST_DATABASE"),
         "schema": test_params.get("SNOWFLAKE_TEST_SCHEMA"),
-        "warehouse": test_params.get("SNOWFLAKE_TEST_WAREHOUSE"),
+        "warehouse": test_params.get("SNOWFLAKE_TEST_WAREHOUSE_PYTHON") or test_params.get("SNOWFLAKE_TEST_WAREHOUSE"),
         "role": test_params.get("SNOWFLAKE_TEST_ROLE"),
     }
 

@@ -65,6 +65,8 @@ class TestTimestampLtzTypeCasting:
         result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_LTZ", single_row=True)
 
         # Then All values should be returned as appropriate type
+        assert_datetime_type(result)
+
         # And Values should have timezone info
         assert_datetime_type(result, require_tzinfo=True)
 

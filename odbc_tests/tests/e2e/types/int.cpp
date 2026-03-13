@@ -15,8 +15,7 @@ TEST_CASE("should cast integer values to appropriate type for int and synonyms",
   // When Query "SELECT 0::<type>, 1000000::<type>, 9223372036854775807::<type>" is executed
   auto stmt = conn.execute_fetch("SELECT 0::INT, 1000000::INT, 9223372036854775807::BIGINT");
 
-  // Then All values should be returned as appropriate type
-  // And No precision loss should occur
+  // Then All values should be returned as appropriate type with no precision loss
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 2) == 1000000);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 9223372036854775807LL);
@@ -158,7 +157,7 @@ TEST_CASE("should handle server-side Arrow memory optimization for int columns o
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain 50000 rows
+  // Then Result should contain 50000 rows with all values equal to expected data
   int row_count = 0;
 
   while (true) {
@@ -178,7 +177,6 @@ TEST_CASE("should handle server-side Arrow memory optimization for int columns o
     ret = SQLGetData(stmt.getHandle(), 4, SQL_C_SBIGINT, &col4, sizeof(col4), NULL);
     CHECK_ODBC(ret, stmt);
 
-    // And All values should be equal to expected data
     REQUIRE(col1 == expected_col1);
     REQUIRE(col2 == expected_col2);
     REQUIRE(col3 == expected_col3);

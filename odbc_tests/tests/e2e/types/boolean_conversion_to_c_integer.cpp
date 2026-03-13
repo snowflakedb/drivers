@@ -84,7 +84,6 @@ TEST_CASE("should handle NULL boolean with integer C types", "[datatype][boolean
   Connection conn;
 
   // When Query "SELECT NULL::BOOLEAN" is executed
-  // Then All integer C type conversions should return SQL_NULL_DATA indicator
   auto check_null = [&](SQLSMALLINT c_type) {
     const auto stmt = conn.execute_fetch("SELECT NULL::BOOLEAN");
     char buffer[100] = {};
@@ -94,6 +93,7 @@ TEST_CASE("should handle NULL boolean with integer C types", "[datatype][boolean
     REQUIRE(indicator == SQL_NULL_DATA);
   };
 
+  // Then All integer C type conversions should return SQL_NULL_DATA indicator
   check_null(SQL_C_LONG);
   check_null(SQL_C_SLONG);
   check_null(SQL_C_ULONG);

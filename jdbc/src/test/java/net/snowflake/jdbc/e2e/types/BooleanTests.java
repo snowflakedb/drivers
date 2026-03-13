@@ -7,10 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Statement;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
@@ -24,36 +23,48 @@ public class BooleanTests extends SnowflakeIntegrationTestBase {
   @Test
   public void shouldCastBooleanValuesToAppropriateType() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN" is executed
-    // Then All values should be returned as appropriate type
-    // And Values should match [TRUE, FALSE, TRUE]
     Connection connection = getDefaultConnection();
-    assertSingleRow(
+
+    // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN" is executed
+    String sql =
+        "SELECT TRUE::" + BOOLEAN_TYPE + ", FALSE::" + BOOLEAN_TYPE + ", TRUE::" + BOOLEAN_TYPE;
+    withQueryResult(
         connection,
-        "SELECT TRUE::" + BOOLEAN_TYPE + ", FALSE::" + BOOLEAN_TYPE + ", TRUE::" + BOOLEAN_TYPE,
-        Arrays.asList(true, false, true));
+        sql,
+        resultSet -> {
+
+          // Then All values should be returned as appropriate type
+          List<Boolean> row = assertBooleanTypes(resultSet, 3);
+
+          // And Values should match [TRUE, FALSE, TRUE]
+          assertEquals(Arrays.asList(true, false, true), row);
+        });
   }
 
   @Test
   public void shouldSelectBooleanLiterals() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
-    // Then Result should contain [TRUE, FALSE]
     Connection connection = getDefaultConnection();
-    assertSingleRow(
+
+    // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
+    String sql = "SELECT TRUE::" + BOOLEAN_TYPE + ", FALSE::" + BOOLEAN_TYPE;
+    withQueryResult(
         connection,
-        "SELECT TRUE::" + BOOLEAN_TYPE + ", FALSE::" + BOOLEAN_TYPE,
-        Arrays.asList(true, false));
+        sql,
+        resultSet -> {
+
+          // Then Result should contain [TRUE, FALSE]
+          assertSingleRow(resultSet, Arrays.asList(true, false));
+        });
   }
 
   @Test
   public void shouldHandleNULLValuesFromLiterals() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN" is executed
-    // Then Result should contain [FALSE, NULL, TRUE, NULL]
     Connection connection = getDefaultConnection();
-    assertSingleRow(
-        connection,
+
+    // When Query "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN" is executed
+    String sql =
         "SELECT FALSE::"
             + BOOLEAN_TYPE
             + ", NULL::"
@@ -61,62 +72,93 @@ public class BooleanTests extends SnowflakeIntegrationTestBase {
             + ", TRUE::"
             + BOOLEAN_TYPE
             + ", NULL::"
-            + BOOLEAN_TYPE,
-        Arrays.asList(false, null, true, null));
+            + BOOLEAN_TYPE;
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain [FALSE, NULL, TRUE, NULL]
+          assertSingleRow(resultSet, Arrays.asList(false, null, true, null));
+        });
   }
 
   @Test
   public void shouldDownloadLargeResultSetWithMultipleChunksFromGenerator() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
-    // Then Result should contain 500000 TRUE and 500000 FALSE values
     Connection connection = getDefaultConnection();
+
+    // When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
     String sql =
         "SELECT (seq8() % 2 = 0)::"
             + BOOLEAN_TYPE
             + " AS col FROM TABLE(GENERATOR(ROWCOUNT => "
             + LARGE_RESULT_SET_SIZE
             + "))";
-    assertBooleanCounts(connection, sql, LARGE_HALF_COUNT, LARGE_HALF_COUNT, 0);
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain 500000 TRUE and 500000 FALSE values
+          assertBooleanResults(resultSet, LARGE_HALF_COUNT, LARGE_HALF_COUNT, 0);
+        });
   }
 
   @Test
   public void shouldSelectBooleanValuesFromTable() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
-    // And Row (TRUE, FALSE, TRUE) is inserted
-    // When Query "SELECT * FROM <table>" is executed
-    // Then Result should contain [TRUE, FALSE, TRUE]
     Connection connection = getDefaultConnection();
+
+    // And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
     String tableName =
         createTempTable(
             connection,
             "ud_boolean_",
             "c1 " + BOOLEAN_TYPE + ", c2 " + BOOLEAN_TYPE + ", c3 " + BOOLEAN_TYPE);
+
+    // And Row (TRUE, FALSE, TRUE) is inserted
     execute(connection, "INSERT INTO " + tableName + " VALUES (TRUE, FALSE, TRUE)");
-    assertSingleRow(connection, "SELECT * FROM " + tableName, Arrays.asList(true, false, true));
+
+    // When Query "SELECT * FROM <table>" is executed
+    withQueryResult(
+        connection,
+        "SELECT * FROM " + tableName,
+        resultSet -> {
+
+          // Then Result should contain [TRUE, FALSE, TRUE]
+          assertSingleRow(resultSet, Arrays.asList(true, false, true));
+        });
   }
 
   @Test
   public void shouldHandleNULLValuesFromTable() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with BOOLEAN column exists
-    // And Rows [NULL, TRUE, FALSE] are inserted
-    // When Query "SELECT * FROM <table>" is executed
-    // Then Result should contain [NULL, TRUE, FALSE] in any order
     Connection connection = getDefaultConnection();
+
+    // And Table with BOOLEAN column exists
     String tableName = createTempTable(connection, "ud_boolean_", "col " + BOOLEAN_TYPE);
+
+    // And Rows [NULL, TRUE, FALSE] are inserted
     execute(connection, "INSERT INTO " + tableName + " VALUES (NULL), (TRUE), (FALSE)");
-    assertBooleanCounts(connection, "SELECT col FROM " + tableName, 1, 1, 1);
+
+    // When Query "SELECT * FROM <table>" is executed
+    withQueryResult(
+        connection,
+        "SELECT col FROM " + tableName,
+        resultSet -> {
+
+          // Then Result should contain [NULL, TRUE, FALSE] in any order
+          assertBooleanResults(resultSet, 1, 1, 1);
+        });
   }
 
   @Test
   public void shouldDownloadLargeResultSetWithMultipleChunksFromTable() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
-    // When Query "SELECT col FROM <table>" is executed
-    // Then Result should contain 500000 TRUE and 500000 FALSE values
     Connection connection = getDefaultConnection();
+
+    // And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
     String tableName = createTempTable(connection, "ud_boolean_", "col " + BOOLEAN_TYPE);
     execute(
         connection,
@@ -127,90 +169,103 @@ public class BooleanTests extends SnowflakeIntegrationTestBase {
             + " FROM TABLE(GENERATOR(ROWCOUNT => "
             + LARGE_RESULT_SET_SIZE
             + "))");
-    assertBooleanCounts(
-        connection, "SELECT col FROM " + tableName, LARGE_HALF_COUNT, LARGE_HALF_COUNT, 0);
+
+    // When Query "SELECT col FROM <table>" is executed
+    withQueryResult(
+        connection,
+        "SELECT col FROM " + tableName,
+        resultSet -> {
+
+          // Then Result should contain 500000 TRUE and 500000 FALSE values
+          assertBooleanResults(resultSet, LARGE_HALF_COUNT, LARGE_HALF_COUNT, 0);
+        });
   }
 
   @Test
   public void shouldSelectBooleanUsingParameterBinding() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed with bound boolean values
-    // [TRUE, FALSE, TRUE]
-    // Then Result should contain [TRUE, FALSE, TRUE]
-    // When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
-    // Then Result should contain [NULL]
     Connection connection = getDefaultConnection();
 
-    try (PreparedStatement preparedStatement =
-        connection.prepareStatement(
-            "SELECT ?::" + BOOLEAN_TYPE + ", ?::" + BOOLEAN_TYPE + ", ?::" + BOOLEAN_TYPE)) {
-      preparedStatement.setBoolean(1, true);
-      preparedStatement.setBoolean(2, false);
-      preparedStatement.setBoolean(3, true);
-      try (ResultSet resultSet = preparedStatement.executeQuery()) {
-        assertTrue(resultSet.next(), "Expected one row for type: " + BOOLEAN_TYPE);
-        assertBooleanColumn(resultSet, 1, true, "Column 1 mismatch for " + BOOLEAN_TYPE);
-        assertBooleanColumn(resultSet, 2, false, "Column 2 mismatch for " + BOOLEAN_TYPE);
-        assertBooleanColumn(resultSet, 3, true, "Column 3 mismatch for " + BOOLEAN_TYPE);
-        assertFalse(resultSet.next(), "Expected exactly one row for type: " + BOOLEAN_TYPE);
-      }
-    }
+    // When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed with bound boolean values
+    // [TRUE, FALSE, TRUE]
+    withPreparedQueryResult(
+        connection,
+        "SELECT ?::" + BOOLEAN_TYPE + ", ?::" + BOOLEAN_TYPE + ", ?::" + BOOLEAN_TYPE,
+        ps -> {
+          ps.setBoolean(1, true);
+          ps.setBoolean(2, false);
+          ps.setBoolean(3, true);
+        },
+        resultSet -> {
 
-    try (PreparedStatement preparedStatement =
-        connection.prepareStatement("SELECT ?::" + BOOLEAN_TYPE)) {
-      preparedStatement.setNull(1, Types.BOOLEAN);
-      try (ResultSet resultSet = preparedStatement.executeQuery()) {
-        assertTrue(resultSet.next(), "Expected one row for type: " + BOOLEAN_TYPE);
-        assertBooleanColumn(resultSet, 1, null, "Column 1 mismatch for " + BOOLEAN_TYPE);
-        assertFalse(resultSet.next(), "Expected exactly one row for type: " + BOOLEAN_TYPE);
-      }
-    }
+          // Then Result should contain [TRUE, FALSE, TRUE]
+          assertSingleRow(resultSet, Arrays.asList(true, false, true));
+        });
+
+    // When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
+    withPreparedQueryResult(
+        connection,
+        "SELECT ?::" + BOOLEAN_TYPE,
+        ps -> ps.setNull(1, Types.BOOLEAN),
+        resultSet -> {
+
+          // Then Result should contain [NULL]
+          assertSingleRow(resultSet, Arrays.asList((Boolean) null));
+        });
   }
 
-  private static void assertSingleRow(
-      Connection connection, String sql, List<Boolean> expectedValues) throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + BOOLEAN_TYPE);
-      for (int i = 0; i < expectedValues.size(); i++) {
-        assertBooleanColumn(
-            resultSet,
-            i + 1,
-            expectedValues.get(i),
-            "Column " + (i + 1) + " mismatch for " + BOOLEAN_TYPE);
-      }
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + BOOLEAN_TYPE);
-    }
-  }
-
-  private static void assertBooleanCounts(
-      Connection connection, String sql, int expectedTrue, int expectedFalse, int expectedNull)
+  private static List<Boolean> assertBooleanTypes(ResultSet resultSet, int columnCount)
       throws Exception {
+    assertTrue(resultSet.next(), "Expected one row for type: " + BOOLEAN_TYPE);
+    List<Boolean> values = new ArrayList<>();
+    for (int i = 1; i <= columnCount; i++) {
+      Object objectValue = resultSet.getObject(i);
+      assertInstanceOf(
+          Boolean.class,
+          objectValue,
+          "Column " + i + " getObject should return Boolean for " + BOOLEAN_TYPE);
+      assertFalse(resultSet.wasNull(), "Column " + i + " should not be NULL for " + BOOLEAN_TYPE);
+      values.add((Boolean) objectValue);
+    }
+    assertFalse(resultSet.next(), "Expected exactly one row for type: " + BOOLEAN_TYPE);
+    return values;
+  }
+
+  private static void assertSingleRow(ResultSet resultSet, List<Boolean> expectedValues)
+      throws Exception {
+    assertTrue(resultSet.next(), "Expected one row for type: " + BOOLEAN_TYPE);
+    for (int i = 0; i < expectedValues.size(); i++) {
+      assertBooleanGetters(
+          resultSet,
+          i + 1,
+          expectedValues.get(i),
+          "Column " + (i + 1) + " mismatch for " + BOOLEAN_TYPE);
+    }
+    assertFalse(resultSet.next(), "Expected exactly one row for type: " + BOOLEAN_TYPE);
+  }
+
+  private static void assertBooleanResults(
+      ResultSet resultSet, int expectedTrue, int expectedFalse, int expectedNull) throws Exception {
     BooleanCounts counts = new BooleanCounts();
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      while (resultSet.next()) {
-        Object objectValue = resultSet.getObject(1);
-        if (objectValue == null) {
-          counts.nullCount++;
-          assertTrue(
-              resultSet.wasNull(), "getObject should set wasNull() for NULL " + BOOLEAN_TYPE);
-          assertFalse(
-              resultSet.getBoolean(1), "getBoolean should return false for NULL " + BOOLEAN_TYPE);
-          assertTrue(
-              resultSet.wasNull(), "getBoolean should set wasNull() for NULL " + BOOLEAN_TYPE);
+    while (resultSet.next()) {
+      Object objectValue = resultSet.getObject(1);
+      if (objectValue == null) {
+        counts.nullCount++;
+        assertTrue(resultSet.wasNull(), "getObject should set wasNull() for NULL " + BOOLEAN_TYPE);
+        assertFalse(
+            resultSet.getBoolean(1), "getBoolean should return false for NULL " + BOOLEAN_TYPE);
+        assertTrue(resultSet.wasNull(), "getBoolean should set wasNull() for NULL " + BOOLEAN_TYPE);
+      } else {
+        assertInstanceOf(
+            Boolean.class, objectValue, "getObject should return Boolean for " + BOOLEAN_TYPE);
+        assertFalse(resultSet.wasNull(), "getObject should not be NULL for " + BOOLEAN_TYPE);
+        boolean boolValue = resultSet.getBoolean(1);
+        assertFalse(resultSet.wasNull(), "getBoolean should not be NULL for " + BOOLEAN_TYPE);
+        assertEquals(objectValue, boolValue, "Boolean value mismatch");
+        if (boolValue) {
+          counts.trueCount++;
         } else {
-          assertInstanceOf(
-              Boolean.class, objectValue, "getObject should return Boolean for " + BOOLEAN_TYPE);
-          assertFalse(resultSet.wasNull(), "getObject should not be NULL for " + BOOLEAN_TYPE);
-          boolean boolValue = resultSet.getBoolean(1);
-          assertFalse(resultSet.wasNull(), "getBoolean should not be NULL for " + BOOLEAN_TYPE);
-          assertEquals(objectValue, boolValue, "Boolean value mismatch");
-          if (boolValue) {
-            counts.trueCount++;
-          } else {
-            counts.falseCount++;
-          }
+          counts.falseCount++;
         }
       }
     }
@@ -220,7 +275,7 @@ public class BooleanTests extends SnowflakeIntegrationTestBase {
     assertEquals(expectedNull, counts.nullCount, "Unexpected NULL count for " + BOOLEAN_TYPE);
   }
 
-  private static void assertBooleanColumn(
+  private static void assertBooleanGetters(
       ResultSet resultSet, int columnIndex, Boolean expected, String message) throws Exception {
     if (expected == null) {
       assertNull(resultSet.getObject(columnIndex), message + " (getObject should be NULL)");

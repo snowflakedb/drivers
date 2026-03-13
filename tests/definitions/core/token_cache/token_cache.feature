@@ -110,6 +110,7 @@ Feature: SSO/MFA Token caching
   @core_unit
   Scenario: Should support configurable retry parameters
     Given a file-based credential store with custom retry settings
+    When the credential store is initialized
     Then the retry count, delay, and stale lock timeout should match
 
   # --- file_cache.rs: concurrency_tests ---
@@ -173,6 +174,7 @@ Feature: SSO/MFA Token caching
   @core_unit
   Scenario: Should report persistence as until delete via adapter
     Given a file-based credential builder
+    When the persistence type is queried
     Then its persistence should be UntilDelete
 
   @core_unit

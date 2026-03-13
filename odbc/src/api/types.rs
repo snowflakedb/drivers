@@ -5,7 +5,7 @@ use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::conversion::NumericSettings;
 use crate::conversion::warning::Warnings;
-use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
+use arrow::{array::RecordBatch, datatypes::SchemaRef, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
@@ -244,6 +244,8 @@ pub enum DescField {
     BindOffsetPtr = 24,
     /// `SQL_DESC_BIND_TYPE` (25) — header: row-wise vs column-wise binding.
     BindType = 25,
+    /// `SQL_DESC_DATETIME_INTERVAL_PRECISION` (26) — leading precision for interval C types.
+    DatetimeIntervalPrecision = 26,
     /// `SQL_DESC_ROWS_PROCESSED_PTR` (34) — header: pointer to rows-processed count.
     RowsProcessedPtr = 34,
     /// `SQL_DESC_COUNT` (1001) — number of bound columns (header field, record 0).
@@ -274,6 +276,7 @@ impl TryFrom<i16> for DescField {
             21 => Ok(DescField::ArrayStatusPtr),
             24 => Ok(DescField::BindOffsetPtr),
             25 => Ok(DescField::BindType),
+            26 => Ok(DescField::DatetimeIntervalPrecision),
             34 => Ok(DescField::RowsProcessedPtr),
             1001 => Ok(DescField::Count),
             1002 => Ok(DescField::Type),
@@ -523,20 +526,24 @@ pub struct ParameterBinding {
 pub enum StatementState {
     Created,
     Prepared {
-        reader: ArrowArrayStreamReader,
+        schema: SchemaRef,
     },
     Executed {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
     },
-    NoResultSet,
+    NoResultSet {
+        schema: SchemaRef,
+    },
     Fetching {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,
         batch_idx: usize,
         rows_affected: Option<i64>,
     },
-    Done,
+    Done {
+        schema: SchemaRef,
+    },
     Error,
 }
 

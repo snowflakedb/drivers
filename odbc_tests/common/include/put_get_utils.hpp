@@ -133,12 +133,12 @@ inline std::filesystem::path write_text_file(const std::filesystem::path& dir, c
 // the new driver returns just the filename (same as Linux).
 inline std::string expected_put_source(const std::filesystem::path& file_path) {
   WINDOWS_ONLY {
-    OLD_DRIVER_ONLY("BD#20") {
+    OLD_DRIVER_ONLY("BD#19") {
       std::string s = std::filesystem::absolute(file_path).string();
       std::replace(s.begin(), s.end(), '\\', '/');
       return s;
     }
-    NEW_DRIVER_ONLY("BD#20") { return file_path.filename().string(); }
+    NEW_DRIVER_ONLY("BD#19") { return file_path.filename().string(); }
   }
   UNIX_ONLY { return file_path.filename().string(); }
 }

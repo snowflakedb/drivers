@@ -1,9 +1,12 @@
 import pytest
 
+from tests.e2e.types.utils import assert_connection_is_open
+
 
 @pytest.mark.skip_reference(reason="CRL e2e applies to universal driver")
-def test_should_connect_and_select_with_crl_enabled(connection_factory):
+def test_should_connect_and_select_with_crl_enabled(execute_query, connection_factory):
     # Given Snowflake client is logged in
+    assert_connection_is_open(execute_query)
     with connection_factory(crl_check_mode="ENABLED") as conn:
         cur = conn.cursor()
 

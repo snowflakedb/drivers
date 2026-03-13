@@ -186,7 +186,7 @@ impl WriteODBCType for SnowflakeReal {
                 let numeric = sql::Numeric {
                     precision: binding.precision.unwrap_or(38) as u8,
                     scale: target_scale as i8,
-                    sign: if magnitude > 0 && snowflake_value.is_sign_negative() {
+                    sign: if snowflake_value.is_sign_negative() {
                         0
                     } else {
                         1
@@ -262,7 +262,7 @@ impl WriteODBCType for SnowflakeReal {
                 let numeric = sql::Numeric {
                     precision: 38,
                     scale: 0,
-                    sign: if magnitude > 0 && snowflake_value.is_sign_negative() {
+                    sign: if snowflake_value.is_sign_negative() {
                         0
                     } else {
                         1
