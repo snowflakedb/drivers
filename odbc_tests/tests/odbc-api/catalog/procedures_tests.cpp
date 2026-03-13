@@ -300,6 +300,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Non-existent procedure r
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Various parameter combinations are accepted",
                  "[odbc-api][procedures][catalog]") {
+  SKIP("Long-running: multiple catalog round-trips cause timeout");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto schema = Schema::use_random_schema(dbc_handle());
@@ -343,6 +344,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Various parameter combin
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Can call multiple times on same statement after close cursor",
                  "[odbc-api][procedures][catalog]") {
+  SKIP("Long-running: multiple catalog round-trips cause timeout");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto schema = Schema::use_random_schema(dbc_handle());

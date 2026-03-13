@@ -189,6 +189,40 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
     }
     
     /**
+     * Method: databaseSetOptionBool
+     */
+    public DatabaseDriverV1.DatabaseSetOptionBoolResponse databaseSetOptionBool(DatabaseDriverV1.DatabaseSetOptionBoolRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "database_set_option_bool",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.DatabaseSetOptionBoolResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
      * Method: databaseInit
      */
     public DatabaseDriverV1.DatabaseInitResponse databaseInit(DatabaseDriverV1.DatabaseInitRequest request) throws ServiceException, TransportException {
@@ -408,6 +442,40 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
         if (code == CoreTransport.CODE_SUCCESS) {
             try {
                 return DatabaseDriverV1.ConnectionSetOptionDoubleResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
+     * Method: connectionSetOptionBool
+     */
+    public DatabaseDriverV1.ConnectionSetOptionBoolResponse connectionSetOptionBool(DatabaseDriverV1.ConnectionSetOptionBoolRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "connection_set_option_bool",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.ConnectionSetOptionBoolResponse.parseFrom(responseBytes);
             } catch (InvalidProtocolBufferException e) {
                 throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
             }
@@ -1054,6 +1122,40 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
         if (code == CoreTransport.CODE_SUCCESS) {
             try {
                 return DatabaseDriverV1.StatementSetOptionDoubleResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
+     * Method: statementSetOptionBool
+     */
+    public DatabaseDriverV1.StatementSetOptionBoolResponse statementSetOptionBool(DatabaseDriverV1.StatementSetOptionBoolRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "statement_set_option_bool",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.StatementSetOptionBoolResponse.parseFrom(responseBytes);
             } catch (InvalidProtocolBufferException e) {
                 throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
             }

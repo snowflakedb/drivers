@@ -34,6 +34,11 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.DatabaseSetOptionDoubleResponse databaseSetOptionDouble(DatabaseDriverV1.DatabaseSetOptionDoubleRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: databaseSetOptionBool
+     */
+    DatabaseDriverV1.DatabaseSetOptionBoolResponse databaseSetOptionBool(DatabaseDriverV1.DatabaseSetOptionBoolRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: databaseInit
      */
     DatabaseDriverV1.DatabaseInitResponse databaseInit(DatabaseDriverV1.DatabaseInitRequest request) throws ServiceException, TransportException;
@@ -67,6 +72,11 @@ public interface DatabaseDriverService {
      * Method: connectionSetOptionDouble
      */
     DatabaseDriverV1.ConnectionSetOptionDoubleResponse connectionSetOptionDouble(DatabaseDriverV1.ConnectionSetOptionDoubleRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: connectionSetOptionBool
+     */
+    DatabaseDriverV1.ConnectionSetOptionBoolResponse connectionSetOptionBool(DatabaseDriverV1.ConnectionSetOptionBoolRequest request) throws ServiceException, TransportException;
 
     /**
      * Method: connectionInit
@@ -162,6 +172,11 @@ public interface DatabaseDriverService {
      * Method: statementSetOptionDouble
      */
     DatabaseDriverV1.StatementSetOptionDoubleResponse statementSetOptionDouble(DatabaseDriverV1.StatementSetOptionDoubleRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: statementSetOptionBool
+     */
+    DatabaseDriverV1.StatementSetOptionBoolResponse statementSetOptionBool(DatabaseDriverV1.StatementSetOptionBoolRequest request) throws ServiceException, TransportException;
 
     /**
      * Method: statementGetParameterSchema
