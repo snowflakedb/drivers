@@ -7,9 +7,6 @@
 #
 # Docker image: same as used in Jenkins CI (rhel8-universal-driver-coverage)
 
-env:
-  DOCKER_IMAGE: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
-
 steps:
   # --------------------------------------------------------------------------
   # Rust Core E2E Tests
@@ -23,11 +20,11 @@ steps:
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
-      export PARAMETER_PATH=$$(pwd)/parameters.json
+      export PARAMETER_PATH=$(pwd)/parameters.json
       cargo test --package sf_core -- --ignored
     plugins:
       - docker#v5.11.0:
-          image: "$${DOCKER_IMAGE}"
+          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
           propagate-environment: true
           environment:
             - "PARAMETERS_SECRET"
@@ -50,7 +47,7 @@ steps:
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
-      export PARAMETER_PATH=$$(pwd)/parameters.json
+      export PARAMETER_PATH=$(pwd)/parameters.json
 
       cd python
       RUSTFLAGS="" hatch build -t wheel
@@ -58,7 +55,7 @@ steps:
       hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
     plugins:
       - docker#v5.11.0:
-          image: "$${DOCKER_IMAGE}"
+          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
           propagate-environment: true
           environment:
             - "PARAMETERS_SECRET"
@@ -81,7 +78,7 @@ steps:
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
-      export PARAMETER_PATH=$$(pwd)/parameters.json
+      export PARAMETER_PATH=$(pwd)/parameters.json
 
       # Build the ODBC driver
       cargo build
@@ -95,16 +92,16 @@ steps:
           -D ODBC_INCLUDE_DIR="/usr/include" \
           -D DRIVER_TYPE=NEW \
           .
-      cmake --build cmake-build -- -j $$(nproc)
+      cmake --build cmake-build -- -j $(nproc)
 
       # Run ODBC integration tests
-      WORKSPACE_ROOT=$$(pwd)/..
-      export DRIVER_PATH=$${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-      export PARAMETER_PATH=$${WORKSPACE_ROOT}/parameters.json
+      WORKSPACE_ROOT=$(pwd)/..
+      export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+      export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
       ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error
     plugins:
       - docker#v5.11.0:
-          image: "$${DOCKER_IMAGE}"
+          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
           propagate-environment: true
           environment:
             - "PARAMETERS_SECRET"
@@ -127,20 +124,20 @@ steps:
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
-      export PARAMETER_PATH=$$(pwd)/parameters.json
+      export PARAMETER_PATH=$(pwd)/parameters.json
 
       # Build Rust components needed by JDBC
       cargo build --package sf_core
       cargo build --package jdbc_bridge
 
       # Run JDBC tests
-      export CORE_PATH=$$(pwd)/target/debug/libjdbc_bridge.so
+      export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
       chmod +x jdbc/gradlew
       cd jdbc
       ./gradlew test --stacktrace
     plugins:
       - docker#v5.11.0:
-          image: "$${DOCKER_IMAGE}"
+          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
           propagate-environment: true
           environment:
             - "PARAMETERS_SECRET"
