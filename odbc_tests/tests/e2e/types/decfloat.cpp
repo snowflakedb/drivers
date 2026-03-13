@@ -4,8 +4,9 @@
 // Snowflake DECFLOAT: 38-digit precision with extreme exponents (up to E+16384).
 // No numeric C type can represent this, so values are read as SQL_C_CHAR strings.
 //
-// The new driver does not yet support DECFLOAT Arrow format; all tests
-// are skipped via SKIP_NEW_DRIVER_NOT_IMPLEMENTED() until support lands.
+// NOTE: Parameter binding for DECFLOAT is not yet supported in the core driver.
+// SELECT tests that use bound parameters are skipped via SKIP_NEW_DRIVER_NOT_IMPLEMENTED().
+// INSERT tests work because parameters are bound as SQL_VARCHAR strings (server-side conversion).
 #include <sql.h>
 #include <sqlext.h>
 #include <sqltypes.h>
@@ -26,8 +27,6 @@
 // ============================================================================
 
 TEST_CASE("should cast decfloat values to appropriate type", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -62,8 +61,6 @@ TEST_CASE("should cast decfloat values to appropriate type", "[decfloat]") {
 // ============================================================================
 
 TEST_CASE("should select decfloat literals", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -81,8 +78,6 @@ TEST_CASE("should select decfloat literals", "[decfloat]") {
 }
 
 TEST_CASE("should handle full 38-digit precision values from literals", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -109,8 +104,6 @@ TEST_CASE("should handle full 38-digit precision values from literals", "[decflo
 }
 
 TEST_CASE("should handle case exponent values from literals", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -143,8 +136,6 @@ TEST_CASE("should handle case exponent values from literals", "[decfloat]") {
 }
 
 TEST_CASE("should handle NULL values from literals", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -158,8 +149,6 @@ TEST_CASE("should handle NULL values from literals", "[decfloat]") {
 }
 
 TEST_CASE("should download large result set with multiple chunks from GENERATOR", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -191,8 +180,6 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
 // ============================================================================
 
 TEST_CASE("should select decfloats from table", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -229,8 +216,6 @@ TEST_CASE("should select decfloats from table", "[decfloat]") {
 }
 
 TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -276,8 +261,6 @@ TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]
 }
 
 TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -324,8 +307,6 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
 }
 
 TEST_CASE("should handle NULL values from table", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -358,8 +339,6 @@ TEST_CASE("should handle NULL values from table", "[decfloat]") {
 }
 
 TEST_CASE("should download large result set with multiple chunks from table", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -504,8 +483,6 @@ TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
 }
 
 TEST_CASE("should insert decfloat using parameter binding", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -564,8 +541,6 @@ TEST_CASE("should insert decfloat using parameter binding", "[decfloat]") {
 }
 
 TEST_CASE("should insert extreme decfloat values using parameter binding", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
