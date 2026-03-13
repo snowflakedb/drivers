@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Requires GnuPG (gpg) 2.2+; verify with `gpg --version`
+
 # Read param secret from 1password if not set
 if [ -z "${PARAMETERS_SECRET}" ]; then
     echo "PARAMETERS_SECRET not set, reading from 1password"

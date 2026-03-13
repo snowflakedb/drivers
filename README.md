@@ -19,7 +19,7 @@ This project contains multiple test suites across different driver implementatio
 All integration tests require access to Snowflake credentials. To set up the required `parameters.json` file:
 
 ```bash
-# Install 1Password CLI if not already installed
+# Install GnuPG (gpg) 2.2+ and the 1Password CLI if not already installed
 # Then decode the encrypted parameters file:
 ./scripts/decode_secrets.sh
 ```

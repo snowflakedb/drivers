@@ -1,11 +1,11 @@
-@python
+@python @jdbc
 Feature: TIMESTAMP_LTZ type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should cast timestamp_ltz values to appropriate type
     # Python: Values should be cast to 'datetime' type with tzinfo set
     Given Snowflake client is logged in
@@ -17,7 +17,7 @@ Feature: TIMESTAMP_LTZ type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should select timestamp_ltz <values>
     Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
@@ -29,13 +29,13 @@ Feature: TIMESTAMP_LTZ type support
       | epoch        | '1970-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ                                                       | 1970-01-01 00:00:00 UTC                           |
       | microseconds | '2024-01-15 10:30:00.123456 +00:00'::TIMESTAMP_LTZ                                                | 2024-01-15 10:30:00.123456 UTC                    |
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should handle NULL values for timestamp_ltz
     Given Snowflake client is logged in
     When Query "SELECT '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ, NULL::TIMESTAMP_LTZ" is executed
     Then Result should contain [2024-01-15 10:30:00 UTC, NULL]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should download large result set with multiple chunks for timestamp_ltz
     Given Snowflake client is logged in
     When Query "SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1, '2024-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ) as ts FROM TABLE(GENERATOR(ROWCOUNT => 50000)) ORDER BY ts" is executed
@@ -45,7 +45,7 @@ Feature: TIMESTAMP_LTZ type support
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario Outline: should select <values> from table for timestamp_ltz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ column exists with values <insert_values>
@@ -58,7 +58,7 @@ Feature: TIMESTAMP_LTZ type support
       | epoch  | '1970-01-01 00:00:00 +00:00', '2024-01-15 10:30:00 +00:00'           | 1970-01-01 00:00:00 UTC, 2024-01-15 10:30:00 UTC |
       | null   | NULL, '2024-01-15 10:30:00 +00:00'                                    | 2024-01-15 10:30:00 UTC, NULL                     |
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should download large result set with multiple chunks from table for timestamp_ltz
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ column exists with 50000 sequential timestamp values
@@ -69,7 +69,7 @@ Feature: TIMESTAMP_LTZ type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should select timestamp_ltz using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ" is executed with bound timestamp values
@@ -77,7 +77,7 @@ Feature: TIMESTAMP_LTZ type support
     When Query "SELECT ?::TIMESTAMP_LTZ" is executed with bound NULL value
     Then Result should contain [NULL]
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert timestamp_ltz using parameter binding
     Given Snowflake client is logged in
     And Table with TIMESTAMP_LTZ column exists
