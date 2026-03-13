@@ -9,12 +9,12 @@ Feature: ODBC boolean to integer type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario Outline: should convert boolean to <c_type>
+  Scenario Outline: should convert boolean to signed integer <c_type>
     Given Snowflake client is logged in
     When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
     Then <c_type> should return 1 for TRUE and 0 for FALSE
 
-    Examples: Signed integer types
+    Examples:
       | c_type         |
       | SQL_C_LONG     |
       | SQL_C_SLONG    |
@@ -24,7 +24,13 @@ Feature: ODBC boolean to integer type conversions
       | SQL_C_STINYINT |
       | SQL_C_SBIGINT  |
 
-    Examples: Unsigned integer types
+  @odbc_e2e
+  Scenario Outline: should convert boolean to unsigned integer <c_type>
+    Given Snowflake client is logged in
+    When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
+    Then <c_type> should return 1 for TRUE and 0 for FALSE
+
+    Examples:
       | c_type         |
       | SQL_C_ULONG    |
       | SQL_C_USHORT   |

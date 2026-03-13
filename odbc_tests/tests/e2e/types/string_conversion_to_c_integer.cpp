@@ -29,7 +29,7 @@
 // SUCCESSFUL CONVERSIONS - String to Signed Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to c_type", "[datatype][string][conversion][integer]") {
+TEST_CASE("should convert string literals to signed c_type", "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -45,41 +45,43 @@ TEST_CASE("should convert string literals to c_type", "[datatype][string][conver
       "'9223372036854775807' AS c16, '-9223372036854775808' AS c17, '1234567890123456789' AS c18");
 
   // Then <c_type> conversions should work
-  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_LONG>(stmt, 2) == -456);
-  CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
-  CHECK(get_data<SQL_C_LONG>(stmt, 4) == 2147483647);
-  CHECK(get_data<SQL_C_LONG>(stmt, 5) == -2147483648);
-
-  // And SQL_C_SLONG conversions should work
-  CHECK(get_data<SQL_C_SLONG>(stmt, 6) == 999);
-  CHECK(get_data<SQL_C_SLONG>(stmt, 7) == -999);
-
-  // And SQL_C_SHORT conversions should work
-  CHECK(get_data<SQL_C_SHORT>(stmt, 8) == 32767);
-  CHECK(get_data<SQL_C_SHORT>(stmt, 9) == -32768);
-
-  // And SQL_C_TINYINT conversions should work
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 10) == 100);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 11) == -100);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 12) == 127);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 13) == -128);
-
-  // And SQL_C_STINYINT conversions should work
-  CHECK(get_data<SQL_C_STINYINT>(stmt, 14) == 50);
-  CHECK(get_data<SQL_C_STINYINT>(stmt, 15) == -50);
-
-  // And SQL_C_SBIGINT conversions should work
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 16) == 9223372036854775807LL);
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 17) == (-9223372036854775807LL - 1));
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 18) == 1234567890123456789LL);
+  SECTION("SQL_C_LONG") {
+    CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
+    CHECK(get_data<SQL_C_LONG>(stmt, 2) == -456);
+    CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
+    CHECK(get_data<SQL_C_LONG>(stmt, 4) == 2147483647);
+    CHECK(get_data<SQL_C_LONG>(stmt, 5) == -2147483648);
+  }
+  SECTION("SQL_C_SLONG") {
+    CHECK(get_data<SQL_C_SLONG>(stmt, 6) == 999);
+    CHECK(get_data<SQL_C_SLONG>(stmt, 7) == -999);
+  }
+  SECTION("SQL_C_SHORT") {
+    CHECK(get_data<SQL_C_SHORT>(stmt, 8) == 32767);
+    CHECK(get_data<SQL_C_SHORT>(stmt, 9) == -32768);
+  }
+  SECTION("SQL_C_TINYINT") {
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 10) == 100);
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 11) == -100);
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 12) == 127);
+    CHECK(get_data<SQL_C_TINYINT>(stmt, 13) == -128);
+  }
+  SECTION("SQL_C_STINYINT") {
+    CHECK(get_data<SQL_C_STINYINT>(stmt, 14) == 50);
+    CHECK(get_data<SQL_C_STINYINT>(stmt, 15) == -50);
+  }
+  SECTION("SQL_C_SBIGINT") {
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 16) == 9223372036854775807LL);
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 17) == (-9223372036854775807LL - 1));
+    CHECK(get_data<SQL_C_SBIGINT>(stmt, 18) == 1234567890123456789LL);
+  }
 }
 
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to Unsigned Integer Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to c_type (unsigned)", "[datatype][string][conversion][integer]") {
+TEST_CASE("should convert string literals to unsigned c_type", "[datatype][string][conversion][integer]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -93,23 +95,21 @@ TEST_CASE("should convert string literals to c_type (unsigned)", "[datatype][str
       "'100' AS c8, '200' AS c9");
 
   // Then <c_type> conversions should work
-  CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_ULONG>(stmt, 2) == 0);
-  CHECK(get_data<SQL_C_ULONG>(stmt, 3) == 4294967295U);
-
-  // And SQL_C_USHORT conversions should work
-  CHECK(get_data<SQL_C_USHORT>(stmt, 4) == 65535);
-
-  // And SQL_C_UTINYINT conversions should work
-  CHECK(get_data<SQL_C_UTINYINT>(stmt, 5) == 255);
-
-  // And SQL_C_UBIGINT conversions should work
-  CHECK(get_data<SQL_C_UBIGINT>(stmt, 6) == 18446744073709551615ULL);
-  CHECK(get_data<SQL_C_UBIGINT>(stmt, 7) == 12345678901234567890ULL);
-
-  // And SQL_C_SSHORT conversions should work
-  CHECK(get_data<SQL_C_SSHORT>(stmt, 8) == 100);
-  CHECK(get_data<SQL_C_SSHORT>(stmt, 9) == 200);
+  SECTION("SQL_C_ULONG") {
+    CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
+    CHECK(get_data<SQL_C_ULONG>(stmt, 2) == 0);
+    CHECK(get_data<SQL_C_ULONG>(stmt, 3) == 4294967295U);
+  }
+  SECTION("SQL_C_USHORT") { CHECK(get_data<SQL_C_USHORT>(stmt, 4) == 65535); }
+  SECTION("SQL_C_UTINYINT") { CHECK(get_data<SQL_C_UTINYINT>(stmt, 5) == 255); }
+  SECTION("SQL_C_UBIGINT") {
+    CHECK(get_data<SQL_C_UBIGINT>(stmt, 6) == 18446744073709551615ULL);
+    CHECK(get_data<SQL_C_UBIGINT>(stmt, 7) == 12345678901234567890ULL);
+  }
+  SECTION("SQL_C_SSHORT") {
+    CHECK(get_data<SQL_C_SSHORT>(stmt, 8) == 100);
+    CHECK(get_data<SQL_C_SSHORT>(stmt, 9) == 200);
+  }
 }
 
 // ============================================================================

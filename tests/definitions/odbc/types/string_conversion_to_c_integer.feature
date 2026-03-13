@@ -10,12 +10,12 @@ Feature: ODBC string to integer type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario Outline: should convert string literals to <c_type>
+  Scenario Outline: should convert string literals to signed <c_type>
     Given Snowflake client is logged in
     When Query selecting string literals representing integers is executed
     Then <c_type> conversions should work
 
-    Examples: Signed integer types
+    Examples:
       | c_type         |
       | SQL_C_LONG     |
       | SQL_C_SLONG    |
@@ -25,12 +25,12 @@ Feature: ODBC string to integer type conversions
       | SQL_C_SBIGINT  |
 
   @odbc_e2e
-  Scenario Outline: should convert string literals to <c_type> (unsigned)
+  Scenario Outline: should convert string literals to unsigned <c_type>
     Given Snowflake client is logged in
     When Query selecting string literals representing unsigned integers is executed
     Then <c_type> conversions should work
 
-    Examples: Unsigned integer types
+    Examples:
       | c_type         |
       | SQL_C_ULONG    |
       | SQL_C_USHORT   |

@@ -449,14 +449,14 @@ TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
   }
 }
 
-TEST_CASE("should select extreme decfloat values using parameter binding", "[decfloat]") {
+TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
-  {
+  SECTION("max exponent") {
+    // When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT", SQL_NTS);
     CHECK_ODBC(ret, stmt);
@@ -472,12 +472,12 @@ TEST_CASE("should select extreme decfloat values using parameter binding", "[dec
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
-    // Then Result should contain [1E+16384]
+    // Then Result should contain [<expected>]
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
   }
 
-  // When Query "SELECT ?::DECFLOAT" is executed with bound value -1.234E+8000
-  {
+  SECTION("large negative exponent") {
+    // When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT", SQL_NTS);
     CHECK_ODBC(ret, stmt);
@@ -493,7 +493,7 @@ TEST_CASE("should select extreme decfloat values using parameter binding", "[dec
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
-    // Then Result should contain [-1.234E+8000]
+    // Then Result should contain [<expected>]
     NEW_DRIVER_ONLY("BD#23") { CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000"); }
     OLD_DRIVER_ONLY("BD#23") { CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997"); }
   }

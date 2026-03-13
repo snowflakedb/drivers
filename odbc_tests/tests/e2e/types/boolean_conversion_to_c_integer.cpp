@@ -7,7 +7,7 @@
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
 
-TEST_CASE("should convert boolean to c_type", "[datatype][boolean][conversion][integer]") {
+TEST_CASE("should convert boolean to signed integer c_type", "[datatype][boolean][conversion][integer]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -15,48 +15,60 @@ TEST_CASE("should convert boolean to c_type", "[datatype][boolean][conversion][i
   const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
 
   // Then <c_type> should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 2) == 0);
+  SECTION("SQL_C_LONG") {
+    REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_SLONG") {
+    REQUIRE(check_no_truncation<SQL_C_SLONG>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_SLONG>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_SHORT") {
+    REQUIRE(check_no_truncation<SQL_C_SHORT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_SHORT>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_SSHORT") {
+    REQUIRE(check_no_truncation<SQL_C_SSHORT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_SSHORT>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_TINYINT") {
+    REQUIRE(check_no_truncation<SQL_C_TINYINT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_TINYINT>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_STINYINT") {
+    REQUIRE(check_no_truncation<SQL_C_STINYINT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_STINYINT>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_SBIGINT") {
+    REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == 0);
+  }
+}
 
-  // And SQL_C_SLONG should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_SLONG>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_SLONG>(stmt, 2) == 0);
+TEST_CASE("should convert boolean to unsigned integer c_type", "[datatype][boolean][conversion][integer]") {
+  // Given Snowflake client is logged in
+  Connection conn;
 
-  // And SQL_C_SHORT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_SHORT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_SHORT>(stmt, 2) == 0);
+  // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
+  const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
 
-  // And SQL_C_SSHORT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_SSHORT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_SSHORT>(stmt, 2) == 0);
-
-  // And SQL_C_TINYINT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_TINYINT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_TINYINT>(stmt, 2) == 0);
-
-  // And SQL_C_STINYINT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_STINYINT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_STINYINT>(stmt, 2) == 0);
-
-  // And SQL_C_SBIGINT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == 0);
-
-  // And SQL_C_ULONG should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 2) == 0);
-
-  // And SQL_C_USHORT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_USHORT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_USHORT>(stmt, 2) == 0);
-
-  // And SQL_C_UTINYINT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_UTINYINT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_UTINYINT>(stmt, 2) == 0);
-
-  // And SQL_C_UBIGINT should return 1 for TRUE and 0 for FALSE
-  REQUIRE(check_no_truncation<SQL_C_UBIGINT>(stmt, 1) == 1);
-  REQUIRE(check_no_truncation<SQL_C_UBIGINT>(stmt, 2) == 0);
+  // Then <c_type> should return 1 for TRUE and 0 for FALSE
+  SECTION("SQL_C_ULONG") {
+    REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_USHORT") {
+    REQUIRE(check_no_truncation<SQL_C_USHORT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_USHORT>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_UTINYINT") {
+    REQUIRE(check_no_truncation<SQL_C_UTINYINT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_UTINYINT>(stmt, 2) == 0);
+  }
+  SECTION("SQL_C_UBIGINT") {
+    REQUIRE(check_no_truncation<SQL_C_UBIGINT>(stmt, 1) == 1);
+    REQUIRE(check_no_truncation<SQL_C_UBIGINT>(stmt, 2) == 0);
+  }
 }
 
 // ============================================================================
