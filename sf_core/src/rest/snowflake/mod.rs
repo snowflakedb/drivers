@@ -20,7 +20,9 @@ use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
-use crate::token_cache::{TokenCache, TokenType, get_keyring_token_cache};
+use crate::token_cache::{
+    KeyringTokenCache, KeystoreAccessSnafu, TokenCache, TokenCacheError, TokenType,
+};
 use reqwest::{self, header};
 use serde_json;
 use serde_json::value::RawValue;
@@ -179,6 +181,13 @@ fn try_get_cached_mfa_token(server_url: &str, username: &str) -> Option<Sensitiv
             None
         }
     }
+}
+
+// TODO: temporary patch, lifetime seems like a part of global_state maybe?
+fn get_keyring_token_cache() -> Result<KeyringTokenCache, TokenCacheError> {
+    KeyringTokenCache::new()
+        .boxed()
+        .context(KeystoreAccessSnafu)
 }
 
 fn store_mfa_token_in_cache(server_url: &str, username: &str, mfa_token: &str) {

@@ -32,15 +32,12 @@ impl MfaTestFixture {
         self.client.connect()
     }
 
-    fn connect_expecting_success(&self, context: &str) {
-        let result = self.connect();
+    fn expecting_success_result(&self, result: Result<(), String>, context: &str) {
         assert!(result.is_ok(), "Expected {context}, got: {result:?}");
     }
 
-    fn connect_expecting_error(&self, patterns: &[&str], context: &str) {
-        let error = self
-            .connect()
-            .expect_err(&format!("Expected {context} to fail"));
+    fn expecting_error_result(&self, patterns: &[&str], result: Result<(), String>, context: &str) {
+        let error = result.expect_err(&format!("Expected {context} to fail"));
         let matches = patterns.iter().any(|p| error.contains(p));
         assert!(matches, "Expected {context}, got: {error}");
     }
@@ -52,15 +49,17 @@ impl MfaTestFixture {
 
 #[test]
 fn should_authenticate_with_mfa_duo_push_via_wiremock() {
-    // Given Wiremock is running
-    // And Wiremock has MFA login success mapping with DUO push
-    // And Snowflake client is configured for USERNAME_PASSWORD_MFA
+    // Given Wiremock is running and Wiremock has MFA login success mapping with DUO push
     let fixture = MfaTestFixture::new();
+
+    // And Snowflake client is configured for USERNAME_PASSWORD_MFA
     fixture.mock.mount(mfa::login_success_with_mfa_token());
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Login is successful
-    fixture.connect_expecting_success("MFA DUO push login to succeed");
+    fixture.expecting_success_result(result, "MFA DUO push login to succeed");
 }
 
 // =============================================================================
@@ -69,16 +68,18 @@ fn should_authenticate_with_mfa_duo_push_via_wiremock() {
 
 #[test]
 fn should_authenticate_with_mfa_totp_passcode_via_wiremock() {
-    // Given Wiremock is running
-    // And Wiremock has MFA login success mapping with passcode
-    // And Snowflake client is configured for USERNAME_PASSWORD_MFA with passcode
+    // Given Wiremock is running and Wiremock has MFA login success mapping with passcode
     let fixture = MfaTestFixture::new();
+
+    // And Snowflake client is configured for USERNAME_PASSWORD_MFA with passcode
     fixture.set_option("passcode", "123456");
     fixture.mock.mount(mfa::login_success_with_passcode());
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Login is successful
-    fixture.connect_expecting_success("MFA TOTP passcode login to succeed");
+    fixture.expecting_success_result(result, "MFA TOTP passcode login to succeed");
 }
 
 // =============================================================================
@@ -87,10 +88,10 @@ fn should_authenticate_with_mfa_totp_passcode_via_wiremock() {
 
 #[test]
 fn should_authenticate_with_mfa_passcode_in_password_via_wiremock() {
-    // Given Wiremock is running
-    // And Wiremock has MFA login success mapping for passcode-in-password
-    // And Snowflake client is configured with passcodeInPassword=true and passcode appended to password
+    // Given Wiremock is running and Wiremock has MFA login success mapping for passcode-in-password
     let fixture = MfaTestFixture::new();
+
+    // And Snowflake client is configured with passcodeInPassword=true and passcode appended to password
     fixture.set_option("password", "test_password123456"); // pragma: allowlist secret
     fixture.set_option("passcodeInPassword", "true");
     fixture
@@ -98,8 +99,10 @@ fn should_authenticate_with_mfa_passcode_in_password_via_wiremock() {
         .mount(mfa::login_success_passcode_in_password());
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Login is successful
-    fixture.connect_expecting_success("MFA passcode-in-password login to succeed");
+    fixture.expecting_success_result(result, "MFA passcode-in-password login to succeed");
 }
 
 // =============================================================================
@@ -108,16 +111,18 @@ fn should_authenticate_with_mfa_passcode_in_password_via_wiremock() {
 
 #[test]
 fn should_fail_mfa_authentication_when_wrong_password_is_provided_via_wiremock() {
-    // Given Wiremock is running
-    // And Wiremock has MFA login failure mapping
-    // And Snowflake client is configured for USERNAME_PASSWORD_MFA with invalid password
+    // Given Wiremock is running and Wiremock has MFA login failure mapping
     let fixture = MfaTestFixture::new();
+
+    // And Snowflake client is configured for USERNAME_PASSWORD_MFA with invalid password
     fixture.set_option("password", "wrong_password"); // pragma: allowlist secret
     fixture.mock.mount(mfa::login_failure());
 
     // When Trying to Connect
+    let result = fixture.connect();
+
     // Then Connection fails with login error
-    fixture.connect_expecting_error(
+    fixture.expecting_error_result(
         &[
             "login",
             "auth",
@@ -126,6 +131,7 @@ fn should_fail_mfa_authentication_when_wrong_password_is_provided_via_wiremock()
             "390100",
             "Incorrect",
         ],
+        result,
         "login error for wrong password",
     );
 }
@@ -173,8 +179,10 @@ fn should_fail_authentication_when_passcode_in_password_is_not_set_but_passcode_
     fixture.mock.mount(mfa::login_failure());
 
     //When Trying to Connect
+    let result = fixture.connect();
+
     //Then There is error returned
-    fixture.connect_expecting_error(
+    fixture.expecting_error_result(
         &[
             "login",
             "auth",
@@ -183,6 +191,7 @@ fn should_fail_authentication_when_passcode_in_password_is_not_set_but_passcode_
             "390100",
             "Incorrect",
         ],
+        result,
         "login error when passcodeInPassword not set",
     );
 }
@@ -196,8 +205,10 @@ fn should_fail_authentication_when_passcode_in_password_is_set_but_passcode_is_n
     fixture.mock.mount(mfa::login_failure());
 
     //When Trying to Connect
+    let result = fixture.connect();
+
     //Then There is error returned
-    fixture.connect_expecting_error(
+    fixture.expecting_error_result(
         &[
             "login",
             "auth",
@@ -206,6 +217,7 @@ fn should_fail_authentication_when_passcode_in_password_is_set_but_passcode_is_n
             "390100",
             "Incorrect",
         ],
+        result,
         "login error when passcode not appended",
     );
 }

@@ -27,32 +27,28 @@ Feature: Username Password MFA Authentication
 
   @core_int
   Scenario: should authenticate with MFA DUO push via wiremock
-    Given Wiremock is running
-    And Wiremock has MFA login success mapping with DUO push
+    Given Wiremock is running and Wiremock has MFA login success mapping with DUO push
     And Snowflake client is configured for USERNAME_PASSWORD_MFA
     When Trying to Connect
     Then Login is successful
 
   @core_int
   Scenario: should authenticate with MFA TOTP passcode via wiremock
-    Given Wiremock is running
-    And Wiremock has MFA login success mapping with passcode
+    Given Wiremock is running and Wiremock has MFA login success mapping with passcode
     And Snowflake client is configured for USERNAME_PASSWORD_MFA with passcode
     When Trying to Connect
     Then Login is successful
 
   @core_int
   Scenario: should authenticate with MFA passcode-in-password via wiremock
-    Given Wiremock is running
-    And Wiremock has MFA login success mapping for passcode-in-password
+    Given Wiremock is running and Wiremock has MFA login success mapping for passcode-in-password
     And Snowflake client is configured with passcodeInPassword=true and passcode appended to password
     When Trying to Connect
     Then Login is successful
 
   @core_int
   Scenario: should fail MFA authentication when wrong password is provided via wiremock
-    Given Wiremock is running
-    And Wiremock has MFA login failure mapping
+    Given Wiremock is running and Wiremock has MFA login failure mapping
     And Snowflake client is configured for USERNAME_PASSWORD_MFA with invalid password
     When Trying to Connect
     Then Connection fails with login error
