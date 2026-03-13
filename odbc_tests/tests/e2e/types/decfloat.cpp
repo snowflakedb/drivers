@@ -97,12 +97,12 @@ TEST_CASE("should handle full 38-digit precision values from literals", "[decflo
   // Then Result should preserve all 38 digits for each value
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678");
 
-  NEW_DRIVER_ONLY("BD#20") {
+  NEW_DRIVER_ONLY("BD#23") {
     CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "1.2345678901234567890123456789012345678e100");
     CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "1.2345678901234567890123456789012345678e-100");
   }
 
-  OLD_DRIVER_ONLY("BD#20") {
+  OLD_DRIVER_ONLY("BD#23") {
     CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "12345678901234567890123456789012345678e63");
     CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "12345678901234567890123456789012345678e-137");
   }
@@ -125,12 +125,12 @@ TEST_CASE("should handle extreme exponent values from literals", "[decfloat]") {
   auto stmt2 = conn.execute_fetch("SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT");
 
   // Then Result should contain [-1.234E+8000, 9.876E-8000]
-  NEW_DRIVER_ONLY("BD#20") {
+  NEW_DRIVER_ONLY("BD#23") {
     CHECK(get_data<SQL_C_CHAR>(stmt2, 1) == "-1.234e8000");
     CHECK(get_data<SQL_C_CHAR>(stmt2, 2) == "9.876e-8000");
   }
 
-  OLD_DRIVER_ONLY("BD#20") {
+  OLD_DRIVER_ONLY("BD#23") {
     CHECK(get_data<SQL_C_CHAR>(stmt2, 1) == "-1234e7997");
     CHECK(get_data<SQL_C_CHAR>(stmt2, 2) == "9876e-8003");
   }
@@ -248,7 +248,7 @@ TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678");
 
-  NEW_DRIVER_ONLY("BD#20") {
+  NEW_DRIVER_ONLY("BD#23") {
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1.2345678901234567890123456789012345678e100");
@@ -258,7 +258,7 @@ TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1.2345678901234567890123456789012345678e-100");
   }
 
-  OLD_DRIVER_ONLY("BD#20") {
+  OLD_DRIVER_ONLY("BD#23") {
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678e63");
@@ -296,7 +296,7 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e-16383");
 
-  NEW_DRIVER_ONLY("BD#20") {
+  NEW_DRIVER_ONLY("BD#23") {
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
@@ -306,7 +306,7 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9.876e-8000");
   }
 
-  OLD_DRIVER_ONLY("BD#20") {
+  OLD_DRIVER_ONLY("BD#23") {
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997");
@@ -490,8 +490,8 @@ TEST_CASE("should select extreme decfloat values using parameter binding", "[dec
     CHECK_ODBC(ret, stmt);
 
     // Then Result should contain [-1.234E+8000]
-    NEW_DRIVER_ONLY("BD#20") { CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000"); }
-    OLD_DRIVER_ONLY("BD#20") { CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997"); }
+    NEW_DRIVER_ONLY("BD#23") { CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000"); }
+    OLD_DRIVER_ONLY("BD#23") { CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997"); }
   }
 }
 
@@ -594,13 +594,13 @@ TEST_CASE("should insert extreme decfloat values using parameter binding", "[dec
   CHECK_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e-16383");
 
-  NEW_DRIVER_ONLY("BD#20") {
+  NEW_DRIVER_ONLY("BD#23") {
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
   }
 
-  OLD_DRIVER_ONLY("BD#20") {
+  OLD_DRIVER_ONLY("BD#23") {
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997");
