@@ -170,6 +170,7 @@ impl FileLock {
         const ERROR_ACCESS_DENIED: i32 = 5;
         const ERROR_SHARING_VIOLATION: i32 = 32;
         const ERROR_DELETE_PENDING: i32 = 303;
+
         match e.raw_os_error() {
             Some(ERROR_SHARING_VIOLATION | ERROR_DELETE_PENDING) => true,
             Some(ERROR_ACCESS_DENIED) => lock_path.exists(),
