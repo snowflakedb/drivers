@@ -103,6 +103,13 @@ impl DatabaseDriverV1 {
                 let mut merged_params = init_params.unwrap_or_default();
                 merged_params.extend(login_result.session_parameters.unwrap_or_default());
 
+                let login_final_names = FinalSessionNames {
+                    database: login_result.database_name,
+                    schema: login_result.schema_name,
+                    warehouse: login_result.warehouse_name,
+                    role: login_result.role_name,
+                };
+
                 conn_ptr
                     .lock()
                     .map_err(|_| ConnectionLockingSnafu {}.build())?
@@ -112,6 +119,7 @@ impl DatabaseDriverV1 {
                         login_parameters.server_url.clone(),
                         login_parameters.client_info.clone(),
                         merged_params,
+                        login_final_names,
                     );
                 Ok(())
             }
@@ -211,6 +219,9 @@ pub struct Connection {
     pub session_parameters: Arc<RwLock<HashMap<String, String>>>,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
+    /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
+    /// Stored separately from session_parameters to keep concerns distinct.
+    pub final_session_names: RwLock<FinalSessionNames>,
 }
 
 impl Default for Connection {
@@ -230,6 +241,7 @@ impl Connection {
             client_info: None,
             session_parameters: Arc::new(RwLock::new(HashMap::new())),
             init_session_parameters: None,
+            final_session_names: RwLock::new(FinalSessionNames::default()),
         }
     }
 
@@ -245,6 +257,7 @@ impl Connection {
         server_url: String,
         client_info: ClientInfo,
         session_params: HashMap<String, String>,
+        final_names: FinalSessionNames,
     ) {
         // Use blocking_write since we're in a sync context during connection_init
         *self.tokens.blocking_write() = Some(tokens);
@@ -252,9 +265,12 @@ impl Connection {
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
 
-        // Populate session parameters cache (assume login always returns parameters)
         if let Ok(mut cache) = self.session_parameters.write() {
             *cache = session_params;
+        }
+
+        if let Ok(mut names) = self.final_session_names.write() {
+            *names = final_names;
         }
     }
 
@@ -313,19 +329,21 @@ impl Connection {
             );
         }
 
-        // 3. Server-echoed final names: update DATABASE/SCHEMA/WAREHOUSE/ROLE so that
-        //    conn.database etc. reflect changes from USE DATABASE, USE SCHEMA, etc.
-        if let Some(db) = &final_names.database {
-            cache.insert("DATABASE".into(), db.clone());
-        }
-        if let Some(sc) = &final_names.schema {
-            cache.insert("SCHEMA".into(), sc.clone());
-        }
-        if let Some(wh) = &final_names.warehouse {
-            cache.insert("WAREHOUSE".into(), wh.clone());
-        }
-        if let Some(rl) = &final_names.role {
-            cache.insert("ROLE".into(), rl.clone());
+        // 3. Server-echoed final names are stored separately in `final_session_names`
+        //    so that conn.database etc. reflect changes from USE DATABASE, USE SCHEMA, etc.
+        if let Ok(mut names) = self.final_session_names.write() {
+            if final_names.database.is_some() {
+                names.database.clone_from(&final_names.database);
+            }
+            if final_names.schema.is_some() {
+                names.schema.clone_from(&final_names.schema);
+            }
+            if final_names.warehouse.is_some() {
+                names.warehouse.clone_from(&final_names.warehouse);
+            }
+            if final_names.role.is_some() {
+                names.role.clone_from(&final_names.role);
+            }
         }
     }
 }
@@ -607,13 +625,28 @@ impl DatabaseDriverV1 {
 
                 let account = get_setting_string(&conn, param_names::ACCOUNT);
                 let user = get_setting_string(&conn, param_names::USER);
-                let role = get_session_or_setting(&conn, "ROLE", param_names::ROLE);
-                let database =
-                    get_session_or_setting(&conn, "DATABASE", param_names::DATABASE);
-                let schema =
-                    get_session_or_setting(&conn, "SCHEMA", param_names::SCHEMA);
-                let warehouse =
-                    get_session_or_setting(&conn, "WAREHOUSE", param_names::WAREHOUSE);
+
+                let final_names = conn
+                    .final_session_names
+                    .read()
+                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let role = final_names
+                    .role
+                    .clone()
+                    .or_else(|| get_session_or_setting(&conn, "ROLE", param_names::ROLE));
+                let database = final_names
+                    .database
+                    .clone()
+                    .or_else(|| get_session_or_setting(&conn, "DATABASE", param_names::DATABASE));
+                let schema = final_names
+                    .schema
+                    .clone()
+                    .or_else(|| get_session_or_setting(&conn, "SCHEMA", param_names::SCHEMA));
+                let warehouse = final_names
+                    .warehouse
+                    .clone()
+                    .or_else(|| get_session_or_setting(&conn, "WAREHOUSE", param_names::WAREHOUSE));
+                drop(final_names);
 
                 Ok(ConnectionInfo {
                     host,
@@ -848,5 +881,58 @@ mod tests {
         assert_eq!(info.role, Some("session_role".into()));
 
         ds.connection_release(handle).unwrap();
+    }
+
+    #[test]
+    fn connection_get_info_final_names_override_session_params() {
+        let ds = driver_state();
+        let handle = ds.connection_new();
+        ds.connection_set_option(
+            handle,
+            "database".into(),
+            Setting::String("setting_db".into()),
+        )
+        .unwrap();
+
+        if let Some(conn_ptr) = ds.connections.get_obj(handle) {
+            let conn = conn_ptr.lock().unwrap();
+            conn.session_parameters
+                .write()
+                .unwrap()
+                .insert("DATABASE".into(), "session_db".into());
+            conn.final_session_names.write().unwrap().database = Some("final_db".into());
+        }
+
+        let info = ds.connection_get_info(handle).unwrap();
+        assert_eq!(info.database, Some("final_db".into()));
+
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[test]
+    fn update_session_params_cache_stores_final_names_separately() {
+        let conn = Connection::new();
+        let final_names = FinalSessionNames {
+            database: Some("new_db".into()),
+            schema: Some("new_schema".into()),
+            warehouse: None,
+            role: None,
+        };
+
+        conn.update_session_params_cache("SELECT 1", None, &final_names);
+
+        let cache = conn.session_parameters.read().unwrap();
+        assert!(
+            cache.get("DATABASE").is_none(),
+            "final names should not be stored in session_parameters"
+        );
+        assert!(
+            cache.get("SCHEMA").is_none(),
+            "final names should not be stored in session_parameters"
+        );
+
+        let names = conn.final_session_names.read().unwrap();
+        assert_eq!(names.database, Some("new_db".into()));
+        assert_eq!(names.schema, Some("new_schema".into()));
     }
 }

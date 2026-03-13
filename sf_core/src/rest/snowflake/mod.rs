@@ -54,6 +54,14 @@ pub struct LoginResult {
     pub tokens: SessionTokens,
     /// Session parameters returned by the server
     pub session_parameters: Option<HashMap<String, String>>,
+    /// Server-echoed database name from sessionInfo
+    pub database_name: Option<String>,
+    /// Server-echoed schema name from sessionInfo
+    pub schema_name: Option<String>,
+    /// Server-echoed warehouse name from sessionInfo
+    pub warehouse_name: Option<String>,
+    /// Server-echoed role name from sessionInfo
+    pub role_name: Option<String>,
 }
 
 impl SessionTokens {
@@ -332,7 +340,7 @@ pub async fn snowflake_login_with_client(
     let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
 
     // Extract session parameters from auth response
-    let mut session_params = auth_response.data._parameters.map(|params| {
+    let session_params = auth_response.data._parameters.map(|params| {
         params
             .iter()
             .filter_map(|param| {
@@ -357,24 +365,19 @@ pub async fn snowflake_login_with_client(
             .collect::<HashMap<String, String>>()
     });
 
-    // Inject server-echoed `sessionInfo` names (`databaseName`, etc.) so that
-    // conn.database / conn.schema / conn.warehouse / conn.role return the
-    // canonical names the server resolved, not the raw user input.
-    if let Some(ref info) = auth_response.data.session_info {
-        let params = session_params.get_or_insert_with(HashMap::new);
-        if let Some(db) = &info.database_name {
-            params.insert("DATABASE".into(), db.clone());
-        }
-        if let Some(sc) = &info.schema_name {
-            params.insert("SCHEMA".into(), sc.clone());
-        }
-        if let Some(wh) = &info.warehouse_name {
-            params.insert("WAREHOUSE".into(), wh.clone());
-        }
-        if let Some(rl) = &info.role_name {
-            params.insert("ROLE".into(), rl.clone());
-        }
-    }
+    // Extract server-echoed sessionInfo names separately so they can be
+    // stored on the connection as `final_session_names` (not mixed into
+    // session parameters).
+    let (database_name, schema_name, warehouse_name, role_name) =
+        match &auth_response.data.session_info {
+            Some(info) => (
+                info.database_name.clone(),
+                info.schema_name.clone(),
+                info.warehouse_name.clone(),
+                info.role_name.clone(),
+            ),
+            None => (None, None, None, None),
+        };
 
     tracing::info!(
         session_id,
@@ -392,6 +395,10 @@ pub async fn snowflake_login_with_client(
             master_expires_at,
         },
         session_parameters: session_params,
+        database_name,
+        schema_name,
+        warehouse_name,
+        role_name,
     })
 }
 
