@@ -331,18 +331,26 @@ impl Connection {
 
         // 3. Server-echoed final names are stored separately in `final_session_names`
         //    so that conn.database etc. reflect changes from USE DATABASE, USE SCHEMA, etc.
-        if let Ok(mut names) = self.final_session_names.write() {
-            if final_names.database.is_some() {
-                names.database.clone_from(&final_names.database);
+        match self.final_session_names.write() {
+            Ok(mut names) => {
+                if final_names.database.is_some() {
+                    names.database = final_names.database.clone();
+                }
+                if final_names.schema.is_some() {
+                    names.schema = final_names.schema.clone();
+                }
+                if final_names.warehouse.is_some() {
+                    names.warehouse = final_names.warehouse.clone();
+                }
+                if final_names.role.is_some() {
+                    names.role = final_names.role.clone();
+                }
             }
-            if final_names.schema.is_some() {
-                names.schema.clone_from(&final_names.schema);
-            }
-            if final_names.warehouse.is_some() {
-                names.warehouse.clone_from(&final_names.warehouse);
-            }
-            if final_names.role.is_some() {
-                names.role.clone_from(&final_names.role);
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to acquire write lock for final_session_names"
+                );
             }
         }
     }
@@ -626,6 +634,13 @@ impl DatabaseDriverV1 {
                 let account = get_setting_string(&conn, param_names::ACCOUNT);
                 let user = get_setting_string(&conn, param_names::USER);
 
+                // Resolution order for session-scoped values:
+                //   1. final_session_names  (server-echoed via login sessionInfo or query finalXxxName)
+                //   2. session_parameters   (server-returned session params, only pre-login / missing sessionInfo)
+                //   3. connection settings   (original kwargs supplied by the caller)
+                // After a successful login, final_session_names is always populated, so the
+                // or_else branch only fires before connection_init or when the server omits
+                // the field from sessionInfo.
                 let final_names = conn
                     .final_session_names
                     .read()
