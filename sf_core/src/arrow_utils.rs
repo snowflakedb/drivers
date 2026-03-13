@@ -1,5 +1,7 @@
 use crate::query_types::RowType;
-use arrow::array::{Array, BooleanArray, Float64Array, Int8Array, Int64Array, StringArray};
+use arrow::array::{
+    Array, BooleanArray, Float64Array, Int8Array, Int32Array, Int64Array, StringArray,
+};
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
@@ -109,6 +111,37 @@ pub fn create_field_with_type(
                         .into(),
                     )
                 })
+            };
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
+        }
+        RowType::TimestampTz {
+            name,
+            nullable,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "TIMESTAMP_TZ".to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            let data_type = if scale <= &3 {
+                DataType::Struct(
+                    vec![
+                        Field::new("epoch", DataType::Int64, true).with_metadata(metadata.clone()),
+                        Field::new("timezone", DataType::Int32, true)
+                            .with_metadata(metadata.clone()),
+                    ]
+                    .into(),
+                )
+            } else {
+                DataType::Struct(
+                    vec![
+                        Field::new("epoch", DataType::Int64, true).with_metadata(metadata.clone()),
+                        Field::new("fraction", DataType::Int32, true)
+                            .with_metadata(metadata.clone()),
+                        Field::new("timezone", DataType::Int32, true)
+                            .with_metadata(metadata.clone()),
+                    ]
+                    .into(),
+                )
             };
             Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
@@ -333,6 +366,102 @@ fn create_column_array(
                 _ => UnsupportedDataTypeSnafu {
                     data_type: format!("{:?}", field.data_type()),
                     row_type: "TIMESTAMP_NTZ".to_string(),
+                }
+                .fail(),
+            }
+        }
+        RowType::TimestampTz { scale, .. } => {
+            #[allow(clippy::type_complexity)]
+            let all_values: Result<Vec<((i64, i32), i32)>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| {
+                    let (epoch_part, tz_part) = v.split_once(' ').unwrap_or((v, ""));
+                    let (epoch_str, fraction_str) =
+                        epoch_part.split_once('.').unwrap_or((epoch_part, ""));
+                    (epoch_str, fraction_str, tz_part)
+                })
+                .map(|(epoch_str, fraction_str, tz_part)| {
+                    let epoch: i64 = epoch_str.parse().context(IntegerParsingSnafu {
+                        value: epoch_str.to_string(),
+                    })?;
+                    let fraction: i32 = if fraction_str.is_empty() {
+                        0
+                    } else {
+                        let filled_with_zeros =
+                            format!("{:0<width$}", fraction_str, width = *scale as usize);
+                        filled_with_zeros
+                            .parse::<i32>()
+                            .context(IntegerParsingSnafu {
+                                value: fraction_str.to_string(),
+                            })?
+                    };
+                    let tz = if tz_part.is_empty() {
+                        // Snowflake uses zone offset [-24h, +24h], which means
+                        // [-1440,1440] in minutes. But it is aligned to be zero based
+                        // which means the values scope is [0, 2880].
+                        // This value means actually zone offset 0.
+                        1440
+                    } else {
+                        tz_part.parse::<i32>().context(IntegerParsingSnafu {
+                            value: tz_part.to_string(),
+                        })?
+                    };
+                    // wrapping first two values in a tuple makes unzipping later easier, but it's heavier
+                    // potentially could be replaced with returning three values and repackaging to three collections manually
+                    Ok(((epoch, fraction), tz))
+                })
+                .collect();
+            let all_values = all_values?;
+            let (time_part_values, tz_values): (Vec<(i64, i32)>, Vec<i32>) =
+                all_values.into_iter().unzip();
+            let (epoch_values, fraction_values): (Vec<i64>, Vec<i32>) =
+                time_part_values.into_iter().unzip();
+
+            let field = create_field(row_type)?;
+            match field.data_type() {
+                DataType::Struct(fields) if fields.len() == 2 => {
+                    let normalized_epoch_values: Vec<i64> = epoch_values
+                        .iter()
+                        .zip(fraction_values.iter())
+                        .map(|(epoch, fraction)| {
+                            epoch * 10i64.pow(*scale as u32) + *fraction as i64
+                        })
+                        .collect();
+                    let epoch_array: Arc<dyn Array> =
+                        Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
+                            normalized_epoch_values,
+                        ));
+                    let tz_array: Arc<dyn Array> = Arc::new(Int32Array::from(tz_values));
+                    let values = vec![
+                        (fields[0].clone(), epoch_array),
+                        (fields[1].clone(), tz_array),
+                    ];
+                    Ok((field, Arc::new(arrow::array::StructArray::from(values))))
+                }
+                DataType::Struct(fields) if fields.len() == 3 => {
+                    let normalized_fraction_values: Vec<i32> = fraction_values
+                        .iter()
+                        .map(|f| f * 10i32.pow((9 - *scale) as u32))
+                        .collect();
+                    let epoch_array: Arc<dyn Array> =
+                        Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
+                            epoch_values,
+                        ));
+                    let fraction_array: Arc<dyn Array> =
+                        Arc::new(arrow::array::PrimitiveArray::<Int32Type>::from(
+                            normalized_fraction_values,
+                        ));
+                    let tz_array: Arc<dyn Array> = Arc::new(Int32Array::from(tz_values));
+                    let values = vec![
+                        (fields[0].clone(), epoch_array),
+                        (fields[1].clone(), fraction_array),
+                        (fields[2].clone(), tz_array),
+                    ];
+                    Ok((field, Arc::new(arrow::array::StructArray::from(values))))
+                }
+                _ => UnsupportedDataTypeSnafu {
+                    data_type: format!("{:?}", field.data_type()),
+                    row_type: "TIMESTAMP_TZ".to_string(),
                 }
                 .fail(),
             }

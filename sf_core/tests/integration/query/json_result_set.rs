@@ -42,6 +42,21 @@ fn should_return_timestamp_ltz_as_arrow_even_if_json_result_set_is_returned() {
     )
 }
 
+#[test]
+fn should_return_timestamp_tz_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_timestamp_tz (TZ0 TIMESTAMP_TZ(0),\
+            TZ1 TIMESTAMP_TZ(1), TZ2 TIMESTAMP_TZ(2), TZ3 TIMESTAMP_TZ(3), TZ4 TIMESTAMP_TZ(4), TZ5 TIMESTAMP_TZ(5), TZ6 TIMESTAMP_TZ(6), TZ7 TIMESTAMP_TZ(7), TZ8 TIMESTAMP_TZ(8), TZ9 TIMESTAMP_TZ(9),\
+            TZ1a TIMESTAMP_TZ(1), TZ2a TIMESTAMP_TZ(2), TZ3a TIMESTAMP_TZ(3), TZ4a TIMESTAMP_TZ(4), TZ5a TIMESTAMP_TZ(5), TZ6a TIMESTAMP_TZ(6), TZ7a TIMESTAMP_TZ(7), TZ8a TIMESTAMP_TZ(8), TZ9a TIMESTAMP_TZ(9),\
+            TZ1b TIMESTAMP_TZ(1), TZ2b TIMESTAMP_TZ(2), TZ3b TIMESTAMP_TZ(3), TZ4b TIMESTAMP_TZ(4), TZ5b TIMESTAMP_TZ(5), TZ6b TIMESTAMP_TZ(6), TZ7b TIMESTAMP_TZ(7), TZ8b TIMESTAMP_TZ(8), TZ9b TIMESTAMP_TZ(9))",
+        "INSERT INTO json_result_set_timestamp_tz VALUES ('2026-01-01 10:10:10',\
+            '2026-01-01 11:11:11.1 +01:00', '2026-01-01 12:12:12.12+02:00', '2026-01-01 13:13:13.123 +03:00', '2026-01-01 14:14:14.1234 +04:00', '2026-01-01 15:15:15.12345 +05:00', '2026-01-01 16:16:16.123456 +06:00', '2026-01-01 17:17:17.1234567 +07:00', '2026-01-01 18:18:18.12345678 +08:00', '2026-01-01 19:19:19.123456789 +09:00',\
+            '2026-01-02 11:11:11 +01:00', '2026-01-02 12:12:12 +02:00', '2026-01-02 13:13:13 +03:00', '2026-01-02 14:14:14 +04:00', '2026-01-02 15:15:15 +05:00', '2026-01-02 16:16:16 +06:00', '2026-01-02 17:17:17 +07:00', '2026-01-02 18:18:18 +08:00', '2026-01-02 19:19:19 +09:00',\
+            '2026-01-02 11:11:11.1 +01:00', '2026-01-02 12:12:12.02 +02:00', '2026-01-03 13:13:13.003 +03:00', '2026-01-02 14:14:14.0004 +04:00', '2026-01-02 15:15:15.00005 +05:00', '2026-01-02 16:16:16.000006 +06:00', '2026-01-02 17:17:17.0000007 +07:00', '2026-01-02 18:18:18.00000008 +08:00', '2026-01-02 19:19:19.000000009 +09:00')",
+        "SELECT * FROM json_result_set_timestamp_tz",
+    )
+}
+
 fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, select_query: &str) {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
