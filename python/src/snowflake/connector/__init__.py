@@ -7,6 +7,7 @@ as defined in PEP 249.
 
 from typing import Any
 
+from . import auth  # noqa: F401 - needed for attribute access (e.g. snowflake.connector.auth.by_plugin)
 from ._internal.api_client.c_api import register_default_logger_callback
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
@@ -37,7 +38,6 @@ from .types import (
     Timestamp,
     TimestampFromTicks,
 )
-from . import auth  # noqa: F401 - needed for attribute access (e.g. snowflake.connector.auth.by_plugin)
 from .version import __version__
 
 

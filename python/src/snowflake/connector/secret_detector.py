@@ -1,6 +1,9 @@
 """BACKWARD COMPATIBILITY MODULE ONLY"""
 
+from __future__ import annotations
+
 import logging
+
 from typing import NamedTuple
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 GCS_METADATA_SFC_DIGEST = "x-goog-meta-sfc-digest"
 
 

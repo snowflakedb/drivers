@@ -1,5 +1,7 @@
 """BACKWARD COMPATIBILITY MODULE ONLY"""
 
+from __future__ import annotations
+
 from typing import Any
 
 

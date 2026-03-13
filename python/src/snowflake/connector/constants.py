@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from enum import Enum, auto, unique
-from typing import Any, DefaultDict, NamedTuple
+from typing import Any, NamedTuple
 
-from .config_manager import CONNECTIONS_FILE, CONFIG_FILE  # noqa: F401
+from .config_manager import CONFIG_FILE, CONNECTIONS_FILE  # noqa: F401
+
 
 # DBAPI type codes
 DBAPI_TYPE_STRING = 0
@@ -48,8 +49,8 @@ FIELD_TYPES: tuple[FieldType, ...] = (
     FieldType(name="INTERVAL_DAY_TIME", dbapi_type=[DBAPI_TYPE_NUMBER]),
 )
 
-FIELD_NAME_TO_ID: DefaultDict[Any, int] = defaultdict(int)
-FIELD_ID_TO_NAME: DefaultDict[int, str] = defaultdict(str)
+FIELD_NAME_TO_ID: defaultdict[Any, int] = defaultdict(int)
+FIELD_ID_TO_NAME: defaultdict[int, str] = defaultdict(str)
 
 for _idx, _field_type in enumerate(FIELD_TYPES):
     FIELD_ID_TO_NAME[_idx] = _field_type.name
@@ -143,9 +144,7 @@ HTTP_HEADER_VALUE_OCTET_STREAM = "application/octet-stream"
 
 # Parameter constants
 PARAMETER_AUTOCOMMIT = "AUTOCOMMIT"
-PARAMETER_CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY = (
-    "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"
-)
+PARAMETER_CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY = "CLIENT_SESSION_KEEP_ALIVE_HEARTBEAT_FREQUENCY"
 PARAMETER_CLIENT_SESSION_KEEP_ALIVE = "CLIENT_SESSION_KEEP_ALIVE"
 PARAMETER_CLIENT_PREFETCH_THREADS = "CLIENT_PREFETCH_THREADS"
 PARAMETER_CLIENT_TELEMETRY_ENABLED = "CLIENT_TELEMETRY_ENABLED"
@@ -178,10 +177,7 @@ megabyte = kilobyte * 1024
 gigabyte = megabyte * 1024
 
 # Log format
-LOG_FORMAT = (
-    "%(asctime)s - %(filename)s:%(lineno)d - "
-    "%(funcName)s() - %(levelname)s - %(message)s"
-)
+LOG_FORMAT = "%(asctime)s - %(filename)s:%(lineno)d - %(funcName)s() - %(levelname)s - %(message)s"
 
 DAY_IN_SECONDS = 60 * 60 * 24
 

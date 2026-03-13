@@ -18,4 +18,5 @@ def write_pandas(
     quote_identifiers: bool = True,
     **kwargs: Any,
 ) -> tuple[bool, int, int, Any]:
+    """Write a pandas DataFrame to a Snowflake table."""
     raise NotImplementedError("write_pandas is not yet implemented in the universal driver")
