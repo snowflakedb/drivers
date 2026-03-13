@@ -276,7 +276,11 @@ class SnowflakeCursorBase(abc.ABC):
         self._binding_data = json_bytes
 
         # Get memory address of the bytes buffer (no-copy scheme)
-        ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
+        # Use c_char.from_buffer_copy to get a stable pointer to the data.
+        # ctypes.c_char_p would create a temporary copy whose memory could be
+        # freed before Rust reads it.
+        self._binding_buf = (ctypes.c_char * len(json_bytes)).from_buffer_copy(json_bytes)
+        ptr_value = ctypes.cast(self._binding_buf, ctypes.c_void_p).value
         if ptr_value is None:
             raise RuntimeError("Failed to obtain memory pointer for binding data")
 
