@@ -32,4 +32,9 @@ python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.py
 python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_pb2.pyi
 python/src/snowflake/connector/_internal/protobuf_gen/database_driver_v1_services.py
 
+# Generated protobuf Java code (built on the fly via Gradle)
+jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverV1.java
+jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverService.java
+jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverServiceClient.java
+
 .DS_Store
