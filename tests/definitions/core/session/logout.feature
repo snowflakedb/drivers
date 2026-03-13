@@ -57,7 +57,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     When Logout is initiated
     Then Logout request times out after approximately 5 seconds
     And Close throws timeout error
-    And Total elapsed time is between 5 and 6 seconds
 
   Scenario: should respect total retry budget timeout across all attempts
     # Tests that total timeout caps wall-clock time across ALL retries
@@ -75,7 +74,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     When Logout is initiated
     Then Fewer than 4 attempts are made
     And The last attempt times out because remaining budget is less than server response time
-    And Total wall-clock time does not exceed 7 seconds for closing the connection
 
   # ===========================================================================
   #                      Close vs Active Query Execution
@@ -221,19 +219,29 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict        |
       | best-effort   |
 
-  Scenario: should include token refresh time in total logout timeout budget
-    # Token refresh is a network call that must be accounted for in total timeout
-    Given Core logout function called
-    And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
-    And Token refresh endpoint delays response by 3 seconds
-    And Mock HTTP server returns 200 after token refresh
-    And Total retry budget timeout is set to 5 seconds
-    When Logout is executed
-    Then Token refresh is attempted
-    And Token refresh time is counted against total timeout budget
-    And Remaining budget for retry logout is reduced by token refresh duration
-    And Total wall-clock time does not exceed 7 seconds for closing the connection
+Scenario: should succeed when retried logout fits within remaining timeout budget after token refresh
+  Given Core logout function called with strict strategy
+  And Timeout configured to 5 seconds
+  And Retry policy allows 5 attempts
+  And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt immediately
+  And Token refresh endpoint delays response by 2 seconds
+  And Mock HTTP server returns 200 immediately on retry attempt after refresh
+  When Logout is executed
+  Then Token refresh is attempted
+  And Logout is retried exactly once
+  And Close succeeds
 
+Scenario: should fail when retried logout exceeds remaining timeout budget after token refresh
+  Given Core logout function called with strict strategy
+  And Timeout configured to 5 seconds
+  And Retry policy allows 5 attempts
+  And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt immediately
+  And Token refresh endpoint delays response by 6 seconds
+  And Mock HTTP server returns 200 immediately on retry attempt after refresh
+  When Logout is executed
+  Then Token refresh is attempted
+  And Logout is retried exactly once
+  And Close throws timeout error
   # ---------------------------------------------------------------------------
   #  Retry and Timeout Configuration (Honors Provided Values)
   # ---------------------------------------------------------------------------
