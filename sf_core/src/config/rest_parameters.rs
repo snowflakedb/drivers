@@ -159,9 +159,10 @@ pub enum LoginMethod {
     },
     UserPasswordMfa {
         username: String,
-        password: String,
+        password: SensitiveString,
         passcode_in_password: bool,
-        passcode: Option<String>,
+        passcode: Option<SensitiveString>,
+        client_store_temporary_credential: bool,
     },
 }
 
@@ -357,11 +358,31 @@ impl LoginMethod {
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 password: settings
                     .get_string("password")
-                    .context(MissingParameterSnafu { parameter: "password" })?,
+                    .context(MissingParameterSnafu { parameter: "password" })?
+                    .into(),
                 passcode_in_password: settings
                     .get_bool("passcodeInPassword")
-                    .unwrap_or_default(),
-                passcode: Some(settings.get_string("passcode").unwrap_or_default()),
+                    .or_else(|| {
+                        settings
+                            .get_string("passcodeInPassword")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
+                    .unwrap_or(false),
+                passcode: settings.get_string("passcode").map(SensitiveString::from),
+                client_store_temporary_credential: settings
+                    .get_bool("client_store_temporary_credential")
+                    .or_else(|| {
+                        settings
+                            .get_string("client_store_temporary_credential")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| {
+                        settings
+                            .get_int("client_store_temporary_credential")
+                            .map(|v| v != 0)
+                    })
+                    .unwrap_or(false),
             }),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",

@@ -60,7 +60,7 @@ pub struct AuthRequestData {
         rename = "CLIENT_REQUEST_MFA_TOKEN",
         skip_serializing_if = "Option::is_none"
     )]
-    pub client_request_mfa_token: Option<String>,
+    pub client_request_mfa_token: Option<bool>,
     #[serde(rename = "PASSCODE", skip_serializing_if = "Option::is_none")]
     pub passcode: Option<SensitiveString>,
     #[serde(rename = "AUTHENTICATOR", skip_serializing_if = "Option::is_none")]
@@ -131,9 +131,9 @@ pub struct AuthResponseMain {
     )]
     pub master_validity: Option<Duration>,
     #[serde(rename = "mfaToken")]
-    pub _mfa_token: Option<String>,
+    pub mfa_token: Option<String>,
     #[serde(rename = "mfaTokenValidityInSeconds")]
-    pub _mfa_token_validity: Option<u64>,
+    pub mfa_token_validity: Option<u64>,
     #[serde(rename = "idToken")]
     pub _id_token: Option<String>,
     #[serde(rename = "idTokenValidityInSeconds")]

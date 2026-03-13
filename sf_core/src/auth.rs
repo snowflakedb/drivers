@@ -36,9 +36,9 @@ pub enum Credentials {
     },
     UserPasswordMfa {
         username: String,
-        password: String,
+        password: SensitiveString,
         passcode_in_password: bool,
-        passcode: Option<String>,
+        passcode: Option<SensitiveString>,
     },
 }
 
@@ -159,6 +159,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             password,
             passcode_in_password,
             passcode,
+            ..
         } => Ok(Credentials::UserPasswordMfa {
             username: username.clone(),
             password: password.clone(),

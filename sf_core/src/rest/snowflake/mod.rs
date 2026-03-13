@@ -20,6 +20,7 @@ use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
+use crate::token_cache::{TokenCache, TokenType, get_keyring_token_cache};
 use reqwest::{self, header};
 use serde_json;
 use serde_json::value::RawValue;
@@ -157,6 +158,48 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
+fn extract_host_from_url(server_url: &str) -> Option<String> {
+    Url::parse(server_url)
+        .ok()?
+        .host_str()
+        .map(|h| h.to_string())
+}
+
+fn try_get_cached_mfa_token(server_url: &str, username: &str) -> Option<SensitiveString> {
+    let host = extract_host_from_url(server_url)?;
+    let cache = get_keyring_token_cache().ok()?;
+    match cache.get_token(&host, username, TokenType::MfaToken) {
+        Ok(Some(token)) if !token.is_empty() => {
+            tracing::info!("Found cached MFA token");
+            Some(token.into())
+        }
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to retrieve cached MFA token");
+            None
+        }
+    }
+}
+
+fn store_mfa_token_in_cache(server_url: &str, username: &str, mfa_token: &str) {
+    let Some(host) = extract_host_from_url(server_url) else {
+        tracing::warn!("Cannot cache MFA token: unable to extract host from server URL");
+        return;
+    };
+    match get_keyring_token_cache() {
+        Ok(cache) => {
+            if let Err(e) = cache.add_token(&host, username, TokenType::MfaToken, mfa_token) {
+                tracing::warn!(error = %e, "Failed to cache MFA token");
+            } else {
+                tracing::info!("Cached MFA token for future use");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to access token cache for MFA token storage");
+        }
+    }
+}
+
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -206,11 +249,38 @@ pub async fn auth_request_data(
                 passcode_in_password,
                 passcode,
             } => {
+                let store_temp_cred = matches!(
+                    &login_parameters.login_method,
+                    LoginMethod::UserPasswordMfa {
+                        client_store_temporary_credential: true,
+                        ..
+                    }
+                );
+
+                let cached_mfa_token = if store_temp_cred {
+                    try_get_cached_mfa_token(&login_parameters.server_url, &username)
+                } else {
+                    None
+                };
+
                 data.login_name = Some(username);
                 data.password = Some(password);
-                data.authenticator = Some("USER_PASSWORD_MFA".to_string());
-                if !passcode_in_password {
-                    data.passcode = passcode.clone();
+                data.authenticator = Some("USERNAME_PASSWORD_MFA".to_string());
+
+                if let Some(cached_token) = cached_mfa_token {
+                    data.token = Some(cached_token);
+                } else {
+                    data.ext_authn_duo_method = Some(if passcode.is_some() {
+                        "passcode".to_string()
+                    } else {
+                        "push".to_string()
+                    });
+                    if !passcode_in_password {
+                        data.passcode = passcode.clone();
+                    }
+                    if store_temp_cred {
+                        data.client_request_mfa_token = Some(true);
+                    }
                 }
             }
         },
@@ -326,6 +396,17 @@ pub async fn snowflake_login_with_client(
     }
 
     tracing::debug!("Login successful, extracting session tokens");
+
+    // Cache MFA token from response if caching is enabled
+    if let LoginMethod::UserPasswordMfa {
+        username,
+        client_store_temporary_credential: true,
+        ..
+    } = &login_parameters.login_method
+        && let Some(mfa_token) = &auth_response.data.mfa_token
+    {
+        store_mfa_token_in_cache(&login_parameters.server_url, username, mfa_token);
+    }
 
     let session_token = auth_response
         .data

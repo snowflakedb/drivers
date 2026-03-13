@@ -4,5 +4,6 @@
 //! Snowflake HTTP interactions without requiring a real backend.
 
 pub mod auth;
+pub mod mfa;
 pub mod okta;
 pub mod put_get;

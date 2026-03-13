@@ -1,6 +1,11 @@
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
+// MFA E2E tests require a real Snowflake account with DUO MFA enrolled.
+// Cannot run in CI (needs interactive MFA push or real TOTP); run locally with:
+//   PARAMETER_PATH=parameters.json cargo test -- --ignored mfa_e2e_
+
 #[test]
+#[ignore = "Requires real MFA-enrolled account (run manually)"]
 fn should_authenticate_using_username_password_and_duo_push() {
     //Given Authentication is set to username_password_mfa and user, password are provided and DUO push is enabled
     let client = SnowflakeTestClient::with_default_params();
@@ -15,6 +20,7 @@ fn should_authenticate_using_username_password_and_duo_push() {
 }
 
 #[test]
+#[ignore = "Requires real MFA-enrolled account (run manually)"]
 fn should_authenticate_using_username_password_and_totp_passcode() {
     //Given Authentication is set to username_password_mfa and user, password and passcode are provided
     let client = SnowflakeTestClient::with_default_params();
@@ -30,6 +36,7 @@ fn should_authenticate_using_username_password_and_totp_passcode() {
 }
 
 #[test]
+#[ignore = "Requires real MFA-enrolled account (run manually)"]
 fn should_authenticate_using_username_password_with_appended_totp_passcode() {
     //Given Authentication is set to username_password_mfa and user, password with appended passcode are provided and passcodeInPassword is set
     let client = SnowflakeTestClient::with_default_params();
@@ -47,6 +54,7 @@ fn should_authenticate_using_username_password_with_appended_totp_passcode() {
 }
 
 #[test]
+#[ignore = "Requires real MFA-enrolled account (run manually)"]
 fn should_fail_authentication_when_wrong_password_is_provided() {
     //Given Authentication is set to username_password_mfa and user is provided but password is skipped or invalid
     let client = SnowflakeTestClient::with_default_params();
