@@ -362,8 +362,10 @@ fn create_column_array(
                 .collect();
 
             let decimal_values = decimal_values?;
-            let non_null: Vec<i128> = decimal_values.iter().filter_map(|v| *v).collect();
-            if non_null.is_empty() {
+            let min_value = decimal_values.iter().filter_map(|v| *v).min();
+            let max_value = decimal_values.iter().filter_map(|v| *v).max();
+            if min_value.is_none() {
+                // All values are null — pick the appropriate null array type
                 if *scale > 0 {
                     return Ok((
                         create_field_with_type(
@@ -382,8 +384,8 @@ fn create_column_array(
                     Arc::new(Int64Array::new_null(len)),
                 ));
             }
-            let min_value: i128 = non_null.iter().min().copied().unwrap();
-            let max_value: i128 = non_null.iter().max().copied().unwrap();
+            let min_value: i128 = min_value.unwrap();
+            let max_value: i128 = max_value.unwrap();
 
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
                 let int8_values: Vec<Option<i8>> = decimal_values
@@ -534,6 +536,7 @@ fn create_column_array(
                 }
                 DataType::Struct(fields) => {
                     let null_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
+                    // Sentinel zeros for null rows — masked by the NullBuffer so never read.
                     let epoch_values: Vec<i64> =
                         all_values.iter().map(|v| v.map_or(0, |(e, _)| e)).collect();
                     let fraction_values: Vec<i32> =
@@ -763,9 +766,10 @@ fn create_column_array(
     }
 }
 
-/// Converts a string rowset with RowType metadata to Arrow format
-/// Supports TEXT and FIXED (with scale 0) types, converting strings to appropriate Arrow types
-/// Assumes rowset and row_types have been validated to have matching column counts
+/// Converts a string rowset with RowType metadata to Arrow format.
+/// Supports TEXT, FIXED, BOOLEAN, REAL, DATE, TIMESTAMP_NTZ, and TIMESTAMP_LTZ types.
+/// Null values in the rowset are preserved as Arrow nulls.
+/// Assumes rowset and row_types have been validated to have matching column counts.
 pub fn convert_string_rowset_to_arrow_reader(
     rowset: &[Vec<Option<String>>],
     row_types: &[RowType],
