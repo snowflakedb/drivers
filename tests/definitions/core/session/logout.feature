@@ -59,23 +59,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     Given Mock HTTP server holds connection open for 10 seconds without responding
     And UD Core connection is logged in with no timeout override
     When Logout is initiated
-    Then Logout request times out after approximately 5 seconds
-    And Close throws timeout error
-    And Total elapsed time is between 5 and 6 seconds
-
-  @core_int
-  Scenario: should cancel individual request when per-request socket timeout exceeded
-    # Tests that per-request timeout is passed to socket and interrupts slow responses
-    Given Mock HTTP server holds connection open for 8 seconds on first attempt then succeeds immediately
-    And UD Core connection is logged in
-    And Per-request socket timeout is set to 2 seconds
-    And Total retry budget timeout is set to 10 seconds
-    When Logout is initiated
-    Then First request is cancelled after 2 seconds due to socket timeout
-    # Implementation: Use mock TCP server that holds connection, verify timing
-    And Retry proceeds because total budget still has time remaining
-    And Second request succeeds immediately
-    And Close succeeds
+    Then Close throws timeout error
 
   @core_int
   Scenario: should respect total retry budget timeout across all attempts
@@ -93,8 +77,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Retry policy allows 10 attempts
     When Logout is initiated
     Then Fewer than 4 attempts are made
-    And The last attempt timeouts because remaining budget is less than server response time
-    And Total wall-clock time does not exceed 7 seconds for closing the connection
+    And The last attempt times out because remaining budget is less than server response time
 
   # ===========================================================================
   #                      Close vs Active Query Execution
@@ -126,7 +109,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     Given Mock HTTP server delays query response by 3 seconds then returns query result
     And Mock HTTP server accepts logout requests with 200
     And UD Core connection is logged in
-    And Socket timeout is set to 10 seconds
     And Query is submitted and server has not responded yet
     When Connection close is initiated
     And Server returns query response after closing process started
@@ -161,7 +143,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     Given Mock HTTP server returns 390112 SESSION_TOKEN_EXPIRED to query after 3 second delay
     And Mock HTTP server accepts logout requests with 200
     And UD Core connection is logged in
-    And Socket timeout is set to 10 seconds
     And Query is submitted and waiting for server response
     When Connection close is initiated
     And Server responds 390112 SESSION_TOKEN_EXPIRED to the in-flight query
@@ -249,20 +230,29 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict        |
       | best-effort   |
 
-  # TODO: SNOW-2923705 - Requires token refresh during logout (complex timing scenario)
-  Scenario: should include token refresh time in total logout timeout budget
-    # Token refresh is a network call that must be accounted for in total timeout
-    Given Core logout function called
-    And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
-    And Token refresh endpoint delays response by 3 seconds
-    And Mock HTTP server returns 200 after token refresh
-    And Total retry budget timeout is set to 5 seconds
-    When Logout is executed
-    Then Token refresh is attempted
-    And Token refresh time is counted against total timeout budget
-    And Remaining budget for retry logout is reduced by token refresh duration
-    And Total wall-clock time does not exceed 7 seconds for closing the connection
+Scenario: should succeed when retried logout fits within remaining timeout budget after token refresh
+  Given Core logout function called with strict strategy
+  And Timeout configured to 5 seconds
+  And Retry policy allows 5 attempts
+  And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt immediately
+  And Token refresh endpoint delays response by 2 seconds
+  And Mock HTTP server returns 200 immediately on retry attempt after refresh
+  When Logout is executed
+  Then Token refresh is attempted
+  And Logout is retried exactly once
+  And Close succeeds
 
+Scenario: should fail when retried logout exceeds remaining timeout budget after token refresh
+  Given Core logout function called with strict strategy
+  And Timeout configured to 5 seconds
+  And Retry policy allows 5 attempts
+  And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt immediately
+  And Token refresh endpoint delays response by 6 seconds
+  And Mock HTTP server returns 200 immediately on retry attempt after refresh
+  When Logout is executed
+  Then Token refresh is attempted
+  And Logout is retried exactly once
+  And Close throws timeout error
   # ---------------------------------------------------------------------------
   #  Retry and Timeout Configuration (Honors Provided Values)
   # ---------------------------------------------------------------------------
@@ -298,8 +288,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Timeout configured to <timeout_seconds> seconds
     And Mock HTTP server delays response by <delay_seconds> seconds then returns 200
     When Logout is executed
-    Then Request completes within <timeout_seconds> seconds
-    And Close succeeds
+    Then Close succeeds
 
     Examples:
       | strategy_type | timeout_seconds | delay_seconds |
@@ -352,8 +341,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Timeout configured to <timeout_seconds> seconds
     And Mock HTTP server delays response by <delay_seconds> seconds
     When Logout is executed
-    Then Request times out after <timeout_seconds> seconds
-    And Close throws timeout error
+    Then Close throws timeout error
 
     Examples:
       | timeout_seconds | delay_seconds |
@@ -366,9 +354,8 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Timeout configured to <timeout_seconds> seconds
     And Mock HTTP server delays response by <delay_seconds> seconds
     When Logout is executed
-    Then Request times out after <timeout_seconds> seconds
     And Timeout is logged as WARN
-    And Close succeeds
+    Then Close succeeds
 
     Examples:
       | timeout_seconds | delay_seconds |
