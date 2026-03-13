@@ -55,7 +55,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     Given Mock HTTP server holds connection open for 10 seconds without responding
     And UD Core connection is logged in with no timeout override
     When Logout is initiated
-    And Close throws timeout error
+    Then Close throws timeout error
 
   Scenario: should respect total retry budget timeout across all attempts
     # Tests that total timeout caps wall-clock time across ALL retries
@@ -274,7 +274,7 @@ Scenario: should fail when retried logout exceeds remaining timeout budget after
     And Timeout configured to <timeout_seconds> seconds
     And Mock HTTP server delays response by <delay_seconds> seconds then returns 200
     When Logout is executed
-    And Close succeeds
+    Then Close succeeds
 
     Examples:
       | strategy_type | timeout_seconds | delay_seconds |
@@ -324,7 +324,7 @@ Scenario: should fail when retried logout exceeds remaining timeout budget after
     And Timeout configured to <timeout_seconds> seconds
     And Mock HTTP server delays response by <delay_seconds> seconds
     When Logout is executed
-    And Close throws timeout error
+    Then Close throws timeout error
 
     Examples:
       | timeout_seconds | delay_seconds |
@@ -337,7 +337,7 @@ Scenario: should fail when retried logout exceeds remaining timeout budget after
     And Mock HTTP server delays response by <delay_seconds> seconds
     When Logout is executed
     And Timeout is logged as WARN
-    And Close succeeds
+    Then Close succeeds
 
     Examples:
       | timeout_seconds | delay_seconds |
