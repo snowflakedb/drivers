@@ -1,0 +1,139 @@
+# Universal Driver CI Tests Pipeline
+# Runs integration and E2E tests for all drivers in parallel.
+#
+# Prerequisites:
+#   - PARAMETERS_SECRET env var must be set on the Buildkite pipeline
+#     (used by ./scripts/decode_secrets.sh to create parameters.json)
+#
+# Docker image: same as used in Jenkins CI (rhel8-universal-driver-coverage)
+
+env:
+  DOCKER_IMAGE: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+
+steps:
+  # --------------------------------------------------------------------------
+  # Rust Core E2E Tests
+  # Based on: ci/Jenkinsfile VPN E2E stage (cargo test --ignored)
+  # --------------------------------------------------------------------------
+  - label: ":rust: Rust Core E2E Tests"
+    key: "rust-core-e2e"
+    command: |
+      ./scripts/decode_secrets.sh
+      yum install -y unzip
+      export PARAMETER_PATH=$$(pwd)/parameters.json
+      cargo test --package sf_core -- --ignored
+    plugins:
+      - docker#v5.11.0:
+          image: "$${DOCKER_IMAGE}"
+          propagate-environment: true
+          environment:
+            - "PARAMETERS_SECRET"
+    timeout_in_minutes: 30
+    retry:
+      automatic:
+        - exit_status: "*"
+          limit: 1
+
+  # --------------------------------------------------------------------------
+  # Python Integration + E2E Tests
+  # Based on: ci/Jenkinsfile.coverage Python stage + GHA test-python.yml
+  # Runs integ/ and e2e/ test directories (unit tests stay in GHA)
+  # --------------------------------------------------------------------------
+  - label: ":python: Python Integ + E2E Tests"
+    key: "python-integ-e2e"
+    command: |
+      ./scripts/decode_secrets.sh
+      yum install -y unzip
+      export PARAMETER_PATH=$$(pwd)/parameters.json
+
+      cd python
+      RUSTFLAGS="" hatch build -t wheel
+      hatch run test.py3.9:install-wheel
+      hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
+    plugins:
+      - docker#v5.11.0:
+          image: "$${DOCKER_IMAGE}"
+          propagate-environment: true
+          environment:
+            - "PARAMETERS_SECRET"
+    timeout_in_minutes: 45
+    retry:
+      automatic:
+        - exit_status: "*"
+          limit: 1
+
+  # --------------------------------------------------------------------------
+  # ODBC Integration + E2E Tests
+  # Based on: ci/Jenkinsfile VPN E2E ODBC stage
+  # Builds the ODBC driver, compiles C++ test suite, runs ctest
+  # --------------------------------------------------------------------------
+  - label: ":c: ODBC Integ + E2E Tests"
+    key: "odbc-integ-e2e"
+    command: |
+      ./scripts/decode_secrets.sh
+      yum install -y unzip
+      export PARAMETER_PATH=$$(pwd)/parameters.json
+
+      # Build the ODBC driver
+      cargo build
+
+      # Build C++ ODBC test suite
+      source /opt/rh/gcc-toolset-11/enable
+      cd odbc_tests
+      mkdir -p cmake-build
+      cmake -B cmake-build \
+          -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+          -D ODBC_INCLUDE_DIR="/usr/include" \
+          -D DRIVER_TYPE=NEW \
+          .
+      cmake --build cmake-build -- -j $$(nproc)
+
+      # Run ODBC integration tests
+      WORKSPACE_ROOT=$$(pwd)/..
+      export DRIVER_PATH=$${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+      export PARAMETER_PATH=$${WORKSPACE_ROOT}/parameters.json
+      ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error
+    plugins:
+      - docker#v5.11.0:
+          image: "$${DOCKER_IMAGE}"
+          propagate-environment: true
+          environment:
+            - "PARAMETERS_SECRET"
+    timeout_in_minutes: 45
+    retry:
+      automatic:
+        - exit_status: "*"
+          limit: 1
+
+  # --------------------------------------------------------------------------
+  # JDBC Integration + E2E Tests
+  # Based on: ci/Jenkinsfile.coverage JDBC stage + GHA test-jdbc.yml
+  # Builds the JDBC bridge (Rust), then runs Gradle test suite
+  # --------------------------------------------------------------------------
+  - label: ":java: JDBC Integ + E2E Tests"
+    key: "jdbc-integ-e2e"
+    command: |
+      ./scripts/decode_secrets.sh
+      yum install -y unzip
+      export PARAMETER_PATH=$$(pwd)/parameters.json
+
+      # Build Rust components needed by JDBC
+      cargo build --package sf_core
+      cargo build --package jdbc_bridge
+
+      # Run JDBC tests
+      export CORE_PATH=$$(pwd)/target/debug/libjdbc_bridge.so
+      chmod +x jdbc/gradlew
+      cd jdbc
+      ./gradlew test --stacktrace
+    plugins:
+      - docker#v5.11.0:
+          image: "$${DOCKER_IMAGE}"
+          propagate-environment: true
+          environment:
+            - "PARAMETERS_SECRET"
+    timeout_in_minutes: 45
+    retry:
+      automatic:
+        - exit_status: "*"
+          limit: 1
