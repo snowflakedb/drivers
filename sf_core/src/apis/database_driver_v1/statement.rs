@@ -429,6 +429,7 @@ impl Statement {
 
 fn parse_bool_setting(setting: &Setting) -> Option<bool> {
     match setting {
+        Setting::Bool(v) => Some(*v),
         Setting::String(s) => {
             let s = s.trim();
             if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("yes") || s == "1" {
@@ -565,6 +566,25 @@ pub(crate) fn parse_json_bindings<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_bool_setting_accepts_native_bool_values() {
+        assert_eq!(parse_bool_setting(&Setting::Bool(true)), Some(true));
+        assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
+    }
+
+    #[test]
+    fn execution_mode_uses_native_bool_async_setting() {
+        let conn = Arc::new(Mutex::new(Connection::new()));
+        let mut stmt = Statement::new(conn);
+        stmt.settings
+            .insert("async_execution".to_string(), Setting::Bool(true));
+
+        assert_eq!(
+            stmt.execution_mode(Some("SELECT 1")),
+            QueryExecutionMode::Async
+        );
+    }
 
     #[test]
     fn is_file_transfer_detects_put_statements() {

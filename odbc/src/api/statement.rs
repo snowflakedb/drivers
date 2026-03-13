@@ -4,7 +4,9 @@ use crate::api::error::{
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
     NoMoreDataSnafu, Required,
 };
-use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
+use crate::api::{
+    ConnectionState, OdbcResult, ParameterBinding, Statement, StatementState, stmt_from_handle,
+};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::write_json::odbc_bindings_to_json;
@@ -65,10 +67,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             let response = response?;
 
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
-            stmt.state = create_execute_state(response)?.into();
-            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
-                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
-            }
+            set_state(stmt, create_execute_state(response)?);
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -151,7 +150,9 @@ pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 
     if matches!(
         stmt.state.as_ref(),
-        StatementState::Executed { .. } | StatementState::Fetching { .. } | StatementState::Done
+        StatementState::Executed { .. }
+            | StatementState::Fetching { .. }
+            | StatementState::Done { .. }
     ) {
         tracing::error!("prepare: cursor is already open");
         return InvalidCursorStateSnafu.fail();
@@ -177,8 +178,9 @@ pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             let result = prepare_result.result.required("Result is required")?;
             let stream_ptr = result.stream.required("Stream is required")?;
             let reader = reader_from_protobuf_stream(stream_ptr)?;
-            stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
-            stmt.state.set(StatementState::Prepared { reader });
+            let schema = reader.schema();
+            stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
+            stmt.state.set(StatementState::Prepared { schema });
             tracing::info!("prepare: Successfully prepared statement");
             Ok(())
         }
@@ -196,7 +198,9 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
     if matches!(
         stmt.state.as_ref(),
-        StatementState::Executed { .. } | StatementState::Fetching { .. } | StatementState::Done
+        StatementState::Executed { .. }
+            | StatementState::Fetching { .. }
+            | StatementState::Done { .. }
     ) {
         tracing::error!("execute: cursor is already open");
         return InvalidCursorStateSnafu.fail();
@@ -223,17 +227,20 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
             let execute_state = create_execute_state(response)?;
 
-            // DML that affected 0 rows returns SQL_NO_DATA per ODBC spec.
             if is_dml_statement_type(statement_type_id) && Some(0) == rows_affected {
-                stmt.state = StatementState::NoResultSet.into();
-                stmt.ird.desc_count = 0;
+                let StatementState::Executed { reader, .. } = &execute_state else {
+                    unreachable!("DML always produces Executed state");
+                };
+                set_state(
+                    stmt,
+                    StatementState::NoResultSet {
+                        schema: reader.schema(),
+                    },
+                );
                 return NoMoreDataSnafu.fail();
             }
 
-            stmt.state = execute_state.into();
-            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
-                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
-            }
+            set_state(stmt, execute_state);
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -265,6 +272,15 @@ fn has_result_set(statement_type_id: i64) -> bool {
     is_ddl_statement(statement_type_id) && !is_pat_statement(statement_type_id)
 }
 
+fn set_state(stmt: &mut Statement, state: StatementState) {
+    stmt.ird.desc_count = match &state {
+        StatementState::Executed { reader, .. } => reader.schema().fields().len() as sql::SmallInt,
+        StatementState::NoResultSet { .. } | StatementState::Done { .. } => 0,
+        _ => stmt.ird.desc_count,
+    };
+    stmt.state = state.into();
+}
+
 fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {
     tracing::debug!("create_execute_state: response={:?}", response);
     let result = response.result.required("Execute result is required")?;
@@ -274,7 +290,9 @@ fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<S
     if let Some(statement_type_id) = result.statement_type_id
         && has_result_set(statement_type_id)
     {
-        return Ok(StatementState::NoResultSet);
+        return Ok(StatementState::NoResultSet {
+            schema: reader.schema(),
+        });
     }
     Ok(StatementState::Executed {
         reader,
@@ -543,7 +561,7 @@ pub fn get_stmt_attr(
                 if !string_length_ptr.is_null() {
                     std::ptr::write_unaligned(
                         string_length_ptr,
-                        std::mem::size_of::<sql::ULen>() as sql::Integer,
+                        size_of::<sql::ULen>() as sql::Integer,
                     );
                 }
             }
@@ -553,7 +571,7 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut sql::ULen) = stmt.max_length;
                 if !string_length_ptr.is_null() {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())
@@ -590,7 +608,7 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut sql::ULen) = stmt.ard.array_size as sql::ULen;
                 if !string_length_ptr.is_null() {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())
@@ -611,7 +629,7 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut sql::ULen) = stmt.ard.bind_type;
                 if !string_length_ptr.is_null() {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
                 }
             }
             Ok(())

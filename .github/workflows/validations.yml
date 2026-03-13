@@ -86,8 +86,36 @@ jobs:
         run: |
           ./tests/tests_format_validator/run_validator.sh
 
+  test-coverage-report:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate HTML coverage report
+        run: |
+          python3 tests/test_coverage_report/coverage_report.py \
+            --workspace . \
+            --format html \
+            --output test_coverage_report.html
+
+      - name: Upload coverage report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: universal-driver-test-coverage-report
+          path: test_coverage_report.html
+          retention-days: 30
+
   validations-status:
-    needs: [detect-changes, test-data, proto, tests-format-validator]
+    needs: [detect-changes, test-data, proto, tests-format-validator, test-coverage-report]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -98,7 +126,8 @@ jobs:
           # Check if all validations were skipped (docs-only)
           if [[ "${{ needs.test-data.result }}" == "skipped" ]] && \
              [[ "${{ needs.proto.result }}" == "skipped" ]] && \
-             [[ "${{ needs.tests-format-validator.result }}" == "skipped" ]]; then
+             [[ "${{ needs.tests-format-validator.result }}" == "skipped" ]] && \
+             [[ "${{ needs.test-coverage-report.result }}" == "skipped" ]]; then
             echo "✓ Validations were SKIPPED (documentation-only changes)"
             exit 0
           fi
@@ -106,11 +135,13 @@ jobs:
           # Check if any validation failed or was cancelled
           if [[ "${{ needs.test-data.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.proto.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.test-coverage-report.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Validations were RUN and FAILED or CANCELLED"
             echo "  - test-data: ${{ needs.test-data.result }}"
             echo "  - proto: ${{ needs.proto.result }}"
             echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
+            echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
             exit 1
           fi
           
@@ -119,4 +150,5 @@ jobs:
           echo "  - test-data: ${{ needs.test-data.result }}"
           echo "  - proto: ${{ needs.proto.result }}"
           echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
+          echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
           exit 0

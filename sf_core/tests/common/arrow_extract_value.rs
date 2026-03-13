@@ -1,4 +1,4 @@
-use arrow::array::{Array, Float64Array, Int8Array, Int64Array, StringArray};
+use arrow::array::{Array, AsArray, Float64Array, Int8Array, Int32Array, Int64Array, StringArray};
 
 #[derive(Debug)]
 pub enum ArrowExtractError {
@@ -7,6 +7,9 @@ pub enum ArrowExtractError {
 
 pub trait ArrowExtractValue: Sized {
     fn extract_int8(_value: i8) -> Result<Self, ArrowExtractError> {
+        Err(ArrowExtractError::UnsupportedType)
+    }
+    fn extract_int32(_value: i32) -> Result<Self, ArrowExtractError> {
         Err(ArrowExtractError::UnsupportedType)
     }
     fn extract_int64(_value: i64) -> Result<Self, ArrowExtractError> {
@@ -22,6 +25,10 @@ pub trait ArrowExtractValue: Sized {
 
 impl ArrowExtractValue for String {
     fn extract_int8(value: i8) -> Result<String, ArrowExtractError> {
+        Ok(value.to_string())
+    }
+
+    fn extract_int32(value: i32) -> Result<String, ArrowExtractError> {
         Ok(value.to_string())
     }
 
@@ -51,6 +58,9 @@ impl ArrowExtractValue for i32 {
     fn extract_int8(value: i8) -> Result<i32, ArrowExtractError> {
         Ok(value as i32)
     }
+    fn extract_int32(value: i32) -> Result<i32, ArrowExtractError> {
+        Ok(value)
+    }
     fn extract_int64(value: i64) -> Result<i32, ArrowExtractError> {
         Ok(value as i32)
     }
@@ -68,6 +78,13 @@ pub fn extract_arrow_value<T: ArrowExtractValue>(
                 .downcast_ref::<Int8Array>()
                 .expect("Expected int8 array");
             T::extract_int8(int_array.value(row_idx))
+        }
+        DataType::Int32 => {
+            let int_array = column
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .expect("Expected int32 array");
+            T::extract_int32(int_array.value(row_idx))
         }
         DataType::Int64 => {
             let int_array = column
@@ -89,6 +106,16 @@ pub fn extract_arrow_value<T: ArrowExtractValue>(
                 .downcast_ref::<StringArray>()
                 .expect("Expected string array");
             T::extract_string(string_array.value(row_idx))
+        }
+        DataType::Struct(_) => {
+            let struct_array = column.as_struct();
+            let parts: Vec<String> = (0..struct_array.num_columns())
+                .map(|i| {
+                    extract_arrow_value::<String>(struct_array.column(i).as_ref(), row_idx)
+                        .unwrap_or_else(|_| "?".to_string())
+                })
+                .collect();
+            T::extract_string(&parts.join("."))
         }
         _ => Err(ArrowExtractError::UnsupportedType),
     }
