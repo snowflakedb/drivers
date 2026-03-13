@@ -124,7 +124,7 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
     match logical_type {
         "TEXT" => &["finalType", "precision", "scale"],
         "FIXED" => &["finalType", "charLength", "byteLength"],
-        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" => &[
+        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" => &[
             "finalType",
             "charLength",
             "byteLength",
@@ -139,47 +139,40 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
 /// Asserts that two Arrow schemas match in field name, data type, nullability,
 /// and relevant metadata keys (excluding keys that are known to differ between
 /// Arrow-native and JSON-converted-to-Arrow results).
-pub fn assert_schemas_match(arrow_schema: &Schema, json_schema: &Schema) {
+pub fn assert_schemas_match(left: &Schema, right: &Schema) {
     assert_eq!(
-        arrow_schema.fields().len(),
-        json_schema.fields().len(),
-        "Schema field count mismatch: arrow has {}, json has {}",
-        arrow_schema.fields().len(),
-        json_schema.fields().len()
+        left.fields().len(),
+        right.fields().len(),
+        "Schema field count mismatch: left has {}, right has {}",
+        left.fields().len(),
+        right.fields().len()
     );
 
-    for (arrow_field, json_field) in arrow_schema
-        .fields()
-        .iter()
-        .zip(json_schema.fields().iter())
-    {
+    for (arrow_field, json_field) in left.fields().iter().zip(right.fields().iter()) {
         assert_fields_match(arrow_field, json_field);
     }
 }
 
-fn assert_fields_match(arrow_field: &FieldRef, json_field: &FieldRef) {
-    assert_eq!(arrow_field.name(), json_field.name(), "Field name mismatch");
+fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
+    assert_eq!(left.name(), right.name(), "Field name mismatch");
     assert_eq!(
-        arrow_field.is_nullable(),
-        json_field.is_nullable(),
+        left.is_nullable(),
+        right.is_nullable(),
         "Nullability mismatch for field '{}'",
-        arrow_field.name()
+        left.name()
     );
     assert_eq!(
-        discriminant(arrow_field.data_type()),
-        discriminant(json_field.data_type()),
-        "Data type variant mismatch for field '{}'",
-        arrow_field.name()
+        discriminant(left.data_type()),
+        discriminant(right.data_type()),
+        "Data type variant mismatch for field '{}', left type: {:?}, right type: {:?}",
+        left.name(),
+        left.data_type(),
+        right.data_type()
     );
-    let logical_type = arrow_field
+    let logical_type = left
         .metadata()
         .get("logicalType")
-        .unwrap_or_else(|| {
-            panic!(
-                "logicalType metadata key missing for field {}",
-                arrow_field.name()
-            )
-        });
+        .unwrap_or_else(|| panic!("logicalType metadata key missing for field {}", left.name()));
     let excluded = metadata_keys_to_exclude(logical_type);
 
     let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
@@ -190,12 +183,12 @@ fn assert_fields_match(arrow_field: &FieldRef, json_field: &FieldRef) {
             .collect()
     };
 
-    let arrow_meta: BTreeMap<String, String> = arrow_field
+    let arrow_meta: BTreeMap<String, String> = left
         .metadata()
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    let json_meta: BTreeMap<String, String> = json_field
+    let json_meta: BTreeMap<String, String> = right
         .metadata()
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
@@ -207,24 +200,24 @@ fn assert_fields_match(arrow_field: &FieldRef, json_field: &FieldRef) {
     assert_eq!(
         filtered_arrow,
         filtered_json,
-        "Metadata mismatch for field '{}'\n  arrow: {:?}\n  json:  {:?}",
-        arrow_field.name(),
+        "Metadata mismatch for field '{}'\n  left: {:?}\n  right:  {:?}",
+        left.name(),
         filtered_arrow,
         filtered_json
     );
-    match (arrow_field.data_type(), json_field.data_type()) {
-        (DataType::Struct(arrow_fields), DataType::Struct(json_fields)) => {
-            arrow_fields
+    match (left.data_type(), right.data_type()) {
+        (DataType::Struct(left_fields), DataType::Struct(right_fields)) => {
+            left_fields
                 .iter()
-                .zip(json_fields.iter())
+                .zip(right_fields.iter())
                 .for_each(|(a, j)| assert_fields_match(a, j));
         }
-        (arrow_data_type, json_data_type) => {
+        (left_data_type, right_data_type) => {
             assert_eq!(
-                arrow_data_type,
-                json_data_type,
+                left_data_type,
+                right_data_type,
                 "Data type mismatch for field '{}'",
-                arrow_field.name()
+                left.name()
             );
         }
     }
@@ -232,26 +225,22 @@ fn assert_fields_match(arrow_field: &FieldRef, json_field: &FieldRef) {
 
 /// Asserts that two RecordBatches match in schema (using relaxed metadata comparison)
 /// and column data.
-pub fn assert_record_batches_match(arrow_batch: &RecordBatch, json_batch: &RecordBatch) {
-    assert_schemas_match(arrow_batch.schema().as_ref(), json_batch.schema().as_ref());
+pub fn assert_record_batches_match(left: &RecordBatch, right: &RecordBatch) {
+    assert_schemas_match(left.schema().as_ref(), right.schema().as_ref());
 
     assert_eq!(
-        arrow_batch.num_columns(),
-        json_batch.num_columns(),
+        left.num_columns(),
+        right.num_columns(),
         "Column count mismatch"
     );
-    assert_eq!(
-        arrow_batch.num_rows(),
-        json_batch.num_rows(),
-        "Row count mismatch"
-    );
+    assert_eq!(left.num_rows(), right.num_rows(), "Row count mismatch");
 
-    for col_idx in 0..arrow_batch.num_columns() {
-        let arrow_col = arrow_batch.column(col_idx);
-        let json_col = json_batch.column(col_idx);
-        let schema = arrow_batch.schema();
+    for col_idx in 0..left.num_columns() {
+        let left_col = left.column(col_idx);
+        let right_col = right.column(col_idx);
+        let schema = left.schema();
         let field_name = schema.field(col_idx).name();
-        assert_arrays_match(arrow_col, json_col, field_name);
+        assert_arrays_match(left_col, right_col, field_name);
     }
 }
 
