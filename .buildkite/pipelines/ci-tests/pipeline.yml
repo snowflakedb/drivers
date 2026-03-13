@@ -17,6 +17,9 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":rust: Rust Core E2E Tests"
     key: "rust-core-e2e"
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
@@ -41,6 +44,9 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":python: Python Integ + E2E Tests"
     key: "python-integ-e2e"
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
@@ -69,6 +75,9 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":c: ODBC Integ + E2E Tests"
     key: "odbc-integ-e2e"
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
@@ -112,6 +121,9 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":java: JDBC Integ + E2E Tests"
     key: "jdbc-integ-e2e"
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
