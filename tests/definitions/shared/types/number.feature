@@ -40,7 +40,7 @@ Feature: NUMBER type support
     When Query "SELECT 99999999999999999999999999999999999999::<type>(38,0), -99999999999999999999999999999999999999::<type>(38,0)" is executed
     Then Result should contain max and min 38-digit integers
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle NULL values from literals for number and synonyms
     Given Snowflake client is logged in
     When Query "SELECT NULL::<type>(10,0), 42::<type>(10,0), NULL::<type>(10,2), 42.50::<type>(10,2)" is executed
@@ -96,7 +96,7 @@ Feature: NUMBER type support
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain 3 rows with expected high precision boundary values
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle NULL values from table with multiple scales for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists

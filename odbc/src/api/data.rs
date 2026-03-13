@@ -342,6 +342,7 @@ fn adjust_binding_for_row(
         ),
         precision: binding.precision,
         scale: binding.scale,
+        datetime_interval_precision: binding.datetime_interval_precision,
     }
 }
 
@@ -496,6 +497,8 @@ pub fn get_data(
                 indicator_ptr: str_len_or_ind_ptr,
                 precision: ard_binding.and_then(|b| b.precision),
                 scale: ard_binding.and_then(|b| b.scale),
+                datetime_interval_precision: ard_binding
+                    .and_then(|b| b.datetime_interval_precision),
             };
             let conversion_warnings = read_arrow_value(
                 &binding,

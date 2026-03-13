@@ -24,7 +24,6 @@ import net.snowflake.client.internal.log.SFLoggerFactory;
  */
 public class SnowflakeBasicDataSource implements SnowflakeDataSource {
 
-  private static final String CONNECTION_STRING_PREFIX = "jdbc:snowflake://";
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeBasicDataSource.class);
 
   static {
@@ -42,10 +41,8 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
 
   private final Properties properties = new Properties();
   private String url;
-  private String serverName;
   private String user;
   private String password;
-  private int portNumber = 0;
 
   // DataSource methods ----------------------------------------------------------------------------
 
@@ -94,6 +91,9 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
       return Integer.parseInt(
           properties.getProperty(SnowflakeSessionProperty.LOGIN_TIMEOUT.getPropertyKey()));
     } catch (NumberFormatException e) {
+      logger.warn(
+          "Could not parse loginTimeout property value '{}', returning default of 0",
+          properties.getProperty(SnowflakeSessionProperty.LOGIN_TIMEOUT.getPropertyKey()));
       return 0;
     }
   }
@@ -112,13 +112,13 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   // Wrapper methods -------------------------------------------------------------------------------
 
   @Override
-  public boolean isWrapperFor(Class<?> iface) {
-    return false;
+  public boolean isWrapperFor(Class<?> iface) throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
   }
 
   @Override
-  public <T> T unwrap(Class<T> iface) {
-    return null;
+  public <T> T unwrap(Class<T> iface) throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
   }
 
   // SnowflakeDataSource methods -------------------------------------------------------------------
@@ -136,16 +136,6 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   @Override
   public void setPassword(String password) {
     this.password = password;
-  }
-
-  @Override
-  public void setServerName(String serverName) {
-    this.serverName = serverName;
-  }
-
-  @Override
-  public void setPortNumber(int portNumber) {
-    this.portNumber = portNumber;
   }
 
   @Override
@@ -175,21 +165,7 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
 
   @Override
   public String getUrl() {
-    if (url != null) {
-      return url;
-    }
-    if (serverName == null || serverName.isEmpty()) {
-      throw new IllegalStateException(
-          "Snowflake DataSource is not configured: either 'url' or 'serverName' must be set "
-              + "before obtaining a connection. ");
-    }
-    StringBuilder urlBuilder = new StringBuilder(100);
-    urlBuilder.append(CONNECTION_STRING_PREFIX);
-    urlBuilder.append(serverName);
-    if (portNumber != 0) {
-      urlBuilder.append(":").append(portNumber);
-    }
-    return urlBuilder.toString();
+    return url;
   }
 
   @Override

@@ -355,7 +355,7 @@ impl SnowflakeTestClient {
             self.set_connection_option("schema", schema);
         }
 
-        if let Some(warehouse) = &self.parameters.warehouse {
+        if let Some(warehouse) = &self.parameters.warehouse() {
             self.set_connection_option("warehouse", warehouse);
         }
 

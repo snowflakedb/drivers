@@ -169,3 +169,54 @@ behavior_differences:
       NEW driver: Returns just the filename (e.g. test_data.csv), same as on Linux.
       Impact: Applications that parse the PUT source column for the full path on
       Windows will now receive only the filename.
+
+  20:
+    name: "Float to single-component interval conversions succeed instead of returning 07006"
+    description: |
+      OLD driver: When SQLGetData is called on a FLOAT/DOUBLE/REAL column with a
+      single-component interval target type (SQL_C_INTERVAL_YEAR, _MONTH, _DAY,
+      _HOUR, _MINUTE, _SECOND), the old driver returns SQL_SUCCESS and converts
+      the float value to the interval struct. This violates the ODBC spec
+      footnote [c] which states these conversions are "not supported for the
+      approximate numeric data types (SQL_REAL, SQL_FLOAT, or SQL_DOUBLE)."
+      NEW driver: Returns SQL_ERROR with SQLSTATE 07006 (Restricted data type
+      attribute violation), correctly rejecting the conversion per the ODBC spec.
+      Impact: Applications that relied on converting float columns to
+      single-component interval types will now receive an error.
+
+  21:
+    name: "Float to compound interval conversions return 22015 instead of 07006"
+    description: |
+      OLD driver: When SQLGetData is called on a FLOAT/DOUBLE/REAL column with a
+      compound interval target type (SQL_C_INTERVAL_YEAR_TO_MONTH,
+      _DAY_TO_HOUR, _DAY_TO_MINUTE, _DAY_TO_SECOND, _HOUR_TO_MINUTE,
+      _HOUR_TO_SECOND, _MINUTE_TO_SECOND), the old driver returns SQL_ERROR
+      with SQLSTATE 22015 (Interval field overflow). This treats the conversion
+      as supported but fails because a scalar cannot map to multiple components.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 07006 (Restricted data type
+      attribute violation), correctly identifying the conversion as unsupported
+      for approximate numeric types per the ODBC spec.
+      Impact: Applications that check for specific SQLSTATE codes on interval
+      conversion failures will see 07006 instead of 22015. Both drivers return
+      SQL_ERROR, so applications checking only the return code are unaffected.
+
+  22:
+    name: "Interval leading field precision is not enforced and SQL_DESC_DATETIME_INTERVAL_PRECISION is not supported"
+    description: |
+      OLD driver: Does not enforce the ODBC-mandated default interval leading
+      precision of 2 digits. When a NUMBER value is converted to a single-field
+      interval C type (SQL_C_INTERVAL_YEAR, _MONTH, _DAY, _HOUR, _MINUTE,
+      _SECOND), any value that fits in a SQLUINTEGER (up to 4,294,967,295)
+      succeeds regardless of leading precision. Setting
+      SQL_DESC_DATETIME_INTERVAL_PRECISION via SQLSetDescField has no effect.
+      NEW driver: Enforces the default leading precision of 2 as specified by
+      the ODBC standard (values must be in the range 0–99). Values >= 100 fail
+      with SQLSTATE 22015 (Interval field overflow). Applications can increase
+      the precision by calling SQLSetDescField with
+      SQL_DESC_DATETIME_INTERVAL_PRECISION on the ARD before fetching.
+      Reference: ODBC spec "Interval Data Type Precision" — "The
+      SQL_DESC_DATETIME_INTERVAL_PRECISION field is automatically set to the
+      default interval leading precision of 2."
+      Impact: Applications converting NUMBER values >= 100 to single-field
+      interval types will now receive 22015 unless they explicitly set a higher
+      leading precision via SQLSetDescField.

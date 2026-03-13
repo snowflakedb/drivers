@@ -1,19 +1,16 @@
-use std::sync::OnceLock;
-
+use keyring::credential::CredentialPersistence;
+use keyring::{CredentialBuilder, Entry};
 use snafu::ResultExt;
 use tracing::{debug, info};
 
-use super::file_cache::install_file_credential_fallback;
+use crate::token_cache::file_cache::FileTokenCache;
+
 use super::{
-    CacheDirectoryResolutionSnafu, KeystoreAccessSnafu, TokenCache, TokenCacheError,
-    TokenRemovalSnafu, TokenRetrievalSnafu, TokenStorageSnafu, TokenType, build_cache_key,
-    validate_key_components,
+    KeystoreAccessSnafu, TokenCache, TokenCacheError, TokenRemovalSnafu, TokenRetrievalSnafu,
+    TokenStorageSnafu, TokenType, build_cache_key, validate_key_components,
 };
 
 const KEYRING_SERVICE_NAME: &str = "snowflake_credential_cache";
-
-/// Result of the one-time fallback installation attempt.
-static FALLBACK_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
 /// A token cache implementation using the system keyring.
 ///
@@ -24,25 +21,28 @@ static FALLBACK_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 /// - Linux: Secret Service (via D-Bus) or kernel keyutils
 ///
 /// On platforms where the keyring does not provide persistent storage,
-/// a file-based credential backend is automatically installed as a
-/// fallback on first instantiation.
-pub struct KeyringTokenCache;
+/// a file-based credential backend is used as a fallback.
+pub struct KeyringTokenCache {
+    cache: Box<CredentialBuilder>,
+}
 
 impl KeyringTokenCache {
     /// Creates a new keyring-based token cache.
     ///
-    /// On the first call, this checks whether the platform keyring provides
-    /// persistent storage. If not, the file-based credential backend is
-    /// installed as a transparent fallback so that all subsequent
-    /// `keyring::Entry` operations are backed by the local cache file.
+    /// Checks whether the platform keyring provides persistent storage.
+    /// If not, a file-based credential backend is used as a fallback.
     pub fn new() -> Result<Self, TokenCacheError> {
-        let result = FALLBACK_INIT
-            .get_or_init(|| install_file_credential_fallback().map_err(|e| format!("{e}")));
-        if let Err(error_msg) = result {
-            debug!("Failed to install file credential fallback: {error_msg}");
-            return CacheDirectoryResolutionSnafu.fail();
-        }
-        Ok(Self)
+        let default_builder = keyring::default::default_credential_builder();
+        let cache = if !matches!(
+            default_builder.persistence(),
+            CredentialPersistence::UntilDelete
+        ) {
+            let cache = FileTokenCache::new()?;
+            Box::new(cache)
+        } else {
+            default_builder
+        };
+        Ok(Self { cache })
     }
 
     /// Creates a keyring entry for the given key components.
@@ -55,7 +55,9 @@ impl KeyringTokenCache {
         validate_key_components(host, username)?;
         debug!("Creating secret for {token_type:?}");
         let key = build_cache_key(host, username, token_type);
-        keyring::Entry::new(KEYRING_SERVICE_NAME, &key)
+        self.cache
+            .build(None, KEYRING_SERVICE_NAME, &key)
+            .map(Entry::new_with_credential)
             .boxed()
             .context(KeystoreAccessSnafu)
     }

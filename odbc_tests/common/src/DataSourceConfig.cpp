@@ -45,7 +45,11 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   if (auto schema = get_string(params, "SNOWFLAKE_TEST_SCHEMA", ""); !schema.empty()) {
     config.parameters_["SCHEMA"] = schema;
   }
-  if (auto warehouse = get_string(params, "SNOWFLAKE_TEST_WAREHOUSE", ""); !warehouse.empty()) {
+  auto warehouse = get_string(params, "SNOWFLAKE_TEST_WAREHOUSE_ODBC", "");
+  if (warehouse.empty()) {
+    warehouse = get_string(params, "SNOWFLAKE_TEST_WAREHOUSE", "");
+  }
+  if (!warehouse.empty()) {
     config.parameters_["WAREHOUSE"] = warehouse;
   }
   if (auto role = get_string(params, "SNOWFLAKE_TEST_ROLE", ""); !role.empty()) {

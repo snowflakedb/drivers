@@ -408,6 +408,7 @@ impl OdbcError {
                     | WriteOdbcError::IndicatorVariableRequired { .. } => {
                         SqlState::IndicatorVariableRequiredButNotSupplied
                     }
+                    WriteOdbcError::IntervalFieldOverflow { .. } => SqlState::IntervalFieldOverflow,
                     WriteOdbcError::UnsupportedOdbcType { .. } => {
                         SqlState::RestrictedDataTypeAttributeViolation
                     }

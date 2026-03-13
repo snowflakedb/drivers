@@ -1,51 +1,55 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 
-use super::Handle;
-use super::Setting;
 use super::error::*;
-use super::global_state::DB_HANDLE_MANAGER;
+use super::global_state::DatabaseDriverV1;
+use crate::config::settings::Setting;
+use crate::handle_manager::Handle;
 
-pub fn database_new() -> Handle {
-    DB_HANDLE_MANAGER.add_handle(Mutex::new(Database::new()))
-}
+impl DatabaseDriverV1 {
+    pub fn database_new(&self) -> Handle {
+        self.databases.add_handle(Mutex::new(Database::new()))
+    }
 
-pub fn database_set_option(db_handle: Handle, key: String, value: Setting) -> Result<(), ApiError> {
-    let handle = db_handle;
-    match DB_HANDLE_MANAGER.get_obj(handle) {
-        Some(db_ptr) => {
-            let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
-            db.settings.insert(key, value);
-            Ok(())
+    pub fn database_set_option(
+        &self,
+        db_handle: Handle,
+        key: String,
+        value: Setting,
+    ) -> Result<(), ApiError> {
+        match self.databases.get_obj(db_handle) {
+            Some(db_ptr) => {
+                let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
+                db.settings.insert(key, value);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Database handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Database handle not found".to_string(),
+    }
+
+    pub fn database_init(&self, db_handle: Handle) -> Result<(), ApiError> {
+        match self.databases.get_obj(db_handle) {
+            Some(_db_ptr) => Ok(()),
+            None => InvalidArgumentSnafu {
+                argument: "Database handle not found".to_string(),
+            }
+            .fail(),
         }
-        .fail(),
+    }
+
+    pub fn database_release(&self, db_handle: Handle) -> Result<(), ApiError> {
+        match self.databases.delete_handle(db_handle) {
+            true => Ok(()),
+            false => InvalidArgumentSnafu {
+                argument: "Failed to release database handle".to_string(),
+            }
+            .fail(),
+        }
     }
 }
-
-pub fn database_init(db_handle: Handle) -> Result<(), ApiError> {
-    let handle = db_handle;
-    match DB_HANDLE_MANAGER.get_obj(handle) {
-        Some(_db_ptr) => Ok(()),
-        None => InvalidArgumentSnafu {
-            argument: "Database handle not found".to_string(),
-        }
-        .fail(),
-    }
-}
-
-pub fn database_release(db_handle: Handle) -> Result<(), ApiError> {
-    match DB_HANDLE_MANAGER.delete_handle(db_handle) {
-        true => Ok(()),
-        false => InvalidArgumentSnafu {
-            argument: "Failed to release database handle".to_string(),
-        }
-        .fail(),
-    }
-}
-
-use std::collections::HashMap;
 
 pub struct Database {
     pub settings: HashMap<String, Setting>,
