@@ -542,6 +542,7 @@ pub enum StatementState {
         rows_affected: Option<i64>,
     },
     Done {
+        #[allow(dead_code)]
         schema: SchemaRef,
     },
     Error,
