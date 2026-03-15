@@ -51,8 +51,9 @@ TEST_CASE("should truncate string data when byte length is longer than the buffe
   CHECK(buffer[sizeof(buffer) - 1] == 0);
 
   // And the indicator should show the actual length of the original string
-  if (is_ascii_locale() || get_platform() == PLATFORM::WINDOWS) {
-    CHECK(indicator == SQL_NO_TOTAL);
+  if (is_ascii_locale() || (get_platform() == PLATFORM::PLATFORM_WINDOWS)) {
+    // TODO: We are not guaranteed to get length of string, due to charset conversion
+    CHECK((indicator == SQL_NO_TOTAL || indicator == 49));
   } else {
     CHECK(indicator == 49);
   }

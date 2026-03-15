@@ -25,10 +25,10 @@ enum class DRIVER_TYPE {
 };
 
 enum class PLATFORM {
-  WINDOWS = 0,
-  LINUX = 1,
-  MACOS = 2,
-  UNKNOWN = 3,
+  PLATFORM_WINDOWS = 0,
+  PLATFORM_LINUX = 1,
+  PLATFORM_MACOS = 2,
+  PLATFORM_UNKNOWN = 3,
 };
 
 extern PLATFORM get_platform();
@@ -60,8 +60,8 @@ extern DRIVER_TYPE get_driver_type();
 // re-encodes them to UTF-8 (double-encoding).  SQL_C_BINARY therefore returns
 // different byte sequences than on Unix/Linux where raw UTF-8 is preserved.
 // Use WINDOWS_ONLY / UNIX_ONLY to gate platform-specific assertions.
-#define WINDOWS_ONLY if (get_platform() == PLATFORM::WINDOWS)
-#define UNIX_ONLY if (get_platform() == PLATFORM::LINUX || get_platform() == PLATFORM::MACOS)
+#define WINDOWS_ONLY if (get_platform() == PLATFORM::PLATFORM_WINDOWS)
+#define UNIX_ONLY if (get_platform() == PLATFORM::PLATFORM_LINUX || get_platform() == PLATFORM::PLATFORM_MACOS)
 
 inline bool is_ascii_locale() {
 #ifdef _WIN32

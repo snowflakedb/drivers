@@ -10,7 +10,7 @@ DRIVER_TYPE get_driver_type() {
 
 PLATFORM get_platform() {
 #if defined(_WIN32)
-  return PLATFORM::WINDOWS;
+  return PLATFORM::PLATFORM_WINDOWS;
 #elif defined(__linux__)
   return PLATFORM::LINUX;
 #elif defined(__APPLE__)
