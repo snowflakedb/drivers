@@ -15,6 +15,12 @@ inline std::string return_code_to_string(SQLRETURN ret) {
       return "SQL_ERROR";
     case SQL_INVALID_HANDLE:
       return "SQL_INVALID_HANDLE";
+    case SQL_NO_DATA:
+      return "SQL_NO_DATA";
+    case SQL_NEED_DATA:
+      return "SQL_NEED_DATA";
+    case SQL_STILL_EXECUTING:
+      return "SQL_STILL_EXECUTING";
     default:
       return "UNKNOWN_RETURN_CODE(" + std::to_string(ret) + ")";
   }

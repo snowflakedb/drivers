@@ -1,3 +1,6 @@
+#ifndef REQUIRE_HPP
+#define REQUIRE_HPP
+
 #include "HandleWrapper.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
@@ -13,3 +16,5 @@ inline std::vector<DiagRec> require_connection_failed(const std::string& connect
   REQUIRE(ret == SQL_ERROR);
   return get_diag_rec(dbc);
 }
+
+#endif  // REQUIRE_HPP

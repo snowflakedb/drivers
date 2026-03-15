@@ -76,6 +76,20 @@ class IsError : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string describe() const override { return "is SQL_ERROR"; }
 };
 
+// Matches SQL_NO_DATA.
+class IsNoData : public Catch::Matchers::MatcherBase<OdbcResult> {
+ public:
+  bool match(const OdbcResult& result) const override { return result.returnCode == SQL_NO_DATA; }
+  std::string describe() const override { return "is SQL_NO_DATA"; }
+};
+
+// Matches SQL_INVALID_HANDLE.
+class IsInvalidHandle : public Catch::Matchers::MatcherBase<OdbcResult> {
+ public:
+  bool match(const OdbcResult& result) const override { return result.returnCode == SQL_INVALID_HANDLE; }
+  std::string describe() const override { return "is SQL_INVALID_HANDLE"; }
+};
+
 // Matches when any diagnostic record has the given SQLSTATE.
 class HasSqlState : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string expectedState_;
@@ -127,6 +141,12 @@ class HasDiagMessage : public Catch::Matchers::MatcherBase<OdbcResult> {
 
 // Requires SQL_ERROR.
 #define REQUIRE_ODBC_ERROR(ret, handle) REQUIRE_THAT(OdbcResult(ret, handle), OdbcMatchers::IsError())
+
+// Requires SQL_NO_DATA.
+#define REQUIRE_ODBC_NO_DATA(ret, handle) REQUIRE_THAT(OdbcResult(ret, handle), OdbcMatchers::IsNoData())
+
+// Requires SQL_INVALID_HANDLE.
+#define REQUIRE_ODBC_INVALID_HANDLE(ret, handle) REQUIRE_THAT(OdbcResult(ret, handle), OdbcMatchers::IsInvalidHandle())
 
 // Requires SQL_ERROR with the given SQLSTATE.
 #define REQUIRE_EXPECTED_ERROR(ret, expectedState, handle, handleType) \
