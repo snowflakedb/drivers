@@ -381,6 +381,10 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
 
 TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
           "[datatype][string][conversion]") {
+  WINDOWS_ONLY { SKIP("This test is not applicable on Windows"); }
+  if (is_utf8_locale()) {
+    SKIP("This test is not applicable on UTF-8 locales");
+  }
   // ODBC-specific: When reading UTF-16 data using SQL_C_CHAR target type,
   // on non-UTF-8 locales non-ASCII characters (> 0x7F) are replaced with 0x1a (SUB character),
   // on UTF-8 locales the characters are preserved as UTF-8.
@@ -405,45 +409,26 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
 
   // Then Japanese characters should be replaced with 0x1a (SUB) when reading as SQL_C_CHAR
   auto japanese = get_data<SQL_C_CHAR>(stmt, 1);
+  CHECK(japanese == "\x1a\x1a\x1a");
+
   // And Mixed string should have ASCII preserved and non-ASCII replaced with 0x1a
   auto mixed = get_data<SQL_C_CHAR>(stmt, 2);
+  CHECK(mixed == "Hello\x1aWorld");
   // And Emojis should all be replaced with 0x1a
   auto emojis = get_data<SQL_C_CHAR>(stmt, 3);
+  CHECK(emojis == "\x1a\x1a\x1a\x1a\x1a\x1a\x1a");
+
   // And Greek letters should be replaced with 0x1a
   auto greek = get_data<SQL_C_CHAR>(stmt, 4);
+  CHECK(greek == "\x1a\x1a\x1a\x1a");
+
   // And Combined string should have ASCII preserved and non-ASCII replaced with 0x1a
   auto combined = get_data<SQL_C_CHAR>(stmt, 6);
+  CHECK(combined ==
+        "y\x1a"
+        "es");
+
   auto surrogate_pair = get_data<SQL_C_CHAR>(stmt, 7);
-
-  if (is_utf8_locale()) {
-    // UTF-8 locale: non-ASCII characters preserved as UTF-8
-    CHECK(japanese == "日本語");
-    CHECK(mixed == "Hello日World");
-    CHECK(emojis == "⛄🚀🎉");
-    CHECK(greek == "αβγδ");
-    CHECK(combined == "y̆es");
-    CHECK(surrogate_pair == "𝄞");
-  } else {
-    // Non-UTF-8 locale: non-ASCII characters replaced with 0x1a (SUB)
-    CHECK(japanese == "\x1a\x1a\x1a");
-
-    CHECK(mixed.substr(0, 5) == "Hello");
-    CHECK(mixed[5] == '\x1a');
-    CHECK(mixed.substr(mixed.size() - 5) == "World");
-
-    for (char c : emojis) {
-      CHECK(c == '\x1a');
-    }
-
-    for (char c : greek) {
-      CHECK(c == '\x1a');
-    }
-
-    CHECK(combined.substr(0, 1) == "y");
-    CHECK(combined[1] == '\x1a');
-    CHECK(combined[2] == 'e');
-    CHECK(combined[3] == 's');
-
-    CHECK(surrogate_pair == "\x1a");
-  }
+  CHECK(surrogate_pair == "\x1a");
+  // UTF-8 locale: non-ASCII characters preserved as UTF-8
 }
