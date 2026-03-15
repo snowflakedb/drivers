@@ -1,15 +1,18 @@
 use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
+use crate::api::encoding::{
+    OdbcEncoding, read_string_from_pointer, write_string_bytes, write_string_bytes_i32,
+};
 use crate::api::error::Required;
 use crate::api::{
-    ConnectionState, GetDataExtensions, OdbcResult, api_utils, conn_from_handle,
+    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
     error::{
         AttributeCannotBeSetNowSnafu, InvalidPortSnafu, UnknownAttributeSnafu,
         UnsupportedAttributeSnafu,
     },
     types::ConnectionAttribute,
 };
-use crate::conversion::warning::{Warning, Warnings};
+use crate::conversion::warning::Warnings;
 use odbc_sys as sql;
 use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::*;
@@ -59,16 +62,18 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     map
 }
 
-/// Connect using connection string (SQLDriverConnect)
-pub fn driver_connect(
+/// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
+pub fn driver_connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
-    in_connection_string: *const sql::Char,
+    in_connection_string: *const E::Char,
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
-    // Parse the connection string
-    let connection_string =
-        api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
-    let connection_string_map = parse_connection_string(&connection_string);
+    let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
+    driver_connect_impl(connection_handle, &connection_string)
+}
+
+fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) -> OdbcResult<()> {
+    let connection_string_map = parse_connection_string(connection_string);
     {
         const REDACTED_KEYS: &[&str] = &[
             "PWD",
@@ -304,14 +309,14 @@ fn apply_pre_connection_attrs(
     Ok(false)
 }
 
-/// Simple connect function (SQLConnect) - currently a placeholder
-pub fn connect(
+/// Connect function (SQLConnect / SQLConnectW) - currently a placeholder.
+pub fn connect<E: OdbcEncoding>(
     _connection_handle: sql::Handle,
-    _server_name: *const sql::Char,
+    _server_name: *const E::Char,
     _name_length1: sql::SmallInt,
-    _user_name: *const sql::Char,
+    _user_name: *const E::Char,
     _name_length2: sql::SmallInt,
-    _authentication: *const sql::Char,
+    _authentication: *const E::Char,
     _name_length3: sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("connect: currently a placeholder implementation");
@@ -344,16 +349,16 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
     Ok(())
 }
 
-/// Set a connection attribute (SQLSetConnectAttr).
+/// Set a connection attribute (SQLSetConnectAttr / SQLSetConnectAttrW).
 // TODO: Clear sensitive pre_connection_attrs after apply_pre_connection_attrs.
-pub fn set_connect_attr(
+pub fn set_connect_attr<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
 ) -> OdbcResult<()> {
     let connection = conn_from_handle(connection_handle);
-    tracing::debug!("set_connect_attr: attribute={}", attribute);
+    tracing::debug!("set_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
@@ -361,21 +366,13 @@ pub fn set_connect_attr(
             return UnknownAttributeSnafu { attribute }.fail();
         }
         None => {
-            // Ignore standard ODBC attributes to avoid breaking driver-manager propagation.
-            tracing::debug!(
-                "set_connect_attr: ignoring standard attribute {}",
-                attribute
-            );
+            tracing::debug!("set_connect_attr: ignoring standard attribute {attribute}");
             return Ok(());
         }
     };
 
     match attr {
-        // Standard ODBC attributes
         ConnectionAttribute::LoginTimeout => {
-            // Matches old driver: LOGIN_TIMEOUT is reused as the Okta SAML retry budget.
-            // SQL_ATTR_LOGIN_TIMEOUT is an integer attribute: the value is passed as
-            // (SQLPOINTER)(uintptr_t)seconds, not as a string pointer.
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
                     attribute: attr.as_raw(),
@@ -383,7 +380,7 @@ pub fn set_connect_attr(
                 .fail();
             }
             let seconds = value_ptr as usize;
-            tracing::debug!("set_connect_attr: LoginTimeout={}", seconds);
+            tracing::debug!("set_connect_attr: LoginTimeout={seconds}");
             connection
                 .pre_connection_attrs
                 .insert(attr, seconds.to_string());
@@ -397,8 +394,6 @@ pub fn set_connect_attr(
             tracing::debug!("set_connect_attr: Autocommit (ignored)");
             Ok(())
         }
-
-        // EVP_PKEY pointer — not supported across FFI boundary (see BD#10).
         ConnectionAttribute::PrivKey => {
             tracing::warn!(
                 "set_connect_attr: PrivKey (EVP_PKEY pointer) is not supported. \
@@ -413,23 +408,22 @@ pub fn set_connect_attr(
         | ConnectionAttribute::PrivKeyPassword
         | ConnectionAttribute::PrivKeyBase64
         | ConnectionAttribute::Application => {
-            // Pre-connection only — reject if already connected.
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
                     attribute: attr.as_raw(),
                 }
                 .fail();
             }
-            let value = api_utils::read_string_from_ptr(value_ptr, string_length)?;
-            tracing::debug!("set_connect_attr: {:?} (set)", attr);
+            let value = read_string_from_pointer::<E>(value_ptr, string_length)?;
+            tracing::debug!("set_connect_attr: {attr:?} (set)");
             connection.pre_connection_attrs.insert(attr, value);
             Ok(())
         }
     }
 }
 
-/// Get a connection attribute (SQLGetConnectAttr).
-pub fn get_connect_attr(
+/// Get a connection attribute (SQLGetConnectAttr / SQLGetConnectAttrW).
+pub fn get_connect_attr<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
@@ -438,12 +432,12 @@ pub fn get_connect_attr(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let connection = conn_from_handle(connection_handle);
-    tracing::debug!("get_connect_attr: attribute={}", attribute);
+    tracing::debug!("get_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
         None => {
-            tracing::warn!("get_connect_attr: unknown attribute {}", attribute);
+            tracing::warn!("get_connect_attr: unknown attribute {attribute}");
             return UnknownAttributeSnafu { attribute }.fail();
         }
     };
@@ -458,15 +452,13 @@ pub fn get_connect_attr(
                 .get(&attr)
                 .map(|s| s.as_str())
                 .unwrap_or("");
-            let truncated = api_utils::write_string_to_buffer(
+            write_string_bytes_i32::<E>(
                 value,
-                value_ptr,
+                value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,
+                Some(warnings),
             );
-            if truncated {
-                warnings.push(Warning::StringDataTruncated);
-            }
             Ok(())
         }
         ConnectionAttribute::Autocommit => {
@@ -481,10 +473,8 @@ pub fn get_connect_attr(
             let timeout: sql::ULen = match connection.pre_connection_attrs.get(&attr) {
                 Some(s) => s.parse().unwrap_or_else(|_| {
                     tracing::warn!(
-                        "get_connect_attr: LoginTimeout value {:?} is not a valid integer, \
-                         returning default {}",
-                        s,
-                        DEFAULT_LOGIN_TIMEOUT_SECS,
+                        "get_connect_attr: LoginTimeout value {s:?} is not a valid integer, \
+                         returning default {DEFAULT_LOGIN_TIMEOUT_SECS}",
                     );
                     DEFAULT_LOGIN_TIMEOUT_SECS.parse().unwrap()
                 }),
@@ -517,8 +507,9 @@ pub fn get_connect_attr(
     }
 }
 
-/// Retrieve general information about the driver and data source (SQLGetInfo).
-pub fn get_info(
+/// Retrieve general information about the driver and data source
+/// (SQLGetInfo / SQLGetInfoW).
+pub fn get_info<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     info_type: sql::USmallInt,
     info_value_ptr: sql::Pointer,
@@ -530,10 +521,10 @@ pub fn get_info(
     let _conn = conn_from_handle(connection_handle);
 
     let info_type = InfoType::try_from(info_type)?;
+    tracing::debug!("get_info: info_type={info_type:?}");
 
     match info_type {
         InfoType::CursorCommitBehavior | InfoType::CursorRollbackBehavior => {
-            // SQL_CB_CLOSE (1): Cursors are closed on commit/rollback.
             let cb_close: u16 = 1;
             if !info_value_ptr.is_null() {
                 unsafe {
@@ -548,22 +539,13 @@ pub fn get_info(
             Ok(())
         }
         InfoType::DriverOdbcVer => {
-            let ver = b"03.00\0";
-            if !info_value_ptr.is_null() {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        ver.as_ptr(),
-                        info_value_ptr as *mut u8,
-                        std::cmp::min(buffer_length as usize, ver.len()),
-                    );
-                }
-            }
-            if !string_length_ptr.is_null() {
-                unsafe {
-                    // String length excludes null terminator
-                    *string_length_ptr = (ver.len() - 1) as sql::SmallInt;
-                }
-            }
+            write_string_bytes::<E>(
+                "03.00",
+                info_value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
             Ok(())
         }
         InfoType::GetDataExtensions => {
@@ -582,7 +564,6 @@ pub fn get_info(
                     *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
                 }
             }
-
             Ok(())
         }
     }

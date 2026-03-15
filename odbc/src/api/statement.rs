@@ -1,4 +1,4 @@
-use crate::api::api_utils::{cstr_to_string, utf16_to_string};
+use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
@@ -22,26 +22,17 @@ use sf_core::protobuf::generated::database_driver_v1::{
 use snafu::ResultExt;
 use tracing;
 
-pub fn exec_direct_n(
+/// Execute a SQL statement directly (SQLExecDirect / SQLExecDirectW).
+pub fn exec_direct<E: OdbcEncoding>(
     statement_handle: sql::Handle,
-    statement_text: *const sql::Char,
+    statement_text: *const E::Char,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
-    let query = cstr_to_string(statement_text, text_length)?;
-    exec_direct(statement_handle, &query)
+    let query = E::read_string(statement_text, text_length)?;
+    exec_direct_impl(statement_handle, &query)
 }
 
-pub fn exec_direct_w(
-    statement_handle: sql::Handle,
-    statement_text: *const sql::WChar,
-    text_length: sql::Integer,
-) -> OdbcResult<()> {
-    let query = utf16_to_string(statement_text, text_length)?;
-    exec_direct(statement_handle, &query)
-}
-
-/// Execute a SQL statement directly
-pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
+fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
     let stmt = stmt_from_handle(statement_handle);
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
@@ -111,22 +102,16 @@ fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut Numeri
     }
 }
 
-pub fn prepare_n(
+/// Read the query text from an ODBC buffer and prepare
+/// (SQLPrepare / SQLPrepareW).
+/// Prepare a SQL statement (SQLPrepare / SQLPrepareW).
+pub fn prepare<E: OdbcEncoding>(
     statement_handle: sql::Handle,
-    statement_text: *const sql::Char,
+    statement_text: *const E::Char,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
-    let query = cstr_to_string(statement_text, text_length)?;
-    prepare(statement_handle, &query)
-}
-
-pub fn prepare_w(
-    statement_handle: sql::Handle,
-    statement_text: *const sql::WChar,
-    text_length: sql::Integer,
-) -> OdbcResult<()> {
-    let query = utf16_to_string(statement_text, text_length)?;
-    prepare(statement_handle, &query)
+    let query = E::read_string(statement_text, text_length)?;
+    prepare_impl(statement_handle, &query)
 }
 
 fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowArrayStreamReader> {
@@ -137,8 +122,7 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
     Ok(reader)
 }
 
-/// Prepare a SQL statement
-pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
+fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     if statement_handle.is_null() {
         return InvalidHandleSnafu.fail();
     }
