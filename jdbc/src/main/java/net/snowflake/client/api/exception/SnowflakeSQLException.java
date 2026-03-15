@@ -12,4 +12,8 @@ public class SnowflakeSQLException extends SQLException {
   public SnowflakeSQLException(String message, Throwable cause) {
     super(message, cause);
   }
+
+  public SnowflakeSQLException(ErrorCode errorCode) {
+    super(errorCode.name(), errorCode.getSqlState(), errorCode.getMessageCode());
+  }
 }

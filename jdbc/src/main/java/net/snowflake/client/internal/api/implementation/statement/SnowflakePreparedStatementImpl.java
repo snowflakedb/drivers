@@ -1,5 +1,7 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static java.sql.Types.CLOB;
+
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
@@ -318,7 +320,11 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
 
   @Override
   public void setClob(int parameterIndex, Clob x) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setClob not supported");
+    if (x == null) {
+      setNull(parameterIndex, CLOB);
+    } else {
+      setString(parameterIndex, x.getSubString(1, (int) x.length()));
+    }
   }
 
   @Override

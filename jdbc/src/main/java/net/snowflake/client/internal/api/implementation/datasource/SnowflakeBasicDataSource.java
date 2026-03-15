@@ -43,6 +43,8 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   private String url;
   private String user;
   private String password;
+  private String serverName;
+  private int portNumber = 0; //TODO check
 
   // DataSource methods ----------------------------------------------------------------------------
 
@@ -164,8 +166,48 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   }
 
   @Override
+  public void setDatabaseName(String databaseName) {
+    this.properties.setProperty(SnowflakeSessionProperty.DATABASE.getPropertyKey(), databaseName);
+  }
+
+  @Override
+  public void setPortNumber(int portNumber) {
+    this.portNumber = portNumber;
+  }
+
+  @Override
+  public void setServerName(String serverName) {
+    this.serverName = serverName;
+  }
+
+  @Override
+  public void setSsl(boolean ssl) {
+    this.properties.put("ssl", String.valueOf(ssl));
+  }
+
+  @Override
+  public void setPrivateKeyFile(String location, String password) {
+    this.properties.put(
+        SnowflakeSessionProperty.AUTHENTICATOR.getPropertyKey(), "SNOWFLAKE_JWT");
+    this.properties.put(SnowflakeSessionProperty.PRIVATE_KEY_FILE.getPropertyKey(), location);
+    if (password != null && !password.isEmpty()) {
+      this.properties.put(SnowflakeSessionProperty.PRIVATE_KEY_PWD.getPropertyKey(), password);
+    }
+  }
+
+  @Override
   public String getUrl() {
-    return url;
+    if (url != null) {
+      return url;
+    }
+    StringBuilder sb = new StringBuilder("jdbc:snowflake://");
+    if (serverName != null) {
+      sb.append(serverName);
+    }
+    if (portNumber != 0) {
+      sb.append(":").append(portNumber);
+    }
+    return sb.toString();
   }
 
   @Override
