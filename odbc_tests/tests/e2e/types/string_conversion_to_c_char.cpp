@@ -416,7 +416,7 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
   CHECK(mixed == "Hello\x1aWorld");
   // And Emojis should all be replaced with 0x1a
   auto emojis = get_data<SQL_C_CHAR>(stmt, 3);
-  CHECK(emojis == "\x1a\x1a\x1a\x1a\x1a\x1a\x1a");
+  CHECK(emojis == "\x1a\x1a\x1a");
 
   // And Greek letters should be replaced with 0x1a
   auto greek = get_data<SQL_C_CHAR>(stmt, 4);

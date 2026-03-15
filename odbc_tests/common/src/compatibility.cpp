@@ -12,10 +12,10 @@ PLATFORM get_platform() {
 #if defined(_WIN32)
   return PLATFORM::PLATFORM_WINDOWS;
 #elif defined(__linux__)
-  return PLATFORM::LINUX;
+  return PLATFORM::PLATFORM_LINUX;
 #elif defined(__APPLE__)
-  return PLATFORM::MACOS;
+  return PLATFORM::PLATFORM_MACOS;
 #else
-  return PLATFORM::UNKNOWN;
+  return PLATFORM::PLATFORM_UNKNOWN;
 #endif
 }

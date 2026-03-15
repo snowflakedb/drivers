@@ -7,6 +7,20 @@ use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use snafu::ResultExt;
 use std::cmp::min;
+use std::sync::OnceLock;
+
+#[cfg(not(windows))]
+fn is_ascii_locale() -> bool {
+    static RESULT: OnceLock<bool> = OnceLock::new();
+    *RESULT.get_or_init(|| {
+        let locale = unsafe { libc::setlocale(libc::LC_CTYPE, std::ptr::null()) };
+        if locale.is_null() {
+            return false;
+        }
+        let locale_str = unsafe { std::ffi::CStr::from_ptr(locale) };
+        matches!(locale_str.to_bytes(), b"C" | b"POSIX")
+    })
+}
 
 /// Abstracts over ANSI (narrow) and Unicode (wide) ODBC string operations,
 /// allowing API-layer functions to be written once as generics.

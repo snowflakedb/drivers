@@ -2813,6 +2813,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "error_trace",
+ "libc",
  "odbc-sys",
  "proto_utils",
  "serde_json",

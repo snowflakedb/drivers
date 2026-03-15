@@ -69,7 +69,7 @@ inline bool is_ascii_locale() {
 #else
   setlocale(LC_CTYPE, "");
   const char* locale = setlocale(LC_CTYPE, nullptr);
-  return locale != nullptr && std::string(locale).find("C") != std::string::npos;
+  return locale != nullptr && (std::string(locale) == "C" || std::string(locale) == "POSIX");
 #endif
 }
 

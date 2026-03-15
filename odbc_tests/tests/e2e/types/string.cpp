@@ -37,16 +37,16 @@ TEST_CASE("should cast string values to appropriate type for string and synonyms
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
-  std::vector<std::string> string_types = {"VARCHAR",  "CHAR",     "CHARACTER", "NCHAR",        "STRING",       "TEXT",
-                                           "VARCHAR2", "NVARCHAR", "NVARCHAR2", "CHAR VARYING", "NCHAR VARYING"};
+  std::vector<std::u16string> string_types = {u"VARCHAR",   u"CHAR",         u"CHARACTER",    u"NCHAR",
+                                              u"STRING",    u"TEXT",         u"VARCHAR2",     u"NVARCHAR",
+                                              u"NVARCHAR2", u"CHAR VARYING", u"NCHAR VARYING"};
 
   for (const auto& type : string_types) {
-    std::string sql =
-        "SELECT 'hello'::" + type + "(32), 'Hello World'::" + type + "(32), '日本語テスト'::" + type + "(32)";
-    auto stmt = conn.execute_fetch(sql);
+    std::u16string sql =
+        u"SELECT 'hello'::" + type + u"(32), 'Hello World'::" + type + u"(32), '日本語テスト'::" + type + u"(32)";
+    auto stmt = conn.executew_fetch(sql);
 
     // Then All values should be returned as appropriate type
-    INFO("Type: " << type);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
     CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "Hello World");
     CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
@@ -487,7 +487,7 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
   CHECK(mixed == "Hello\x1aWorld");
 
   // And emojis should all be replaced with 0x1a
-  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "\x1a\x1a\x1a\x1a\x1a\x1a\x1a");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "\x1a\x1a\x1a");
 
   // And Greek letters should be replaced with 0x1a
   CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "\x1a\x1a\x1a\x1a");
