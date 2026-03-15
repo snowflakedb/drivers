@@ -35,6 +35,15 @@ impl OdbcEncoding for Narrow {
     type Char = sql::Char;
 
     fn read_string(text: *const Self::Char, length: sql::Integer) -> OdbcResult<String> {
+        if text.is_null() {
+            return NullPointerSnafu.fail();
+        }
+        if length != sql::NTS as i32 && length <= 0 {
+            return InvalidBufferLengthSnafu {
+                length: length as i64,
+            }
+            .fail();
+        }
         if length == sql::NTS as i32 {
             let cstr =
                 unsafe { std::ffi::CStr::from_ptr(text as *const std::os::raw::c_char).to_str() };
@@ -77,9 +86,15 @@ impl OdbcEncoding for Wide {
             .fail();
         }
         if length == sql::NTS as i32 {
-            let cstr =
-                unsafe { std::ffi::CStr::from_ptr(text as *const std::os::raw::c_char).to_str() };
-            cstr.context(TextConversionUtf8Snafu {}).map(String::from)
+            // Find null terminator
+            let mut null_terminator_index = 0;
+            unsafe {
+                while *text.add(null_terminator_index) != 0 {
+                    null_terminator_index += 1;
+                }
+            }
+            let slice = unsafe { std::slice::from_raw_parts(text, null_terminator_index) };
+            String::from_utf16(slice).context(TextConversionFromUtf16Snafu {})
         } else {
             let slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
             String::from_utf16(slice).context(TextConversionFromUtf16Snafu {})

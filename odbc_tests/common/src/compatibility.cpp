@@ -7,3 +7,15 @@ DRIVER_TYPE get_driver_type() {
   return DRIVER_TYPE::NEW;
 #endif
 }
+
+PLATFORM get_platform() {
+#if defined(_WIN32)
+  return PLATFORM::WINDOWS;
+#elif defined(__linux__)
+  return PLATFORM::LINUX;
+#elif defined(__APPLE__)
+  return PLATFORM::MACOS;
+#else
+  return PLATFORM::UNKNOWN;
+#endif
+}

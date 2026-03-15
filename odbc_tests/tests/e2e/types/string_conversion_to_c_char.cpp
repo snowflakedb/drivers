@@ -51,10 +51,10 @@ TEST_CASE("should truncate string data when byte length is longer than the buffe
   CHECK(buffer[sizeof(buffer) - 1] == 0);
 
   // And the indicator should show the actual length of the original string
-  if (is_utf8_locale()) {
-    CHECK(indicator == 49);
-  } else {
+  if (is_ascii_locale() || get_platform() == PLATFORM::WINDOWS) {
     CHECK(indicator == SQL_NO_TOTAL);
+  } else {
+    CHECK(indicator == 49);
   }
 }
 
@@ -381,9 +381,8 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
 
 TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
           "[datatype][string][conversion]") {
-  WINDOWS_ONLY { SKIP("This test is not applicable on Windows"); }
-  if (is_utf8_locale()) {
-    SKIP("This test is not applicable on UTF-8 locales");
+  if (!is_ascii_locale()) {
+    SKIP("This test is not applicable on non-ASCII locales");
   }
   // ODBC-specific: When reading UTF-16 data using SQL_C_CHAR target type,
   // on non-UTF-8 locales non-ASCII characters (> 0x7F) are replaced with 0x1a (SUB character),

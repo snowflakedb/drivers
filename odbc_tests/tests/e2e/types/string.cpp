@@ -458,8 +458,7 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
 
 TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
           "[datatype][string][conversion]") {
-  WINDOWS_ONLY { SKIP("This unix specific test is not applicable on Windows"); }
-  if (is_utf8_locale()) {
+  if (!is_ascii_locale()) {
     SKIP("0x1a substitution only applies on non-UTF-8 locales");
   }
 

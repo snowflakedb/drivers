@@ -2,6 +2,9 @@
 #define COMPATIBILITY_HPP
 
 #include <cstdlib>
+#ifndef _WIN32
+#include <locale>
+#endif
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -20,6 +23,15 @@ enum class DRIVER_TYPE {
   NEW = 0,
   OLD = 1,
 };
+
+enum class PLATFORM {
+  WINDOWS = 0,
+  LINUX = 1,
+  MACOS = 2,
+  UNKNOWN = 3,
+};
+
+extern PLATFORM get_platform();
 
 extern DRIVER_TYPE get_driver_type();
 
@@ -48,24 +60,16 @@ extern DRIVER_TYPE get_driver_type();
 // re-encodes them to UTF-8 (double-encoding).  SQL_C_BINARY therefore returns
 // different byte sequences than on Unix/Linux where raw UTF-8 is preserved.
 // Use WINDOWS_ONLY / UNIX_ONLY to gate platform-specific assertions.
-#ifdef _WIN32
-#define WINDOWS_ONLY
-#define UNIX_ONLY if (false)
-#else
-#define WINDOWS_ONLY if (false)
-#define UNIX_ONLY
-#endif
+#define WINDOWS_ONLY if (get_platform() == PLATFORM::WINDOWS)
+#define UNIX_ONLY if (get_platform() == PLATFORM::LINUX || get_platform() == PLATFORM::MACOS)
 
-inline bool is_utf8_locale() {
+inline bool is_ascii_locale() {
 #ifdef _WIN32
   return false;
 #else
-  const char* locale = std::getenv("LC_ALL");
-  if (!locale || !*locale) locale = std::getenv("LC_CTYPE");
-  if (!locale || !*locale) locale = std::getenv("LANG");
-  if (!locale) return false;
-  return strstr(locale, "UTF-8") != nullptr || strstr(locale, "utf-8") != nullptr ||
-         strstr(locale, "UTF8") != nullptr || strstr(locale, "utf8") != nullptr;
+  setlocale(LC_CTYPE, "");
+  const char* locale = setlocale(LC_CTYPE, nullptr);
+  return locale != nullptr && std::string(locale).find("C") != std::string::npos;
 #endif
 }
 
