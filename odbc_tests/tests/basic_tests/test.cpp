@@ -42,5 +42,6 @@ TEST_CASE("Test SELECT 1", "[odbc]") {
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(result), NULL);
     REQUIRE_ODBC(ret, stmt);
   }
-  SQLDisconnect(dbc.getHandle());
+  ret = SQLDisconnect(dbc.getHandle());
+  REQUIRE_ODBC(ret, dbc);
 }
