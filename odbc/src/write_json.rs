@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     ffi::{CStr, c_char},
-    slice, str,
+    mem, slice, str,
 };
 
 use error_trace::ErrorTrace;
@@ -59,6 +59,12 @@ pub enum JsonBindingError {
     #[cfg(windows)]
     #[snafu(display("Failed to convert ANSI code page string to UTF-8"))]
     AcpConversion {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Wide-character (WChar) parameter is not valid UTF-16"))]
+    WCharConversion {
         #[snafu(implicit)]
         location: Location,
     },
@@ -137,6 +143,7 @@ fn convert_binding_to_json_value(
         CDataType::Float => read_numeric::<f32>(binding),
         CDataType::Double => read_numeric::<f64>(binding),
         CDataType::Char => read_char_value(binding),
+        CDataType::WChar => read_wchar_value(binding),
         CDataType::Bit => read_bit_value(binding),
         CDataType::Binary => read_binary_value(binding),
         _ => {
@@ -315,6 +322,16 @@ fn read_char_value(binding: &ParameterBinding) -> Result<Value, JsonBindingError
     };
 
     Ok(Value::String(acp_bytes_to_string(bytes)?))
+}
+
+/// Read a SQL_C_WCHAR (UTF-16) value and convert to a UTF-8 JSON string.
+fn read_wchar_value(binding: &ParameterBinding) -> Result<Value, JsonBindingError> {
+    let byte_len = buffer_data_len(binding);
+    let unit_len = byte_len / mem::size_of::<u16>();
+    let units =
+        unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u16, unit_len) };
+    let s = String::from_utf16(units).map_err(|_| WCharConversionSnafu.build())?;
+    Ok(Value::String(s))
 }
 
 /// Read a SQL_C_BIT value as a boolean string ("true"/"false").

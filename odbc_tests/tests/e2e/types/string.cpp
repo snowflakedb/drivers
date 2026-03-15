@@ -28,6 +28,31 @@
 #include "test_setup.hpp"
 
 // ============================================================================
+// TYPE CASTING
+// ============================================================================
+
+TEST_CASE("should cast string values to appropriate type for string and synonyms", "[datatype][string]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
+  std::vector<std::string> string_types = {"VARCHAR",  "CHAR",     "CHARACTER", "NCHAR",        "STRING",       "TEXT",
+                                           "VARCHAR2", "NVARCHAR", "NVARCHAR2", "CHAR VARYING", "NCHAR VARYING"};
+
+  for (const auto& type : string_types) {
+    std::string sql = "SELECT 'hello'::" + type + ", 'Hello World'::" + type + ", '日本語テスト'::" + type;
+    auto stmt = conn.execute_fetch(sql);
+
+    // Then All values should be returned as appropriate type
+    INFO("Type: " << type);
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+    CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "Hello World");
+    CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
+  }
+}
+
+// ============================================================================
 // SIMPLE SELECTS - LITERALS (Happy path, Corner cases)
 // ============================================================================
 
@@ -79,7 +104,6 @@ TEST_CASE("should select hardcoded string literals using SQLBindCol", "[datatype
 }
 
 TEST_CASE("should select string literals with corner case values", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -154,7 +178,6 @@ TEST_CASE("should select hardcoded string values from table", "[datatype][string
 }
 
 TEST_CASE("should select corner case string values from table", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -217,7 +240,6 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
 // ============================================================================
 
 TEST_CASE("should insert and select back hardcoded string values using parameter binding", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -254,7 +276,6 @@ TEST_CASE("should insert and select back hardcoded string values using parameter
 // ============================================================================
 
 TEST_CASE("should select string literals using parameter binding", "[datatype][string]") {
-  SKIP_WINDOWS_STRING_ENCODING();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -294,8 +315,7 @@ TEST_CASE("should select string literals using parameter binding", "[datatype][s
   CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
 }
 
-// Skipped since null handling is not yet implemented for bindings
-TEST_CASE("should select corner case string values using parameter binding", "[.][datatype][string]") {
+TEST_CASE("should select corner case string values using parameter binding", "[datatype][string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -436,7 +456,7 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
 // ============================================================================
 
 TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
-          "[.][datatype][string][conversion]") {
+          "[datatype][string][conversion]") {
   // ODBC-specific: When reading UTF-16 data using SQL_C_CHAR target type,
   // non-ASCII characters (> 0x7F) should be replaced with 0x1a (SUB character)
   // Given Snowflake client is logged in
@@ -454,41 +474,53 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
       u"'y̆es' AS combined, "
       u"'𝄞' AS surrogate_pair");
 
-  // Then Japanese characters should be replaced with 0x1a (SUB) when reading as SQL_C_CHAR
-  auto japanese = get_data<SQL_C_CHAR>(stmt, 1);
-  CHECK(japanese == "\x1a\x1a\x1a");
-
-  // And Mixed string should have ASCII preserved and non-ASCII replaced with 0x1a
-  auto mixed = get_data<SQL_C_CHAR>(stmt, 2);
-  CHECK(mixed.substr(0, 5) == "Hello");
-  CHECK(mixed[5] == '\x1a');
-  CHECK(mixed.substr(mixed.size() - 5) == "World");
-
-  // And Emojis should all be replaced with 0x1a
-  auto emojis = get_data<SQL_C_CHAR>(stmt, 3);
-  for (char c : emojis) {
-    CHECK(c == '\x1a');
-  }
-
-  // And Greek letters should be replaced with 0x1a
-  auto greek = get_data<SQL_C_CHAR>(stmt, 4);
-  for (char c : greek) {
-    CHECK(c == '\x1a');
-  }
-
   // And Pure ASCII string should remain unchanged
   auto ascii_only = get_data<SQL_C_CHAR>(stmt, 5);
   CHECK(ascii_only == "Hello");
 
+  // Then Japanese characters should be replaced with 0x1a (SUB) when reading as SQL_C_CHAR
+  auto japanese = get_data<SQL_C_CHAR>(stmt, 1);
+  // And Mixed string should have ASCII preserved and non-ASCII replaced with 0x1a
+  auto mixed = get_data<SQL_C_CHAR>(stmt, 2);
+  // And Emojis should all be replaced with 0x1a
+  auto emojis = get_data<SQL_C_CHAR>(stmt, 3);
+  // And Greek letters should be replaced with 0x1a
+  auto greek = get_data<SQL_C_CHAR>(stmt, 4);
   // And Combined string should have ASCII preserved and non-ASCII replaced with 0x1a
   auto combined = get_data<SQL_C_CHAR>(stmt, 6);
-  CHECK(combined.substr(0, 1) == "y");
-  CHECK(combined[1] == '\x1a');
-  CHECK(combined[2] == 'e');
-  CHECK(combined[3] == 's');
-
   auto surrogate_pair = get_data<SQL_C_CHAR>(stmt, 7);
-  CHECK(surrogate_pair == "\x1a");
+
+  if (is_utf8_locale()) {
+    // UTF-8 locale: non-ASCII characters preserved as UTF-8
+    CHECK(japanese == "日本語");
+    CHECK(mixed == "Hello日World");
+    CHECK(emojis == "⛄🚀🎉");
+    CHECK(greek == "αβγδ");
+    CHECK(combined == "y̆es");
+    CHECK(surrogate_pair == "𝄞");
+  } else {
+    // Non-UTF-8 locale: non-ASCII characters replaced with 0x1a (SUB)
+    CHECK(japanese == "\x1a\x1a\x1a");
+
+    CHECK(mixed.substr(0, 5) == "Hello");
+    CHECK(mixed[5] == '\x1a');
+    CHECK(mixed.substr(mixed.size() - 5) == "World");
+
+    for (char c : emojis) {
+      CHECK(c == '\x1a');
+    }
+
+    for (char c : greek) {
+      CHECK(c == '\x1a');
+    }
+
+    CHECK(combined[0] == 'y');
+    CHECK(combined[1] == '\x1a');
+    CHECK(combined[2] == 'e');
+    CHECK(combined[3] == 's');
+
+    CHECK(surrogate_pair == "\x1a");
+  }
 }
 
 // ============================================================================

@@ -11,6 +11,8 @@
 #define GET_PROCESS_ID() _getpid()
 #else
 #include <unistd.h>
+
+#include <cstring>
 #define GET_PROCESS_ID() getpid()
 #endif
 
@@ -53,6 +55,19 @@ extern DRIVER_TYPE get_driver_type();
 #define WINDOWS_ONLY if (false)
 #define UNIX_ONLY
 #endif
+
+inline bool is_utf8_locale() {
+#ifdef _WIN32
+  return false;
+#else
+  const char* locale = std::getenv("LC_ALL");
+  if (!locale || !*locale) locale = std::getenv("LC_CTYPE");
+  if (!locale || !*locale) locale = std::getenv("LANG");
+  if (!locale) return false;
+  return strstr(locale, "UTF-8") != nullptr || strstr(locale, "utf-8") != nullptr ||
+         strstr(locale, "UTF8") != nullptr || strstr(locale, "utf8") != nullptr;
+#endif
+}
 
 #ifdef _WIN32
 #define SKIP_WINDOWS_STRING_ENCODING() \
