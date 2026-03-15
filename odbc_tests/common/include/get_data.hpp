@@ -9,6 +9,7 @@
 
 #include "HandleWrapper.hpp"
 #include "MetaOfSqlCTypes.hpp"
+#include "macros.hpp"
 
 template <int SQL_C_TYPE>
 inline std::optional<typename MetaOfSqlCType<SQL_C_TYPE>::type> get_data_optional(const StatementHandleWrapper& stmt,

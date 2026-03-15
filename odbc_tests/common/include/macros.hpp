@@ -1,50 +1,25 @@
 #ifndef ODBC_TESTS_MACROS_HPP
 #define ODBC_TESTS_MACROS_HPP
 
-#include <sql.h>
-#include <sqlext.h>
-#include <sqltypes.h>
+#include "odbc_matchers.hpp"
 
-#include <catch2/catch_test_macros.hpp>
-
-inline std::string return_code_to_string(SQLRETURN ret) {
-  switch (ret) {
-    case SQL_SUCCESS:
-      return "SQL_SUCCESS";
-    case SQL_SUCCESS_WITH_INFO:
-      return "SQL_SUCCESS_WITH_INFO";
-    case SQL_ERROR:
-      return "SQL_ERROR";
-    case SQL_INVALID_HANDLE:
-      return "SQL_INVALID_HANDLE";
-    default:
-      return "UNKNOWN_RETURN_CODE(" + std::to_string(ret) + ")";
-  }
-}
-
-#define CHECK_ODBC(ret, handle) CHECK_ODBC_ERROR(ret, handle.getHandle(), handle.getType())
-
-#define CHECK_ODBC_ERROR(ret, handle, handleType)                                                                   \
-  if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {                                                         \
-    if (ret == SQL_INVALID_HANDLE) {                                                                                \
-      FAIL("ODBC Error Status:" << return_code_to_string(ret) << " (SQL_INVALID_HANDLE).\n "                        \
-                                << "HandleType=" << handleType << " Handle=" << handle);                            \
-    }                                                                                                               \
-    SQLINTEGER nativeError = 0;                                                                                     \
-    SQLCHAR state[1024] = {0};                                                                                      \
-    SQLCHAR message[1024] = {0};                                                                                    \
-    SQLRETURN diag_ret = SQLGetDiagRec(handleType, handle, 1, state, &nativeError, message, sizeof(message), NULL); \
-    if (diag_ret == SQL_SUCCESS || diag_ret == SQL_SUCCESS_WITH_INFO) {                                             \
-      FAIL("ODBC Error Status:" << ret << '\n'                                                                      \
-                                << "Error: " << message << '\n'                                                     \
-                                << "State: " << state << '\n'                                                       \
-                                << "NativeError: " << nativeError);                                                 \
-    } else {                                                                                                        \
-      FAIL("ODBC Error Status:" << ret << '\n'                                                                      \
-                                << "No diagnostics; SQLGetDiagRec ret=" << diag_ret << '\n'                         \
-                                << "HandleType=" << handleType << '\n'                                              \
-                                << "Handle=" << handle);                                                            \
-    }                                                                                                               \
-  }
+// Deprecated – use REQUIRE_ODBC(ret, handle) from odbc_matchers.hpp.
+#ifdef __GNUC__
+#define CHECK_ODBC(ret, handle) \
+  _Pragma("GCC warning \"CHECK_ODBC is deprecated, use REQUIRE_ODBC from odbc_matchers.hpp\"") REQUIRE_ODBC(ret, handle)
+#define CHECK_ODBC_ERROR(ret, handle, handleType)                                   \
+  _Pragma("GCC warning \"CHECK_ODBC_ERROR is deprecated – see odbc_matchers.hpp\"") \
+      REQUIRE_THAT(OdbcResult(ret, handleType, handle), OdbcMatchers::Succeeded())
+#elif defined(_MSC_VER)
+#define CHECK_ODBC(ret, handle) \
+  __pragma(message("CHECK_ODBC is deprecated, use REQUIRE_ODBC from odbc_matchers.hpp")) REQUIRE_ODBC(ret, handle)
+#define CHECK_ODBC_ERROR(ret, handle, handleType)                             \
+  __pragma(message("CHECK_ODBC_ERROR is deprecated – see odbc_matchers.hpp")) \
+      REQUIRE_THAT(OdbcResult(ret, handleType, handle), OdbcMatchers::Succeeded())
+#else
+#define CHECK_ODBC(ret, handle) REQUIRE_ODBC(ret, handle)
+#define CHECK_ODBC_ERROR(ret, handle, handleType) \
+  REQUIRE_THAT(OdbcResult(ret, handleType, handle), OdbcMatchers::Succeeded())
+#endif
 
 #endif  // ODBC_TESTS_MACROS_HPP

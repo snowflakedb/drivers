@@ -18,7 +18,7 @@ TEST_CASE("Test SELECT 1", "[odbc]") {
   EnvironmentHandleWrapper env;
 
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env)
+  CHECK_ODBC(ret, env);
 
   // Get driver path from environment variable
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
