@@ -10,8 +10,6 @@ import javax.sql.DataSource;
  * <p>Use {@link SnowflakeDataSourceFactory} to create instances of this interface.
  */
 public interface SnowflakeDataSource extends DataSource {
-  // Only a minimal set of DataSource parameters has been migrated here.
-  // More will be added once the parameter strategy for the core driver is finalized.
 
   void setUrl(String url);
 
@@ -23,11 +21,21 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setDatabase(String database);
 
+  void setDatabaseName(String databaseName);
+
   void setSchema(String schema);
 
   void setRole(String role);
 
   void setWarehouse(String warehouse);
+
+  void setPortNumber(int portNumber);
+
+  void setServerName(String serverName);
+
+  void setSsl(boolean ssl);
+
+  void setPrivateKeyFile(String location, String password);
 
   String getUrl();
 
