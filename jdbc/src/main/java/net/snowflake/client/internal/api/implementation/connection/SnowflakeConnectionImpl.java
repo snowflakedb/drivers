@@ -1,9 +1,13 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
+import static java.sql.ResultSet.CONCUR_READ_ONLY;
+import static java.sql.ResultSet.TYPE_FORWARD_ONLY;
+
 import java.io.InputStream;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.CallableStatement;
+import java.sql.ClientInfoStatus;
 import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -19,6 +23,7 @@ import java.sql.Savepoint;
 import java.sql.Statement;
 import java.sql.Struct;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
@@ -51,6 +56,8 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   private boolean closed = false;
   private String catalog;
   private String schema;
+  private int transactionIsolation = Connection.TRANSACTION_NONE;
+  private int networkTimeoutInMilli = 0;
   private DatabaseHandle databaseHandle;
   public ConnectionHandle connectionHandle;
 
@@ -130,7 +137,8 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public CallableStatement prepareCall(String sql) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return new SnowflakeCallableStatementWrapper(prepareStatement(sql));
   }
 
   @Override
@@ -142,22 +150,34 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public void setAutoCommit(boolean autoCommit) throws SQLException {
     checkClosed();
-    this.autoCommit = autoCommit;
+    if (autoCommit != this.autoCommit) {
+      this.autoCommit = autoCommit;
+      try (Statement stmt = createStatement()) {
+        stmt.execute("alter session set autocommit=" + autoCommit);
+      }
+    }
   }
 
   @Override
   public boolean getAutoCommit() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return autoCommit;
   }
 
   @Override
   public void commit() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    try (Statement stmt = createStatement()) {
+      stmt.execute("COMMIT");
+    }
   }
 
   @Override
   public void rollback() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    try (Statement stmt = createStatement()) {
+      stmt.execute("ROLLBACK");
+    }
   }
 
   @Override
@@ -192,50 +212,84 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public void setCatalog(String catalog) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    try (Statement stmt = createStatement()) {
+      stmt.execute("use database \"" + catalog + "\"");
+    }
   }
 
   @Override
   public String getCatalog() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    try (Statement stmt = createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT CURRENT_DATABASE()")) {
+      if (rs.next()) {
+        return rs.getString(1);
+      }
+    }
+    return null;
   }
 
   @Override
   public void setTransactionIsolation(int level) throws SQLException {
-    throw new SQLFeatureNotSupportedException("setTransactionIsolation not supported");
+    checkClosed();
+    if (level == Connection.TRANSACTION_NONE || level == Connection.TRANSACTION_READ_COMMITTED) {
+      this.transactionIsolation = level;
+    } else {
+      throw new SQLFeatureNotSupportedException(
+          "Transaction Isolation " + level + " not supported.");
+    }
   }
 
   @Override
   public int getTransactionIsolation() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return this.transactionIsolation;
   }
 
   @Override
   public SQLWarning getWarnings() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return null;
   }
 
   @Override
   public void clearWarnings() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
   }
 
   @Override
   public Statement createStatement(int resultSetType, int resultSetConcurrency)
       throws SQLException {
+    if (TYPE_FORWARD_ONLY != resultSetType) {
+      throw new SQLFeatureNotSupportedException(
+          String.format("ResultSet type %d is not supported.", resultSetType));
+    }
+    if (CONCUR_READ_ONLY != resultSetConcurrency) {
+      throw new SQLFeatureNotSupportedException(
+          String.format("ResultSet concurrency %d is not supported.", resultSetConcurrency));
+    }
     return createStatement();
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency)
       throws SQLException {
+    if (TYPE_FORWARD_ONLY != resultSetType) {
+      throw new SQLFeatureNotSupportedException(
+          String.format("ResultSet type %d is not supported.", resultSetType));
+    }
+    if (CONCUR_READ_ONLY != resultSetConcurrency) {
+      throw new SQLFeatureNotSupportedException(
+          String.format("ResultSet concurrency %d is not supported.", resultSetConcurrency));
+    }
     return prepareStatement(sql);
   }
 
   @Override
   public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency)
       throws SQLException {
-    throw new NotImplementedException();
+    return prepareCall(sql);
   }
 
   @Override
@@ -284,21 +338,21 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public Statement createStatement(
       int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
-    throw new NotImplementedException();
+    return createStatement();
   }
 
   @Override
   public PreparedStatement prepareStatement(
       String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
       throws SQLException {
-    throw new NotImplementedException();
+    return prepareStatement(sql, resultSetType, resultSetConcurrency);
   }
 
   @Override
   public CallableStatement prepareCall(
       String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability)
       throws SQLException {
-    throw new NotImplementedException();
+    return prepareCall(sql);
   }
 
   @Override
@@ -318,7 +372,8 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public Clob createClob() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return new SnowflakeClob();
   }
 
   @Override
@@ -338,32 +393,46 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public boolean isValid(int timeout) throws SQLException {
-    throw new NotImplementedException();
+    if (timeout < 0) {
+      throw new SQLException("timeout is less than 0");
+    }
+    return !closed;
   }
 
   @Override
   public void setClientInfo(String name, String value) throws SQLClientInfoException {
-    throw new NotImplementedException();
+    Map<String, ClientInfoStatus> failedProps = new HashMap<>();
+    failedProps.put(name, ClientInfoStatus.REASON_UNKNOWN_PROPERTY);
+    throw new SQLClientInfoException(
+        "The client property cannot be set by setClientInfo.", failedProps);
   }
 
   @Override
   public void setClientInfo(Properties properties) throws SQLClientInfoException {
-    throw new NotImplementedException();
+    Map<String, ClientInfoStatus> failedProps = new HashMap<>();
+    for (String name : properties.stringPropertyNames()) {
+      failedProps.put(name, ClientInfoStatus.REASON_UNKNOWN_PROPERTY);
+    }
+    throw new SQLClientInfoException(
+        "The client property cannot be set by setClientInfo.", failedProps);
   }
 
   @Override
   public String getClientInfo(String name) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return null;
   }
 
   @Override
   public Properties getClientInfo() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return new Properties();
   }
 
   @Override
   public Array createArrayOf(String typeName, Object[] elements) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    throw new SQLFeatureNotSupportedException("createArrayOf not supported");
   }
 
   @Override
@@ -373,27 +442,46 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   @Override
   public void setSchema(String schema) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    String databaseName = getCatalog();
+    if (databaseName == null) {
+      try (Statement stmt = createStatement()) {
+        stmt.execute("use schema \"" + schema + "\"");
+      }
+    } else {
+      try (Statement stmt = createStatement()) {
+        stmt.execute("use schema \"" + databaseName + "\".\"" + schema + "\"");
+      }
+    }
   }
 
   @Override
   public String getSchema() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    try (Statement stmt = createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT CURRENT_SCHEMA()")) {
+      if (rs.next()) {
+        return rs.getString(1);
+      }
+    }
+    return null;
   }
 
   @Override
   public void abort(Executor executor) throws SQLException {
-    throw new NotImplementedException();
+    close();
   }
 
   @Override
   public void setNetworkTimeout(Executor executor, int milliseconds) throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    networkTimeoutInMilli = milliseconds;
   }
 
   @Override
   public int getNetworkTimeout() throws SQLException {
-    throw new NotImplementedException();
+    checkClosed();
+    return networkTimeoutInMilli;
   }
 
   @Override

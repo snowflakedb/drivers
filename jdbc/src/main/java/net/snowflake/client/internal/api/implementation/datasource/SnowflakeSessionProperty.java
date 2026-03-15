@@ -14,7 +14,10 @@ enum SnowflakeSessionProperty {
   SCHEMA("schema"),
   ROLE("role"),
   WAREHOUSE("warehouse"),
-  LOGIN_TIMEOUT("loginTimeout");
+  LOGIN_TIMEOUT("loginTimeout"),
+  AUTHENTICATOR("authenticator"),
+  PRIVATE_KEY_FILE("private_key_file"),
+  PRIVATE_KEY_PWD("private_key_pwd");
 
   private final String propertyKey;
 }

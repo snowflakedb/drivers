@@ -15,6 +15,10 @@ public class SnowflakeSQLException extends SQLException {
     super(message, cause);
   }
 
+  public SnowflakeSQLException(ErrorCode errorCode) {
+    super(errorCode.name(), errorCode.getSqlState(), errorCode.getMessageCode());
+  }
+
   public SnowflakeSQLException(DatabaseDriverV1.DriverException error, Throwable cause) {
     super(
         error.hasRootCause() ? error.getRootCause() : error.getMessage(),
