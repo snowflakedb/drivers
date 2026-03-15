@@ -49,12 +49,16 @@ extern DRIVER_TYPE get_driver_type();
     SKIP("Skipping for new driver: " << bd << ": " << message); \
   }
 
+#ifdef FORCE_RUN_NOT_IMPLEMENTED
+#define SKIP_NEW_DRIVER_NOT_IMPLEMENTED() ((void)0)
+#else
 #define SKIP_NEW_DRIVER_NOT_IMPLEMENTED()        \
   do {                                           \
     if (get_driver_type() == DRIVER_TYPE::NEW) { \
       SKIP("Not implemented for new driver");    \
     }                                            \
   } while (0)
+#endif
 
 // On Windows the ODBC driver interprets UTF-8 wire bytes as Windows-1252 and
 // re-encodes them to UTF-8 (double-encoding).  SQL_C_BINARY therefore returns
