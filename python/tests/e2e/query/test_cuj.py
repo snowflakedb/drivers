@@ -19,11 +19,12 @@ class TestCriticalUserJourneys:
 
     def test_show_command(self, tmp_schema, cursor):
         # When SHOW SCHEMAS command is executed
-        (db_name,) = cursor.execute("SELECT current_database()").fetchone()
-        r = cursor.execute(f"SHOW SCHEMAS IN DATABASE {db_name}").fetchall()
+        r = cursor.execute("SHOW SCHEMAS").fetchall()
 
         # Then Result contains INFORMATION_SCHEMA and PUBLIC schemas
         schema_names = [row[1].upper() for row in r]
         assert "INFORMATION_SCHEMA" in schema_names
         assert "PUBLIC" in schema_names
-        assert tmp_schema.upper() in schema_names
+        filtered = cursor.execute(f"SHOW SCHEMAS LIKE '{tmp_schema}'").fetchall()
+        assert len(filtered) == 1
+        assert filtered[0][1].upper() == tmp_schema.upper()
