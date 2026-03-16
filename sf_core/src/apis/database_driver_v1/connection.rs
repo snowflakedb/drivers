@@ -19,6 +19,7 @@ use crate::handle_manager::Handle;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
+use crate::token_cache::TokenCache;
 
 /// Load configuration from TOML files for a named connection.
 ///
@@ -89,10 +90,13 @@ impl DatabaseDriverV1 {
                     create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                         .context(TlsClientCreationSnafu)?;
 
+                let token_cache = self.token_cache().ok();
+
                 let login_result = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
+                            token_cache.map(|c| c as &dyn TokenCache),
                 )
                 .await
                 .context(LoginSnafu)?;

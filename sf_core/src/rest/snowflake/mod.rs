@@ -20,9 +20,7 @@ use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
-use crate::token_cache::{
-    KeyringTokenCache, KeystoreAccessSnafu, TokenCache, TokenCacheError, TokenType,
-};
+use crate::token_cache::{TokenCache, TokenType};
 use reqwest::{self, header};
 use serde_json;
 use serde_json::value::RawValue;
@@ -167,9 +165,13 @@ fn extract_host_from_url(server_url: &str) -> Option<String> {
         .map(|h| h.to_string())
 }
 
-fn try_get_cached_mfa_token(server_url: &str, username: &str) -> Option<SensitiveString> {
+fn try_get_cached_mfa_token(
+    server_url: &str,
+    username: &str,
+    token_cache: Option<&dyn TokenCache>,
+) -> Option<SensitiveString> {
     let host = extract_host_from_url(server_url)?;
-    let cache = get_keyring_token_cache().ok()?;
+    let cache = token_cache?;
     match cache.get_token(&host, username, TokenType::MfaToken) {
         Ok(Some(token)) if !token.is_empty() => {
             tracing::info!("Found cached MFA token");
@@ -183,29 +185,24 @@ fn try_get_cached_mfa_token(server_url: &str, username: &str) -> Option<Sensitiv
     }
 }
 
-// TODO: temporary patch, lifetime seems like a part of global_state maybe?
-fn get_keyring_token_cache() -> Result<KeyringTokenCache, TokenCacheError> {
-    KeyringTokenCache::new()
-        .boxed()
-        .context(KeystoreAccessSnafu)
-}
-
-fn store_mfa_token_in_cache(server_url: &str, username: &str, mfa_token: &str) {
+fn store_mfa_token_in_cache(
+    server_url: &str,
+    username: &str,
+    mfa_token: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
     let Some(host) = extract_host_from_url(server_url) else {
         tracing::warn!("Cannot cache MFA token: unable to extract host from server URL");
         return;
     };
-    match get_keyring_token_cache() {
-        Ok(cache) => {
-            if let Err(e) = cache.add_token(&host, username, TokenType::MfaToken, mfa_token) {
-                tracing::warn!(error = %e, "Failed to cache MFA token");
-            } else {
-                tracing::info!("Cached MFA token for future use");
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to access token cache for MFA token storage");
-        }
+    let Some(cache) = token_cache else {
+        tracing::debug!("No token cache available for MFA token storage");
+        return;
+    };
+    if let Err(e) = cache.add_token(&host, username, TokenType::MfaToken, mfa_token) {
+        tracing::warn!(error = %e, "Failed to cache MFA token");
+    } else {
+        tracing::info!("Cached MFA token for future use");
     }
 }
 
@@ -213,6 +210,7 @@ pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
+    token_cache: Option<&dyn TokenCache>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
 
@@ -267,7 +265,7 @@ pub async fn auth_request_data(
                 );
 
                 let cached_mfa_token = if store_temp_cred {
-                    try_get_cached_mfa_token(&login_parameters.server_url, &username)
+                    try_get_cached_mfa_token(&login_parameters.server_url, &username, token_cache)
                 } else {
                     None
                 };
@@ -306,17 +304,18 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters, session_parameters).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters, None).await
 }
 
 #[tracing::instrument(
-    skip(client, login_parameters, session_parameters),
+    skip(client, login_parameters, session_parameters, token_cache),
     fields(account_name, login_name)
 )]
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
+    token_cache: Option<&dyn TokenCache>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -334,7 +333,8 @@ pub async fn snowflake_login_with_client(
     );
 
     // Build the login request data (handles all auth methods including Okta SAML exchange)
-    let auth_request_data = auth_request_data(client, login_parameters, session_parameters).await?;
+    let auth_request_data =
+        auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
     tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
         data: auth_request_data,
@@ -414,7 +414,12 @@ pub async fn snowflake_login_with_client(
     } = &login_parameters.login_method
         && let Some(mfa_token) = &auth_response.data.mfa_token
     {
-        store_mfa_token_in_cache(&login_parameters.server_url, username, mfa_token);
+        store_mfa_token_in_cache(
+            &login_parameters.server_url,
+            username,
+            mfa_token,
+            token_cache,
+        );
     }
 
     let session_token = auth_response
