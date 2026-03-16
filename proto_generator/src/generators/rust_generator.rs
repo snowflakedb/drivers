@@ -332,7 +332,21 @@ impl<T: Transport> {service_name}Client<T> {{
             }
             None => {
                 format!(
-                    r#"	async fn {name}(&self, input: {input_type}) -> {output_type};
+                    r#"
+    pub async fn {name}(&self, input: {input_type}) -> Result<{output_type}, ProtoError<()>> {{
+        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
+        match result {{
+            Ok(output) => {{
+                let output = {output_type}::decode(&output[..]);
+                match output {{
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }}
+            }},
+            Err(ProtoError::Application(_)) => Err(ProtoError::Transport("Unexpected application error".to_string())),
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }}
+    }}
 "#
                 )
             }

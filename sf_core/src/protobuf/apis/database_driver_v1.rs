@@ -783,7 +783,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionSetOptionDoubleResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_set_option_bool", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::connection_set_option_bool",
+        skip(self, input)
+    )]
     async fn connection_set_option_bool(
         &self,
         input: ConnectionSetOptionBoolRequest,
@@ -1099,7 +1102,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementSetOptionDoubleResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_set_option_bool", skip(self, input))]
+    #[instrument(
+        name = "DatabaseDriverV1::statement_set_option_bool",
+        skip(self, input)
+    )]
     async fn statement_set_option_bool(
         &self,
         input: StatementSetOptionBoolRequest,

@@ -14,6 +14,9 @@ struct JdbcBridge {
 impl JdbcBridge {
     pub fn new() -> Self {
         Self {
+            // Single worker thread is intentional: keeps contention minimal and
+            // makes deadlocks easier to detect. Will be increased during
+            // performance optimization.
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(1)
                 .enable_all()

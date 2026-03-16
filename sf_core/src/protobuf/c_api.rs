@@ -10,6 +10,9 @@ struct CApiState {
 }
 
 static STATE: LazyLock<CApiState> = LazyLock::new(|| CApiState {
+    // Single worker thread is intentional: keeps contention minimal and
+    // makes deadlocks easier to detect. Will be increased during
+    // performance optimization.
     runtime: tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()

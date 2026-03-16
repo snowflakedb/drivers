@@ -4,6 +4,17 @@ use std::sync::RwLock;
 use sf_core::protobuf::apis::database_driver_v1::{DatabaseDriverClient, database_driver_client};
 use snafu::{Location, ResultExt, Snafu};
 
+/// Holds the shared tokio runtime and driver client used by all ODBC
+/// environments in this process.
+///
+/// ODBC requires an Environment handle before any Connection or Statement can
+/// be created. An application may allocate multiple Environments (e.g. for
+/// different global settings), but they all share the same underlying driver
+/// state. We therefore keep a single `OdbcGlobals` instance behind a
+/// reference-counted latch (`env_count`): the first `SQLAllocHandle(SQL_HANDLE_ENV)`
+/// creates it, and the last `SQLFreeHandle(SQL_HANDLE_ENV)` tears it down.
+/// On Windows the ODBC Driver Manager unloads the driver DLL after the last
+/// environment is freed, so we must shut down before that happens.
 pub struct OdbcGlobals {
     runtime: tokio::runtime::Runtime,
     client: DatabaseDriverClient,
@@ -69,7 +80,6 @@ pub fn global() -> Result<GlobalsGuard, OdbcRuntimeError> {
 
 pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
-    guard.env_count += 1;
     if guard.globals.is_none() {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -79,6 +89,7 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
         let client = database_driver_client();
         guard.globals = Some(OdbcGlobals { runtime, client });
     }
+    guard.env_count += 1;
     Ok(())
 }
 
@@ -86,6 +97,7 @@ pub fn env_freed() -> Result<(), OdbcRuntimeError> {
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     guard.env_count = guard.env_count.saturating_sub(1);
     if guard.env_count == 0 {
+        tracing::info!("Last ODBC environment freed, tearing down global state");
         guard.globals = None;
     }
     Ok(())

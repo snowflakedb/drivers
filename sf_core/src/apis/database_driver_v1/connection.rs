@@ -255,7 +255,6 @@ impl Connection {
         session_params: HashMap<String, String>,
         final_names: FinalSessionNames,
     ) {
-        // Use blocking_write since we're in a sync context during connection_init
         *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
