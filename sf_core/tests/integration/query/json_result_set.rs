@@ -57,6 +57,72 @@ fn should_return_timestamp_tz_as_arrow_even_if_json_result_set_is_returned() {
     )
 }
 
+#[test]
+fn should_return_time_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_time (t0 TIME(0),\
+            t1 TIME(1), t2 TIME(2), t3 TIME(3), t4 TIME(4), t5 TIME(5), t6 TIME(6), t7 TIME(7), t8 TIME(8), t9 TIME(9),\
+            t1a TIME(1), t2a TIME(2), t3a TIME(3), t4a TIME(4), t5a TIME(5), t6a TIME(6), t7a TIME(7), t8a TIME(8), t9a TIME(9))",
+        "INSERT INTO json_result_set_time VALUES ('10:10:10',\
+            '11:11:11.1', '12:12:12.12', '13:13:13.123', '14:14:14.1234', '15:15:15.12345', '16:16:16.123456', '17:17:17.1234567', '18:18:18.12345678', '19:19:19.123456789',\
+            '11:11:11', '12:12:12', '13:13:13', '14:14:14', '15:15:15', '16:16:16', '17:17:17', '18:18:18', '19:19:19')",
+        "SELECT * FROM json_result_set_time",
+    )
+}
+
+#[test]
+fn should_return_binary_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_binary (b BINARY)",
+        "INSERT INTO json_result_set_binary VALUES (TO_BINARY('hello', 'UTF-8'))",
+        "SELECT * FROM json_result_set_binary",
+    )
+}
+
+#[test]
+fn should_return_decfloat_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_decfloat (\
+            d_zero DECFLOAT,\
+            d_pos DECFLOAT,\
+            d_neg DECFLOAT,\
+            d_pos_frac DECFLOAT,\
+            d_neg_frac DECFLOAT,\
+            d_large_pos_exp DECFLOAT,\
+            d_large_neg_exp DECFLOAT,\
+            d_tiny_pos DECFLOAT,\
+            d_tiny_neg DECFLOAT,\
+            d_max_precision DECFLOAT, d_neg_max_precision DECFLOAT,\
+            d_max_exp DECFLOAT,\
+            d_min_exp DECFLOAT,\
+            d_neg_large_exp DECFLOAT,\
+            d_pos_large_exp DECFLOAT,\
+            d_one DECFLOAT,\
+            d_neg_one DECFLOAT,\
+            d_integer DECFLOAT)",
+        "INSERT INTO json_result_set_decfloat SELECT \
+            0::DECFLOAT, \
+            123.456::DECFLOAT, \
+            '-789.012'::DECFLOAT, \
+            1.5::DECFLOAT, \
+            '-1.5'::DECFLOAT, \
+            1.23E+20::DECFLOAT, \
+            '-9.87E-15'::DECFLOAT, \
+            1E-16383::DECFLOAT, \
+            '-1E-16383'::DECFLOAT,
+            12345678901234567890123456789012345678::DECFLOAT, \
+            '-12345678901234567890123456789012345678'::DECFLOAT, \
+            '1E+16384'::DECFLOAT, \
+            '1E-16383'::DECFLOAT, \
+            '-1.234E+8000'::DECFLOAT, \
+            '9.876E-8000'::DECFLOAT, \
+            1::DECFLOAT, \
+            (-1)::DECFLOAT, \
+            42::DECFLOAT",
+        "SELECT * FROM json_result_set_decfloat",
+    )
+}
+
 fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, select_query: &str) {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();

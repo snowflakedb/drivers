@@ -585,6 +585,27 @@ impl TryFrom<&RowType> for query_types::RowType {
                 Ok(query_types::RowType::timestamp_tz(&name, nullable, scale))
             }
             "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
+            "TIME" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::time(&name, nullable, scale))
+            }
+            "BINARY" => {
+                let length = value.length.context(MissingParameterSnafu {
+                    parameter: format!("row type -> length for BINARY column '{name}'"),
+                })?;
+
+                let byte_length = value.byte_length.context(MissingParameterSnafu {
+                    parameter: format!("row type -> byte length for BINARY column '{name}'"),
+                })?;
+
+                Ok(query_types::RowType::binary(
+                    &name,
+                    nullable,
+                    length,
+                    byte_length,
+                ))
+            }
+            "DECFLOAT" => Ok(query_types::RowType::decfloat(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
