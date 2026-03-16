@@ -1,11 +1,31 @@
 # Universal Driver CI Tests Pipeline
 # Runs integration and E2E tests for all drivers in parallel.
 #
-# Prerequisites:
-#   - PARAMETERS_SECRET env var must be set on the Buildkite pipeline
-#     (used by ./scripts/decode_secrets.sh to create parameters.json)
+# Secrets:
+#   PARAMETERS_SECRET is fetched from Vault via the vault-secrets plugin
+#   (path: secret/jenkins/rt-tests/driver_validation_parameters_secret)
+#   and passed into the Docker container for decode_secrets.sh to use.
 #
 # Docker image: same as used in Jenkins CI (rhel8-universal-driver-coverage)
+
+common: &common
+  agents:
+    queue: "discovery"
+    repo: "snowflakedb/universal-driver"
+  plugins:
+    - vault-secrets:
+        secrets:
+          - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+            env_name: "PARAMETERS_SECRET"
+    - docker#v5.11.0:
+        image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+        propagate-environment: true
+        environment:
+          - "PARAMETERS_SECRET"
+  retry:
+    automatic:
+      - exit_status: "*"
+        limit: 1
 
 steps:
   # --------------------------------------------------------------------------
@@ -14,25 +34,13 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":rust: Rust Core E2E Tests"
     key: "rust-core-e2e"
-    agents:
-      queue: "discovery"
-      repo: "snowflakedb/universal-driver"
+    <<: *common
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
       export PARAMETER_PATH=$(pwd)/parameters.json
       cargo test --package sf_core -- --ignored
-    plugins:
-      - docker#v5.11.0:
-          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
-          propagate-environment: true
-          environment:
-            - "PARAMETERS_SECRET"
     timeout_in_minutes: 30
-    retry:
-      automatic:
-        - exit_status: "*"
-          limit: 1
 
   # --------------------------------------------------------------------------
   # Python Integration + E2E Tests
@@ -41,9 +49,7 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":python: Python Integ + E2E Tests"
     key: "python-integ-e2e"
-    agents:
-      queue: "discovery"
-      repo: "snowflakedb/universal-driver"
+    <<: *common
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
@@ -53,17 +59,7 @@ steps:
       RUSTFLAGS="" hatch build -t wheel
       hatch run test.py3.9:install-wheel
       hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
-    plugins:
-      - docker#v5.11.0:
-          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
-          propagate-environment: true
-          environment:
-            - "PARAMETERS_SECRET"
     timeout_in_minutes: 45
-    retry:
-      automatic:
-        - exit_status: "*"
-          limit: 1
 
   # --------------------------------------------------------------------------
   # ODBC Integration + E2E Tests
@@ -72,9 +68,7 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":c: ODBC Integ + E2E Tests"
     key: "odbc-integ-e2e"
-    agents:
-      queue: "discovery"
-      repo: "snowflakedb/universal-driver"
+    <<: *common
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
@@ -99,17 +93,7 @@ steps:
       export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
       export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
       ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error
-    plugins:
-      - docker#v5.11.0:
-          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
-          propagate-environment: true
-          environment:
-            - "PARAMETERS_SECRET"
     timeout_in_minutes: 45
-    retry:
-      automatic:
-        - exit_status: "*"
-          limit: 1
 
   # --------------------------------------------------------------------------
   # JDBC Integration + E2E Tests
@@ -118,9 +102,7 @@ steps:
   # --------------------------------------------------------------------------
   - label: ":java: JDBC Integ + E2E Tests"
     key: "jdbc-integ-e2e"
-    agents:
-      queue: "discovery"
-      repo: "snowflakedb/universal-driver"
+    <<: *common
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
@@ -135,14 +117,4 @@ steps:
       chmod +x jdbc/gradlew
       cd jdbc
       ./gradlew test --stacktrace
-    plugins:
-      - docker#v5.11.0:
-          image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
-          propagate-environment: true
-          environment:
-            - "PARAMETERS_SECRET"
     timeout_in_minutes: 45
-    retry:
-      automatic:
-        - exit_status: "*"
-          limit: 1
