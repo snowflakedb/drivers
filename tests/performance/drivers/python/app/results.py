@@ -58,6 +58,39 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
     return filename
 
 
+def write_memory_timeline(memory_timeline, test_name, driver_type):
+    """Write memory timeline samples to a separate CSV file.
+    
+    Args:
+        memory_timeline: List of MemorySample objects from ResourceMonitor
+        test_name: Name of the test
+        driver_type: Driver type (universal or old)
+    
+    Returns:
+        Path: Path to the created CSV file, or None if no samples
+    """
+    if not memory_timeline:
+        return None
+
+    timestamp = int(time.time())
+    results_dir = Path("/results")
+    results_dir.mkdir(exist_ok=True)
+
+    filename = results_dir / f"memory_timeline_{test_name}_python_{driver_type}_{timestamp}.csv"
+
+    with open(filename, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=["timestamp_ms", "rss_bytes", "vm_bytes"])
+        writer.writeheader()
+        for sample in memory_timeline:
+            writer.writerow({
+                "timestamp_ms": sample.timestamp_ms,
+                "rss_bytes": sample.rss_bytes,
+                "vm_bytes": sample.vm_bytes,
+            })
+
+    return filename
+
+
 def write_run_metadata(driver_type, driver_version, server_version):
     """Write run metadata JSON file (once per run).
     

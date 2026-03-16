@@ -6,6 +6,7 @@ import resource
 import shutil
 import time
 from common import run_warmup, run_test_iterations, print_timing_stats
+from resource_monitor import ResourceMonitor
 
 
 def execute_put_get_test(cursor, sql_command, warmup_iterations, iterations):
@@ -13,16 +14,24 @@ def execute_put_get_test(cursor, sql_command, warmup_iterations, iterations):
     Execute a complete PUT/GET test: warmup, iterations, and statistics.
     
     Returns:
-        list: Test results for CSV output
+        tuple: (results list, memory_timeline list)
     """
     print("\n=== Executing PUT_GET Test ===")
     print(f"Query: {sql_command}")
     
     run_warmup(_execute_put_get, cursor, sql_command, warmup_iterations)
+
+    monitor = ResourceMonitor(interval_s=0.1)
+    monitor.start()
+
     results = run_test_iterations(_execute_put_get, cursor, sql_command, iterations)
+
+    memory_timeline = monitor.stop()
+
     print_statistics(results)
+    print(f"  Memory timeline: {len(memory_timeline)} samples collected")
     
-    return results
+    return results, memory_timeline
 
 
 def print_statistics(results):

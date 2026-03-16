@@ -3,6 +3,7 @@ import os
 import resource
 import time
 from common import run_warmup, run_test_iterations, print_timing_stats
+from resource_monitor import ResourceMonitor
 
 _FETCH_BATCH_SIZE = 1024
 
@@ -12,17 +13,25 @@ def execute_fetch_test(cursor, sql_command, warmup_iterations, iterations):
     Execute a complete SELECT test: warmup, iterations, and statistics.
     
     Returns:
-        list: Test results for CSV output
+        tuple: (results list, memory_timeline list)
     """
     print("\n=== Executing SELECT Test ===")
     print(f"Query: {sql_command}")
     
     run_warmup(_execute_query, cursor, sql_command, warmup_iterations)
+
+    monitor = ResourceMonitor(interval_s=0.1)
+    monitor.start()
+
     results = run_test_iterations(_execute_query, cursor, sql_command, iterations)
+
+    memory_timeline = monitor.stop()
+
     _validate_row_counts(results)
     _print_statistics(results)
+    print(f"  Memory timeline: {len(memory_timeline)} samples collected")
     
-    return results
+    return results, memory_timeline
 
 
 def _validate_row_counts(results):

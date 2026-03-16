@@ -5,7 +5,7 @@ from config import TestConfig
 from connection import create_connection, get_server_version, execute_setup_queries
 from put_execution import execute_put_get_test
 from query_execution import execute_fetch_test
-from results import write_csv_results, write_run_metadata
+from results import write_csv_results, write_memory_timeline, write_run_metadata
 from test_types import TestType
 
 TEST_EXECUTORS = {
@@ -43,7 +43,7 @@ def main():
         conn.close()
         sys.exit(1)
     
-    results = execute_test(
+    results, memory_timeline = execute_test(
         config.test_type, 
         cursor, 
         config.sql_command, 
@@ -62,8 +62,11 @@ def main():
     conn.close()
 
     filename = write_csv_results(results, config.test_name, config.driver_type, config.test_type)
+    timeline_filename = write_memory_timeline(memory_timeline, config.test_name, config.driver_type)
     
     print(f"\n✓ Complete → {filename}")
+    if timeline_filename:
+        print(f"✓ Memory timeline → {timeline_filename}")
 
 
 if __name__ == "__main__":
