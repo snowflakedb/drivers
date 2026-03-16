@@ -21,6 +21,9 @@ old_odbc_cloned/
 old_coverage.txt
 weekly_report/
 
+# Local directory for AI prompts / inputs
+.ai/plans
+
 # Python/Cython build artifacts
 python/src/snowflake/connector/_internal/nanoarrow_cpp/ArrowIterator/arrow_stream_iterator.cpp
 python/src/snowflake/connector/_internal/*.so

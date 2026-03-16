@@ -39,5 +39,8 @@ def get_test_parameters() -> dict[str, Any]:
         "SNOWFLAKE_TEST_PRIVATE_KEY_FILE",
         "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS",
         "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
+        "SNOWFLAKE_TEST_MFA_USER",
+        "SNOWFLAKE_TEST_MFA_PASSWORD",
+        "SNOWFLAKE_TEST_MFA_PASSCODE",
     ]
     return {k: os.environ.get(k) for k in env_vars}
