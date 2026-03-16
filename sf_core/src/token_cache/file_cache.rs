@@ -814,6 +814,11 @@ mod tests {
         #[cfg(target_os = "linux")]
         #[test]
         fn validate_file_fd_rejects_file_not_owned_by_current_user() {
+            let current_uid = unsafe { libc::getuid() };
+            if current_uid == 0 {
+                return;
+            }
+
             let path = Path::new("/etc/hosts");
             let file = fs::File::open(path).expect("/etc/hosts should be readable");
 
