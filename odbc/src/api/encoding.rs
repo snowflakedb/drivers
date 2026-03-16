@@ -10,7 +10,7 @@ use std::cmp::min;
 use std::sync::OnceLock;
 
 #[cfg(not(windows))]
-fn is_ascii_locale() -> bool {
+pub fn is_ascii_locale() -> bool {
     static RESULT: OnceLock<bool> = OnceLock::new();
     *RESULT.get_or_init(|| {
         let locale = unsafe { libc::setlocale(libc::LC_CTYPE, std::ptr::null()) };
@@ -20,6 +20,17 @@ fn is_ascii_locale() -> bool {
         let locale_str = unsafe { std::ffi::CStr::from_ptr(locale) };
         matches!(locale_str.to_bytes(), b"C" | b"POSIX")
     })
+}
+
+#[cfg(windows)]
+pub fn is_ascii_locale() -> bool {
+    false
+}
+
+pub fn mask_non_ascii_characters(src: &str) -> String {
+    src.chars()
+        .map(|c| if c as u8 > 0x7F { '\x1a' } else { c })
+        .collect()
 }
 
 /// Abstracts over ANSI (narrow) and Unicode (wide) ODBC string operations,
@@ -69,20 +80,31 @@ impl OdbcEncoding for Narrow {
     }
 
     fn write_string(string: &str, buffer: *mut Self::Char, buffer_length: usize) -> (usize, bool) {
-        let full_len = string.len();
-        if buffer.is_null() {
-            return (full_len, false);
+        let write_inner = |string: &str| {
+            let full_len = string.len();
+            if buffer.is_null() {
+                return (full_len, false);
+            }
+            if buffer_length == 0 {
+                return (full_len, full_len > 0);
+            }
+            let max_len = buffer_length.saturating_sub(1);
+            let copy_len = min(full_len, max_len);
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    string.as_ptr() as *const sql::Char,
+                    buffer,
+                    copy_len,
+                );
+                *buffer.add(copy_len) = 0;
+            }
+            (full_len, full_len > max_len)
+        };
+        if is_ascii_locale() {
+            write_inner(&mask_non_ascii_characters(string))
+        } else {
+            write_inner(string)
         }
-        if buffer_length == 0 {
-            return (full_len, full_len > 0);
-        }
-        let max_len = buffer_length.saturating_sub(1);
-        let copy_len = min(full_len, max_len);
-        unsafe {
-            std::ptr::copy_nonoverlapping(string.as_ptr() as *const sql::Char, buffer, copy_len);
-            *buffer.add(copy_len) = 0;
-        }
-        (full_len, full_len > max_len)
     }
 }
 

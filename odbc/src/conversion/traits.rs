@@ -141,7 +141,14 @@ impl Binding {
         }
         #[cfg(not(windows))]
         {
-            self.write_char_bytes(src.as_bytes(), get_data_offset)
+            use crate::api::encoding::{is_ascii_locale, mask_non_ascii_characters};
+
+            if is_ascii_locale() {
+                let masked_src = mask_non_ascii_characters(src);
+                self.write_char_bytes(masked_src.as_bytes(), get_data_offset)
+            } else {
+                self.write_char_bytes(src.as_bytes(), get_data_offset)
+            }
         }
     }
 
