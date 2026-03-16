@@ -1,13 +1,9 @@
-#include <sql.h>
-#include <sqlext.h>
-
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
 #include "Schema.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
 
 TEST_CASE("should cast number values to appropriate type for number and synonyms", "[number]") {
   // Given Snowflake client is logged in
