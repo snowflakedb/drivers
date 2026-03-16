@@ -157,9 +157,16 @@ pub unsafe extern "C" fn SQLSetEnvAttr(
     environment_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
-    _string_length: sql::SmallInt,
+    string_length: sql::Integer,
 ) -> sql::RetCode {
-    api::environment::set_env_attribute(environment_handle, attribute, value).to_sql_code()
+    if environment_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Env, environment_handle);
+    let result =
+        api::environment::set_env_attribute(environment_handle, attribute, value, string_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Env, environment_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -169,9 +176,22 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
     environment_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
-    _string_length: sql::SmallInt,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::environment::get_env_attribute(environment_handle, attribute, value).to_sql_code()
+    if environment_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Env, environment_handle);
+    let result = api::environment::get_env_attribute(
+        environment_handle,
+        attribute,
+        value,
+        buffer_length,
+        string_length_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Env, environment_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -916,14 +936,26 @@ pub unsafe extern "C" fn SQLGetStmtAttr(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::statement::get_stmt_attr(
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_stmt_attr::<Narrow>(
         statement_handle,
         attribute,
         value_ptr,
         buffer_length,
         string_length_ptr,
-    )
-    .to_sql_code()
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -936,14 +968,26 @@ pub unsafe extern "C" fn SQLGetStmtAttrW(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::statement::get_stmt_attr(
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_stmt_attr::<Wide>(
         statement_handle,
         attribute,
         value_ptr,
         buffer_length,
         string_length_ptr,
-    )
-    .to_sql_code()
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety

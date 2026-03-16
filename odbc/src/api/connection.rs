@@ -5,8 +5,8 @@ use crate::api::encoding::{
 };
 use crate::api::error::Required;
 use crate::api::error::{
-    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, InvalidPortSnafu, OdbcRuntimeSnafu,
-    UnknownAttributeSnafu, UnsupportedAttributeSnafu,
+    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, InvalidBufferLengthSnafu,
+    InvalidPortSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -560,6 +560,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             tracing::debug!("set_connect_attr: Autocommit (ignored)");
             Ok(())
         }
+        ConnectionAttribute::CurrentCatalog => {
+            tracing::warn!("set_connect_attr: CurrentCatalog is not yet implemented");
+            crate::api::error::UnsupportedAttributeSnafu {
+                attribute: attr.as_raw(),
+            }
+            .fail()
+        }
         ConnectionAttribute::PrivKey => {
             tracing::warn!(
                 "set_connect_attr: PrivKey (EVP_PKEY pointer) is not supported. \
@@ -664,6 +671,22 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                     *(value_ptr as *mut sql::ULen) = 0;
                 }
             }
+            Ok(())
+        }
+        ConnectionAttribute::CurrentCatalog => {
+            if buffer_length < 0 {
+                return InvalidBufferLengthSnafu {
+                    length: buffer_length as i64,
+                }
+                .fail();
+            }
+            write_string_bytes_i32::<E>(
+                "",
+                value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
+            );
             Ok(())
         }
         ConnectionAttribute::PrivKey => UnsupportedAttributeSnafu {

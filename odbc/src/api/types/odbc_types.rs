@@ -27,6 +27,8 @@ pub enum ConnectionAttribute {
     Autocommit,
     /// SQL_ATTR_LOGIN_TIMEOUT (103)
     LoginTimeout,
+    /// SQL_ATTR_CURRENT_CATALOG (109)
+    CurrentCatalog,
     /// SQL_ATTR_CONNECTION_TIMEOUT (113)
     ConnectionTimeout,
 
@@ -50,6 +52,7 @@ impl ConnectionAttribute {
         match value {
             102 => Some(Self::Autocommit),
             103 => Some(Self::LoginTimeout),
+            109 => Some(Self::CurrentCatalog),
             113 => Some(Self::ConnectionTimeout),
             x if x == SQL_SF_CONN_ATTR_BASE + 1 => Some(Self::PrivKey),
             x if x == SQL_SF_CONN_ATTR_BASE + 2 => Some(Self::Application),
@@ -70,6 +73,7 @@ impl ConnectionAttribute {
         match self {
             Self::Autocommit => 102,
             Self::LoginTimeout => 103,
+            Self::CurrentCatalog => 109,
             Self::ConnectionTimeout => 113,
             Self::PrivKey => SQL_SF_CONN_ATTR_BASE + 1,
             Self::Application => SQL_SF_CONN_ATTR_BASE + 2,
@@ -201,6 +205,8 @@ pub enum StmtAttr {
     ImpRowDesc = 10012,
     /// `SQL_ATTR_IMP_PARAM_DESC` — handle to the Implementation Parameter Descriptor.
     ImpParamDesc = 10013,
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (2000100) — last query ID (read-only string).
+    SnowflakeLastQueryId = 2000100,
 }
 
 impl TryFrom<i32> for StmtAttr {
@@ -220,6 +226,7 @@ impl TryFrom<i32> for StmtAttr {
             10011 => Ok(StmtAttr::AppParamDesc),
             10012 => Ok(StmtAttr::ImpRowDesc),
             10013 => Ok(StmtAttr::ImpParamDesc),
+            2000100 => Ok(StmtAttr::SnowflakeLastQueryId),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
                 Err(OdbcError::UnknownAttribute {
@@ -763,6 +770,8 @@ impl ToSqlReturn for OdbcResult<()> {
 
 pub struct Environment {
     pub odbc_version: sql::Integer,
+    pub connection_pooling: sql::AttrConnectionPooling,
+    pub connection_pool_match: sql::AttrCpMatch,
     pub diagnostic_info: DiagnosticInfo,
 }
 
@@ -990,6 +999,8 @@ pub struct Statement<'a> {
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
     pub used_extended_fetch: bool,
+    /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
+    pub last_query_id: Option<String>,
 }
 
 // Helper functions for handle conversion

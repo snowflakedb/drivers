@@ -4,7 +4,7 @@ use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
     InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, Required, StatementNotExecutedSnafu,
+    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -63,8 +63,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             tracing::info!("exec_direct: response={:?}", response);
             let response = response?;
 
+            let query_id = response.result.as_ref().map(|r| r.query_id.clone());
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
             set_state(stmt, create_execute_state(response, false)?);
+            stmt.last_query_id = query_id.filter(|s| !s.is_empty());
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -229,8 +231,11 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
             let statement_type_id = response.result.as_ref().and_then(|r| r.statement_type_id);
             let rows_affected = response.result.as_ref().and_then(|r| r.rows_affected);
+            let query_id = response.result.as_ref().map(|r| r.query_id.clone());
 
             let execute_state = create_execute_state(response, prepared)?;
+
+            stmt.last_query_id = query_id.filter(|s| !s.is_empty());
 
             if is_dml_statement_type(statement_type_id) && Some(0) == rows_affected {
                 let StatementState::Executed {
@@ -725,6 +730,10 @@ pub fn set_stmt_attr(
             stmt.ard.bind_offset_ptr = ptr;
             Ok(())
         }
+        StmtAttr::SnowflakeLastQueryId => {
+            tracing::warn!("set_stmt_attr: SnowflakeLastQueryId is read-only");
+            ReadOnlyAttributeSnafu { attribute }.fail()
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
@@ -733,12 +742,13 @@ pub fn set_stmt_attr(
 }
 
 /// Get a statement attribute value
-pub fn get_stmt_attr(
+pub fn get_stmt_attr<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
-    _buffer_length: sql::Integer,
+    buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
+    warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
@@ -834,6 +844,23 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut *mut sql::Len) = stmt.ard.bind_offset_ptr;
             }
+            Ok(())
+        }
+        StmtAttr::SnowflakeLastQueryId => {
+            if buffer_length < 0 {
+                return InvalidBufferLengthSnafu {
+                    length: buffer_length as i64,
+                }
+                .fail();
+            }
+            let query_id = stmt.last_query_id.as_deref().unwrap_or("");
+            crate::api::encoding::write_string_bytes_i32::<E>(
+                query_id,
+                value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
+            );
             Ok(())
         }
         _ => {

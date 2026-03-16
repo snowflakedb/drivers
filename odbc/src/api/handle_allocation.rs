@@ -18,6 +18,8 @@ pub fn alloc_environment() -> OdbcResult<*mut Environment> {
     env_allocated().context(OdbcRuntimeSnafu)?;
     let env = Box::new(Environment {
         odbc_version: 3,
+        connection_pooling: sql::AttrConnectionPooling::Off,
+        connection_pool_match: sql::AttrCpMatch::Strict,
         diagnostic_info: DiagnosticInfo::default(),
     });
     Ok(Box::into_raw(env))
@@ -67,6 +69,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 cursor_type: crate::api::CursorType::ForwardOnly,
                 max_length: 0,
                 used_extended_fetch: false,
+                last_query_id: None,
             });
             Ok(Box::into_raw(stmt))
         }
