@@ -199,8 +199,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Multiple VARCHAR-returni
   REQUIRE(rowCount == 2);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: NUMBER-returning proc is skipped by reference driver",
-                 "[odbc-api][procedures][catalog][known-bug]") {
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: NUMBER-returning proc is returned alongside VARCHAR proc",
+                 "[odbc-api][procedures][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto schema = Schema::use_random_schema(dbc_handle());
@@ -226,22 +226,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: NUMBER-returning proc is
   REQUIRE(ret == SQL_SUCCESS);
 
   int rowCount = 0;
-  std::string foundName;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS) {
     char name[256] = {};
     SQLGetData(stmt_handle(), 3, SQL_C_CHAR, name, sizeof(name), nullptr);
     INFO("Row " << (rowCount + 1) << ": " << name);
-    if (rowCount == 0) foundName = name;
     rowCount++;
   }
-  // Note: One proc has NUMBER(38,0) return types, so it is silently
-  // dropped by a comma-in-type parsing bug in the reference driver.
-  REQUIRE(rowCount == 1);
-  REQUIRE(foundName == "TEST_PROCS_DTYPE_A");
+  REQUIRE(rowCount == 2);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Multiple NUMBER-returning procs are all skipped",
-                 "[odbc-api][procedures][catalog][known-bug]") {
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Multiple NUMBER-returning procs are all returned",
+                 "[odbc-api][procedures][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const auto schema = Schema::use_random_schema(dbc_handle());
@@ -270,12 +265,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Multiple NUMBER-returnin
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS) {
     char name[256] = {};
     SQLGetData(stmt_handle(), 3, SQL_C_CHAR, name, sizeof(name), nullptr);
-    WARN("Unexpected row " << (rowCount + 1) << ": " << name);
+    INFO("Row " << (rowCount + 1) << ": " << name);
     rowCount++;
   }
-  // Note: Both procs have NUMBER(38,0) return types, so both are silently
-  // dropped by a comma-in-type parsing bug in the reference driver.
-  REQUIRE(rowCount == 0);
+  REQUIRE(rowCount == 2);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedures: Non-existent procedure returns empty result set",
