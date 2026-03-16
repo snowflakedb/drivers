@@ -29,7 +29,7 @@ pub fn is_ascii_locale() -> bool {
 
 pub fn mask_non_ascii_characters(src: &str) -> String {
     src.chars()
-        .map(|c| if c as u8 > 0x7F { '\x1a' } else { c })
+        .map(|c| if !c.is_ascii() { '\x1a' } else { c })
         .collect()
 }
 
@@ -267,5 +267,50 @@ pub fn write_string_bytes_i32<E: OdbcEncoding>(
     }
     if truncated && let Some(w) = warnings {
         w.push(Warning::StringDataTruncated);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mask_non_ascii_preserves_pure_ascii() {
+        assert_eq!(mask_non_ascii_characters("Hello"), "Hello");
+    }
+
+    #[test]
+    fn mask_non_ascii_preserves_empty_string() {
+        assert_eq!(mask_non_ascii_characters(""), "");
+    }
+
+    #[test]
+    fn mask_non_ascii_replaces_japanese_characters() {
+        assert_eq!(mask_non_ascii_characters("日本語"), "\x1a\x1a\x1a");
+    }
+
+    #[test]
+    fn mask_non_ascii_replaces_mixed_string() {
+        assert_eq!(mask_non_ascii_characters("Hello日World"), "Hello\x1aWorld");
+    }
+
+    #[test]
+    fn mask_non_ascii_replaces_emojis() {
+        assert_eq!(mask_non_ascii_characters("⛄🚀🎉"), "\x1a\x1a\x1a");
+    }
+
+    #[test]
+    fn mask_non_ascii_replaces_greek_letters() {
+        assert_eq!(mask_non_ascii_characters("αβγδ"), "\x1a\x1a\x1a\x1a");
+    }
+
+    #[test]
+    fn mask_non_ascii_replaces_combined_characters() {
+        assert_eq!(mask_non_ascii_characters("y\u{0306}es"), "y\x1aes");
+    }
+
+    #[test]
+    fn mask_non_ascii_replaces_surrogate_pair_character() {
+        assert_eq!(mask_non_ascii_characters("𝄞"), "\x1a");
     }
 }
