@@ -104,7 +104,6 @@ fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut Numeri
 
 /// Read the query text from an ODBC buffer and prepare
 /// (SQLPrepare / SQLPrepareW).
-/// Prepare a SQL statement (SQLPrepare / SQLPrepareW).
 pub fn prepare<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     statement_text: *const E::Char,

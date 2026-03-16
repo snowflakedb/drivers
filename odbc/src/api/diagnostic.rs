@@ -359,8 +359,7 @@ pub fn get_diag_field<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
     tracing::debug!(
-        "get_diag_field: handle_type={:?}, rec_number={rec_number}, diag_identifier={diag_identifier:?}",
-        handle_type,
+        "get_diag_field: handle_type={handle_type:?}, rec_number={rec_number}, diag_identifier={diag_identifier:?}"
     );
     if rec_number < 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();

@@ -67,7 +67,6 @@ inline bool is_ascii_locale() {
 #ifdef _WIN32
   return false;
 #else
-  setlocale(LC_CTYPE, "");
   const char* locale = setlocale(LC_CTYPE, nullptr);
   return locale != nullptr && (std::string(locale) == "C" || std::string(locale) == "POSIX");
 #endif

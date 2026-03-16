@@ -60,8 +60,8 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
     Ok(())
 }
 
-/// Get a column attribute (SQLColAttribute)
-pub fn col_attribute(
+/// Get a column attribute (SQLColAttribute / SQLColAttributeW).
+pub fn col_attribute<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     field_identifier: sql::USmallInt,
