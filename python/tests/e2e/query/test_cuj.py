@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 class TestCriticalUserJourneys:
     def test_desc_command(self, cursor):
         # When DESC SCHEMA command is executed
-        cursor.execute("ALTER SESSION SET TIMEZONE = 'UTC';")
+        cursor.execute("ALTER SESSION SET TIMEZONE = 'America/Los_Angeles';")
         rows = cursor.execute("desc schema snowflake.INFORMATION_SCHEMA").fetchall()
 
         # Then Schema properties are returned with correct types
@@ -19,7 +19,8 @@ class TestCriticalUserJourneys:
 
     def test_show_command(self, tmp_schema, cursor):
         # When SHOW SCHEMAS command is executed
-        r = cursor.execute("show schemas in database identifier(current_database())").fetchall()
+        (db_name,) = cursor.execute("SELECT current_database()").fetchone()
+        r = cursor.execute(f"SHOW SCHEMAS IN DATABASE {db_name}").fetchall()
 
         # Then Result contains INFORMATION_SCHEMA and PUBLIC schemas
         schema_names = [row[1].upper() for row in r]

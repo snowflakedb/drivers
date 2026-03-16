@@ -221,8 +221,9 @@ pub fn create_field_with_type(
 }
 
 /// Maps a FIXED column's precision to the narrowest integer Arrow type that can
-/// hold all possible values for that precision. Used for the all-null path so
-/// the schema stays consistent with what the non-null path would produce.
+/// hold all possible values for that precision. Used as a precision-based
+/// fallback for all-null columns (the non-null path instead infers the type
+/// from the observed min/max values, which may select a different width).
 fn integer_type_for_precision(precision: u64) -> DataType {
     if precision <= 2 {
         DataType::Int8
@@ -399,8 +400,8 @@ fn create_column_array(
                 .collect();
 
             let decimal_values = decimal_values?;
-            let min_value = decimal_values.iter().filter_map(|v| *v).min();
-            let max_value = decimal_values.iter().filter_map(|v| *v).max();
+            let min_value = decimal_values.iter().flatten().min().copied();
+            let max_value = decimal_values.iter().flatten().max().copied();
             if min_value.is_none() {
                 if *scale > 0 {
                     return Ok((
@@ -448,6 +449,20 @@ fn create_column_array(
             }
             let min_value = min_value.unwrap();
             let max_value = max_value.unwrap();
+
+            if *scale > 0 {
+                return Ok((
+                    create_field_with_type(
+                        row_type,
+                        Some(DataType::Decimal128(*precision as u8, *scale as i8)),
+                    )?,
+                    Arc::new(
+                        arrow::array::Decimal128Array::from(decimal_values)
+                            .with_precision_and_scale(*precision as u8, *scale as i8)
+                            .context(ArrowSnafu {})?,
+                    ),
+                ));
+            }
 
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
                 cast_fixed_to_arrow::<arrow::datatypes::Int8Type>(
@@ -844,7 +859,7 @@ fn create_column_array(
 }
 
 /// Converts a string rowset with RowType metadata to Arrow format.
-/// Supports TEXT, FIXED, BOOLEAN, REAL, DATE, TIMESTAMP_NTZ, and TIMESTAMP_LTZ types.
+/// Supports TEXT, FIXED, BOOLEAN, REAL, DATE, TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ types.
 /// Null values in the rowset are preserved as Arrow nulls.
 /// Assumes rowset and row_types have been validated to have matching column counts.
 pub fn convert_string_rowset_to_arrow_reader(
@@ -1294,6 +1309,75 @@ mod tests {
             assert!(col.is_null(1));
             assert!(!col.is_null(2));
             assert_eq!(col.value(2), 4_000_000_000);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_decimal128() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 20, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Decimal128(20, 0));
+    }
+
+    #[test]
+    fn test_null_values_in_fixed_column_decimal128() {
+        let rowset = vec![
+            vec![Some("12345678901234567890".to_string())],
+            vec![None],
+            vec![Some("98765432109876543210".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col_fixed", true, 38, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Decimal128Array>()
+                .unwrap();
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 12_345_678_901_234_567_890);
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+            assert_eq!(col.value(2), 98_765_432_109_876_543_210);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_fixed_column_with_scale_uses_decimal128() {
+        let rowset = vec![
+            vec![Some("123.45".to_string())],
+            vec![None],
+            vec![Some("678.90".to_string())],
+        ];
+        let row_types = vec![RowType::fixed("col_fixed", true, 10, 2)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Decimal128Array>()
+                .unwrap();
+            assert_eq!(*col.data_type(), DataType::Decimal128(10, 2));
+            assert_eq!(col.len(), 3);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 12345);
+            assert!(col.is_null(1));
+            assert!(!col.is_null(2));
+            assert_eq!(col.value(2), 67890);
         } else {
             panic!("Expected one record batch");
         }
