@@ -72,7 +72,10 @@ steps:
     command: |
       ./scripts/decode_secrets.sh
       yum install -y unzip
-      export PARAMETER_PATH=$(pwd)/parameters.json
+
+      WORKSPACE_ROOT="$(pwd)"
+      export PARAMETER_PATH="${WORKSPACE_ROOT}/parameters.json"
+      export DRIVER_PATH="${WORKSPACE_ROOT}/target/debug/libsfodbc.so"
 
       # Build the ODBC driver
       cargo build
@@ -89,9 +92,6 @@ steps:
       cmake --build cmake-build -- -j $(nproc)
 
       # Run ODBC integration tests
-      WORKSPACE_ROOT=$(pwd)/..
-      export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-      export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
       ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error
     timeout_in_minutes: 45
 
