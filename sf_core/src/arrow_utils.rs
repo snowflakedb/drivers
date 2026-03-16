@@ -1281,6 +1281,29 @@ mod tests {
     }
 
     #[test]
+    fn test_null_values_in_timestamp_ltz_int64() {
+        let rowset = vec![
+            vec![Some("1234567.890".to_string())],
+            vec![None],
+            vec![Some("9876543.210".to_string())],
+        ];
+        let row_types = vec![RowType::timestamp_ltz("col", true, 3)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        let col = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(batch.num_rows(), 3);
+        assert!(col.is_valid(0));
+        assert!(col.is_null(1));
+        assert!(col.is_valid(2));
+    }
+
+    #[test]
     fn test_null_values_in_timestamp_ntz_struct_column() {
         let rowset = vec![
             vec![Some("1609459200.123456789".to_string())],

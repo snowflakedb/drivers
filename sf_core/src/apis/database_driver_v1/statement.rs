@@ -1058,13 +1058,13 @@ mod tests {
         );
     }
 
-    fn make_data(json: &str) -> Data {
-        serde_json::from_str(json).unwrap()
+    fn deserialize_query_response(json: &str) -> Data {
+        serde_json::from_str(json).expect("test JSON must be valid query response Data")
     }
 
     #[test]
     fn calculate_rows_affected_sums_dml_columns() {
-        let data = make_data(
+        let data = deserialize_query_response(
             r#"{
                 "statementTypeId": 12544,
                 "rowset": [["10", "3"]],
@@ -1079,7 +1079,7 @@ mod tests {
 
     #[test]
     fn calculate_rows_affected_skips_null_cells() {
-        let data = make_data(
+        let data = deserialize_query_response(
             r#"{
                 "statementTypeId": 12544,
                 "rowset": [["5", null]],
@@ -1094,7 +1094,7 @@ mod tests {
 
     #[test]
     fn calculate_rows_affected_all_null_cells() {
-        let data = make_data(
+        let data = deserialize_query_response(
             r#"{
                 "statementTypeId": 12544,
                 "rowset": [[null]],
@@ -1108,7 +1108,7 @@ mod tests {
 
     #[test]
     fn calculate_rows_affected_select_uses_total() {
-        let data = make_data(
+        let data = deserialize_query_response(
             r#"{
                 "total": 42
             }"#,
