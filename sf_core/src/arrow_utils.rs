@@ -220,6 +220,23 @@ pub fn create_field_with_type(
     }
 }
 
+/// Maps a FIXED column's precision to the narrowest integer Arrow type that can
+/// hold all possible values for that precision. Used for the all-null path so
+/// the schema stays consistent with what the non-null path would produce.
+fn integer_type_for_precision(precision: u64) -> DataType {
+    if precision <= 2 {
+        DataType::Int8
+    } else if precision <= 4 {
+        DataType::Int16
+    } else if precision <= 9 {
+        DataType::Int32
+    } else if precision <= 18 {
+        DataType::Int64
+    } else {
+        DataType::Decimal128(precision as u8, 0)
+    }
+}
+
 fn cast_fixed_to_arrow<T>(
     row_type: &RowType,
     data_type: DataType,
@@ -398,10 +415,36 @@ fn create_column_array(
                         ),
                     ));
                 }
-                return Ok((
-                    create_field_with_type(row_type, Some(DataType::Int64))?,
-                    Arc::new(Int64Array::new_null(len)),
-                ));
+                let inferred = integer_type_for_precision(*precision);
+                return match inferred {
+                    DataType::Int8 => Ok((
+                        create_field_with_type(row_type, Some(DataType::Int8))?,
+                        Arc::new(Int8Array::new_null(len)),
+                    )),
+                    DataType::Int16 => Ok((
+                        create_field_with_type(row_type, Some(DataType::Int16))?,
+                        Arc::new(Int16Array::new_null(len)),
+                    )),
+                    DataType::Int32 => Ok((
+                        create_field_with_type(row_type, Some(DataType::Int32))?,
+                        Arc::new(Int32Array::new_null(len)),
+                    )),
+                    DataType::Int64 => Ok((
+                        create_field_with_type(row_type, Some(DataType::Int64))?,
+                        Arc::new(Int64Array::new_null(len)),
+                    )),
+                    dt @ DataType::Decimal128(p, s) => Ok((
+                        create_field_with_type(row_type, Some(dt))?,
+                        Arc::new(
+                            arrow::array::Decimal128Array::new_null(len)
+                                .with_precision_and_scale(p, s)
+                                .context(ArrowSnafu {})?,
+                        ),
+                    )),
+                    _ => unreachable!(
+                        "integer_type_for_precision only returns Int8/16/32/64 or Decimal128"
+                    ),
+                };
             }
             let min_value = min_value.unwrap();
             let max_value = max_value.unwrap();
@@ -581,15 +624,16 @@ fn create_column_array(
         }
         RowType::TimestampTz { scale, .. } => {
             #[allow(clippy::type_complexity)]
-            let all_values: Result<Vec<((i64, i32), i32)>, ArrowUtilsError> = values
+            let all_values: Result<Vec<Option<((i64, i32), i32)>>, ArrowUtilsError> = values
                 .into_iter()
                 .map(|v| {
+                    let v = match v {
+                        None => return Ok(None),
+                        Some(s) => s,
+                    };
                     let (epoch_part, tz_part) = v.split_once(' ').unwrap_or((v, ""));
                     let (epoch_str, fraction_str) =
                         epoch_part.split_once('.').unwrap_or((epoch_part, ""));
-                    (epoch_str, fraction_str, tz_part)
-                })
-                .map(|(epoch_str, fraction_str, tz_part)| {
                     let epoch: i64 = epoch_str.parse().context(IntegerParsingSnafu {
                         value: epoch_str.to_string(),
                     })?;
@@ -615,39 +659,59 @@ fn create_column_array(
                             value: tz_part.to_string(),
                         })?
                     };
-                    // wrapping first two values in a tuple makes unzipping later easier, but it's heavier
-                    // potentially could be replaced with returning three values and repackaging to three collections manually
-                    Ok(((epoch, fraction), tz))
+                    Ok(Some(((epoch, fraction), tz)))
                 })
                 .collect();
             let all_values = all_values?;
-            let (time_part_values, tz_values): (Vec<(i64, i32)>, Vec<i32>) =
-                all_values.into_iter().unzip();
-            let (epoch_values, fraction_values): (Vec<i64>, Vec<i32>) =
-                time_part_values.into_iter().unzip();
 
             let field = create_field(row_type)?;
             match field.data_type() {
                 DataType::Struct(fields) if fields.len() == 2 => {
-                    let normalized_epoch_values: Vec<i64> = epoch_values
+                    let null_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
+                    let normalized_epoch_values: Vec<i64> = all_values
                         .iter()
-                        .zip(fraction_values.iter())
-                        .map(|(epoch, fraction)| {
-                            epoch * 10i64.pow(*scale as u32) + *fraction as i64
+                        .map(|v| {
+                            v.map_or(0, |((epoch, fraction), _)| {
+                                epoch * 10i64.pow(*scale as u32) + fraction as i64
+                            })
                         })
+                        .collect();
+                    let tz_values: Vec<i32> = all_values
+                        .iter()
+                        .map(|v| v.map_or(0, |(_, tz)| tz))
                         .collect();
                     let epoch_array: Arc<dyn Array> =
                         Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
                             normalized_epoch_values,
                         ));
                     let tz_array: Arc<dyn Array> = Arc::new(Int32Array::from(tz_values));
-                    let values = vec![
+                    let arrays = vec![
                         (fields[0].clone(), epoch_array),
                         (fields[1].clone(), tz_array),
                     ];
-                    Ok((field, Arc::new(arrow::array::StructArray::from(values))))
+                    let struct_array = arrow::array::StructArray::from(arrays);
+                    let null_buffer = arrow::buffer::NullBuffer::from(null_mask);
+                    let nullable_struct = arrow::array::StructArray::new(
+                        struct_array.fields().clone(),
+                        struct_array.columns().to_vec(),
+                        Some(null_buffer),
+                    );
+                    Ok((field, Arc::new(nullable_struct)))
                 }
                 DataType::Struct(fields) if fields.len() == 3 => {
+                    let null_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
+                    let epoch_values: Vec<i64> = all_values
+                        .iter()
+                        .map(|v| v.map_or(0, |((e, _), _)| e))
+                        .collect();
+                    let fraction_values: Vec<i32> = all_values
+                        .iter()
+                        .map(|v| v.map_or(0, |((_, f), _)| f))
+                        .collect();
+                    let tz_values: Vec<i32> = all_values
+                        .iter()
+                        .map(|v| v.map_or(0, |(_, tz)| tz))
+                        .collect();
                     let normalized_fraction_values: Vec<i32> = fraction_values
                         .iter()
                         .map(|f| f * 10i32.pow((9 - *scale) as u32))
@@ -661,12 +725,19 @@ fn create_column_array(
                             normalized_fraction_values,
                         ));
                     let tz_array: Arc<dyn Array> = Arc::new(Int32Array::from(tz_values));
-                    let values = vec![
+                    let arrays = vec![
                         (fields[0].clone(), epoch_array),
                         (fields[1].clone(), fraction_array),
                         (fields[2].clone(), tz_array),
                     ];
-                    Ok((field, Arc::new(arrow::array::StructArray::from(values))))
+                    let struct_array = arrow::array::StructArray::from(arrays);
+                    let null_buffer = arrow::buffer::NullBuffer::from(null_mask);
+                    let nullable_struct = arrow::array::StructArray::new(
+                        struct_array.fields().clone(),
+                        struct_array.columns().to_vec(),
+                        Some(null_buffer),
+                    );
+                    Ok((field, Arc::new(nullable_struct)))
                 }
                 _ => UnsupportedDataTypeSnafu {
                     data_type: format!("{:?}", field.data_type()),
@@ -878,7 +949,6 @@ pub enum ArrowUtilsError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Int8Array, Int16Array, Int64Array, StringArray};
     use arrow::record_batch::RecordBatchReader;
 
     #[test]
@@ -1090,6 +1160,48 @@ mod tests {
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
         assert_eq!(*col.data_type(), DataType::Int64);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_int8() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 2, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int8);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_int16() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 4, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int16);
+    }
+
+    #[test]
+    fn test_all_null_fixed_column_int32() {
+        let rowset = vec![vec![None], vec![None]];
+        let row_types = vec![RowType::fixed("col", true, 9, 0)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+
+        assert_eq!(batch.num_rows(), 2);
+        let col = batch.column(0);
+        assert_eq!(col.null_count(), 2);
+        assert_eq!(*col.data_type(), DataType::Int32);
     }
 
     #[test]
