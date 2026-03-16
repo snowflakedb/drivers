@@ -19,8 +19,7 @@ class TestCriticalUserJourneys:
 
     def test_show_command(self, tmp_schema, cursor):
         # When SHOW SCHEMAS command is executed
-        current_database = cursor.execute("select current_database()").fetchone()[0]
-        r = cursor.execute(f"show schemas in database {current_database}").fetchall()
+        r = cursor.execute("show schemas in database identifier(current_database())").fetchall()
 
         # Then Result contains INFORMATION_SCHEMA and PUBLIC schemas
         schema_names = [row[1].upper() for row in r]
