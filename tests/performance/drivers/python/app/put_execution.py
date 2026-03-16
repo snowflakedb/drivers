@@ -1,9 +1,10 @@
 """PUT/GET execution and performance measurement."""
 
-import time
 import os
 import re
+import resource
 import shutil
+import time
 from common import run_warmup, run_test_iterations, print_timing_stats
 
 
@@ -37,19 +38,27 @@ def _execute_put_get(cursor, sql):
     Execute a PUT or GET command and collect metrics.
     
     Returns:
-        dict: Dictionary with timestamp and query_time_s
+        dict: Dictionary with timestamp, query_time_s, cpu_time_s, and peak_rss_mb
     """
     _create_get_target_directory(sql)
     
+    cpu_start = time.process_time()
+
     query_start = time.time()
     cursor.execute(sql)
     query_time = time.time() - query_start
-    
+
+    cpu_time_s = time.process_time() - cpu_start
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    peak_rss_mb = usage.ru_maxrss / 1024  # KB -> MB on Linux
+
     timestamp = int(time.time())
     
     return {
         "timestamp": timestamp,
         "query_time_s": query_time,
+        "cpu_time_s": cpu_time_s,
+        "peak_rss_mb": peak_rss_mb,
     }
 
 

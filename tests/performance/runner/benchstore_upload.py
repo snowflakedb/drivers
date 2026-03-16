@@ -315,6 +315,10 @@ def read_csv_results(csv_path: Path) -> List[Dict]:
             
             if 'fetch_s' in row:
                 result['fetch_s'] = float(row['fetch_s'])
+            if 'cpu_time_s' in row:
+                result['cpu_time_s'] = float(row['cpu_time_s'])
+            if 'peak_rss_mb' in row:
+                result['peak_rss_mb'] = float(row['peak_rss_mb'])
             
             results.append(result)
     
@@ -516,6 +520,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                         # fetch_s is only present in SELECT tests, not PUT/GET tests
                         if 'fetch_s' in result:
                             metrics[f"{test_name}_fetch_s"] = result['fetch_s']
+                        if 'cpu_time_s' in result:
+                            metrics[f"{test_name}_cpu_time_s"] = result['cpu_time_s']
+                        if 'peak_rss_mb' in result:
+                            metrics[f"{test_name}_peak_rss_mb"] = result['peak_rss_mb']
                         
                         timestamp = Timestamp()
                         timestamp.FromSeconds(result['timestamp'])

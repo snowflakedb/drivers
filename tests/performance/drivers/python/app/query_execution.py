@@ -1,5 +1,6 @@
 """Query execution and performance measurement."""
 import os
+import resource
 import time
 from common import run_warmup, run_test_iterations, print_timing_stats
 
@@ -85,8 +86,11 @@ def _execute_query(cursor, sql):
     """Execute a single query and collect metrics.
     
     Returns:
-        dict: Dictionary with timestamp, query_time_s, fetch_time_s, and row_count
+        dict: Dictionary with timestamp, query_time_s, fetch_time_s, row_count,
+              cpu_time_s, and peak_rss_mb
     """
+    cpu_start = time.process_time()
+
     query_start = time.time()
     cursor.execute(sql)
     query_time = time.time() - query_start
@@ -100,6 +104,10 @@ def _execute_query(cursor, sql):
         row_count += len(rows)
     fetch_time = time.time() - fetch_start
 
+    cpu_time_s = time.process_time() - cpu_start
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    peak_rss_mb = usage.ru_maxrss / 1024  # KB -> MB on Linux
+
     timestamp = int(time.time())
     
     return {
@@ -107,5 +115,7 @@ def _execute_query(cursor, sql):
         "query_time_s": query_time,
         "fetch_time_s": fetch_time,
         "row_count": row_count,
+        "cpu_time_s": cpu_time_s,
+        "peak_rss_mb": peak_rss_mb,
     }
 
