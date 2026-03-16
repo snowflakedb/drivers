@@ -91,8 +91,9 @@ steps:
           .
       cmake --build cmake-build -- -j $(nproc)
 
-      # Run ODBC integration tests
-      ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error
+      # Run ODBC e2e + integration tests (matching Jenkins scope)
+      # odbc_api tests are unit tests that don't need a Snowflake connection
+      ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration"
     timeout_in_minutes: 45
 
   # --------------------------------------------------------------------------
