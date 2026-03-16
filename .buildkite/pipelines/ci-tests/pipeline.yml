@@ -73,9 +73,8 @@ steps:
       ./scripts/decode_secrets.sh
       yum install -y unzip
 
-      WORKSPACE_ROOT="$(pwd)"
-      export PARAMETER_PATH="${WORKSPACE_ROOT}/parameters.json"
-      export DRIVER_PATH="${WORKSPACE_ROOT}/target/debug/libsfodbc.so"
+      export PARAMETER_PATH=/workdir/parameters.json
+      export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
 
       # Build the ODBC driver
       cargo build
