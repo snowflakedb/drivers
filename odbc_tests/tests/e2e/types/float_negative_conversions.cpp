@@ -40,9 +40,9 @@ static void check_single_interval_conversion(Connection& conn, const char* query
   std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
   INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
 
-  OLD_DRIVER_ONLY("BD#20") { CHECK((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO)); }
+  OLD_DRIVER_ONLY("BD#18") { CHECK((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO)); }
 
-  NEW_DRIVER_ONLY("BD#20") {
+  NEW_DRIVER_ONLY("BD#18") {
     REQUIRE(ret == SQL_ERROR);
     REQUIRE(!records.empty());
     CHECK((sqlstate == "07006" || sqlstate == "HY003"));
@@ -61,9 +61,9 @@ static void check_compound_interval_conversion(Connection& conn, const char* que
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
 
-  OLD_DRIVER_ONLY("BD#21") { CHECK(sqlstate == "22015"); }
+  OLD_DRIVER_ONLY("BD#19") { CHECK(sqlstate == "22015"); }
 
-  NEW_DRIVER_ONLY("BD#21") { CHECK((sqlstate == "07006" || sqlstate == "HY003")); }
+  NEW_DRIVER_ONLY("BD#19") { CHECK((sqlstate == "07006" || sqlstate == "HY003")); }
 }
 
 // ============================================================================

@@ -643,7 +643,7 @@ TEST_CASE("REAL SQL_C_CHAR buffer handling", "[datatype][real][char][buffer]") {
 
   SECTION("fractional-only truncation returns 01004") {
     SKIP_OLD_DRIVER(
-        "BD#17",
+        "BD#15",
         "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small SQL_C_CHAR buffer on FLOAT columns");
 
     auto stmt = conn.execute_fetch("SELECT 3.14159::FLOAT");
@@ -684,7 +684,7 @@ TEST_CASE("REAL SQL_C_WCHAR buffer handling", "[datatype][real][wchar][buffer]")
 
   SECTION("fractional-only truncation returns 01004") {
     SKIP_OLD_DRIVER(
-        "BD#17",
+        "BD#15",
         "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO for small SQL_C_WCHAR buffer on FLOAT columns");
 
     auto stmt = conn.execute_fetch("SELECT 3.14159::FLOAT");
@@ -972,7 +972,7 @@ inline unsigned long long real_numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
 }
 
 TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
-  SKIP_OLD_DRIVER("BD#16",
+  SKIP_OLD_DRIVER("BD#14",
                   "Old driver returns raw f64 bytes instead of SQL_NUMERIC_STRUCT for SQL_C_BINARY on FLOAT columns");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -1101,7 +1101,7 @@ TEST_CASE("REAL SQL_C_NUMERIC negative zero", "[datatype][real][numeric][edge]")
 }
 
 TEST_CASE("REAL SQL_C_BINARY negative zero", "[datatype][real][binary][edge]") {
-  SKIP_OLD_DRIVER("BD#12", "SNOW-3127864: Old driver fix to be merged to return the proper size for SQL_NUMERIC");
+  SKIP_OLD_DRIVER("BD#14", "Old driver returns raw f64 bytes instead of SQL_NUMERIC_STRUCT for FLOAT columns");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
@@ -1276,7 +1276,7 @@ TEST_CASE("REAL negative fraction to unsigned integer types", "[datatype][real][
 // ============================================================================
 
 TEST_CASE("REAL NaN to integer types returns error", "[datatype][real][nan][edge]") {
-  SKIP_OLD_DRIVER("BD#18", "Old driver silently converts NaN to 0 for integer targets");
+  SKIP_OLD_DRIVER("BD#16", "Old driver silently converts NaN to 0 for integer targets");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
@@ -1306,7 +1306,7 @@ TEST_CASE("REAL NaN to integer types returns error", "[datatype][real][nan][edge
 }
 
 TEST_CASE("REAL NaN to BIT returns error", "[datatype][real][nan][edge]") {
-  SKIP_OLD_DRIVER("BD#18", "Old driver silently converts NaN to 0 for BIT target");
+  SKIP_OLD_DRIVER("BD#16", "Old driver silently converts NaN to 0 for BIT target");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 

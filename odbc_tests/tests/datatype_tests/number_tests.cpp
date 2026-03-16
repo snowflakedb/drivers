@@ -481,7 +481,7 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR buffer handling", "[datatype][number][char][bu
   auto random_schema = Schema::use_random_schema(conn);
 
   SECTION("whole digits do not fit returns 22003") {
-    SKIP_OLD_DRIVER("BD#13",
+    SKIP_OLD_DRIVER("BD#11",
                     "Old driver returns SQL_SUCCESS instead of SQL_ERROR (22003) when whole digits do not fit in "
                     "SQL_C_CHAR buffer");
 
@@ -496,9 +496,6 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR buffer handling", "[datatype][number][char][bu
   }
 
   SECTION("fractional-only truncation returns 01004") {
-    SKIP_OLD_DRIVER("BD#11",
-                    "SNOW-3120035: Old driver returns SQL_SUCCESS instead of SQL_SUCCESS_WITH_INFO for truncation");
-
     auto stmt = conn.execute_fetch("SELECT 12.345::DECIMAL(10,3)");
 
     char small_buffer[4];
@@ -521,7 +518,7 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR buffer handling", "[datatype][number][char][bu
   }
 
   SECTION("negative whole digits do not fit returns 22003") {
-    SKIP_OLD_DRIVER("BD#13",
+    SKIP_OLD_DRIVER("BD#11",
                     "Old driver returns SQL_SUCCESS instead of SQL_ERROR (22003) when whole digits do not fit in "
                     "SQL_C_CHAR buffer");
 
@@ -536,9 +533,6 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR buffer handling", "[datatype][number][char][bu
   }
 
   SECTION("negative fractional-only truncation returns 01004") {
-    SKIP_OLD_DRIVER("BD#11",
-                    "SNOW-3120035: Old driver returns SQL_SUCCESS instead of SQL_SUCCESS_WITH_INFO for truncation");
-
     auto stmt = conn.execute_fetch("SELECT -12.345::DECIMAL(10,3)");
 
     char small_buffer[5];
@@ -695,7 +689,7 @@ TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC", "[datatype][number][numeric]") {
 
 TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_PRECISION and SQL_DESC_SCALE",
           "[datatype][number][numeric][descriptor]") {
-  SKIP_OLD_DRIVER("BD#15", "Old driver ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField");
+  SKIP_OLD_DRIVER("BD#13", "Old driver ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
@@ -879,7 +873,6 @@ TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC with SQL_DESC_PRECISION and SQL_DESC_SCA
 // ============================================================================
 
 TEST_CASE("SQL_DECIMAL to SQL_C_BINARY", "[datatype][number][binary]") {
-  SKIP_OLD_DRIVER("BD#12", "SNOW-3127864: Old driver fix to be merged to return the proper size for SQL_NUMERIC");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
@@ -913,7 +906,7 @@ TEST_CASE("SQL_DECIMAL to SQL_C_BINARY", "[datatype][number][binary]") {
 
 TEST_CASE("SQL_DECIMAL SQL_C_BINARY buffer too small returns 22003", "[datatype][number][binary][22003]") {
   SKIP_OLD_DRIVER(
-      "BD#14",
+      "BD#12",
       "Old driver does not return SQL_ERROR (22003) when SQL_C_BINARY buffer is too small for SQL_NUMERIC_STRUCT");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -1380,7 +1373,7 @@ TEST_CASE("NUMBER to interval - sub-microsecond truncation returns 01S07", "[dat
 }
 
 TEST_CASE("NUMBER to interval - no negative zero", "[datatype][number][interval][edge]") {
-  SKIP_OLD_DRIVER("BD#19", "Old driver produces negative zero for interval types");
+  SKIP_OLD_DRIVER("BD#17", "Old driver produces negative zero for interval types");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
@@ -1478,7 +1471,7 @@ TEST_CASE("NUMBER to interval - NULL returns SQL_NULL_DATA", "[datatype][number]
 // ============================================================================
 
 TEST_CASE("NUMBER to interval - default precision rejects values >= 100", "[datatype][number][interval][precision]") {
-  SKIP_OLD_DRIVER("BD#22", "Old driver does not enforce interval leading precision");
+  SKIP_OLD_DRIVER("BD#20", "Old driver does not enforce interval leading precision");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
@@ -1511,7 +1504,7 @@ TEST_CASE("NUMBER to interval - default precision rejects values >= 100", "[data
 
 TEST_CASE("NUMBER to interval - custom precision via SQLSetDescField",
           "[datatype][number][interval][precision][descriptor]") {
-  SKIP_OLD_DRIVER("BD#22", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
+  SKIP_OLD_DRIVER("BD#20", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 

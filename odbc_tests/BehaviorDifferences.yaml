@@ -34,37 +34,6 @@ behavior_differences:
       Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
 
   11:
-    name: "SQL_C_CHAR with small buffer returns SQL_SUCCESS instead of SQL_SUCCESS_WITH_INFO"
-    description: |
-      OLD driver: When SQLGetData is called with a buffer too small to hold the full
-      character representation of a DECIMAL value, the old driver returns SQL_SUCCESS (0)
-      and silently truncates the data without setting a warning.
-      NEW driver: Returns SQL_SUCCESS_WITH_INFO (1) with truncated data in the buffer,
-      a null terminator, and SQL_NO_TOTAL in the indicator, per the ODBC spec
-      for string data right truncation (SQLSTATE 01004).
-      Impact: Applications that check only for SQL_SUCCESS will now also see
-      SQL_SUCCESS_WITH_INFO. The ODBC specification mandates SQL_SUCCESS_WITH_INFO
-      for string truncation, so this is a spec-compliance improvement.
-      Fix for Old Driver is to be merged with SNOW-3120035
-
-  12:
-    name: "SQL_C_BINARY on DECIMAL/NUMERIC columns returns raw internal data size instead of SQL_NUMERIC_STRUCT size"
-    description: |
-      OLD driver: When SQLGetData is called with SQL_C_BINARY on a SQL_DECIMAL or
-      SQL_NUMERIC column, the old driver returns 68 bytes of raw internal
-      TDWExactNumericType data (the Simba SDK's internal representation). The indicator
-      is set to 68 and the buffer contents are not interpretable by ODBC-compliant
-      applications.
-      NEW driver: Returns a 19-byte SQL_NUMERIC_STRUCT as required by the ODBC
-      specification, with precision, scale (0 — integer part after truncation),
-      sign (1 positive, 0 negative), and val[16] containing the unsigned magnitude
-      in little-endian 128-bit format. The indicator is set to sizeof(SQL_NUMERIC_STRUCT).
-      Impact: Applications requesting SQL_C_BINARY for numeric columns now receive
-      a standards-compliant SQL_NUMERIC_STRUCT. No correct application could have
-      relied on the old 68-byte internal representation.
-      Fix for Old Driver is to be merged with SNOW-3127864
-
-  13:
     name: "SQL_C_CHAR returns SQL_SUCCESS instead of SQL_ERROR (22003) when whole digits do not fit in buffer"
     description: |
       OLD driver: When SQLGetData is called with SQL_C_CHAR on a DECIMAL/NUMERIC
@@ -79,7 +48,7 @@ behavior_differences:
       conversion.
       TODO: To be fixed in old driver
 
-  14:
+  12:
     name: "SQL_C_BINARY returns SQL_SUCCESS instead of SQL_ERROR (22003) when buffer is too small for SQL_NUMERIC_STRUCT"
     description: |
       OLD driver: When SQLGetData is called with SQL_C_BINARY on a DECIMAL/NUMERIC
@@ -93,7 +62,7 @@ behavior_differences:
       receive an error instead of corrupted partial data.
       TODO: To be fixed in old driver
 
-  15:
+  13:
     name: "SQL_C_NUMERIC ignores SQL_DESC_PRECISION and SQL_DESC_SCALE set via SQLSetDescField"
     description: |
       OLD driver: When SQLSetDescField is used to set SQL_DESC_PRECISION and
@@ -110,7 +79,7 @@ behavior_differences:
       the ODBC specification behavior.
       TODO: To be fixed in old driver
 
-  16:
+  14:
     name: "SQL_C_BINARY on FLOAT/DOUBLE/REAL columns returns raw f64 bytes instead of SQL_NUMERIC_STRUCT"
     description: |
       OLD driver: When SQLGetData is called with SQL_C_BINARY on a SQL_DOUBLE
@@ -124,10 +93,9 @@ behavior_differences:
       Fractional values produce SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07.
       Impact: Applications requesting SQL_C_BINARY for floating-point columns now
       receive a standards-compliant SQL_NUMERIC_STRUCT instead of raw double bytes.
-      Related: BD#12 (same issue for DECIMAL/NUMERIC columns).
       TODO: To be fixed in old driver
 
-  17:
+  15:
     name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO"
     description: |
       OLD driver: When SQLGetData is called with SQL_C_CHAR on a FLOAT/DOUBLE/REAL
@@ -137,12 +105,9 @@ behavior_differences:
       right truncation), per the ODBC specification for string data truncation.
       Impact: Applications providing small buffers for SQL_C_CHAR on FLOAT columns
       will now receive a truncated result with a warning instead of an error.
-      Note: This is distinct from BD#11, which covers the same scenario for
-      DECIMAL/NUMERIC columns where the old driver returns SQL_SUCCESS (too lenient)
-      rather than SQL_ERROR (too strict as seen here for FLOAT).
       TODO: To be fixed in old driver
 
-  18:
+  16:
     name: "NaN FLOAT value silently converts to 0 for integer and BIT targets instead of returning 22003"
     description: |
       OLD driver: When SQLGetData is called on a FLOAT/DOUBLE column containing NaN
@@ -161,7 +126,7 @@ behavior_differences:
       will now receive an error. This is a spec-compliance improvement.
       TODO: To be fixed in old driver
 
-  19:
+  17:
     name: "On Windows, PUT source column returns filename only instead of full absolute path"
     description: |
       OLD driver: On Windows, the PUT result set source column returns the full
@@ -170,7 +135,7 @@ behavior_differences:
       Impact: Applications that parse the PUT source column for the full path on
       Windows will now receive only the filename.
 
-  20:
+  18:
     name: "Float to single-component interval conversions succeed instead of returning 07006"
     description: |
       OLD driver: When SQLGetData is called on a FLOAT/DOUBLE/REAL column with a
@@ -184,7 +149,7 @@ behavior_differences:
       Impact: Applications that relied on converting float columns to
       single-component interval types will now receive an error.
 
-  21:
+  19:
     name: "Float to compound interval conversions return 22015 instead of 07006"
     description: |
       OLD driver: When SQLGetData is called on a FLOAT/DOUBLE/REAL column with a
@@ -200,7 +165,7 @@ behavior_differences:
       conversion failures will see 07006 instead of 22015. Both drivers return
       SQL_ERROR, so applications checking only the return code are unaffected.
 
-  22:
+  20:
     name: "Interval leading field precision is not enforced and SQL_DESC_DATETIME_INTERVAL_PRECISION is not supported"
     description: |
       OLD driver: Does not enforce the ODBC-mandated default interval leading
@@ -221,7 +186,7 @@ behavior_differences:
       interval types will now receive 22015 unless they explicitly set a higher
       leading precision via SQLSetDescField.
   
-  23:
+  21:
     name: "DECFLOAT values are returned in scientific notation and properly normalized"
     description: |
       OLD driver: DECFLOAT values are not properly normalized, when using scientific notation. (e.g. "12e199" is returned instead of "1.2e200")
