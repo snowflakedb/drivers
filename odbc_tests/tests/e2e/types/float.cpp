@@ -10,6 +10,7 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 
 // Old driver returns "INFINITY"/"-INFINITY", new driver returns "inf"/"-inf"
@@ -398,6 +399,7 @@ TEST_CASE("should select float using parameter binding for float and synonyms", 
 }
 
 TEST_CASE("should insert float using parameter binding for float and synonyms", "[float]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

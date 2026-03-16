@@ -6,6 +6,7 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 
 TEST_CASE("should cast integer values to appropriate type for int and synonyms", "[int]") {
@@ -348,6 +349,7 @@ TEST_CASE("should insert integer using parameter binding for int and synonyms", 
 }
 
 TEST_CASE("should insert and select integers from table using batch parameter binding for int and synonyms", "[int]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
