@@ -233,3 +233,172 @@ TEST_CASE("should handle server-side Arrow memory optimization for int columns o
 
   REQUIRE(row_count == total_rows);
 }
+
+// ============================================================================
+// Large integer values (exceed int64 range, fetch as strings)
+// ============================================================================
+
+TEST_CASE("should handle large integer values for int and synonyms", "[int]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT -99999999999999999999999999999999999999::<type>,
+  // 99999999999999999999999999999999999999::<type>" is executed
+  auto stmt = conn.execute_fetch(
+      "SELECT -99999999999999999999999999999999999999::INT, "
+      "99999999999999999999999999999999999999::INT");
+
+  // Then Result should contain integers [-99999999999999999999999999999999999999,
+  // 99999999999999999999999999999999999999]
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-99999999999999999999999999999999999999");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "99999999999999999999999999999999999999");
+}
+
+TEST_CASE("should handle NULL values for int and synonyms", "[int]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
+  auto stmt = conn.execute_fetch("SELECT NULL::INT, 42::INT, NULL::INT");
+
+  // Then Result should contain [NULL, 42, NULL]
+  CHECK(get_data_optional<SQL_C_SBIGINT>(stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_SBIGINT>(stmt, 2) == std::optional<int64_t>(42));
+  CHECK(get_data_optional<SQL_C_SBIGINT>(stmt, 3) == std::nullopt);
+}
+
+// ============================================================================
+// Table operations - large integers
+// ============================================================================
+
+TEST_CASE("should select large integer values from table for int and synonyms", "[int]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with <type> column exists with values [-99999999999999999999999999999999999999,
+  // 99999999999999999999999999999999999999]
+  conn.execute("CREATE TABLE int_large_table (col INT)");
+  conn.execute(
+      "INSERT INTO int_large_table VALUES "
+      "(-99999999999999999999999999999999999999), "
+      "(99999999999999999999999999999999999999)");
+
+  // When Query "SELECT * FROM <table> ORDER BY col" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM int_large_table ORDER BY col");
+
+  // Then Result should contain integers [-99999999999999999999999999999999999999,
+  // 99999999999999999999999999999999999999]
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-99999999999999999999999999999999999999");
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "99999999999999999999999999999999999999");
+}
+
+// ============================================================================
+// Parameter binding
+// ============================================================================
+
+TEST_CASE("should insert integer using parameter binding for int and synonyms", "[int]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with <type> column exists
+  conn.execute("CREATE TABLE int_bind_insert (col BIGINT)");
+
+  // When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
+  auto insert_value = [&](int64_t val) {
+    auto stmt = conn.createStatement();
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO int_bind_insert VALUES (?)", SQL_NTS);
+    CHECK_ODBC(ret, stmt);
+
+    SQLBIGINT bind_val = val;
+    SQLLEN len = 0;
+    ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, &bind_val, 0, &len);
+    CHECK_ODBC(ret, stmt);
+
+    ret = SQLExecute(stmt.getHandle());
+    CHECK_ODBC(ret, stmt);
+  };
+
+  insert_value(0);
+  insert_value(-2147483648LL);
+  insert_value(2147483647LL);
+  insert_value(9223372036854775807LL);
+
+  // And Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM int_bind_insert ORDER BY col");
+
+  // Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -2147483648LL);
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 2147483647LL);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 9223372036854775807LL);
+}
+
+TEST_CASE("should insert and select integers from table using batch parameter binding for int and synonyms", "[int]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with <type> column exists
+  conn.execute("CREATE TABLE int_batch_bind (col BIGINT)");
+
+  // When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
+  constexpr SQLULEN num_rows = 5;
+  SQLBIGINT values[num_rows] = {0, 42, -2147483648LL, 2147483647LL, 9223372036854775807LL};
+  SQLLEN indicators[num_rows] = {0, 0, 0, 0, 0};
+  SQLUSMALLINT param_status[num_rows] = {};
+  SQLULEN params_processed = 0;
+
+  auto insert_stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  CHECK_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  CHECK_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
+  CHECK_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  CHECK_ODBC(ret, insert_stmt);
+
+  ret = SQLBindParameter(insert_stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, values, 0,
+                         indicators);
+  CHECK_ODBC(ret, insert_stmt);
+
+  ret = SQLExecDirect(insert_stmt.getHandle(), (SQLCHAR*)"INSERT INTO int_batch_bind VALUES (?)", SQL_NTS);
+  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE(params_processed == num_rows);
+
+  // And Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.execute_fetch("SELECT * FROM int_batch_bind ORDER BY col");
+
+  // Then Result should contain integers [0, 42, -2147483648, 2147483647, 9223372036854775807]
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -2147483648LL);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 42);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 2147483647LL);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 9223372036854775807LL);
+}

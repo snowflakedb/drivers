@@ -102,7 +102,7 @@ Feature: FLOAT type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select float using parameter binding for float and synonyms
     Given Snowflake client is logged in
     When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values [123.456, -789.012, 42.0]
@@ -114,7 +114,7 @@ Feature: FLOAT type support
     When Query "SELECT ?::<type>" is executed with bound NULL value
     Then Result should contain NULL
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should insert float using parameter binding for float and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists

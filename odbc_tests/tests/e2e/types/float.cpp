@@ -339,3 +339,111 @@ TEST_CASE("should select large result set from table for float and synonyms", "[
 
   REQUIRE(row_count == 50000);
 }
+
+// ============================================================================
+// PARAMETER BINDING
+// ============================================================================
+
+TEST_CASE("should select float using parameter binding for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values [123.456, -789.012, 42.0]
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::FLOAT, ?::FLOAT, ?::FLOAT", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  double v1 = 123.456;
+  double v2 = -789.012;
+  double v3 = 42.0;
+  SQLLEN len1 = 0;
+  SQLLEN len2 = 0;
+  SQLLEN len3 = 0;
+
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v1, 0, &len1);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v2, 0, &len2);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v3, 0, &len3);
+  CHECK_ODBC(ret, stmt);
+
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then Result should contain floats [123.456, -789.012, 42.0]
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(-789.012));
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == Catch::Approx(42.0));
+
+  // When Query "SELECT ?::<type>" is executed with bound NULL value
+  auto stmt2 = conn.createStatement();
+  ret = SQLPrepare(stmt2.getHandle(), (SQLCHAR*)"SELECT ?::FLOAT", SQL_NTS);
+  CHECK_ODBC(ret, stmt2);
+
+  SQLLEN null_ind = SQL_NULL_DATA;
+  ret = SQLBindParameter(stmt2.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, nullptr, 0, &null_ind);
+  CHECK_ODBC(ret, stmt2);
+
+  ret = SQLExecute(stmt2.getHandle());
+  CHECK_ODBC(ret, stmt2);
+
+  ret = SQLFetch(stmt2.getHandle());
+  CHECK_ODBC(ret, stmt2);
+
+  // Then Result should contain NULL
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt2, 1) == std::nullopt);
+}
+
+TEST_CASE("should insert float using parameter binding for float and synonyms", "[float]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with <type> column exists
+  conn.execute("CREATE TABLE float_bind_insert (col FLOAT)");
+
+  // When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
+  constexpr SQLULEN num_rows = 4;
+  double values[num_rows] = {0.0, 123.456, -789.012, 0.0};
+  SQLLEN indicators[num_rows] = {0, 0, 0, SQL_NULL_DATA};
+  SQLUSMALLINT param_status[num_rows] = {};
+  SQLULEN params_processed = 0;
+
+  auto insert_stmt = conn.createStatement();
+  SQLRETURN ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
+  CHECK_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
+  CHECK_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
+  CHECK_ODBC(ret, insert_stmt);
+  ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
+  CHECK_ODBC(ret, insert_stmt);
+
+  ret = SQLBindParameter(insert_stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, values, 0,
+                         indicators);
+  CHECK_ODBC(ret, insert_stmt);
+
+  ret = SQLExecDirect(insert_stmt.getHandle(), (SQLCHAR*)"INSERT INTO float_bind_insert VALUES (?)", SQL_NTS);
+  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE(params_processed == num_rows);
+
+  // Then Result should contain the same values including NULL
+  auto stmt = conn.execute_fetch("SELECT col FROM float_bind_insert ORDER BY col NULLS LAST");
+
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
+}
