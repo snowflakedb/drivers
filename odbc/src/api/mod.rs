@@ -7,6 +7,7 @@ pub mod diagnostic;
 pub mod environment;
 pub mod error;
 pub mod handle_allocation;
+pub mod runtime;
 pub mod sql_state;
 pub mod statement;
 pub mod types;

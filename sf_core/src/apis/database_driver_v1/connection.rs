@@ -1,6 +1,8 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
-use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
+use std::sync::RwLock;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Setting;
@@ -51,50 +53,49 @@ pub fn connection_load_from_config_with_paths(
 }
 
 impl DatabaseDriverV1 {
-    pub fn connection_init(&self, conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
+    pub async fn connection_init(
+        &self,
+        conn_handle: Handle,
+        _db_handle: Handle,
+    ) -> Result<(), ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let (login_parameters, init_params) = {
+                    let mut conn = conn_ptr.lock().await;
 
-                // Check if connection_name is set and load from config if present
-                let connection_name =
-                    conn.settings
-                        .get(param_names::CONNECTION_NAME)
-                        .and_then(|s| {
-                            if let Setting::String(name) = s {
-                                Some(name.clone())
-                            } else {
-                                None
-                            }
-                        });
+                    // Check if connection_name is set and load from config if present
+                    let connection_name =
+                        conn.settings
+                            .get(param_names::CONNECTION_NAME)
+                            .and_then(|s| {
+                                if let Setting::String(name) = s {
+                                    Some(name.clone())
+                                } else {
+                                    None
+                                }
+                            });
 
-                if let Some(name) = connection_name {
-                    connection_load_from_config(&mut conn, &name)?;
-                }
+                    if let Some(name) = connection_name {
+                        connection_load_from_config(&mut conn, &name)?;
+                    }
 
-                let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
-                let login_parameters =
-                    LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
-                let init_params = conn.init_session_parameters.clone();
-                drop(conn);
+                    let login_parameters = LoginParameters::from_settings(&conn.settings)
+                        .context(ConfigurationSnafu)?;
+                    let init_params = conn.init_session_parameters.clone();
+                    (login_parameters, init_params)
+                };
 
                 let http_client =
                     create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                         .context(TlsClientCreationSnafu)?;
 
-                let login_result = rt
-                    .block_on(async {
-                        crate::rest::snowflake::snowflake_login_with_client(
-                            &http_client,
-                            &login_parameters,
-                            init_params.as_ref(),
-                        )
-                        .await
-                    })
-                    .context(LoginSnafu)?;
+                let login_result = crate::rest::snowflake::snowflake_login_with_client(
+                    &http_client,
+                    &login_parameters,
+                    init_params.as_ref(),
+                )
+                .await
+                .context(LoginSnafu)?;
 
                 // Initialize connection with session parameters from login response.
                 // The server returns system-level parameters but may not echo back
@@ -112,7 +113,7 @@ impl DatabaseDriverV1 {
 
                 conn_ptr
                     .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?
+                    .await
                     .initialize(
                         login_result.tokens,
                         http_client,
@@ -120,7 +121,8 @@ impl DatabaseDriverV1 {
                         login_parameters.client_info.clone(),
                         merged_params,
                         login_final_names,
-                    );
+                    )
+                    .await;
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -130,7 +132,7 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn connection_set_option(
+    pub async fn connection_set_option(
         &self,
         handle: Handle,
         key: String,
@@ -138,9 +140,7 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let mut conn = conn_ptr.lock().await;
                 conn.settings.insert(key, value);
                 Ok(())
             }
@@ -151,16 +151,14 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn connection_set_options(
+    pub async fn connection_set_options(
         &self,
         handle: Handle,
         options: HashMap<String, Setting>,
     ) -> Result<Vec<ValidationIssue>, ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let mut conn = conn_ptr.lock().await;
                 resolve_and_apply_options(&mut conn.settings, options)
             }
             None => InvalidArgumentSnafu {
@@ -170,16 +168,14 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn connection_set_session_parameters(
+    pub async fn connection_set_session_parameters(
         &self,
         handle: Handle,
         parameters: HashMap<String, String>,
     ) -> Result<(), ApiError> {
         match self.connections.get_obj(handle) {
             Some(conn_ptr) => {
-                let mut conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let mut conn = conn_ptr.lock().await;
                 conn.init_session_parameters = Some(parameters);
                 Ok(())
             }
@@ -216,7 +212,7 @@ pub struct Connection {
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
     /// Session parameters cache (populated after login)
-    pub session_parameters: Arc<RwLock<HashMap<String, String>>>,
+    pub session_parameters: Arc<AsyncRwLock<HashMap<String, String>>>,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
@@ -239,7 +235,7 @@ impl Connection {
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
-            session_parameters: Arc::new(RwLock::new(HashMap::new())),
+            session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             init_session_parameters: None,
             final_session_names: RwLock::new(FinalSessionNames::default()),
         }
@@ -250,7 +246,7 @@ impl Connection {
         self.settings.insert(key, value);
     }
 
-    pub(crate) fn initialize(
+    pub(crate) async fn initialize(
         &mut self,
         tokens: SessionTokens,
         http_client: reqwest::Client,
@@ -259,15 +255,14 @@ impl Connection {
         session_params: HashMap<String, String>,
         final_names: FinalSessionNames,
     ) {
-        // Use blocking_write since we're in a sync context during connection_init
-        *self.tokens.blocking_write() = Some(tokens);
+        *self.tokens.write().await = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
 
-        if let Ok(mut cache) = self.session_parameters.write() {
-            *cache = session_params;
-        }
+        let mut cache = self.session_parameters.write().await;
+        *cache = session_params;
+        drop(cache);
 
         if let Ok(mut names) = self.final_session_names.write() {
             *names = final_names;
@@ -275,7 +270,7 @@ impl Connection {
     }
 
     /// Update the session parameters cache after a successful query.
-    pub fn update_session_params_cache(
+    pub async fn update_session_params_cache(
         &self,
         query: &str,
         response_parameters: Option<
@@ -283,10 +278,7 @@ impl Connection {
         >,
         final_names: &FinalSessionNames,
     ) {
-        let mut cache = match self.session_parameters.write() {
-            Ok(cache) => cache,
-            Err(_) => return,
-        };
+        let mut cache = self.session_parameters.write().await;
 
         // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.
         // This is necessary as Snowflake returns only part of session parameters in response.
@@ -368,7 +360,7 @@ where
     F: Fn(SensitiveString) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
-    let mut ctx = RefreshContext::from_arc(conn)?;
+    let mut ctx = RefreshContext::from_arc(conn).await?;
     let mut last_error: Option<RestError> = None;
     loop {
         let token = ctx.refresh_token(last_error).await?;
@@ -420,8 +412,8 @@ pub struct RefreshContext {
 }
 
 impl RefreshContext {
-    pub fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
-        let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+    pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
+        let guard = conn.lock().await;
         Self::new(&guard)
     }
     /// Create a new `RefreshContext` by extracting connection info.
@@ -591,7 +583,7 @@ fn get_session_or_setting(
     param_name: &str,
     setting_key: ParamKey,
 ) -> Option<String> {
-    if let Ok(cache) = conn.session_parameters.read()
+    if let Ok(cache) = conn.session_parameters.try_read()
         && let Some(v) = cache.get(param_name)
         && !v.is_empty()
     {
@@ -602,12 +594,13 @@ fn get_session_or_setting(
 
 impl DatabaseDriverV1 {
     /// Get connection information for the given connection handle
-    pub fn connection_get_info(&self, conn_handle: Handle) -> Result<ConnectionInfo, ApiError> {
+    pub async fn connection_get_info(
+        &self,
+        conn_handle: Handle,
+    ) -> Result<ConnectionInfo, ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let conn = conn_ptr.lock().await;
 
                 let host = get_setting_string(&conn, param_names::HOST);
 
@@ -622,7 +615,7 @@ impl DatabaseDriverV1 {
                 let server_url = conn.server_url.clone();
 
                 let (session_token, session_id) = {
-                    let tokens_guard = conn.tokens.blocking_read();
+                    let tokens_guard = conn.tokens.read().await;
                     match tokens_guard.as_ref() {
                         Some(tokens) => {
                             (Some(tokens.session_token.clone()), Some(tokens.session_id))
@@ -684,21 +677,16 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn connection_get_parameter(
+    pub async fn connection_get_parameter(
         &self,
         conn_handle: Handle,
         key: String,
     ) -> Result<Option<String>, ApiError> {
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
-                let conn = conn_ptr
-                    .lock()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let conn = conn_ptr.lock().await;
 
-                let cache = conn
-                    .session_parameters
-                    .read()
-                    .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                let cache = conn.session_parameters.read().await;
 
                 let normalized_key = key.to_uppercase();
                 Ok(cache.get(&normalized_key).cloned())
@@ -714,7 +702,6 @@ impl DatabaseDriverV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::apis::database_driver_v1::driver_state;
     use crate::config::param_registry::param_names;
 
     fn make_connection_with_settings(settings: Vec<(&str, Setting)>) -> Connection {
@@ -752,7 +739,7 @@ mod tests {
         let conn =
             make_connection_with_settings(vec![("database", Setting::String("setting_db".into()))]);
         conn.session_parameters
-            .write()
+            .try_write()
             .unwrap()
             .insert("DATABASE".into(), "session_db".into());
 
@@ -778,7 +765,7 @@ mod tests {
         let conn =
             make_connection_with_settings(vec![("role", Setting::String("setting_role".into()))]);
         conn.session_parameters
-            .write()
+            .try_write()
             .unwrap()
             .insert("ROLE".into(), String::new());
 
@@ -797,36 +784,44 @@ mod tests {
         );
     }
 
-    #[test]
-    fn connection_get_info_returns_all_settings() {
-        let ds = driver_state();
+    #[tokio::test]
+    async fn connection_get_info_returns_all_settings() {
+        let ds = DatabaseDriverV1::new();
         let handle = ds.connection_new();
         ds.connection_set_option(
             handle,
             "host".into(),
             Setting::String("snow.example.com".into()),
         )
+        .await
         .unwrap();
         ds.connection_set_option(handle, "port".into(), Setting::Int(8080))
+            .await
             .unwrap();
         ds.connection_set_option(
             handle,
             "account".into(),
             Setting::String("my_account".into()),
         )
+        .await
         .unwrap();
         ds.connection_set_option(handle, "user".into(), Setting::String("my_user".into()))
+            .await
             .unwrap();
         ds.connection_set_option(handle, "role".into(), Setting::String("my_role".into()))
+            .await
             .unwrap();
         ds.connection_set_option(handle, "database".into(), Setting::String("my_db".into()))
+            .await
             .unwrap();
         ds.connection_set_option(handle, "schema".into(), Setting::String("my_schema".into()))
+            .await
             .unwrap();
         ds.connection_set_option(handle, "warehouse".into(), Setting::String("my_wh".into()))
+            .await
             .unwrap();
 
-        let info = ds.connection_get_info(handle).unwrap();
+        let info = ds.connection_get_info(handle).await.unwrap();
 
         assert_eq!(info.host, Some("snow.example.com".into()));
         assert_eq!(info.port, Some(8080));
@@ -840,12 +835,12 @@ mod tests {
         ds.connection_release(handle).unwrap();
     }
 
-    #[test]
-    fn connection_get_info_returns_none_for_unset_fields() {
-        let ds = driver_state();
+    #[tokio::test]
+    async fn connection_get_info_returns_none_for_unset_fields() {
+        let ds = DatabaseDriverV1::new();
         let handle = ds.connection_new();
 
-        let info = ds.connection_get_info(handle).unwrap();
+        let info = ds.connection_get_info(handle).await.unwrap();
 
         assert_eq!(info.host, None);
         assert_eq!(info.port, None);
@@ -861,36 +856,38 @@ mod tests {
         ds.connection_release(handle).unwrap();
     }
 
-    #[test]
-    fn connection_get_info_session_params_override_settings() {
-        let ds = driver_state();
+    #[tokio::test]
+    async fn connection_get_info_session_params_override_settings() {
+        let ds = DatabaseDriverV1::new();
         let handle = ds.connection_new();
         ds.connection_set_option(
             handle,
             "database".into(),
             Setting::String("original_db".into()),
         )
+        .await
         .unwrap();
         ds.connection_set_option(
             handle,
             "role".into(),
             Setting::String("original_role".into()),
         )
+        .await
         .unwrap();
 
         if let Some(conn_ptr) = ds.connections.get_obj(handle) {
-            let conn = conn_ptr.lock().unwrap();
+            let conn = conn_ptr.lock().await;
             conn.session_parameters
                 .write()
-                .unwrap()
+                .await
                 .insert("DATABASE".into(), "session_db".into());
             conn.session_parameters
                 .write()
-                .unwrap()
+                .await
                 .insert("ROLE".into(), "session_role".into());
         }
 
-        let info = ds.connection_get_info(handle).unwrap();
+        let info = ds.connection_get_info(handle).await.unwrap();
 
         assert_eq!(info.database, Some("session_db".into()));
         assert_eq!(info.role, Some("session_role".into()));
@@ -898,34 +895,35 @@ mod tests {
         ds.connection_release(handle).unwrap();
     }
 
-    #[test]
-    fn connection_get_info_final_names_override_session_params() {
-        let ds = driver_state();
+    #[tokio::test]
+    async fn connection_get_info_final_names_override_session_params() {
+        let ds = DatabaseDriverV1::new();
         let handle = ds.connection_new();
         ds.connection_set_option(
             handle,
             "database".into(),
             Setting::String("setting_db".into()),
         )
+        .await
         .unwrap();
 
         if let Some(conn_ptr) = ds.connections.get_obj(handle) {
-            let conn = conn_ptr.lock().unwrap();
+            let conn = conn_ptr.lock().await;
             conn.session_parameters
                 .write()
-                .unwrap()
+                .await
                 .insert("DATABASE".into(), "session_db".into());
             conn.final_session_names.write().unwrap().database = Some("final_db".into());
         }
 
-        let info = ds.connection_get_info(handle).unwrap();
+        let info = ds.connection_get_info(handle).await.unwrap();
         assert_eq!(info.database, Some("final_db".into()));
 
         ds.connection_release(handle).unwrap();
     }
 
-    #[test]
-    fn update_session_params_cache_stores_final_names_separately() {
+    #[tokio::test]
+    async fn update_session_params_cache_stores_final_names_separately() {
         let conn = Connection::new();
         let final_names = FinalSessionNames {
             database: Some("new_db".into()),
@@ -934,9 +932,10 @@ mod tests {
             role: None,
         };
 
-        conn.update_session_params_cache("SELECT 1", None, &final_names);
+        conn.update_session_params_cache("SELECT 1", None, &final_names)
+            .await;
 
-        let cache = conn.session_parameters.read().unwrap();
+        let cache = conn.session_parameters.read().await;
         assert!(
             cache.get("DATABASE").is_none(),
             "final names should not be stored in session_parameters"

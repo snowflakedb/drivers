@@ -1,5 +1,5 @@
 use snafu::{OptionExt, ResultExt, Snafu};
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 use super::connection::{Connection, RefreshContext};
 use super::error::*;
@@ -31,6 +31,17 @@ pub struct DataPtr<'a> {
     /// Phantom data to enforce lifetime
     _phantom: std::marker::PhantomData<&'a [u8]>,
 }
+
+// Safety: DataPtr semantically represents a &[u8] (immutable borrowed slice),
+// which is Send. The raw pointer is only used for FFI interop and is always
+// accessed immutably within the lifetime 'a.
+//
+// Callers must ensure the backing memory is not freed or mutated while
+// any DataPtr (or Future holding one) is alive — including across .await
+// points. All current production paths run the entire async execution
+// synchronously via block_on, keeping the source data on the stack for
+// the full duration, which satisfies this requirement.
+unsafe impl Send for DataPtr<'_> {}
 
 impl<'a> DataPtr<'a> {
     /// Create a new DataPtr from a raw pointer and length
@@ -162,7 +173,7 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn statement_set_option(
+    pub async fn statement_set_option(
         &self,
         handle: Handle,
         key: String,
@@ -170,7 +181,7 @@ impl DatabaseDriverV1 {
     ) -> Result<(), ApiError> {
         match self.statements.get_obj(handle) {
             Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+                let mut stmt = stmt_ptr.lock().await;
                 stmt.settings.insert(key, value);
                 Ok(())
             }
@@ -181,14 +192,14 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn statement_set_options(
+    pub async fn statement_set_options(
         &self,
         handle: Handle,
         options: HashMap<String, Setting>,
     ) -> Result<Vec<ValidationIssue>, ApiError> {
         match self.statements.get_obj(handle) {
             Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+                let mut stmt = stmt_ptr.lock().await;
                 resolve_and_apply_options(&mut stmt.settings, options)
             }
             None => InvalidArgumentSnafu {
@@ -198,14 +209,14 @@ impl DatabaseDriverV1 {
         }
     }
 
-    pub fn statement_set_sql_query(
+    pub async fn statement_set_sql_query(
         &self,
         stmt_handle: Handle,
         query: String,
     ) -> Result<(), ApiError> {
         match self.statements.get_obj(stmt_handle) {
             Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+                let mut stmt = stmt_ptr.lock().await;
                 stmt.query = Some(query);
                 Ok(())
             }
@@ -223,8 +234,10 @@ pub struct PrepareResult {
 }
 
 impl DatabaseDriverV1 {
-    pub fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
-        let result = self.execute_query_internal(stmt_handle, None, Some(true))?;
+    pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
+        let result = self
+            .execute_query_internal(stmt_handle, None, Some(true))
+            .await?;
         Ok(PrepareResult {
             stream: result.stream,
             columns: result.columns,
@@ -254,15 +267,16 @@ pub struct ExecuteResult {
 }
 
 impl DatabaseDriverV1 {
-    pub fn statement_execute_query<'a>(
+    pub async fn statement_execute_query<'a>(
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
     ) -> Result<ExecuteResult, ApiError> {
         self.execute_query_internal(stmt_handle, bindings, None)
+            .await
     }
 
-    fn execute_query_internal<'a>(
+    async fn execute_query_internal<'a>(
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
@@ -275,7 +289,7 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+        let mut stmt = stmt_ptr.lock().await;
         let query = stmt.query.as_deref().ok_or_else(|| {
             InvalidArgumentSnafu {
                 argument: "Query not found".to_string(),
@@ -283,13 +297,8 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
         let (query_parameters, http_client, retry_policy) = {
-            let conn = stmt
-                .conn
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu.build())?;
+            let conn = stmt.conn.lock().await;
             (
                 QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
                 conn.http_client
@@ -306,12 +315,9 @@ impl DatabaseDriverV1 {
         let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
             match &binding_type {
                 BindingType::Json(data_ptr) => {
-                    // True zero-copy: pointer → &'static RawValue (no allocation, no validation).
-                    // Wrapper guarantees data lives through synchronous execute call.
                     Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
                 }
                 BindingType::Csv(_csv_ptr) => {
-                    // TODO: Implement CSV binding handling (stage upload)
                     return Err(InvalidArgumentSnafu {
                         argument: "CSV bindings are not yet implemented".to_string(),
                     }
@@ -328,8 +334,8 @@ impl DatabaseDriverV1 {
             describe_only,
         };
 
-        let response = rt.block_on(async {
-            let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
+        let response = {
+            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
             let mut last_error = None;
             loop {
                 let session_token = ctx.refresh_token(last_error).await?;
@@ -343,17 +349,14 @@ impl DatabaseDriverV1 {
                 )
                 .await
                 {
-                    Ok(result) => return Ok(result),
+                    Ok(result) => break Ok(result),
                     Err(e) => last_error = Some(e),
                 }
             }
-        })?;
+        }?;
 
         if response.success {
-            let conn = stmt
-                .conn
-                .lock()
-                .map_err(|_| ConnectionLockingSnafu.build())?;
+            let conn = stmt.conn.lock().await;
             conn.update_session_params_cache(
                 query,
                 response.data.parameters.as_ref(),
@@ -363,11 +366,12 @@ impl DatabaseDriverV1 {
                     warehouse: response.data.final_warehouse_name.clone(),
                     role: response.data.final_role_name.clone(),
                 },
-            );
+            )
+            .await;
         }
 
-        let query_result = rt
-            .block_on(process_query_response(&response.data, &http_client))
+        let query_result = process_query_response(&response.data, &http_client)
+            .await
             .context(QueryResponseProcessingSnafu)?;
 
         let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
