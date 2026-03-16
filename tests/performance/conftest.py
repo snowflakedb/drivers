@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from runner.test_types import TestType
-from runner.utils import perf_tests_root
+from runner.utils import perf_tests_root, collect_node_info, log_node_info
 import pytest
 
 logger = logging.getLogger(__name__)
@@ -248,6 +248,8 @@ def session_results_dir(run_id):
     _current_run_dir = run_dir
     
     logger.info(f"Results for this run will be saved to: {run_dir}")
+    
+    log_node_info(collect_node_info())
     
     return run_dir
 
