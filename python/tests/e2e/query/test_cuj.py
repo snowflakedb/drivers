@@ -25,3 +25,4 @@ class TestCriticalUserJourneys:
         schema_names = [row[1].upper() for row in r]
         assert "INFORMATION_SCHEMA" in schema_names
         assert "PUBLIC" in schema_names
+        assert tmp_schema.upper() in schema_names
