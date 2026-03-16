@@ -1,4 +1,4 @@
-"""Performance test for 1M rows with WireMock - for stability testing"""
+"""Performance test for 1M rows with recorded HTTP traffic - for stability testing"""
 import pytest
 from runner.test_types import TestType
 

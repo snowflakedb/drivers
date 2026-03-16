@@ -8,14 +8,13 @@ from runner.docker_network import DockerNetworkManager
 from runner.modes.common import execute_test, verify_test_results
 from runner.test_types import TestType
 from runner.utils import perf_tests_root
-from wiremock.wiremock_manager import WiremockManager
 
 logger = logging.getLogger(__name__)
 
 MAPPINGS_BASE_DIR = perf_tests_root() / "mappings"
 
 
-def run_wiremock_performance_test(
+def run_recorded_http_performance_test(
     test_name: str,
     sql_command: str,
     parameters_json: str,
@@ -33,22 +32,21 @@ def run_wiremock_performance_test(
     expected_row_count_override: int = None,
 ) -> list[Path]:
     """
-    Run a performance test with WireMock HTTP traffic recording.
-    
+    Run a performance test with recorded HTTP traffic.
+
     Workflow (if reuse_mappings_dir not provided):
-    1. Start WireMock in record mode
-    2. Execute test once to record HTTP traffic
-    3. Create snapshot and transform mappings
-    4. Stop WireMock
-    5. Start WireMock in replay mode
-    6. Execute test N times against recorded responses
-    7. Stop WireMock
-    
+    1. Start proxy in record mode to capture HTTP traffic
+    2. Execute test once to record traffic
+    3. Stop recorder and transform mappings
+    4. Start proxy in replay mode
+    5. Execute test N times against recorded responses
+    6. Stop replay server
+
     Workflow (if reuse_mappings_dir provided):
-    1. Start WireMock in replay mode with existing mappings
+    1. Start proxy in replay mode with existing mappings
     2. Execute test N times against recorded responses
-    3. Stop WireMock
-    
+    3. Stop replay server
+
     Args:
         test_name: Name of the test (used for result filenames)
         sql_command: SQL command to execute
@@ -67,42 +65,39 @@ def run_wiremock_performance_test(
                            If provided, skips recording phase and uses existing mappings
         expected_row_count_override: Optional row count for validation (used in comparison mode)
                                      When old driver reuses universal's mappings, this is set to universal's row count
-    
+
     Returns:
         List of result file paths created
     """
-    # Validate: local binary execution is not supported with WireMock
     if use_local_binary:
         raise ValueError(
-            "Local binary execution (--use-local-binary) is not supported with WireMock tests. "
-            "WireMock requires Docker container networking to properly intercept HTTP traffic."
+            "Local binary execution (--use-local-binary) is not supported with recorded HTTP tests. "
+            "These tests require Docker container networking to intercept HTTP traffic."
         )
-    
-    # Determine mappings directory and mode
+
     mappings_dir, skip_recording = _get_mappings_dir(test_name, results_dir, run_id, reuse_mappings_dir)
-    
+
     if skip_recording:
-        _log_banner(f"WIREMOCK REPLAY MODE (REUSING MAPPINGS: {reuse_mappings_dir})")
+        _log_banner(f"REPLAY MODE (REUSING MAPPINGS: {reuse_mappings_dir})")
     else:
-        _log_banner("WIREMOCK RECORDING MODE")
-    
-    # Create Docker network for container communication
+        _log_banner("RECORDING MODE")
+
     network_manager = DockerNetworkManager()
     network = network_manager.create_network()
-    
-    try:
-        # Recording phase (skip if reusing existing mappings)
-        if not skip_recording:
-            # Step 1: Start WireMock in record mode
-            logger.info("")
-            logger.info("Step 1: Starting WireMock in RECORD mode...")
-            wiremock = WiremockManager(mappings_dir, network_mode=network)
-            try:
-                wiremock.start_recording()
 
-                # Step 3: Execute test once to record traffic
+    try:
+        from replay_server.manager import ProxyServerManager
+
+        # ── Recording phase (skip if reusing existing mappings) ──────
+        if not skip_recording:
+            logger.info("")
+            logger.info("Step 1: Starting recorder...")
+            recorder = ProxyServerManager(mappings_dir, network_mode=network)
+            try:
+                recorder.start_recording()
+
                 logger.info("")
-                logger.info("Step 3: Recording HTTP traffic...")
+                logger.info("Step 2: Recording HTTP traffic...")
                 _run_test_with_proxy(
                     test_name=f"{test_name}_record",
                     sql_command=sql_command,
@@ -115,24 +110,21 @@ def run_wiremock_performance_test(
                     setup_queries=setup_queries,
                     use_local_binary=use_local_binary,
                     s3_files_dir=s3_files_dir,
-                    wiremock_url=wiremock.get_url(),
-                    wiremock_container_name=wiremock.get_container_name(),
+                    proxy_url=recorder.get_url(),
                     network_mode=network,
-                    wiremock_manager=wiremock,
+                    proxy_manager=recorder,
                 )
-                
-                # Step 4: Create snapshot and transform
+
                 logger.info("")
-                logger.info("Step 4: Creating snapshot and transforming mappings...")
-                wiremock.create_snapshot()
-                
+                logger.info("Step 3: Creating snapshot and transforming mappings...")
+
             finally:
-                # Step 5: Stop recording WireMock
                 logger.info("")
-                logger.info("Step 5: Stopping WireMock (record mode)...")
-                wiremock.stop()
-            
-            # Extract expected row count from recording phase for validation during replay
+                logger.info("Step 4: Stopping recorder...")
+                recorder.stop()
+
+            recorder.create_snapshot()
+
             expected_row_count = _extract_row_count_from_recording(results_dir, test_name, driver, driver_type)
             if expected_row_count:
                 logger.info(f"Extracted row count from recording: {expected_row_count} rows")
@@ -140,24 +132,23 @@ def run_wiremock_performance_test(
             logger.info("")
             logger.info("Skipping recording phase - reusing existing mappings")
             logger.info(f"Mappings directory: {mappings_dir}")
-            # Use override if provided (e.g., in comparison mode where old driver reuses universal's mappings)
             expected_row_count = expected_row_count_override
             if expected_row_count:
                 logger.info(f"Using expected row count from override: {expected_row_count} rows")
-        
-        # Start WireMock in replay mode
-        replay_step = 2 if skip_recording else 6
+
+        # ── Replay phase ─────────────────────────────────────────────
+        replay_step = 2 if skip_recording else 5
         if not skip_recording:
-            _log_banner("WIREMOCK REPLAY MODE")
+            _log_banner("REPLAY MODE")
         else:
             logger.info("")
-        logger.info(f"Step {replay_step}: Starting WireMock in REPLAY mode...")
-        wiremock = WiremockManager(mappings_dir, network_mode=network)
-        
+        logger.info(f"Step {replay_step}: Starting replay server...")
+
+        replay_mgr = ProxyServerManager(mappings_dir, network_mode=network)
+
         try:
-            wiremock.start_replay(driver_label=driver_type)
-            
-            # Execute test N times with cached responses
+            replay_mgr.start_replay(driver_label=driver_type)
+
             logger.info("")
             logger.info(f"Step {replay_step + 1}: Running {iterations} iterations with recorded responses...")
             _run_test_with_proxy(
@@ -169,36 +160,33 @@ def run_wiremock_performance_test(
                 warmup_iterations=warmup_iterations,
                 driver=driver,
                 driver_type=driver_type,
-                setup_queries=None,  # Skip setup queries in replay mode - they were only recorded once
+                setup_queries=None,
                 use_local_binary=use_local_binary,
                 s3_files_dir=s3_files_dir,
-                wiremock_url=wiremock.get_url(),
-                wiremock_container_name=wiremock.get_container_name(),
+                proxy_url=replay_mgr.get_url(),
                 network_mode=network,
-                is_replay=True,  # Flag to indicate replay mode
-                expected_row_count=expected_row_count,  # Pass expected row count for validation
-                wiremock_manager=wiremock,
+                is_replay=True,
+                expected_row_count=expected_row_count,
+                proxy_manager=replay_mgr,
             )
-            
-            # Collect metrics while WireMock is still running (triggers flush to disk)
+
             logger.info("")
             logger.info("Collecting response time metrics...")
-            metrics = wiremock.get_request_metrics()
-            _log_wiremock_metrics(metrics, warmup_iterations=warmup_iterations, iterations=iterations)
-            
+            metrics = replay_mgr.get_request_metrics()
+            _log_replay_metrics(metrics, warmup_iterations=warmup_iterations, iterations=iterations)
+            _check_unmatched_requests(metrics)
+
         finally:
-            cleanup_step = 4 if skip_recording else 8
+            cleanup_step = 4 if skip_recording else 7
             logger.info("")
             logger.info(f"Step {cleanup_step}: Cleanup...")
-            wiremock.stop()
-            
-            # Never delete mappings when reusing (they belong to another run)
+            replay_mgr.stop()
+
             if skip_recording:
                 logger.info(f"✓ Reused mappings from: {mappings_dir}")
             elif preserve_mappings:
                 logger.info(f"✓ Mappings preserved at: {mappings_dir}")
             else:
-                # Delete mappings by default
                 if mappings_dir.exists():
                     logger.info(f"Removing mappings directory: {mappings_dir}")
                     shutil.rmtree(mappings_dir)
@@ -206,12 +194,10 @@ def run_wiremock_performance_test(
                 else:
                     logger.debug(f"Mappings directory does not exist: {mappings_dir}")
     finally:
-        # Clean up Docker network
         network_manager.remove_network()
-    
-    _log_banner("✓ WIREMOCK TEST COMPLETE")
-    
-    # Verify and return results
+
+    _log_banner("✓ RECORDED HTTP TEST COMPLETE")
+
     return verify_test_results(
         results_dir,
         test_name,
@@ -221,7 +207,7 @@ def run_wiremock_performance_test(
     )
 
 
-def run_wiremock_comparison_test(
+def run_recorded_http_comparison_test(
     test_name: str,
     sql_command: str,
     parameters_json: str,
@@ -237,8 +223,8 @@ def run_wiremock_comparison_test(
     reuse_mappings_dir: str = None,
 ) -> dict[str, list[Path]]:
     """
-    Run WireMock test on both universal and old driver implementations.
-    
+    Run recorded HTTP test on both universal and old driver implementations.
+
     Args:
         test_name: Name of the test (used for result filenames)
         sql_command: SQL command to execute
@@ -253,23 +239,22 @@ def run_wiremock_comparison_test(
         run_id: Optional run ID for organizing results
         preserve_mappings: Keep mappings after test (default: delete)
         reuse_mappings_dir: Optional path to existing mappings directory
-    
+
     Returns:
         Dict with 'universal' and 'old' keys, each containing list of result file paths
     """
     if use_local_binary:
         raise ValueError(
-            "Local binary execution (--use-local-binary) is not supported with WireMock tests. "
-            "WireMock requires Docker container networking to properly intercept HTTP traffic."
+            "Local binary execution (--use-local-binary) is not supported with recorded HTTP tests. "
+            "These tests require Docker container networking to intercept HTTP traffic."
         )
-    
-    logger.info(f"Running {test_name} WireMock comparison ({driver.upper()}): Universal vs Old")
-    
+
+    logger.info(f"Running {test_name} comparison ({driver.upper()}): Universal vs Old")
+
     results = {}
-    
-    # Run Universal driver first (records mappings)
+
     _log_banner(">>> DRIVER: Universal (Recording)")
-    results['universal'] = run_wiremock_performance_test(
+    results['universal'] = run_recorded_http_performance_test(
         test_name=test_name,
         sql_command=sql_command,
         parameters_json=parameters_json,
@@ -282,29 +267,22 @@ def run_wiremock_comparison_test(
         use_local_binary=use_local_binary,
         s3_files_dir=s3_files_dir,
         run_id=run_id,
-        preserve_mappings=True,  # Must preserve for old driver to reuse
+        preserve_mappings=True,
         reuse_mappings_dir=reuse_mappings_dir,
     )
-    
-    # Determine the mappings directory created by universal driver
-    # If user provided reuse_mappings_dir, both drivers use it
-    # Otherwise, old driver reuses the mappings just created by universal
+
     if reuse_mappings_dir:
         old_driver_mappings = reuse_mappings_dir
     else:
         actual_run_id = _extract_run_id(results_dir, run_id)
         old_driver_mappings = f"run_{actual_run_id}"
-    
-    # Extract expected row count from universal driver's recording for old driver validation
-    # The old driver will look for its own recording file, but it doesn't have one
-    # So we need to extract from universal's recording and pass it explicitly
+
     expected_row_count_for_old = _extract_row_count_from_recording(results_dir, test_name, driver, "universal")
     if expected_row_count_for_old:
         logger.info(f"Universal driver recorded {expected_row_count_for_old} rows - will validate old driver fetches the same")
-    
-    # Run Old driver second (reuses mappings from universal)
+
     _log_banner(f">>> DRIVER: Old (Reusing mappings from: {old_driver_mappings})")
-    results['old'] = run_wiremock_performance_test(
+    results['old'] = run_recorded_http_performance_test(
         test_name=test_name,
         sql_command=sql_command,
         parameters_json=parameters_json,
@@ -317,11 +295,11 @@ def run_wiremock_comparison_test(
         use_local_binary=use_local_binary,
         s3_files_dir=s3_files_dir,
         run_id=run_id,
-        preserve_mappings=preserve_mappings,  # Use user's preference for final cleanup
-        reuse_mappings_dir=old_driver_mappings,  # Reuse universal's mappings
-        expected_row_count_override=expected_row_count_for_old,  # Pass universal's row count for validation
+        preserve_mappings=preserve_mappings,
+        reuse_mappings_dir=old_driver_mappings,
+        expected_row_count_override=expected_row_count_for_old,
     )
-    
+
     return results
 
 
@@ -329,19 +307,17 @@ def _extract_run_id(results_dir: Path, run_id: str = None) -> str:
     """Extract run_id from results_dir if not provided."""
     if run_id is not None:
         return run_id
-    # results_dir format: .../results/run_YYYYMMDD_HHMMSS
     return results_dir.name.replace("run_", "")
 
 
 def _get_mappings_dir(test_name: str, results_dir: Path, run_id: str = None, reuse_mappings_dir: str = None) -> tuple[Path, bool]:
     """
     Determine mappings directory and whether to skip recording.
-    
+
     Returns:
         Tuple of (mappings_dir, skip_recording)
     """
     if reuse_mappings_dir:
-        # User provided existing mappings directory to reuse
         mappings_dir = (MAPPINGS_BASE_DIR / reuse_mappings_dir / test_name).resolve()
         if not mappings_dir.exists():
             raise RuntimeError(
@@ -350,7 +326,6 @@ def _get_mappings_dir(test_name: str, results_dir: Path, run_id: str = None, reu
             )
         return mappings_dir, True
     else:
-        # Normal flow: record first, then replay
         actual_run_id = _extract_run_id(results_dir, run_id)
         mappings_dir = (MAPPINGS_BASE_DIR / f"run_{actual_run_id}" / test_name).resolve()
         return mappings_dir, False
@@ -365,127 +340,98 @@ def _log_banner(message: str, separator: str = "=" * 80):
     logger.info("")
 
 
-def _log_wiremock_metrics(metrics: dict, warmup_iterations: int = 0, iterations: int = 0):
-    """
-    Log WireMock response time metrics in a formatted display.
-    
-    Args:
-        metrics: Dictionary containing response time statistics
-        warmup_iterations: Number of warmup iterations to exclude
-        iterations: Total test iterations (used to calculate requests per iteration)
-    """
+def _log_replay_metrics(metrics: dict, warmup_iterations: int = 0, iterations: int = 0):
+    """Log replay server response time metrics in a formatted display."""
     logger.info("")
     logger.info("=" * 80)
-    logger.info("WIREMOCK RESPONSE TIME METRICS")
+    logger.info("REPLAY SERVER RESPONSE TIME METRICS")
     logger.info("=" * 80)
-    
+
     total_requests = metrics.get("total_requests", 0)
-    
+
     if total_requests == 0:
         logger.info("No requests recorded")
         logger.info("=" * 80)
         logger.info("")
         return
-    
-    # Filter out warmup iterations if we have individual response times
+
     all_times = metrics.get("response_times", [])
+    times = all_times
+
     if all_times and warmup_iterations > 0 and iterations > 0:
-        # Calculate requests per iteration
         total_iterations = warmup_iterations + iterations
         requests_per_iteration = total_requests / total_iterations
         warmup_requests = int(requests_per_iteration * warmup_iterations)
-        
+
         if warmup_requests < len(all_times):
-            # Filter out warmup requests
-            filtered_times = all_times[warmup_requests:]
+            times = all_times[warmup_requests:]
             logger.info(f"Filtered out {warmup_requests} warmup requests ({warmup_iterations} iterations)")
-            
-            # Recalculate statistics
-            total_requests = len(filtered_times)
-            avg_time = statistics.mean(filtered_times)
-            min_time = min(filtered_times)
-            max_time = max(filtered_times)
-            sorted_times = sorted(filtered_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-        else:
-            # Calculate from all times (no warmup filtering)
-            avg_time = statistics.mean(all_times)
-            min_time = min(all_times)
-            max_time = max(all_times)
-            sorted_times = sorted(all_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
+
+    if times:
+        sorted_times = sorted(times)
+        n = len(sorted_times)
+        avg_time = statistics.mean(times)
+        min_time = sorted_times[0]
+        max_time = sorted_times[-1]
+        p50_time = sorted_times[int(0.50 * n)]
+        p95_time = sorted_times[int(0.95 * n)]
+        p99_time = sorted_times[min(int(0.99 * n), n - 1)]
     else:
-        # Calculate from all times (no warmup information available)
-        if all_times:
-            avg_time = statistics.mean(all_times)
-            min_time = min(all_times)
-            max_time = max(all_times)
-            sorted_times = sorted(all_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-        else:
-            # No data
-            avg_time = min_time = max_time = p50_time = p95_time = p99_time = 0
-    
-    logger.info(f"Total Requests:        {total_requests:,}")
+        avg_time = min_time = max_time = p50_time = p95_time = p99_time = 0
+
+    logger.info(f"Total Requests:        {len(times):,}")
     logger.info(f"Average Response Time: {avg_time:.2f} ms")
     logger.info(f"Min Response Time:     {min_time:.2f} ms")
     logger.info(f"Max Response Time:     {max_time:.2f} ms")
     logger.info(f"P50 Response Time:     {p50_time:.2f} ms")
     logger.info(f"P95 Response Time:     {p95_time:.2f} ms")
     logger.info(f"P99 Response Time:     {p99_time:.2f} ms")
-    
+
     logger.info("=" * 80)
     logger.info("")
 
 
-def _get_proxy_url_for_container(wiremock_url: str, wiremock_container_name: str, network_mode: str = None) -> str:
+def _check_unmatched_requests(metrics: dict):
+    """Fail the test if the replay proxy returned 404 for any request."""
+    unmatched = metrics.get("unmatched_requests", 0)
+    if unmatched > 0:
+        details = metrics.get("unmatched_details", [])
+        detail_lines = "\n  ".join(details) if details else "(details unavailable)"
+        raise RuntimeError(
+            f"Replay server had {unmatched} unmatched request(s) (returned 404):\n  {detail_lines}"
+        )
+
+
+def _get_proxy_url_for_container(proxy_url: str, network_mode: str = None) -> str:
     """
-    Get Docker-accessible proxy URL for WireMock.
-    
+    Get Docker-accessible proxy URL.
+
     Network modes:
-    - "host" (Linux): All containers share host network → use localhost
+    - "host" (Linux): All containers share host network -> use localhost
     - None (macOS default bridge): Containers use host.docker.internal to reach host
-    
-    Args:
-        wiremock_url: WireMock URL (host-accessible, e.g., http://127.0.0.1:12345)
-        wiremock_container_name: Name of WireMock container (not used, kept for API compat)
-        network_mode: Docker network mode ("host" on Linux, None on macOS)
-    
-    Returns:
-        Proxy URL accessible from other containers
     """
     if network_mode == "host":
-        # Linux host network: all containers share host network stack → use localhost
-        return wiremock_url
+        return proxy_url
     else:
-        # macOS default bridge: use host.docker.internal to reach host-bound ports
-        wiremock_port = wiremock_url.split(":")[-1]
-        return f"http://host.docker.internal:{wiremock_port}"
+        port = proxy_url.split(":")[-1]
+        return f"http://host.docker.internal:{port}"
 
 
 def _extract_row_count_from_recording(results_dir: Path, test_name: str, driver: str, driver_type: str) -> int:
     """Extract row count from recording phase CSV file."""
-    # Find the recording CSV file
-    # Core driver doesn't include driver_type in filename, others do
     if driver == "core":
         pattern = f"{test_name}_record_{driver}_*.csv"
     else:
         pattern = f"{test_name}_record_{driver}_{driver_type}_*.csv"
-    
+
     csv_files = list(results_dir.glob(pattern))
-    
+
     if not csv_files:
         logger.warning(f"No recording CSV found matching pattern: {pattern}")
         return None
-    
+
     csv_file = csv_files[0]
-    
+
     try:
         with open(csv_file, 'r') as f:
             reader = csv.DictReader(f)
@@ -507,8 +453,7 @@ def _run_test_with_proxy(
     results_dir: Path,
     iterations: int,
     warmup_iterations: int,
-    wiremock_url: str,
-    wiremock_container_name: str,
+    proxy_url: str,
     network_mode: str,
     driver: str = "core",
     driver_type: str = None,
@@ -517,47 +462,41 @@ def _run_test_with_proxy(
     s3_files_dir: Path = None,
     is_replay: bool = False,
     expected_row_count: int = None,
-    wiremock_manager: "WiremockManager" = None,
+    proxy_manager=None,
 ):
     """
-    Run test with WireMock proxy configuration.
-    
-    Sets up proxy environment variables and exports the WireMock CA certificate
+    Run test with proxy configuration.
+
+    Sets up proxy environment variables and exports the CA certificate
     so drivers trust the dynamically generated MITM certificates.
     """
-    # Build environment variables for proxy and replay mode
-    # With host network: use localhost; with bridge network: use container name
-    proxy_url = _get_proxy_url_for_container(wiremock_url, wiremock_container_name, network_mode)
+    container_proxy_url = _get_proxy_url_for_container(proxy_url, network_mode)
     env_vars = {
-        "HTTPS_PROXY": proxy_url,
-        "HTTP_PROXY": proxy_url,
-        # Lowercase variants required by the old Snowflake ODBC driver (libcurl)
-        "https_proxy": proxy_url,
-        "http_proxy": proxy_url,
+        "HTTPS_PROXY": container_proxy_url,
+        "HTTP_PROXY": container_proxy_url,
+        "https_proxy": container_proxy_url,
+        "http_proxy": container_proxy_url,
     }
-    
+
     if is_replay:
-        env_vars["WIREMOCK_REPLAY"] = "true"
+        env_vars["REPLAY_MODE"] = "true"
         if expected_row_count is not None:
             logger.info(f"Setting EXPECTED_ROW_COUNT={expected_row_count} for replay validation")
             env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
-    
-    # Export the WireMock CA cert so the driver trusts the dynamically generated
-    # MITM certificates. Each Dockerfile appends this to the appropriate CA bundle.
-    if wiremock_manager:
+
+    if proxy_manager:
         try:
-            ca_cert_path = wiremock_manager.export_ca_cert(results_dir)
-            env_vars["WIREMOCK_CA_CERT"] = "/results/" + ca_cert_path.name
+            ca_cert_path = proxy_manager.export_ca_cert(results_dir)
+            env_vars["PROXY_CA_CERT"] = "/results/" + ca_cert_path.name
             if driver == "odbc" and driver_type == "old":
-                env_vars["WIREMOCK_PROXY_URL"] = proxy_url
-        except Exception as e:
+                env_vars["PROXY_URL"] = container_proxy_url
+        except Exception:
             logger.error(
-                "Failed to export WireMock CA cert; skipping this test execution.",
+                "Failed to export CA cert; skipping this test execution.",
                 exc_info=True,
             )
             return
-    
-    # Execute test with common function
+
     execute_test(
         test_name=test_name,
         sql_command=sql_command,
@@ -568,11 +507,9 @@ def _run_test_with_proxy(
         driver=driver,
         driver_type=driver_type,
         setup_queries=setup_queries,
-        test_type=TestType.SELECT,  # WireMock tests are SELECT-based
+        test_type=TestType.SELECT,
         use_local_binary=use_local_binary,
         s3_files_dir=s3_files_dir,
         env_vars=env_vars,
         network_mode=network_mode,
     )
-
-

@@ -61,7 +61,7 @@ void finalize_test_execution(SQLHDBC dbc, const std::string& results_file, const
                              const std::string& driver_version, time_t timestamp) {
   // In replay mode, skip server version query and use N/A
   std::string actual_server_version;
-  const char* replay_mode = std::getenv("WIREMOCK_REPLAY");
+  const char* replay_mode = std::getenv("REPLAY_MODE");
   if (replay_mode != nullptr && std::string(replay_mode) == "true") {
     actual_server_version = "N/A";
   } else {

@@ -52,7 +52,7 @@ def main():
     )
     
     # In replay mode, skip server version query and use N/A
-    if os.getenv("WIREMOCK_REPLAY") == "true":
+    if os.getenv("REPLAY_MODE") == "true":
         server_version = "N/A"
     else:
         server_version = get_server_version(cursor)

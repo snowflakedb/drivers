@@ -122,10 +122,10 @@ pipeline {
                                 )
                             ]) {
                                 script {
-                                    echo "Building WireMock image..."
+                                    echo "Building proxy server image..."
                                     sh """
                                         source .venv/bin/activate
-                                        python -m hatch run build-wiremock
+                                        python -m hatch run build-proxy
                                     """
                                     
                                     // Build driver image

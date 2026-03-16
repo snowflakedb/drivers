@@ -70,9 +70,9 @@ COPY tests/performance/.tmp/rust_version /etc/rust_version
 ENV DRIVER_TYPE=universal
 
 CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && \
-    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+    if [ -n "$PROXY_CA_CERT" ] && [ -f "$PROXY_CA_CERT" ]; then \
         SYS_CA=/etc/ssl/certs/ca-certificates.crt; \
-        printf '\n' >> "$SYS_CA" && cat "$WIREMOCK_CA_CERT" >> "$SYS_CA"; \
+        printf '\n' >> "$SYS_CA" && cat "$PROXY_CA_CERT" >> "$SYS_CA"; \
     fi && \
     /workdir/build/odbc-perf-driver
 
@@ -87,13 +87,13 @@ RUN echo "N/A" > /etc/rust_version
 ENV DRIVER_TYPE=old
 
 CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && \
-    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+    if [ -n "$PROXY_CA_CERT" ] && [ -f "$PROXY_CA_CERT" ]; then \
         SYS_CA=/etc/ssl/certs/ca-certificates.crt; \
-        printf '\n' >> "$SYS_CA" && cat "$WIREMOCK_CA_CERT" >> "$SYS_CA"; \
+        printf '\n' >> "$SYS_CA" && cat "$PROXY_CA_CERT" >> "$SYS_CA"; \
         CACERT=/usr/lib/snowflake/odbc/lib/cacert.pem; \
-        printf '\n' >> "$CACERT" && cat "$WIREMOCK_CA_CERT" >> "$CACERT"; \
+        printf '\n' >> "$CACERT" && cat "$PROXY_CA_CERT" >> "$CACERT"; \
         INI_ORIG=/usr/lib/snowflake/odbc/lib/simba.snowflake.ini; \
-        INI=/tmp/simba.snowflake.wiremock.ini; \
+        INI=/tmp/simba.snowflake.proxy.ini; \
         if [ -f "$INI_ORIG" ]; then cp "$INI_ORIG" "$INI"; else : > "$INI"; fi; \
         printf '\n[Driver]\nCABundleFile=%s\nDisableOCSPCheck=true\nErrorMessagesPath=/usr/lib/snowflake/odbc/ErrorMessages/\nODBCInstLib=libodbcinst.so\n' "$CACERT" >> "$INI"; \
         export SIMBAINI="$INI"; \

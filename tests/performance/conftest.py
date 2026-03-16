@@ -85,13 +85,13 @@ def pytest_addoption(parser):
         "--preserve-mappings",
         action="store_true",
         default=False,
-        help="Preserve WireMock mapping directories after tests (useful for debugging). Default: delete after completion",
+        help="Preserve recorded HTTP mapping directories after tests (useful for debugging). Default: delete after completion",
     )
     parser.addoption(
         "--reuse-mappings",
         action="store",
         default=None,
-        help="Reuse existing WireMock mappings directory (e.g., 'run_20251230_155413'). Skips recording phase.",
+        help="Reuse existing recorded HTTP mappings directory (e.g., 'run_20251230_155413'). Skips recording phase.",
     )
 
 
@@ -293,11 +293,11 @@ def _should_run_comparison(driver: str, driver_type: str) -> bool:
     return driver_type == "both" and driver != "core"
 
 
-def _validate_wiremock_old_driver(driver: str, driver_type: str):
-    """Validate that old driver is not used alone with WireMock tests."""
+def _validate_recorded_http_old_driver(driver: str, driver_type: str):
+    """Validate that old driver is not used alone with recorded HTTP tests."""
     if driver_type == "old" and driver != "core":
         raise pytest.UsageError(
-            f"WireMock tests cannot run with --driver-type=old only.\n"
+            f"Recorded HTTP tests cannot run with --driver-type=old only.\n"
             f"The old {driver} driver requires mappings from the universal driver.\n"
             f"Use --driver-type=universal or --driver-type=both instead."
         )
@@ -377,7 +377,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         
         # Route to appropriate runner based on test type
         if test_type == TestType.SELECT_RECORDED_HTTP:
-            return _run_wiremock_test(
+            return _run_recorded_http_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
@@ -394,19 +394,19 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 is_comparison=is_comparison,
             )
     
-    def _run_wiremock_test(
+    def _run_recorded_http_test(
         test_name: str,
         sql_command: str,
         setup_queries: list[str],
         s3_files_dir,
         is_comparison: bool,
     ):
-        """Run WireMock test (recorded HTTP traffic)."""
-        _validate_wiremock_old_driver(driver, driver_type)
+        """Run recorded HTTP test (record then replay with proxy server)."""
+        _validate_recorded_http_old_driver(driver, driver_type)
         
         if is_comparison:
-            from runner.modes.wiremock_runner import run_wiremock_comparison_test
-            return run_wiremock_comparison_test(
+            from runner.modes.recorded_http_runner import run_recorded_http_comparison_test
+            return run_recorded_http_comparison_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=setup_queries,
@@ -422,8 +422,8 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 reuse_mappings_dir=reuse_mappings_dir,
             )
         else:
-            from runner.modes.wiremock_runner import run_wiremock_performance_test
-            return run_wiremock_performance_test(
+            from runner.modes.recorded_http_runner import run_recorded_http_performance_test
+            return run_recorded_http_performance_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=setup_queries,

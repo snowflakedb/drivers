@@ -217,10 +217,10 @@ std::string get_connection_string() {
 
   std::string driver_type_str = get_driver_type();
 
-  const char* wiremock_proxy = std::getenv("WIREMOCK_PROXY_URL");
-  if (driver_type_str == "old" && wiremock_proxy) {
-    ss << "proxy=" << wiremock_proxy << ";";
-    std::cout << "Old driver: proxy=" << wiremock_proxy << "\n";
+  const char* proxy_url = std::getenv("PROXY_URL");
+  if (driver_type_str == "old" && proxy_url) {
+    ss << "proxy=" << proxy_url << ";";
+    std::cout << "Old driver: proxy=" << proxy_url << "\n";
   }
 
   return ss.str();

@@ -14,7 +14,7 @@ DATA_CHUNK_PATTERN = re.compile(r'data_\d+_\d+_\d+_\d+')
 
 
 class MappingTransformer:
-    """Transform WireMock mappings to be more generic"""
+    """Transform recorded HTTP mappings to be more generic for replay."""
     
     @staticmethod
     def transform_mappings_directory(mappings_dir: Path) -> int:
@@ -22,7 +22,7 @@ class MappingTransformer:
         Transform all mapping files in a directory.
         
         Args:
-            mappings_dir: Directory containing WireMock mapping JSON files
+            mappings_dir: Directory containing mapping JSON files
         
         Returns:
             Number of mappings transformed
@@ -33,7 +33,6 @@ class MappingTransformer:
         
         mapping_files = list(mappings_dir.glob("*.json"))
         
-        # Process all mappings - check removal first, then transform
         stats = {'transformed': 0, 'removed': 0, 'errors': 0}
         
         for mapping_file in mapping_files:
@@ -41,12 +40,10 @@ class MappingTransformer:
                 with open(mapping_file, 'r') as f:
                     data = json.load(f)
                 
-                # Check if mapping should be removed (ALTER SESSION query)
                 if MappingTransformer._is_alter_session(data):
                     mapping_file.unlink()
                     stats['removed'] += 1
                 else:
-                    # Transform the mapping (only if not removed)
                     transformed = MappingTransformer._transform_mapping_content(data)
                     with open(mapping_file, 'w') as f:
                         json.dump(transformed, f, indent=2)
@@ -65,37 +62,32 @@ class MappingTransformer:
 
     @staticmethod
     def _transform_mapping_content(mapping: dict[str, Any]) -> dict[str, Any]:
-        mapping['persistent'] = False
-        
         request = mapping.get('request', {})
         if not request:
             return mapping
-        # Extract URL information once (avoid variable shadowing)
         url_path = request.get('urlPath', '')
         url_exact = request.get('url', '')
         url_pattern = request.get('urlPattern', '')
         current_url = url_path or url_exact or url_pattern
         url_field = 'urlPath' if url_path else ('url' if url_exact else ('urlPattern' if url_pattern else None))
         
-        # Handle login request
         if LOGIN_ENDPOINT in current_url:
             MappingTransformer._remove_body_patterns(request)
             MappingTransformer._remove_query_parameters(request)
+            MappingTransformer._convert_to_url_pattern(request, LOGIN_ENDPOINT + '.*')
             mapping['request'] = request
             mapping['priority'] = 10
             return mapping
         
-        # Handle query requests
         if QUERY_REQUEST_ENDPOINT in current_url:
             MappingTransformer._remove_body_patterns(request)
             MappingTransformer._remove_query_parameters(request)
+            MappingTransformer._convert_to_url_pattern(request, QUERY_REQUEST_ENDPOINT + '.*')
             mapping['request'] = request
             mapping['priority'] = 5
             return mapping
         
-        # Handle query result endpoints
         if QUERY_RESULT_PATTERN.search(current_url):
-            # Transform /queries/{queryId}/result -> /queries/.*/result.*
             mapping['request']['urlPattern'] = '/queries/.*/result.*'
             if 'url' in mapping['request']:
                 del mapping['request']['url']
@@ -104,32 +96,33 @@ class MappingTransformer:
             mapping['priority'] = 5
             return mapping
         
-        # Transform request URL patterns for all other endpoints
         if url_field and current_url:
             if MappingTransformer._is_data_chunk(current_url):
-                # Data chunk: data_1234_5678_9012_3456 -> .*data_1234_5678_9012_3456.*
                 pattern = MappingTransformer._extract_data_chunk_pattern(current_url)
                 if pattern:
                     mapping['request']['urlPattern'] = pattern
                     if url_field != 'urlPattern' and url_field in mapping['request']:
                         del mapping['request'][url_field]
-                # OPTIMIZATION 1: Remove ALL query parameters for data chunks (faster matching)
                 MappingTransformer._remove_query_parameters(request)
-                # OPTIMIZATION 2: Assign priority (data chunks are MOST common - check first)
                 mapping['priority'] = 1
             else:
-                # Other URLs: add wildcard for query parameters
                 base_path = current_url.split('?')[0] if '?' in current_url else current_url
                 mapping['request']['urlPattern'] = f"{base_path}.*"
                 if url_field != 'urlPattern' and url_field in mapping['request']:
                     del mapping['request'][url_field]
-                # Remove ALL query parameters for faster matching
                 MappingTransformer._remove_query_parameters(request)
-                # OPTIMIZATION 2: Assign priority (other requests are medium-low frequency)
                 mapping['priority'] = 8
         
         return mapping
     
+    @staticmethod
+    def _convert_to_url_pattern(request: dict[str, Any], pattern: str) -> None:
+        """Replace url/urlPath with urlPattern (in-place)."""
+        request['urlPattern'] = pattern
+        for field in ('url', 'urlPath'):
+            if field in request:
+                del request[field]
+
     @staticmethod
     def _remove_body_patterns(request: dict[str, Any]) -> None:
         """Remove bodyPatterns from request (in-place)."""
@@ -149,26 +142,21 @@ class MappingTransformer:
         1. Text-based: "ALTER SESSION" appears in body/URL/response
         2. Pattern-based: Response has 1 row with no data chunks
         """
-        # Heuristic 1: Check for "ALTER SESSION" text
         if 'request' in mapping:
-            # Check body patterns
             body_patterns = mapping['request'].get('bodyPatterns', [])
             for pattern in body_patterns:
                 if 'alter session' in str(pattern).lower():
                     return True
             
-            # Check URL
             url = mapping['request'].get('url', '') + mapping['request'].get('urlPattern', '')
             if 'alter session' in url.lower():
                 return True
         
-        # Check response body for ALTER SESSION in sqlText
         response = mapping.get('response', {})
         response_body = response.get('body', '')
         if response_body and 'alter session' in response_body.lower():
             return True
         
-        # Heuristic 2: Check response characteristics (1 row, no chunks)
         if not response_body:
             return False
         
@@ -176,11 +164,9 @@ class MappingTransformer:
             response_json = json.loads(response_body)
             data = response_json.get('data', {})
             
-            # Handle case where data is explicitly None in JSON
             if data is None:
                 return False
             
-            # ALTER queries return 1 row, no chunks
             total = data.get('total', 0)
             returned = data.get('returned', 0)
             chunks = data.get('chunks', [])
@@ -188,7 +174,6 @@ class MappingTransformer:
             if total == 1 and returned == 1 and len(chunks) == 0:
                 return True
         except (json.JSONDecodeError, KeyError, TypeError):
-            # Malformed or unexpected response body — not a metadata-only response
             pass
         
         return False

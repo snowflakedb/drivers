@@ -48,6 +48,7 @@
    hatch run build-python
    hatch run build-core
    hatch run build-odbc
+   hatch run build-proxy   # HTTPS proxy server for recorded HTTP tests
    ```
 
 #### Platform Architecture
@@ -115,7 +116,7 @@ hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
 | `--upload-to-benchstore` | Upload metrics to Benchstore | `false` |
 | `--local-benchstore-upload` | Use local auth for Benchstore | `false` |
 | `--use-local-binary` | Use local binary (Core only) | `false` |
-| `--preserve-mappings` | Keep WireMock mappings after tests (for debugging) | `false` (enabled in local runs) |
+| `--preserve-mappings` | Keep recorded HTTP mappings after tests (for debugging) | `false` (enabled in local runs) |
 | `--reuse-mappings` | Reuse existing mappings directory (e.g., `run_20260115_120000`) | None (runs recording phase) |
 
 #### Examples with Custom Arguments
@@ -224,12 +225,21 @@ def test_put_files_12mx100(perf_test):
 
 ## Tests with Recorded HTTP Traffic
 
-Tests with recorded HTTP traffic use WireMock to record HTTP traffic to Snowflake and replay it for deterministic performance testing without requiring live Snowflake connections.
+Tests with recorded HTTP traffic use a lightweight HTTPS MITM proxy to record real Snowflake HTTP traffic and replay it for deterministic performance testing without requiring live Snowflake connections during the replay phase.
 
 ### How It Works
 
-1. **Recording Phase**: Real Snowflake requests/responses are captured via WireMock proxy and saved as mappings
-2. **Replay Phase**: Recorded mappings are replayed for consistent, repeatable performance measurements
+1. **Recording Phase**: The proxy server runs in record mode, forwarding requests to the real Snowflake backend while saving each request/response pair as a mapping file on disk. Mappings are then transformed (URL pattern generalization, priority assignment, ALTER SESSION removal) to be reusable across replays.
+2. **Replay Phase**: The proxy server runs in replay mode, loading all mapping files into memory at startup and serving recorded responses with zero disk I/O per request. This provides consistent, repeatable performance measurements with sub-millisecond proxy overhead.
+
+### Proxy Server
+
+The proxy server (`replay_server/`) is a single Python process (~200MB Docker image, ~50MB runtime memory) that handles both recording and replay:
+
+- **HTTPS MITM**: Handles HTTP CONNECT tunneling with dynamically generated per-hostname TLS certificates
+- **Recording**: Forwards requests to the real backend via `http.client.HTTPSConnection`, saves responses as JSON mapping files
+- **Replay**: Loads mappings into memory, matches requests by URL pattern with priority ordering
+- **Metrics**: Tracks per-request response times, exposed via `/__perf/flush-stats` endpoint
 
 ### Running Tests with Recorded HTTP Traffic
 
@@ -241,7 +251,7 @@ hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_sel
 hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_select_string_1M_arrow_recorded_http --reuse-mappings run_20260115_120000
 ```
 
-### WireMock-Specific Parameters
+### Parameters
 
 | Parameter | Description | Use Case |
 |-----------|-------------|----------|
@@ -254,7 +264,7 @@ hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_sel
 
 - **Test naming**: Tests end with `_recorded_http` (e.g., `test_select_string_1M_arrow_recorded_http`)
 - **Benchstore upload**: Only replay phase metrics are uploaded; recording phase results are for debugging only
-- **Docker networking**: Test driver and WireMock containers run in a shared Docker network for communication
+- **Docker networking**: Test driver and proxy server containers run in a shared Docker network for communication
 - **Server version**: Marked as "N/A" in replay mode for Old driver since tests don't connect to real Snowflake
 ---
 
@@ -485,4 +495,3 @@ This creates an intermediate image containing Core libraries:
 These libraries are copied into the final driver images:
 - **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python-ud` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
-

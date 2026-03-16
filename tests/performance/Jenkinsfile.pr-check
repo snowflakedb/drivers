@@ -36,7 +36,7 @@ pipeline {
 
         stage('Build Docker Images') {
             parallel {
-                stage('Core + WireMock') {
+                stage('Core + Proxy') {
                     steps {
                         withCredentials([
                             usernamePassword(
@@ -46,7 +46,7 @@ pipeline {
                             )
                         ]) {
                             sh 'tests/performance/drivers/core/build.sh'
-                            sh 'tests/performance/wiremock/build.sh'
+                            sh 'tests/performance/replay_server/build.sh'
                         }
                     }
                 }

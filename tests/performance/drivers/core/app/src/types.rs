@@ -24,7 +24,7 @@ pub struct TestConnectionParams {
     pub warehouse: String,
     #[serde(rename = "SNOWFLAKE_TEST_ROLE")]
     pub role: String,
-    // Optional TLS settings for WireMock support
+    // Optional TLS settings for proxy replay support
     #[serde(rename = "custom_root_store_path", default)]
     pub custom_root_store_path: Option<String>,
     #[serde(rename = "verify_certificates", default)]

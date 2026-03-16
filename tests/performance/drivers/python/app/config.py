@@ -78,7 +78,7 @@ class TestConfig:
             connection_params["authenticator"] = "SNOWFLAKE_JWT"
             connection_params["private_key_file"] = private_key_file
 
-        _disable_ocsp_for_wiremock(connection_params, self.driver_type)
+        _disable_ocsp_for_proxy(connection_params, self.driver_type)
 
         return connection_params
     
@@ -87,9 +87,9 @@ class TestConfig:
         return "PYTHON" if self.driver_type == "universal" else "PYTHON (Old)"
 
 
-def _disable_ocsp_for_wiremock(connection_params, driver_type):
-    """Disable OCSP for the old driver when proxied through WireMock,
-    since WireMock-generated certs have no OCSP responder."""
+def _disable_ocsp_for_proxy(connection_params, driver_type):
+    """Disable OCSP for the old driver when proxied through the replay proxy,
+    since proxy-generated certs have no OCSP responder."""
     if driver_type == "old" and os.getenv("HTTPS_PROXY"):
         connection_params["insecure_mode"] = True
 

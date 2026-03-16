@@ -75,9 +75,9 @@ RUN pip install --no-cache-dir /workdir/python/
 ENV DRIVER_TYPE=universal
 
 CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
-    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+    if [ -n "$PROXY_CA_CERT" ] && [ -f "$PROXY_CA_CERT" ]; then \
         CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
-        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$PROXY_CA_CERT" >> "$CA_BUNDLE"; \
     fi && \
     python main.py
 
@@ -92,9 +92,9 @@ RUN echo "N/A" > /etc/rust_version
 ENV DRIVER_TYPE=old
 
 CMD export OS_INFO=$(cat /etc/os_info) && export BUILD_RUST_VERSION=$(cat /etc/rust_version) && \
-    if [ -n "$WIREMOCK_CA_CERT" ] && [ -f "$WIREMOCK_CA_CERT" ]; then \
+    if [ -n "$PROXY_CA_CERT" ] && [ -f "$PROXY_CA_CERT" ]; then \
         CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; \
-        printf '\n' >> "$CA_BUNDLE" && cat "$WIREMOCK_CA_CERT" >> "$CA_BUNDLE"; \
+        printf '\n' >> "$CA_BUNDLE" && cat "$PROXY_CA_CERT" >> "$CA_BUNDLE"; \
         export REQUESTS_CA_BUNDLE="$CA_BUNDLE"; \
         export SSL_CERT_FILE="$CA_BUNDLE"; \
     fi && \
