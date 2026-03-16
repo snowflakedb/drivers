@@ -13,7 +13,7 @@ common: &common
     queue: "discovery"
     repo: "snowflakedb/universal-driver"
   plugins:
-    - vault-secrets:
+    - ${GLOBAL_PLUGIN}/vault_secrets:
         secrets:
           - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
             env_name: "PARAMETERS_SECRET"
