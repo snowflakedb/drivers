@@ -59,8 +59,8 @@ public class SnowflakePooledConnection implements PooledConnection {
   @Override
   public void close() throws SQLException {
     if (this.physicalConnection != null) {
-      SnowflakeConnectionImpl sfConnection = physicalConnection.unwrap(
-          SnowflakeConnectionImpl.class);
+      SnowflakeConnectionImpl sfConnection =
+          physicalConnection.unwrap(SnowflakeConnectionImpl.class);
       logger.debug("Closing pooled connection with session id: {}", safeGetSessionID(sfConnection));
       this.physicalConnection.close();
       this.physicalConnection = null;
@@ -83,7 +83,7 @@ public class SnowflakePooledConnection implements PooledConnection {
     // not supported
   }
 
-  //TODO not fully implemented yet
+  // TODO not fully implemented yet
   private static String safeGetSessionID(SnowflakeConnectionImpl sfConnection) {
     try {
       return sfConnection.getSessionID();
