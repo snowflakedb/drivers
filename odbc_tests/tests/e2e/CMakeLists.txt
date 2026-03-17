@@ -36,6 +36,7 @@ add_odbc_test(e2e_types_boolean_conversion_to_c_real types/boolean_conversion_to
 add_odbc_test(e2e_types_decfloat types/decfloat.cpp)
 add_odbc_test(e2e_types_float types/float.cpp)
 add_odbc_test(e2e_types_float_incompatible_conversions types/float_incompatible_conversions.cpp)
+add_odbc_test(e2e_types_float_integer_valued_conversions types/float_integer_valued_conversions.cpp)
 add_odbc_test(e2e_types_int types/int.cpp)
 add_odbc_test(e2e_types_number types/number.cpp)
 add_odbc_test(e2e_types_number_conversion_to_c_interval types/number_conversion_to_c_interval.cpp)
