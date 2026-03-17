@@ -5,7 +5,6 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
-#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 
@@ -250,6 +249,73 @@ TEST_CASE("SQLBindParameter binds SQL_C_FLOAT and round-trips through SELECT.", 
 }
 
 // =============================================================================
+// Decimal / Numeric Types
+// =============================================================================
+
+TEST_CASE("SQLBindParameter binds SQL_C_CHAR to SQL_DECIMAL and round-trips through INSERT/SELECT.",
+          "[query][bind_parameter]") {
+  // Doc: "For SQL_DECIMAL or SQL_NUMERIC, ColumnSize is the defined precision."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindparameter-function#columnsize
+
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // And a temporary table with a DECIMAL column exists
+  auto schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE bind_decimal_test (val DECIMAL(10,2))");
+
+  auto stmt = conn.createStatement();
+
+  // When a parameterized INSERT is prepared
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO bind_decimal_test VALUES (?)", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And an SQL_C_CHAR parameter is bound with a decimal string value
+  char param[] = "12345.67";
+  SQLLEN indicator = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 2, param, sizeof(param),
+                         &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // And the INSERT is executed
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then selecting the value should return 12345.67
+  auto select_stmt = conn.execute_fetch("SELECT val FROM bind_decimal_test");
+  CHECK(get_data<SQL_C_CHAR>(select_stmt, 1) == "12345.67");
+}
+
+TEST_CASE("SQLBindParameter binds SQL_C_CHAR to SQL_NUMERIC and round-trips through SELECT.",
+          "[query][bind_parameter]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameterized SELECT is prepared with SQL_NUMERIC parameter type
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ? AS val", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  char param[] = "99999";
+  SQLLEN indicator = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_NUMERIC, 10, 0, param, sizeof(param),
+                         &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // Then executing and fetching should return the value
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  SQLINTEGER result = 0;
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  CHECK_ODBC(ret, stmt);
+  CHECK(result == 99999);
+}
+
+// =============================================================================
 // String Types
 // =============================================================================
 
@@ -309,6 +375,35 @@ TEST_CASE("SQLBindParameter binds SQL_C_CHAR with explicit length.", "[query][bi
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, result, sizeof(result), &result_ind);
   CHECK_ODBC(ret, stmt);
   CHECK(std::string(result) == "hello");
+}
+
+TEST_CASE("SQLBindParameter binds SQL_C_CHAR with empty string.", "[query][bind_parameter]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameterized SELECT is prepared
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ? AS val", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And an SQL_C_CHAR parameter is bound with an empty string
+  char param[] = "";
+  SQLLEN indicator = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 0, 0, param, sizeof(param),
+                         &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // Then executing and fetching should return an empty string
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  char result[256] = {};
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, result, sizeof(result), &result_ind);
+  CHECK_ODBC(ret, stmt);
+  CHECK(std::string(result) == "");
 }
 
 // =============================================================================
@@ -416,8 +511,6 @@ TEST_CASE("SQLBindParameter binds SQL_C_BINARY and round-trips through INSERT/SE
 
 TEST_CASE("SQLBindParameter binds SQL_C_TYPE_DATE struct and round-trips through INSERT/SELECT.",
           "[query][bind_parameter]") {
-  SKIP_NEW_DRIVER("BD-TEMPORAL-PARAM", "SQL_C_TYPE_DATE parameter binding not yet implemented");
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -457,8 +550,6 @@ TEST_CASE("SQLBindParameter binds SQL_C_TYPE_DATE struct and round-trips through
 }
 
 TEST_CASE("SQLBindParameter binds SQL_C_TYPE_DATE with epoch date.", "[query][bind_parameter]") {
-  SKIP_NEW_DRIVER("BD-TEMPORAL-PARAM", "SQL_C_TYPE_DATE parameter binding not yet implemented");
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -497,14 +588,48 @@ TEST_CASE("SQLBindParameter binds SQL_C_TYPE_DATE with epoch date.", "[query][bi
   CHECK(result.day == 1);
 }
 
+TEST_CASE("SQLBindParameter binds date as SQL_C_CHAR string to SQL_TYPE_DATE.", "[query][bind_parameter]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // And a temporary table with a DATE column exists
+  auto schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE bind_date_str_test (val DATE)");
+
+  auto stmt = conn.createStatement();
+
+  // When a parameterized INSERT is prepared
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO bind_date_str_test VALUES (?)", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And a date string is bound as SQL_C_CHAR to SQL_TYPE_DATE
+  char param[] = "2025-03-15";
+  SQLLEN indicator = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_TYPE_DATE, 10, 0, param, sizeof(param),
+                         &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // And the INSERT is executed
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then selecting the date should return 2025-03-15
+  auto select_stmt = conn.execute_fetch("SELECT val FROM bind_date_str_test");
+  SQL_DATE_STRUCT result = {};
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(select_stmt.getHandle(), 1, SQL_C_TYPE_DATE, &result, sizeof(result), &result_ind);
+  CHECK_ODBC(ret, select_stmt);
+  CHECK(result.year == 2025);
+  CHECK(result.month == 3);
+  CHECK(result.day == 15);
+}
+
 // =============================================================================
 // Time Types
 // =============================================================================
 
 TEST_CASE("SQLBindParameter binds SQL_C_TYPE_TIME struct and round-trips through INSERT/SELECT.",
           "[query][bind_parameter]") {
-  SKIP_NEW_DRIVER("BD-TEMPORAL-PARAM", "SQL_C_TYPE_TIME parameter binding not yet implemented");
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -544,8 +669,6 @@ TEST_CASE("SQLBindParameter binds SQL_C_TYPE_TIME struct and round-trips through
 }
 
 TEST_CASE("SQLBindParameter binds SQL_C_TYPE_TIME with midnight.", "[query][bind_parameter]") {
-  SKIP_NEW_DRIVER("BD-TEMPORAL-PARAM", "SQL_C_TYPE_TIME parameter binding not yet implemented");
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -584,13 +707,47 @@ TEST_CASE("SQLBindParameter binds SQL_C_TYPE_TIME with midnight.", "[query][bind
   CHECK(result.second == 0);
 }
 
+TEST_CASE("SQLBindParameter binds time as SQL_C_CHAR string to SQL_TYPE_TIME.", "[query][bind_parameter]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // And a temporary table with a TIME column exists
+  auto schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE bind_time_str_test (val TIME)");
+
+  auto stmt = conn.createStatement();
+
+  // When a parameterized INSERT is prepared
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO bind_time_str_test VALUES (?)", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And a time string is bound as SQL_C_CHAR to SQL_TYPE_TIME
+  char param[] = "14:30:00";
+  SQLLEN indicator = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_TYPE_TIME, 8, 0, param, sizeof(param),
+                         &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // And the INSERT is executed
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then selecting the time should return 14:30:00
+  auto select_stmt = conn.execute_fetch("SELECT val FROM bind_time_str_test");
+  SQL_TIME_STRUCT result = {};
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(select_stmt.getHandle(), 1, SQL_C_TYPE_TIME, &result, sizeof(result), &result_ind);
+  CHECK_ODBC(ret, select_stmt);
+  CHECK(result.hour == 14);
+  CHECK(result.minute == 30);
+  CHECK(result.second == 0);
+}
+
 // =============================================================================
 // Timestamp Types
 // =============================================================================
 
 TEST_CASE("SQLBindParameter binds SQL_C_TYPE_TIMESTAMP to TIMESTAMP_NTZ and round-trips.", "[query][bind_parameter]") {
-  SKIP_NEW_DRIVER("BD-TEMPORAL-PARAM", "SQL_C_TYPE_TIMESTAMP parameter binding not yet implemented");
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -852,4 +1009,87 @@ TEST_CASE("SQLBindParameter re-executes prepared statement with changed bound va
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
   CHECK_ODBC(ret, stmt);
   CHECK(result == 20);
+}
+
+TEST_CASE("SQLFreeStmt SQL_RESET_PARAMS clears bindings and allows re-binding.", "[query][bind_parameter]") {
+  // Doc: "A variable remains bound until it is rebound or until all parameters are
+  //       unbound by calling SQLFreeStmt with the SQL_RESET_PARAMS option."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindparameter-function#comments
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameterized SELECT is prepared and an integer is bound
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ? AS val", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  SQLINTEGER int_param = 42;
+  SQLLEN int_ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0,
+                         &int_ind);
+  CHECK_ODBC(ret, stmt);
+
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 42);
+
+  ret = SQLCloseCursor(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // And all parameter bindings are reset
+  ret = SQLFreeStmt(stmt.getHandle(), SQL_RESET_PARAMS);
+  CHECK_ODBC(ret, stmt);
+
+  // And a new string parameter is bound to the same parameter position
+  char str_param[] = "rebound";
+  SQLLEN str_ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0,
+                         str_param, sizeof(str_param), &str_ind);
+  CHECK_ODBC(ret, stmt);
+
+  // Then re-executing should return the new string value
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  char result[256] = {};
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, result, sizeof(result), &result_ind);
+  CHECK_ODBC(ret, stmt);
+  CHECK(std::string(result) == "rebound");
+}
+
+TEST_CASE("SQLExecDirect with bound parameter executes without SQLPrepare.", "[query][bind_parameter]") {
+  // Doc: "If the statement contains parameter markers, the application uses SQLBindParameter
+  //       to bind each parameter before passing the SQL statement to SQLExecDirect."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function#comments
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameter is bound before calling SQLExecDirect
+  SQLINTEGER param = 77;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0,
+                                   &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // And SQLExecDirect is called with a parameterized query
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT ? AS val", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then the bound parameter value should be returned
+  SQLINTEGER result = 0;
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  CHECK_ODBC(ret, stmt);
+  CHECK(result == 77);
 }

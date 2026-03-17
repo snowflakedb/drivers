@@ -51,6 +51,26 @@ Feature: ODBC SQLBindParameter function behavior
     Then executing and fetching should return 255
 
   # ============================================================================
+  # Decimal / Numeric Types
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: SQLBindParameter binds SQL_C_CHAR to SQL_DECIMAL and round-trips through INSERT/SELECT.
+    Given Snowflake client is logged in
+    And a temporary table with a DECIMAL column exists
+    When a parameterized INSERT is prepared
+    And an SQL_C_CHAR parameter is bound with a decimal string value
+    And the INSERT is executed
+    Then selecting the value should return 12345.67
+
+  @odbc_e2e
+  Scenario: SQLBindParameter binds SQL_C_CHAR to SQL_NUMERIC and round-trips through SELECT.
+    Given Snowflake client is logged in
+    When a parameterized SELECT is prepared with SQL_NUMERIC parameter type
+    And an SQL_C_CHAR parameter is bound with a numeric string value
+    Then executing and fetching should return the value
+
+  # ============================================================================
   # Float / Double Types
   # ============================================================================
 
@@ -85,6 +105,13 @@ Feature: ODBC SQLBindParameter function behavior
     When a parameterized SELECT is prepared
     And an SQL_C_CHAR parameter is bound with explicit length
     Then executing and fetching should return the substring defined by the length
+
+  @odbc_e2e
+  Scenario: SQLBindParameter binds SQL_C_CHAR with empty string.
+    Given Snowflake client is logged in
+    When a parameterized SELECT is prepared
+    And an SQL_C_CHAR parameter is bound with an empty string
+    Then executing and fetching should return an empty string
 
   # ============================================================================
   # Boolean Types
@@ -139,6 +166,15 @@ Feature: ODBC SQLBindParameter function behavior
     And the INSERT is executed
     Then selecting the date should return 1970-01-01
 
+  @odbc_e2e
+  Scenario: SQLBindParameter binds date as SQL_C_CHAR string to SQL_TYPE_DATE.
+    Given Snowflake client is logged in
+    And a temporary table with a DATE column exists
+    When a parameterized INSERT is prepared
+    And a date string is bound as SQL_C_CHAR to SQL_TYPE_DATE
+    And the INSERT is executed
+    Then selecting the date should return 2025-03-15
+
   # ============================================================================
   # Time Types
   # ============================================================================
@@ -160,6 +196,15 @@ Feature: ODBC SQLBindParameter function behavior
     And an SQL_C_TYPE_TIME parameter is bound with time 00:00:00
     And the INSERT is executed
     Then selecting the time should return 00:00:00
+
+  @odbc_e2e
+  Scenario: SQLBindParameter binds time as SQL_C_CHAR string to SQL_TYPE_TIME.
+    Given Snowflake client is logged in
+    And a temporary table with a TIME column exists
+    When a parameterized INSERT is prepared
+    And a time string is bound as SQL_C_CHAR to SQL_TYPE_TIME
+    And the INSERT is executed
+    Then selecting the time should return 14:30:00
 
   # ============================================================================
   # Timestamp Types
@@ -220,3 +265,19 @@ Feature: ODBC SQLBindParameter function behavior
     And the statement is executed and the result verified
     And the cursor is closed and the bound variable changed to 20
     Then re-executing should return 20
+
+  @odbc_e2e
+  Scenario: SQLFreeStmt SQL_RESET_PARAMS clears bindings and allows re-binding.
+    Given Snowflake client is logged in
+    When a parameterized SELECT is prepared and an integer is bound
+    And the statement is executed and the integer result is verified
+    And all parameter bindings are reset with SQL_RESET_PARAMS
+    And a new string parameter is bound to the same position
+    Then re-executing should return the new string value
+
+  @odbc_e2e
+  Scenario: SQLExecDirect with bound parameter executes without SQLPrepare.
+    Given Snowflake client is logged in
+    When a parameter is bound before calling SQLExecDirect
+    And SQLExecDirect is called with a parameterized query
+    Then executing and fetching should return the bound parameter value
