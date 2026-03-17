@@ -1,6 +1,7 @@
 import pytest
 
 
+# TEMPORARY: dummy change to test Buildkite test selection - REVERT BEFORE MERGE
 @pytest.mark.skip_reference(reason="CRL e2e applies to universal driver")
 def test_should_connect_and_select_with_crl_enabled(connection_factory):
     # Given Snowflake client is logged in

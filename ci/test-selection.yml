@@ -478,7 +478,8 @@ shared_fallback_paths:
   - "thrift/**"
   - "proto_utils/**"
   - "proto_generator/**"
-  - ".github/workflows/**"
-  - "scripts/**"
-  - "ci/**"
+  # TEMPORARILY DISABLED FOR TESTING - REVERT BEFORE MERGE
+  # - ".github/workflows/**"
+  # - "scripts/**"
+  # - "ci/**"
   - "tests/definitions/**"
