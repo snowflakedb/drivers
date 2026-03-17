@@ -1,16 +1,23 @@
+use std::borrow::Cow;
+
 use arrow::array::{Array, GenericByteArray};
 use arrow::datatypes::Utf8Type;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
+use serde_json::Value;
 use snafu::ResultExt;
 
+use crate::api::ParameterBinding;
 use crate::cdata_types::CDataType;
+use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     RustParsingSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::param_binding::{read_char_str, read_wchar_str};
 use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -20,7 +27,7 @@ pub(crate) struct SnowflakeVarchar {
 }
 
 impl SnowflakeType for SnowflakeVarchar {
-    type Representation<'a> = &'a str;
+    type Representation<'a> = Cow<'a, str>;
 }
 
 impl ReadArrowType<GenericByteArray<Utf8Type>> for SnowflakeVarchar {
@@ -35,7 +42,7 @@ impl ReadArrowType<GenericByteArray<Utf8Type>> for SnowflakeVarchar {
             });
         }
         let v = array.value(row_idx);
-        Ok(v)
+        Ok(Cow::Borrowed(v))
     }
 }
 
@@ -197,6 +204,7 @@ impl WriteODBCType for SnowflakeVarchar {
         binding: &Binding,
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
+        let snowflake_value: &str = &snowflake_value;
         match binding.target_type {
             CDataType::Default | CDataType::Char => {
                 Ok(binding.write_char_string(snowflake_value, get_data_offset))
@@ -363,5 +371,28 @@ impl WriteODBCType for SnowflakeVarchar {
             }
             .fail(),
         }
+    }
+}
+
+impl ReadODBC for SnowflakeVarchar {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        let s = match binding.value_type {
+            CDataType::WChar => read_wchar_str(binding)?,
+            _ => read_char_str(binding)?,
+        };
+        Ok(Cow::Owned(s))
+    }
+}
+
+impl WriteJson for SnowflakeVarchar {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        Ok(Value::String(value.into_owned()))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Text
     }
 }

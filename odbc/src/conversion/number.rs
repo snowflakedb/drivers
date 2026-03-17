@@ -1,12 +1,17 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
+use serde_json::Value;
 
+use crate::api::ParameterBinding;
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{
     IntervalFieldOverflowSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -478,5 +483,58 @@ impl WriteODBCType for SnowflakeNumber {
             .fail(),
             _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
         }
+    }
+}
+
+impl ReadODBC for SnowflakeNumber {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        let value = match binding.value_type {
+            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as i128,
+            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as i128,
+            CDataType::SBigInt => read_unaligned::<i64>(binding) as i128,
+            CDataType::ULong => read_unaligned::<u32>(binding) as i128,
+            CDataType::UShort => read_unaligned::<u16>(binding) as i128,
+            CDataType::UBigInt => read_unaligned::<u64>(binding) as i128,
+            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) as i128,
+            CDataType::UTinyInt => read_unaligned::<u8>(binding) as i128,
+            CDataType::Char => {
+                let s = read_char_str(binding)?;
+                s.trim().parse::<i128>().map_err(|_| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })?
+            }
+            CDataType::WChar => {
+                let s = read_wchar_str(binding)?;
+                s.trim().parse::<i128>().map_err(|_| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })?
+            }
+            _ => {
+                return UnsupportedCDataTypeSnafu {
+                    c_type: binding.value_type,
+                }
+                .fail();
+            }
+        };
+        Ok(value)
+    }
+}
+
+impl WriteJson for SnowflakeNumber {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        Ok(Value::String(value.to_string()))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Fixed
     }
 }

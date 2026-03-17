@@ -11,7 +11,7 @@ use crate::api::{
 };
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
-use crate::write_json::odbc_bindings_to_json;
+use crate::conversion::param_binding::odbc_bindings_to_json;
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;

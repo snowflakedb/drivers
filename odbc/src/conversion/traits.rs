@@ -1,7 +1,11 @@
 use odbc_sys as sql;
+use serde_json::Value;
 
+use crate::api::ParameterBinding;
 use crate::cdata_types::{CDataType, SQL_NO_TOTAL};
-use crate::conversion::error::{IndicatorRequiredSnafu, ReadArrowError, WriteOdbcError};
+use crate::conversion::error::{
+    IndicatorRequiredSnafu, JsonBindingError, ReadArrowError, WriteOdbcError,
+};
 use crate::conversion::warning::{Warning, Warnings};
 
 /// Convert a UTF-8 string to the system's ANSI code page (ACP) bytes.
@@ -272,4 +276,54 @@ pub trait ReadArrowType<ArrowArrayType>: SnowflakeType {
         array: &'a ArrowArrayType,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError>;
+}
+
+/// Snowflake logical type names used in the binding protocol and Arrow metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnowflakeLogicalType {
+    Any,
+    Fixed,
+    Text,
+    Real,
+    Boolean,
+    Binary,
+    Date,
+    Time,
+    TimestampNtz,
+}
+
+impl SnowflakeLogicalType {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Any => "ANY",
+            Self::Fixed => "FIXED",
+            Self::Text => "TEXT",
+            Self::Real => "REAL",
+            Self::Boolean => "BOOLEAN",
+            Self::Binary => "BINARY",
+            Self::Date => "DATE",
+            Self::Time => "TIME",
+            Self::TimestampNtz => "TIMESTAMP_NTZ",
+        }
+    }
+}
+
+impl std::fmt::Display for SnowflakeLogicalType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Reads a typed value from a raw ODBC `ParameterBinding` buffer.
+pub(crate) trait ReadODBC: SnowflakeType {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError>;
+}
+
+/// Converts a typed representation into a JSON value for the Snowflake binding protocol.
+pub(crate) trait WriteJson: SnowflakeType {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError>;
+    fn sf_type(&self) -> SnowflakeLogicalType;
 }
