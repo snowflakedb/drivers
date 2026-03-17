@@ -31,7 +31,7 @@ TEST_CASE("SQLRowCount returns HY009 when called with null pointer.", "[query]")
   // When SQLRowCount is called with a null pointer for RowCountPtr
   ret = SQLRowCount(stmt.getHandle(), nullptr);
 
-  // Then the old driver silently returns SQL_SUCCESS, while the new driver returns HY009
+  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY009 (Invalid use of null pointer)
   OLD_DRIVER_ONLY("BD#26") { REQUIRE(ret == SQL_SUCCESS); }
   NEW_DRIVER_ONLY("BD#26") {
     REQUIRE(ret == SQL_ERROR);
