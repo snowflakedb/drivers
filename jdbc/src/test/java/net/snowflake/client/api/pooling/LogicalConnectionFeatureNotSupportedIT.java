@@ -54,8 +54,7 @@ public class LogicalConnectionFeatureNotSupportedIT extends PoolingTestBase {
     expectFeatureNotSupported(logicalConnection::createSQLXML);
     expectFeatureNotSupported(
         () -> logicalConnection.setHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT));
-    expectFeatureNotSupported(
-        () -> logicalConnection.createStruct("fakeType", new Object[] {}));
+    expectFeatureNotSupported(() -> logicalConnection.createStruct("fakeType", new Object[] {}));
     expectFeatureNotSupported(
         () -> logicalConnection.prepareStatement("select 1", Statement.RETURN_GENERATED_KEYS));
 

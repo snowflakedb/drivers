@@ -44,7 +44,7 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
   private String user;
   private String password;
   private String serverName;
-  private int portNumber = 0; //TODO check
+  private int portNumber = 0; // TODO check
 
   // DataSource methods ----------------------------------------------------------------------------
 
@@ -191,8 +191,7 @@ public class SnowflakeBasicDataSource implements SnowflakeDataSource {
 
   @Override
   public void setPrivateKeyFile(String location, String password) {
-    this.properties.put(
-        SnowflakeSessionProperty.AUTHENTICATOR.getPropertyKey(), "SNOWFLAKE_JWT");
+    this.properties.put(SnowflakeSessionProperty.AUTHENTICATOR.getPropertyKey(), "SNOWFLAKE_JWT");
     this.properties.put(SnowflakeSessionProperty.PRIVATE_KEY_FILE.getPropertyKey(), location);
     if (password != null && !password.isEmpty()) {
       this.properties.put(SnowflakeSessionProperty.PRIVATE_KEY_PWD.getPropertyKey(), password);

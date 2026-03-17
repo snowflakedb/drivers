@@ -40,9 +40,9 @@ public abstract class PoolingTestBase {
   protected String getUrl() {
     String account = connectionProperties.getProperty("account");
     String port = connectionProperties.getProperty("port");
-    return port != null ?
-        "jdbc:snowflake://" + account + ".snowflakecomputing.com:" + port :
-        "jdbc:snowflake://" + account + ".snowflakecomputing.com";
+    return port != null
+        ? "jdbc:snowflake://" + account + ".snowflakecomputing.com:" + port
+        : "jdbc:snowflake://" + account + ".snowflakecomputing.com";
   }
 
   protected String getUser() {
