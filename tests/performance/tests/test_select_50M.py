@@ -62,3 +62,19 @@ def test_select_15columns_50M_arrow(perf_test):
         """
     )
 
+
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+def test_select_string_50M_ordered_arrow(perf_test):
+    perf_test(
+        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000"
+    )
+
+
+@pytest.mark.iterations(ITERATIONS)
+@pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
+def test_select_number_50M_ordered_arrow(perf_test):
+    perf_test(
+        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM ORDER BY L_ORDERKEY LIMIT 50000000"
+    )
+
