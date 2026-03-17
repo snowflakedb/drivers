@@ -18,8 +18,11 @@ use super::{
 };
 
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
-const DEFAULT_RETRY_COUNT: u32 = 5;
-const DEFAULT_RETRY_DELAY: Duration = Duration::from_millis(100);
+// Give the shared fallback cache enough time to serialize concurrent access in
+// CI and other high-contention environments without immediately surfacing
+// spurious `LockExhausted` errors to callers.
+const DEFAULT_RETRY_COUNT: u32 = 100;
+const DEFAULT_RETRY_DELAY: Duration = Duration::from_millis(50);
 const DEFAULT_STALE_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Serialize, Deserialize)]
