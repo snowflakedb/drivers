@@ -38,6 +38,21 @@ pub enum RowType {
         nullable: bool,
         scale: u64,
     },
+    Time {
+        name: String,
+        nullable: bool,
+        scale: u64,
+    },
+    Binary {
+        name: String,
+        nullable: bool,
+        length: u64,
+        byte_length: u64,
+    },
+    Decfloat {
+        name: String,
+        nullable: bool,
+    },
 }
 
 impl RowType {
@@ -110,6 +125,30 @@ impl RowType {
             name: name.to_string(),
             nullable,
             scale,
+        }
+    }
+
+    pub fn time(name: &str, nullable: bool, scale: u64) -> Self {
+        RowType::Time {
+            name: name.to_string(),
+            nullable,
+            scale,
+        }
+    }
+
+    pub fn binary(name: &str, nullable: bool, length: u64, byte_length: u64) -> Self {
+        RowType::Binary {
+            name: name.to_string(),
+            nullable,
+            length,
+            byte_length,
+        }
+    }
+
+    pub fn decfloat(name: &str, nullable: bool) -> Self {
+        RowType::Decfloat {
+            name: name.to_string(),
+            nullable,
         }
     }
 }

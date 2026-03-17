@@ -132,6 +132,15 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
             "precision",
             "physicalType",
         ],
+        "TIME" => &[
+            "finalType",
+            "charLength",
+            "byteLength",
+            "precision",
+            "physicalType",
+        ],
+        "BINARY" => &["finalType", "precision", "scale", "physicalType"],
+        "DECFLOAT" => &["finalType", "precision", "scale", "physicalType"],
         _ => &[],
     }
 }
@@ -183,27 +192,27 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
             .collect()
     };
 
-    let arrow_meta: BTreeMap<String, String> = left
+    let left_meta: BTreeMap<String, String> = left
         .metadata()
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    let json_meta: BTreeMap<String, String> = right
+    let right_meta: BTreeMap<String, String> = right
         .metadata()
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    let filtered_arrow = filter_metadata(&arrow_meta);
-    let filtered_json = filter_metadata(&json_meta);
+    let filtered_left_meta = filter_metadata(&left_meta);
+    let filtered_right_meta = filter_metadata(&right_meta);
 
     assert_eq!(
-        filtered_arrow,
-        filtered_json,
+        filtered_left_meta,
+        filtered_right_meta,
         "Metadata mismatch for field '{}'\n  left: {:?}\n  right:  {:?}",
         left.name(),
-        filtered_arrow,
-        filtered_json
+        filtered_left_meta,
+        filtered_right_meta
     );
     match (left.data_type(), right.data_type()) {
         (DataType::Struct(left_fields), DataType::Struct(right_fields)) => {

@@ -1,10 +1,12 @@
 use crate::query_types::RowType;
 use arrow::array::{
-    Array, BooleanArray, Float64Array, Int8Array, Int32Array, Int64Array, StringArray,
+    Array, BinaryArray, BooleanArray, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
+    StringArray,
 };
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
+use hex::FromHexError;
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -145,6 +147,52 @@ pub fn create_field_with_type(
             };
             Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
+        RowType::Time {
+            name,
+            nullable,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "TIME".to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            let data_type = if scale <= &4 {
+                data_type.unwrap_or(DataType::Int32)
+            } else {
+                data_type.unwrap_or(DataType::Int64)
+            };
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
+        }
+        RowType::Binary {
+            name,
+            nullable,
+            length,
+            byte_length,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "BINARY".to_string());
+            metadata.insert("byteLength".to_string(), byte_length.to_string());
+            metadata.insert("charLength".to_string(), length.to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Binary), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Decfloat { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "DECFLOAT".to_string());
+            let data_type = data_type.unwrap_or_else(|| {
+                DataType::Struct(
+                    vec![
+                        Field::new("exponent", DataType::Int16, false)
+                            .with_metadata(metadata.clone()),
+                        Field::new("significand", DataType::Binary, false)
+                            .with_metadata(metadata.clone()),
+                    ]
+                    .into(),
+                )
+            });
+            Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
+        }
     }
 }
 
@@ -187,6 +235,87 @@ fn parse_decimal_str(v: &str, scale: u32) -> Result<i128, ArrowUtilsError> {
 
     let unscaled = abs_int * 10i128.pow(scale) + frac_scaled;
     Ok(if negative { -unscaled } else { unscaled })
+}
+
+/// Parses a DECFLOAT string (decimal or scientific notation) into (exponent, mantissa_bytes).
+/// The mantissa is normalized by stripping trailing zeros, and the mantissa bytes are
+/// minimal big-endian two's complement.
+fn parse_decfloat_str(v: &str) -> Result<(i16, Vec<u8>), ArrowUtilsError> {
+    if v == "0" || v == "0.0" || v == "-0" || v == "-0.0" {
+        return Ok((0_i16, vec![0]));
+    }
+
+    // Parse into integer mantissa (i128) and exponent (i16).
+    // Handle scientific notation: "1.23e5" or "1.23E-5"
+    let lowered = v.to_lowercase();
+    let (coeff_str, exp_offset) = match lowered.split_once('e') {
+        Some((c, e)) => {
+            let exp: i16 = e.parse().context(DecfloatParsingSnafu {
+                value: v.to_string(),
+            })?;
+            (c, exp)
+        }
+        None => (v, 0_i16),
+    };
+
+    let negative = coeff_str.starts_with('-');
+    let abs_coeff = coeff_str.trim_start_matches('-');
+
+    // Split on decimal point
+    let (int_part, frac_part) = match abs_coeff.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (abs_coeff, ""),
+    };
+
+    // Combine into integer mantissa: "123.456" -> 123456, with implicit exponent = -3
+    let digits = format!("{int_part}{frac_part}");
+    let frac_len = frac_part.len() as i16;
+
+    let mut mantissa: i128 = digits.parse().context(DecfloatParsingSnafu {
+        value: v.to_string(),
+    })?;
+    let mut exponent: i16 = exp_offset - frac_len;
+
+    if negative {
+        mantissa = -mantissa;
+    }
+
+    // Strip trailing zeros from mantissa, adjust exponent (Snowflake normalization)
+    if mantissa != 0 {
+        while mantissa % 10 == 0 {
+            mantissa /= 10;
+            exponent += 1;
+        }
+    }
+
+    // Convert mantissa i128 to minimal big-endian two's complement bytes
+    let bytes = i128::to_be_bytes(mantissa);
+    let mantissa_bytes = minimal_twos_complement(&bytes);
+
+    Ok((exponent, mantissa_bytes))
+}
+
+/// Strips leading redundant bytes from a big-endian two's complement representation,
+/// keeping the sign bit intact.
+fn minimal_twos_complement(bytes: &[u8]) -> Vec<u8> {
+    if bytes.is_empty() {
+        return vec![0];
+    }
+
+    let is_negative = bytes[0] & 0x80 != 0;
+    let pad_byte: u8 = if is_negative { 0xFF } else { 0x00 };
+
+    let mut start = 0;
+    while start < bytes.len() - 1 && bytes[start] == pad_byte {
+        // Keep this byte if removing it would change the sign
+        let next_sign = bytes[start + 1] & 0x80 != 0;
+        if next_sign != is_negative {
+            break;
+        }
+        start += 1;
+    }
+
+    bytes[start..].to_vec()
 }
 
 /// Creates an Arrow array from column values and data type
@@ -466,6 +595,97 @@ fn create_column_array(
                 .fail(),
             }
         }
+        RowType::Time { scale, .. } => {
+            let field = create_field(row_type)?;
+            match field.data_type() {
+                DataType::Int32 => {
+                    let normalized: Result<Vec<i32>, ArrowUtilsError> = values
+                        .into_iter()
+                        .map(|v| {
+                            let (seconds_str, fraction_str) = v.split_once('.').unwrap_or((v, ""));
+                            let seconds: i32 =
+                                seconds_str.parse().context(IntegerParsingSnafu {
+                                    value: v.to_string(),
+                                })?;
+                            let fraction: i32 = if fraction_str.is_empty() {
+                                0
+                            } else {
+                                let filled =
+                                    format!("{:0<width$}", fraction_str, width = *scale as usize);
+                                filled.parse::<i32>().context(IntegerParsingSnafu {
+                                    value: v.to_string(),
+                                })?
+                            };
+                            Ok(seconds * 10i32.pow(*scale as u32) + fraction)
+                        })
+                        .collect();
+                    Ok((field, Arc::new(Int32Array::from(normalized?))))
+                }
+                DataType::Int64 => {
+                    let normalized: Result<Vec<i64>, ArrowUtilsError> = values
+                        .into_iter()
+                        .map(|v| {
+                            let scale1 = *scale;
+                            let (seconds_str, fraction_str) = v.split_once('.').unwrap_or((v, ""));
+                            let seconds: i64 =
+                                seconds_str.parse().context(IntegerParsingSnafu {
+                                    value: v.to_string(),
+                                })?;
+                            let fraction: i64 = if fraction_str.is_empty() {
+                                0
+                            } else {
+                                let filled =
+                                    format!("{:0<width$}", fraction_str, width = scale1 as usize);
+                                filled.parse::<i64>().context(IntegerParsingSnafu {
+                                    value: v.to_string(),
+                                })?
+                            };
+                            Ok(seconds * 10i64.pow(scale1 as u32) + fraction)
+                        })
+                        .collect();
+                    Ok((field, Arc::new(Int64Array::from(normalized?))))
+                }
+                _ => UnsupportedDataTypeSnafu {
+                    data_type: format!("{:?}", field.data_type()),
+                    row_type: "TIME".to_string(),
+                }
+                .fail(),
+            }
+        }
+        RowType::Binary { .. } => {
+            let binary_values: Result<Vec<Vec<u8>>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| hex::decode(v).context(BinaryParsingSnafu {}))
+                .collect();
+            let binary_values = binary_values?;
+            let refs: Vec<&[u8]> = binary_values.iter().map(|v| v.as_slice()).collect();
+            Ok((create_field(row_type)?, Arc::new(BinaryArray::from(refs))))
+        }
+        RowType::Decfloat { .. } => {
+            let parsed: Result<Vec<(i16, Vec<u8>)>, ArrowUtilsError> =
+                values.into_iter().map(parse_decfloat_str).collect();
+            let parsed = parsed?;
+            let (exponents, mantissas): (Vec<i16>, Vec<Vec<u8>>) = parsed.into_iter().unzip();
+            let mantissa_refs: Vec<&[u8]> = mantissas.iter().map(|v| v.as_slice()).collect();
+
+            let field = create_field(row_type)?;
+            match field.data_type() {
+                DataType::Struct(fields) => {
+                    let exponent_array: Arc<dyn Array> = Arc::new(Int16Array::from(exponents));
+                    let mantissa_array: Arc<dyn Array> = Arc::new(BinaryArray::from(mantissa_refs));
+                    let values = vec![
+                        (fields[0].clone(), exponent_array),
+                        (fields[1].clone(), mantissa_array),
+                    ];
+                    Ok((field, Arc::new(arrow::array::StructArray::from(values))))
+                }
+                _ => UnsupportedDataTypeSnafu {
+                    data_type: format!("{:?}", field.data_type()),
+                    row_type: "DECFLOAT".to_string(),
+                }
+                .fail(),
+            }
+        }
     }
 }
 
@@ -536,9 +756,22 @@ pub enum ArrowUtilsError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to parse decfloat value: {value}"))]
+    DecfloatParsing {
+        value: String,
+        source: std::num::ParseIntError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to parse boolean value: {value}"))]
     BooleanParsing {
         value: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse binary value"))]
+    BinaryParsing {
+        source: FromHexError,
         #[snafu(implicit)]
         location: Location,
     },
