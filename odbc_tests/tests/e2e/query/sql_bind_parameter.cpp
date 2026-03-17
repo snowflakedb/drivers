@@ -923,9 +923,13 @@ TEST_CASE("SQLBindParameter mixes NULL and non-NULL in sequential executions.", 
   indicator = 0;
   ret = SQLExecute(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
+  ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
+  CHECK_ODBC(ret, stmt);
 
   indicator = SQL_NULL_DATA;
   ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
   CHECK_ODBC(ret, stmt);
 
   param = 200;
