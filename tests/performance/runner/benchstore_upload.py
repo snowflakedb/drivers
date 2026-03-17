@@ -38,7 +38,7 @@ def _sanitize_tag(tag: str) -> str:
 
 
 PROJECT_NAME = "SnowDrivers"
-BENCHMARK_NAME = "Universal_Driver"
+BENCHMARK_NAME = "POC_Universal_Driver"
 PERFORMANCE_TESTS_DIR = perf_tests_root()
 
 
