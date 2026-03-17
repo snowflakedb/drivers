@@ -46,3 +46,6 @@ add_odbc_test(e2e_types_string_conversion_to_c_interval types/string_conversion_
 add_odbc_test(e2e_types_string_conversion_to_c_real types/string_conversion_to_c_real.cpp)
 add_odbc_test(e2e_types_string_conversion_to_c_temporal types/string_conversion_to_c_temporal.cpp)
 add_odbc_test(e2e_types_string_lob types/string_lob.cpp)
+
+# conversion matrix
+add_subdirectory(types/conversion_matrix)
