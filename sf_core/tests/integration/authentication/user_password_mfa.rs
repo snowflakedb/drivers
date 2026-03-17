@@ -1,6 +1,7 @@
 use crate::common::mocks::mfa;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
+use sf_core::token_cache::{TokenCache, TokenType};
 
 // =============================================================================
 // Test Fixture - Reduces boilerplate for MFA integration tests
@@ -134,6 +135,35 @@ fn should_fail_mfa_authentication_when_wrong_password_is_provided_via_wiremock()
         result,
         "login error for wrong password",
     );
+}
+
+// =============================================================================
+// Wiremock-based MFA tests - cached MFA token flow
+// =============================================================================
+
+#[test]
+fn should_authenticate_with_cached_mfa_token_via_wiremock() {
+    let fixture = MfaTestFixture::new();
+    fixture.set_option("client_store_temporary_credential", "true");
+    fixture.mock.mount(mfa::login_success_with_cached_token());
+
+    let cache = sf_core::apis::database_driver_v1::driver_state()
+        .token_cache()
+        .expect("token cache should be available");
+    let host = url::Url::parse(&fixture.mock.http_url())
+        .unwrap()
+        .host_str()
+        .unwrap()
+        .to_string();
+    cache
+        .add_token(&host, "test_user", TokenType::MfaToken, "cached_mfa_token")
+        .expect("failed to seed token cache");
+
+    let result = fixture.connect();
+
+    fixture.expecting_success_result(result, "MFA cached token login to succeed");
+
+    let _ = cache.remove_token(&host, "test_user", TokenType::MfaToken);
 }
 
 // =============================================================================

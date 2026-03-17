@@ -1142,3 +1142,148 @@ pub enum SnowflakeResponseError {
         location: Location,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::token_cache::{TokenCache, TokenCacheError, TokenType};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct StubTokenCache {
+        store: Mutex<HashMap<String, String>>,
+    }
+
+    impl StubTokenCache {
+        fn new() -> Self {
+            Self {
+                store: Mutex::new(HashMap::new()),
+            }
+        }
+
+        fn with_token(host: &str, username: &str, token_type: TokenType, value: &str) -> Self {
+            let cache = Self::new();
+            cache.add_token(host, username, token_type, value).unwrap();
+            cache
+        }
+
+        fn key(host: &str, username: &str, token_type: TokenType) -> String {
+            format!("{host};{username};{}", token_type.as_str())
+        }
+    }
+
+    impl TokenCache for StubTokenCache {
+        fn add_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+            token_value: &str,
+        ) -> Result<(), TokenCacheError> {
+            self.store.lock().unwrap().insert(
+                Self::key(host, username, token_type),
+                token_value.to_string(),
+            );
+            Ok(())
+        }
+
+        fn remove_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+        ) -> Result<(), TokenCacheError> {
+            self.store
+                .lock()
+                .unwrap()
+                .remove(&Self::key(host, username, token_type));
+            Ok(())
+        }
+
+        fn get_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+        ) -> Result<Option<String>, TokenCacheError> {
+            Ok(self
+                .store
+                .lock()
+                .unwrap()
+                .get(&Self::key(host, username, token_type))
+                .cloned())
+        }
+    }
+
+    mod try_get_cached_mfa_token_tests {
+        use super::*;
+
+        #[test]
+        fn returns_cached_token_on_hit() {
+            let cache = StubTokenCache::with_token(
+                "host.example.com",
+                "alice",
+                TokenType::MfaToken,
+                "tok123",
+            );
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert_eq!(result.unwrap().reveal(), "tok123");
+        }
+
+        #[test]
+        fn returns_none_on_cache_miss() {
+            let cache = StubTokenCache::new();
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_no_cache_provided() {
+            let result = try_get_cached_mfa_token("https://host.example.com", "alice", None);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            let result = try_get_cached_mfa_token("not-a-url", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_empty_cached_token() {
+            let cache =
+                StubTokenCache::with_token("host.example.com", "alice", TokenType::MfaToken, "");
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+    }
+
+    mod store_mfa_token_in_cache_tests {
+        use super::*;
+
+        #[test]
+        fn stores_token_successfully() {
+            let cache = StubTokenCache::new();
+            store_mfa_token_in_cache("https://host.example.com", "alice", "new_tok", Some(&cache));
+            let stored = cache
+                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .unwrap();
+            assert_eq!(stored.as_deref(), Some("new_tok"));
+        }
+
+        #[test]
+        fn no_panic_when_no_cache() {
+            store_mfa_token_in_cache("https://host.example.com", "alice", "tok", None);
+        }
+
+        #[test]
+        fn no_panic_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            store_mfa_token_in_cache("not-a-url", "alice", "tok", Some(&cache));
+        }
+    }
+}
