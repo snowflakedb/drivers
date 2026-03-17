@@ -15,6 +15,10 @@ parameters*.json
 .DS_Store
 /.tmp
 /build
+coverage_report/
+old_odbc_cloned/
+old_coverage.txt
+weekly_report/
 
 # Python/Cython build artifacts
 python/src/snowflake/connector/_internal/nanoarrow_cpp/ArrowIterator/arrow_stream_iterator.cpp
