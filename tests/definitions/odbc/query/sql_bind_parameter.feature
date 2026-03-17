@@ -67,7 +67,6 @@ Feature: ODBC SQLBindParameter function behavior
   Scenario: SQLBindParameter binds SQL_C_CHAR to SQL_NUMERIC and round-trips through SELECT.
     Given Snowflake client is logged in
     When a parameterized SELECT is prepared with SQL_NUMERIC parameter type
-    And an SQL_C_CHAR parameter is bound with a numeric string value
     Then executing and fetching should return the value
 
   # ============================================================================
@@ -276,18 +275,17 @@ Feature: ODBC SQLBindParameter function behavior
   @odbc_e2e
   Scenario: SQLBindParameter rebinds parameter to different type without SQL_RESET_PARAMS.
     Given Snowflake client is logged in
-    When a parameterized SELECT is prepared and an integer is bound
-    And the statement is executed and the integer result is verified
-    And the same parameter is rebound as a string without SQL_RESET_PARAMS
+    When a parameterized SELECT is prepared
+    And an integer parameter is bound and executed
+    And the same parameter is rebound as a string without calling SQL_RESET_PARAMS
     Then re-executing should return the new string value
 
   @odbc_e2e
   Scenario: SQLFreeStmt SQL_RESET_PARAMS clears bindings and allows re-binding.
     Given Snowflake client is logged in
     When a parameterized SELECT is prepared and an integer is bound
-    And the statement is executed and the integer result is verified
-    And all parameter bindings are reset with SQL_RESET_PARAMS
-    And a new string parameter is bound to the same position
+    And all parameter bindings are reset
+    And a new string parameter is bound to the same parameter position
     Then re-executing should return the new string value
 
   @odbc_e2e
@@ -295,4 +293,4 @@ Feature: ODBC SQLBindParameter function behavior
     Given Snowflake client is logged in
     When a parameter is bound before calling SQLExecDirect
     And SQLExecDirect is called with a parameterized query
-    Then executing and fetching should return the bound parameter value
+    Then the bound parameter value should be returned
