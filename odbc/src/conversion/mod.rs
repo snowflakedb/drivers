@@ -1,5 +1,6 @@
 // mod readers;
 pub mod error;
+pub(crate) mod param_binding;
 mod parsers;
 mod traits;
 pub mod warning;
@@ -18,6 +19,7 @@ mod real;
 mod real_tests;
 #[cfg(test)]
 mod test_utils;
+mod time;
 mod timestamp;
 mod varchar;
 

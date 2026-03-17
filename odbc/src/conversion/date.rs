@@ -2,10 +2,15 @@ use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Date32Type;
 use chrono::{Datelike, NaiveDate};
 use odbc_sys as sql;
+use serde_json::Value;
 
+use crate::api::ParameterBinding;
 use crate::cdata_types::CDataType;
+use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -71,5 +76,58 @@ impl WriteODBCType for SnowflakeDate {
             }
             .fail(),
         }
+    }
+}
+
+impl ReadODBC for SnowflakeDate {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        match binding.value_type {
+            CDataType::Date | CDataType::TypeDate => {
+                let date = read_unaligned::<sql::Date>(binding);
+                NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
+                    .ok_or_else(|| {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    })
+            }
+            CDataType::Char => {
+                let s = read_char_str(binding)?;
+                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })
+            }
+            CDataType::WChar => {
+                let s = read_wchar_str(binding)?;
+                NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })
+            }
+            _ => UnsupportedCDataTypeSnafu {
+                c_type: binding.value_type,
+            }
+            .fail(),
+        }
+    }
+}
+
+impl WriteJson for SnowflakeDate {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        let millis = (value - UNIX_EPOCH).num_days() * 86_400_000;
+        Ok(Value::String(millis.to_string()))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Date
     }
 }

@@ -1,11 +1,16 @@
 use arrow::array::{Array, StructArray};
 use arrow::datatypes::{Int32Type, Int64Type};
-use chrono::{DateTime, Datelike, NaiveDateTime, Timelike};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
+use serde_json::Value;
 
+use crate::api::ParameterBinding;
 use crate::cdata_types::CDataType;
+use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -86,5 +91,80 @@ impl WriteODBCType for SnowflakeTimestampNtz {
             }
             .fail(),
         }
+    }
+}
+
+impl ReadODBC for SnowflakeTimestampNtz {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        match binding.value_type {
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
+                    .ok_or_else(|| {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    })?;
+                let time = NaiveTime::from_hms_nano_opt(
+                    ts.hour as u32,
+                    ts.minute as u32,
+                    ts.second as u32,
+                    ts.fraction,
+                )
+                .ok_or_else(|| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })?;
+                Ok(NaiveDateTime::new(date, time))
+            }
+            CDataType::Char => {
+                let s = read_char_str(binding)?;
+                NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S")
+                    .or_else(|_| NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S%.f"))
+                    .map_err(|_| {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    })
+            }
+            CDataType::WChar => {
+                let s = read_wchar_str(binding)?;
+                NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S")
+                    .or_else(|_| NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%d %H:%M:%S%.f"))
+                    .map_err(|_| {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    })
+            }
+            _ => UnsupportedCDataTypeSnafu {
+                c_type: binding.value_type,
+            }
+            .fail(),
+        }
+    }
+}
+
+impl WriteJson for SnowflakeTimestampNtz {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        let epoch_nanos = value.and_utc().timestamp_nanos_opt().ok_or_else(|| {
+            UnsupportedCDataTypeSnafu {
+                c_type: CDataType::TypeTimestamp,
+            }
+            .build()
+        })?;
+        Ok(Value::String(epoch_nanos.to_string()))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::TimestampNtz
     }
 }
