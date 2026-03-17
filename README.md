@@ -12,7 +12,7 @@ This project contains multiple test suites across different driver implementatio
 
 ## Prerequisites
 
-> **_NOTE:_** For snowflake cloud workspace users: Run `./scripts/install_prerequisites_cloud_ws.sh` to install required global dependencies
+> **_NOTE:_** For snowflake cloud workspace users: the dependencies are managed by nix-shell and direnv
 
 ### 1. Decode Secrets
 
