@@ -1,4 +1,4 @@
-// Float to illegal C type conversion tests
+// Float incompatible C type conversion tests
 // Tests that converting Snowflake FLOAT/DOUBLE/REAL SQL type to C types
 // not listed in the ODBC spec conversion table returns the appropriate error.
 // Per the ODBC spec (Appendix D, "SQL to C: Numeric"), approximate numeric
@@ -28,7 +28,7 @@ static void check_restricted_conversion(const StatementHandleWrapper& stmt, SQLU
   INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
-  CHECK((sqlstate == "07006" || sqlstate == "HY003" || sqlstate == "HYC00"));
+  CHECK(sqlstate == "07006");
 }
 
 static void check_single_interval_conversion(Connection& conn, const char* query, SQLSMALLINT target_type) {
@@ -45,7 +45,7 @@ static void check_single_interval_conversion(Connection& conn, const char* query
   NEW_DRIVER_ONLY("BD#18") {
     REQUIRE(ret == SQL_ERROR);
     REQUIRE(!records.empty());
-    CHECK((sqlstate == "07006" || sqlstate == "HY003"));
+    CHECK(sqlstate == "07006");
   }
 }
 
@@ -63,11 +63,11 @@ static void check_compound_interval_conversion(Connection& conn, const char* que
 
   OLD_DRIVER_ONLY("BD#19") { CHECK(sqlstate == "22015"); }
 
-  NEW_DRIVER_ONLY("BD#19") { CHECK((sqlstate == "07006" || sqlstate == "HY003")); }
+  NEW_DRIVER_ONLY("BD#19") { CHECK(sqlstate == "07006"); }
 }
 
 // ============================================================================
-// ILLEGAL CONVERSIONS - Float to Temporal C Types
+// INCOMPATIBLE CONVERSIONS - Float to Temporal C Types
 // ============================================================================
 
 TEST_CASE("should fail converting float to temporal C types", "[datatype][float][conversion][negative]") {
@@ -97,7 +97,7 @@ TEST_CASE("should fail converting float to temporal C types", "[datatype][float]
 }
 
 // ============================================================================
-// ILLEGAL CONVERSIONS - Float to Single-Component Interval C Types
+// INCOMPATIBLE CONVERSIONS - Float to Single-Component Interval C Types
 // ============================================================================
 
 TEST_CASE("should fail converting float to single-component interval C types",
@@ -128,7 +128,7 @@ TEST_CASE("should fail converting float to single-component interval C types",
 }
 
 // ============================================================================
-// ILLEGAL CONVERSIONS - Float to Compound Interval C Types
+// INCOMPATIBLE CONVERSIONS - Float to Compound Interval C Types
 // ============================================================================
 
 TEST_CASE("should fail converting float to compound interval C types", "[datatype][float][conversion][negative]") {
@@ -161,7 +161,7 @@ TEST_CASE("should fail converting float to compound interval C types", "[datatyp
 }
 
 // ============================================================================
-// ILLEGAL CONVERSIONS - Float to GUID C Type
+// INCOMPATIBLE CONVERSIONS - Float to GUID C Type
 // ============================================================================
 
 TEST_CASE("should fail converting float to SQL_C_GUID", "[datatype][float][conversion][negative]") {
