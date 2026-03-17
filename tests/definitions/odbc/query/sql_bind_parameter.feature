@@ -219,6 +219,7 @@ Feature: ODBC SQLBindParameter function behavior
   @odbc_e2e
   Scenario: SQLBindParameter binds SQL_C_TYPE_TIMESTAMP to TIMESTAMP_NTZ and round-trips.
     Given Snowflake client is logged in
+    And the session timezone is set to UTC
     And a temporary table with a TIMESTAMP_NTZ column exists
     When a parameterized INSERT is prepared
     And an SQL_C_TYPE_TIMESTAMP parameter is bound with fractional seconds
@@ -228,6 +229,7 @@ Feature: ODBC SQLBindParameter function behavior
   @odbc_e2e
   Scenario: SQLBindParameter binds timestamp as SQL_C_CHAR string.
     Given Snowflake client is logged in
+    And the session timezone is set to UTC
     And a temporary table with a TIMESTAMP_NTZ column exists
     When a parameterized INSERT is prepared
     And an SQL_C_CHAR parameter is bound with a timestamp string

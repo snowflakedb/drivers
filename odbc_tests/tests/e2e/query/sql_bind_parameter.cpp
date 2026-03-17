@@ -786,6 +786,9 @@ TEST_CASE("SQLBindParameter binds SQL_C_TYPE_TIMESTAMP to TIMESTAMP_NTZ and roun
   // Given Snowflake client is logged in
   Connection conn;
 
+  // And the session timezone is set to UTC
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+
   // And a temporary table with a TIMESTAMP_NTZ column exists
   auto schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE bind_ts_test (val TIMESTAMP_NTZ(9))");
@@ -832,6 +835,9 @@ TEST_CASE("SQLBindParameter binds SQL_C_TYPE_TIMESTAMP to TIMESTAMP_NTZ and roun
 TEST_CASE("SQLBindParameter binds timestamp as SQL_C_CHAR string.", "[query][bind_parameter]") {
   // Given Snowflake client is logged in
   Connection conn;
+
+  // And the session timezone is set to UTC
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
 
   // And a temporary table with a TIMESTAMP_NTZ column exists
   auto schema = Schema::use_random_schema(conn);
