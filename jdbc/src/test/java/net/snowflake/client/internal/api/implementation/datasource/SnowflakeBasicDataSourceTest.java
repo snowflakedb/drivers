@@ -4,27 +4,78 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockStatic;
 
 import java.io.PrintWriter;
+import java.lang.reflect.Proxy;
 import java.sql.Connection;
-import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.util.Properties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.MockedStatic;
 
 public class SnowflakeBasicDataSourceTest {
 
+  private static final class TestableSnowflakeBasicDataSource extends SnowflakeBasicDataSource {
+    private Connection nextConnection;
+    private Properties lastProperties;
+    private String lastUrl;
+
+    void setNextConnection(Connection nextConnection) {
+      this.nextConnection = nextConnection;
+    }
+
+    Properties getLastProperties() {
+      return lastProperties;
+    }
+
+    String getLastUrl() {
+      return lastUrl;
+    }
+
+    @Override
+    protected Connection openConnection(String url, Properties properties) throws SQLException {
+      this.lastUrl = url;
+      this.lastProperties = new Properties();
+      this.lastProperties.putAll(properties);
+      return nextConnection;
+    }
+  }
+
   private SnowflakeBasicDataSource dataSource;
+
+  private Connection createDummyConnection() {
+    return (Connection)
+        Proxy.newProxyInstance(
+            Connection.class.getClassLoader(),
+            new Class<?>[] {Connection.class},
+            (proxy, method, args) -> {
+              if ("isClosed".equals(method.getName())) {
+                return false;
+              }
+              if ("close".equals(method.getName())) {
+                return null;
+              }
+              if ("unwrap".equals(method.getName())) {
+                Class<?> iface = (Class<?>) args[0];
+                if (iface.isInstance(proxy)) {
+                  return proxy;
+                }
+                throw new SQLFeatureNotSupportedException();
+              }
+              if ("isWrapperFor".equals(method.getName())) {
+                Class<?> iface = (Class<?>) args[0];
+                return iface.isInstance(proxy);
+              }
+
+              throw new UnsupportedOperationException(
+                  "Unexpected Connection method in test: " + method.getName());
+            });
+  }
 
   @BeforeEach
   public void setUp() {
-    dataSource = new SnowflakeBasicDataSource();
+    dataSource = new TestableSnowflakeBasicDataSource();
     dataSource.setUrl("jdbc:snowflake://testaccount.snowflakecomputing.com");
   }
 
@@ -34,75 +85,65 @@ public class SnowflakeBasicDataSourceTest {
     dataSource.setUser("testuser");
     dataSource.setPassword("testpassword");
 
-    ArgumentCaptor<Properties> propertiesCaptor = ArgumentCaptor.forClass(Properties.class);
-    Connection mockConnection = mock(Connection.class);
-    try (MockedStatic<DriverManager> driverManager = mockStatic(DriverManager.class)) {
-      driverManager
-          .when(() -> DriverManager.getConnection(anyString(), propertiesCaptor.capture()))
-          .thenReturn(mockConnection);
+    Connection mockConnection = createDummyConnection();
+    TestableSnowflakeBasicDataSource testableDataSource =
+        (TestableSnowflakeBasicDataSource) dataSource;
+    testableDataSource.setNextConnection(mockConnection);
 
-      Connection result = dataSource.getConnection();
+    Connection result = dataSource.getConnection();
 
-      assertSame(mockConnection, result);
-      Properties capturedProperties = propertiesCaptor.getValue();
-      assertEquals("testuser", capturedProperties.getProperty("user"));
-      assertEquals("testpassword", capturedProperties.getProperty("password"));
-    }
+    assertSame(mockConnection, result);
+    assertEquals(
+        "jdbc:snowflake://testaccount.snowflakecomputing.com", testableDataSource.getLastUrl());
+    Properties capturedProperties = testableDataSource.getLastProperties();
+    assertEquals("testuser", capturedProperties.getProperty("user"));
+    assertEquals("testpassword", capturedProperties.getProperty("password"));
   }
 
   @Test
   public void testGetConnectionWithUsernameAndPasswordSetsPropertiesAndReturnsConnection()
       throws Exception {
-    ArgumentCaptor<Properties> propertiesCaptor = ArgumentCaptor.forClass(Properties.class);
-    Connection mockConnection = mock(Connection.class);
-    try (MockedStatic<DriverManager> driverManager = mockStatic(DriverManager.class)) {
-      driverManager
-          .when(() -> DriverManager.getConnection(anyString(), propertiesCaptor.capture()))
-          .thenReturn(mockConnection);
+    Connection mockConnection = createDummyConnection();
+    TestableSnowflakeBasicDataSource testableDataSource =
+        (TestableSnowflakeBasicDataSource) dataSource;
+    testableDataSource.setNextConnection(mockConnection);
 
-      Connection result = dataSource.getConnection("user1", "pass1");
+    Connection result = dataSource.getConnection("user1", "pass1");
 
-      assertSame(mockConnection, result);
-      Properties capturedProperties = propertiesCaptor.getValue();
-      assertEquals("user1", capturedProperties.getProperty("user"));
-      assertEquals("pass1", capturedProperties.getProperty("password"));
-    }
+    assertSame(mockConnection, result);
+    Properties capturedProperties = testableDataSource.getLastProperties();
+    assertEquals("user1", capturedProperties.getProperty("user"));
+    assertEquals("pass1", capturedProperties.getProperty("password"));
   }
 
   @Test
   public void testGetConnectionWithNullUsernameDoesNotSetUserProperty() throws Exception {
-    ArgumentCaptor<Properties> propertiesCaptor = ArgumentCaptor.forClass(Properties.class);
-    Connection mockConnection = mock(Connection.class);
-    try (MockedStatic<DriverManager> driverManager = mockStatic(DriverManager.class)) {
-      driverManager
-          .when(() -> DriverManager.getConnection(anyString(), propertiesCaptor.capture()))
-          .thenReturn(mockConnection);
+    Connection mockConnection = createDummyConnection();
+    TestableSnowflakeBasicDataSource testableDataSource =
+        (TestableSnowflakeBasicDataSource) dataSource;
+    testableDataSource.setNextConnection(mockConnection);
 
-      Connection result = dataSource.getConnection(null, "pass1");
+    Connection result = dataSource.getConnection(null, "pass1");
 
-      assertSame(mockConnection, result);
-      Properties capturedProperties = propertiesCaptor.getValue();
-      assertNull(capturedProperties.getProperty("user"));
-      assertEquals("pass1", capturedProperties.getProperty("password"));
-    }
+    assertSame(mockConnection, result);
+    Properties capturedProperties = testableDataSource.getLastProperties();
+    assertNull(capturedProperties.getProperty("user"));
+    assertEquals("pass1", capturedProperties.getProperty("password"));
   }
 
   @Test
   public void testGetConnectionWithNullPasswordDoesNotSetPasswordProperty() throws Exception {
-    ArgumentCaptor<Properties> propertiesCaptor = ArgumentCaptor.forClass(Properties.class);
-    Connection mockConnection = mock(Connection.class);
-    try (MockedStatic<DriverManager> driverManager = mockStatic(DriverManager.class)) {
-      driverManager
-          .when(() -> DriverManager.getConnection(anyString(), propertiesCaptor.capture()))
-          .thenReturn(mockConnection);
+    Connection mockConnection = createDummyConnection();
+    TestableSnowflakeBasicDataSource testableDataSource =
+        (TestableSnowflakeBasicDataSource) dataSource;
+    testableDataSource.setNextConnection(mockConnection);
 
-      Connection result = dataSource.getConnection("user1", null);
+    Connection result = dataSource.getConnection("user1", null);
 
-      assertSame(mockConnection, result);
-      Properties capturedProperties = propertiesCaptor.getValue();
-      assertEquals("user1", capturedProperties.getProperty("user"));
-      assertNull(capturedProperties.getProperty("password"));
-    }
+    assertSame(mockConnection, result);
+    Properties capturedProperties = testableDataSource.getLastProperties();
+    assertEquals("user1", capturedProperties.getProperty("user"));
+    assertNull(capturedProperties.getProperty("password"));
   }
 
   @Test

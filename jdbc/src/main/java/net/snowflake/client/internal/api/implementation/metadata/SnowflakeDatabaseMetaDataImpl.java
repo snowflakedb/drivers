@@ -10,11 +10,6 @@ import net.snowflake.client.api.connection.SnowflakeDatabaseMetaData;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.util.NotImplementedException;
 
-/**
- * Snowflake JDBC DatabaseMetaData implementation
- *
- * <p>This is a stub implementation that provides basic database metadata information.
- */
 public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, SnowflakeDatabaseMetaData {
   private static final String DatabaseProductName = "Snowflake";
   private static final String DriverName = "Snowflake";
@@ -311,7 +306,7 @@ public class SnowflakeDatabaseMetaDataImpl implements DatabaseMetaData, Snowflak
   @Override
   public boolean supportsMultipleResultSets() throws SQLException {
     connection.checkClosed();
-    // TODO: should it be true since we support multi statements?
+    // TODO: it should be true when we support multi statements
     return false;
   }
 

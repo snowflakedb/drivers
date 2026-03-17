@@ -1,12 +1,17 @@
 package net.snowflake.client.internal.api.implementation.statement;
 
+import static net.snowflake.client.internal.api.implementation.statement.StatementTypeClassifier.NO_UPDATE_COUNT;
+
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
 import net.snowflake.client.api.statement.SnowflakeStatement;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
@@ -23,21 +28,19 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.State
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementNewRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryRequest;
 
-/**
- * Snowflake JDBC Statement implementation
- *
- * <p>This is a stub implementation that provides the basic JDBC Statement interface and delegates
- * to native Rust implementation via JNI.
- */
 public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeStatementImpl.class);
 
-  public final SnowflakeConnectionImpl connection;
+  protected final SnowflakeConnectionImpl connection;
   protected boolean closed = false;
   protected int maxRows = 0;
   protected int queryTimeout = 0;
   protected int fetchSize = 0;
   protected StatementHandle statementHandle;
+  protected ResultSet currentResultSet;
+  protected long currentUpdateCount = NO_UPDATE_COUNT;
+  protected String queryId;
+  protected final Set<ResultSet> openResultSets = ConcurrentHashMap.newKeySet();
 
   public SnowflakeStatementImpl(SnowflakeConnectionImpl connection) {
     this.connection = connection;
@@ -59,9 +62,31 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   protected ResultSet executeQueryWithBindings(String sql, QueryBindings bindings)
       throws SQLException {
+    checkClosed();
+    ExecuteResult executeResult = executeStatement(sql, bindings);
+    applyExecuteQueryResult(executeResult);
+    return currentResultSet;
+  }
+
+  protected int executeUpdateWithBindings(String sql, QueryBindings bindings) throws SQLException {
+    boolean producedResultSet = executeWithBindings(sql, bindings);
+    if (producedResultSet) {
+      throw new SnowflakeSQLException(
+          "executeUpdate() cannot be used for statements that produce a ResultSet");
+    }
+    return getCurrentUpdateCountAsInt();
+  }
+
+  protected boolean executeWithBindings(String sql, QueryBindings bindings) throws SQLException {
+    checkClosed();
+    ExecuteResult executeResult = executeStatement(sql, bindings);
+    return updateExecutionStateAndReturnHasResultSet(executeResult);
+  }
+
+  private ExecuteResult executeStatement(String sql, QueryBindings bindings) throws SQLException {
     boolean hasBindings = bindings != null;
-    logger.debug(
-        "Statement executeQueryWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
+    logger.debug("Statement executeWithBindings start: sql={}, hasBindings={}", sql, hasBindings);
+    prepareForExecution();
     StatementSetSqlQueryRequest statementSetSqlQueryRequest =
         StatementSetSqlQueryRequest.newBuilder()
             .setStmtHandle(statementHandle)
@@ -92,21 +117,105 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
           "statementExecuteQuery succeeded: hasBindings={}, queryId={}",
           hasBindings,
           executeResult.getQueryId());
-      return new SnowflakeResultSetImpl(this, executeResult);
+      return executeResult;
     } catch (DatabaseDriverService.ServiceException e) {
       logger.warn("statementExecuteQuery failed: hasBindings={}", hasBindings, e);
       throw new SnowflakeSQLException("Failed to execute statement query", e);
     }
   }
 
+  private void applyExecuteQueryResult(ExecuteResult executeResult) throws SQLException {
+    queryId = executeResult.getQueryId();
+    // Match the old JDBC driver: executeQuery() historically accepted single-statement
+    // DML/DDL and surfaced a ResultSet wrapper when the server returned a stream
+    if (StatementTypeClassifier.producesResultSet(executeResult) || executeResult.hasStream()) {
+      applyResultSetExecutionResult(executeResult);
+      return;
+    }
+
+    currentResultSet = null;
+    currentUpdateCount = NO_UPDATE_COUNT;
+  }
+
+  private boolean updateExecutionStateAndReturnHasResultSet(ExecuteResult executeResult)
+      throws SQLException {
+    queryId = executeResult.getQueryId();
+    if (StatementTypeClassifier.producesResultSet(executeResult)) {
+      applyResultSetExecutionResult(executeResult);
+      return true;
+    }
+
+    currentResultSet = null;
+    currentUpdateCount = StatementTypeClassifier.getUpdateCount(executeResult);
+    return false;
+  }
+
+  private void applyResultSetExecutionResult(ExecuteResult executeResult) throws SQLException {
+    currentResultSet = new SnowflakeResultSetImpl(this, executeResult);
+    currentUpdateCount = NO_UPDATE_COUNT;
+  }
+
+  private void prepareForExecution() throws SQLException {
+    if (currentResultSet != null && !currentResultSet.isClosed()) {
+      openResultSets.add(currentResultSet);
+    }
+    currentResultSet = null;
+    currentUpdateCount = NO_UPDATE_COUNT;
+    queryId = null;
+  }
+
+  private void clearExecutionState() throws SQLException {
+    closeCurrentResultSet();
+    for (ResultSet resultSet : openResultSets) {
+      closeResultSet(resultSet);
+    }
+    openResultSets.clear();
+    currentResultSet = null;
+    currentUpdateCount = NO_UPDATE_COUNT;
+    queryId = null;
+  }
+
+  protected void closeCurrentResultSet() throws SQLException {
+    closeResultSet(currentResultSet);
+  }
+
+  public void removeClosedResultSet(ResultSet resultSet) {
+    openResultSets.remove(resultSet);
+  }
+
+  private void closeResultSet(ResultSet resultSet) throws SQLException {
+    if (resultSet != null && !resultSet.isClosed()) {
+      resultSet.close();
+    }
+  }
+
+  private int getCurrentUpdateCountAsInt() throws SQLException {
+    return toJdbcIntUpdateCount(currentUpdateCount);
+  }
+
+  private int toJdbcIntUpdateCount(long updateCount) throws SQLException {
+    if (updateCount == NO_UPDATE_COUNT) {
+      return (int) NO_UPDATE_COUNT;
+    }
+    try {
+      return Math.toIntExact(updateCount);
+    } catch (ArithmeticException e) {
+      throw new SnowflakeSQLException("Update count exceeds JDBC int range", e);
+    }
+  }
+
   @Override
   public int executeUpdate(String sql) throws SQLException {
     checkClosed();
-    return 0; // Stub: return 0 rows affected
+    return executeUpdateWithBindings(sql, null);
   }
 
   @Override
   public void close() throws SQLException {
+    if (closed) {
+      return;
+    }
+    clearExecutionState();
     closed = true;
   }
 
@@ -178,27 +287,24 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
   @Override
   public boolean execute(String sql) throws SQLException {
     checkClosed();
-    // Stub implementation - assume all statements return result sets
-    executeQuery(sql);
-    return true;
+    return executeWithBindings(sql, null);
   }
 
   @Override
   public ResultSet getResultSet() throws SQLException {
     checkClosed();
-    return null; // No current result set in stub implementation
+    return currentResultSet;
   }
 
   @Override
   public int getUpdateCount() throws SQLException {
     checkClosed();
-    return -1; // No update count in stub implementation
+    return getCurrentUpdateCountAsInt();
   }
 
   @Override
   public boolean getMoreResults() throws SQLException {
-    checkClosed();
-    return false; // No additional result sets in stub implementation
+    return getMoreResults(Statement.CLOSE_CURRENT_RESULT);
   }
 
   @Override
@@ -260,9 +366,26 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
     return connection;
   }
 
+  public Set<ResultSet> getOpenResultSets() {
+    return Collections.unmodifiableSet(openResultSets);
+  }
+
   @Override
   public boolean getMoreResults(int current) throws SQLException {
     checkClosed();
+    if (current == Statement.CLOSE_CURRENT_RESULT || current == Statement.CLOSE_ALL_RESULTS) {
+      closeCurrentResultSet();
+    }
+    if (current == Statement.CLOSE_ALL_RESULTS) {
+      for (ResultSet resultSet : openResultSets) {
+        closeResultSet(resultSet);
+      }
+      openResultSets.clear();
+    }
+    // TODO: Implement multi-statement result traversal once JDBC can iterate child results beyond
+    // the first ExecuteResult returned for a statement execution.
+    currentResultSet = null;
+    currentUpdateCount = NO_UPDATE_COUNT;
     return false;
   }
 
@@ -360,7 +483,8 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
 
   @Override
   public String getQueryID() throws SQLException {
-    throw new SQLFeatureNotSupportedException("getQueryID not supported");
+    checkClosed();
+    return queryId;
   }
 
   @Override
