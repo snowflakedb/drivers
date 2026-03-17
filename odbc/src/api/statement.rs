@@ -431,10 +431,19 @@ pub fn bind_parameter(
     Ok(())
 }
 
+/// ODBC InputOutputType values:
+/// 1 = SQL_PARAM_INPUT, 2 = SQL_PARAM_INPUT_OUTPUT,
+/// 3 = SQL_PARAM_OUTPUT, 4 = SQL_PARAM_INPUT_OUTPUT_STREAM,
+/// 5 = SQL_PARAM_OUTPUT_STREAM
 fn is_valid_param_type(value: i16) -> bool {
     matches!(value, 1..=5)
 }
 
+/// ODBC SQL data type identifier ranges:
+///   1..=12   — core types (SQL_CHAR through SQL_VARCHAR)
+///  91..=95   — datetime types (SQL_TYPE_DATE, SQL_TYPE_TIME, SQL_TYPE_TIMESTAMP, etc.)
+///  -11..=-1  — extended types (SQL_GUID, SQL_WLONGVARCHAR, ..., SQL_BIT)
+///  101..=113 — interval types (SQL_INTERVAL_YEAR through SQL_INTERVAL_MINUTE_TO_SECOND)
 fn is_valid_sql_data_type(value: i16) -> bool {
     matches!(value, 1..=12 | 91..=95 | -11..=-1 | 101..=113)
 }
