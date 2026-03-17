@@ -63,6 +63,20 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid parameter type: {value}"))]
+    InvalidParameterType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid SQL data type: {value}"))]
+    InvalidSqlDataType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid record number: {number}"))]
     InvalidRecordNumber {
         number: sql::SmallInt,
@@ -381,6 +395,8 @@ impl OdbcError {
             OdbcError::InvalidApplicationBufferType { .. } => {
                 SqlState::InvalidApplicationBufferType
             }
+            OdbcError::InvalidParameterType { .. } => SqlState::InvalidParameterType,
+            OdbcError::InvalidSqlDataType { .. } => SqlState::InvalidSqlDataType,
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
@@ -392,7 +408,7 @@ impl OdbcError {
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::UnknownInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
-            OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::InvalidParameterNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,

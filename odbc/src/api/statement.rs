@@ -1,8 +1,9 @@
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
-    NoMoreDataSnafu, OdbcRuntimeSnafu, Required,
+    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidApplicationBufferTypeSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
+    InvalidParameterNumberSnafu, InvalidParameterTypeSnafu, InvalidSqlDataTypeSnafu,
+    JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -353,27 +354,62 @@ fn apply_parameter_bindings(
 pub fn bind_parameter(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
-    input_output_type: sql::ParamType,
-    value_type: CDataType,
-    parameter_type: sql::SqlDataType,
+    raw_input_output_type: sql::SmallInt,
+    raw_value_type: sql::SmallInt,
+    raw_parameter_type: sql::SmallInt,
     _column_size: sql::ULen,
     _decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> OdbcResult<()> {
-    // TODO handle input_output_type
     tracing::debug!(
-        "bind_parameter: parameter_number={}, input_output_type={:?}, value_type={:?}, parameter_type={:?}",
+        "bind_parameter: parameter_number={}, input_output_type={}, value_type={}, parameter_type={}",
         parameter_number,
-        input_output_type,
-        value_type,
-        parameter_type
+        raw_input_output_type,
+        raw_value_type,
+        raw_parameter_type
     );
 
     if parameter_number == 0 {
         tracing::error!("bind_parameter: parameter_number cannot be 0");
         return InvalidParameterNumberSnafu.fail();
+    }
+
+    if !is_valid_param_type(raw_input_output_type) {
+        tracing::error!(
+            "bind_parameter: invalid input_output_type: {}",
+            raw_input_output_type
+        );
+        return InvalidParameterTypeSnafu {
+            value: raw_input_output_type,
+        }
+        .fail();
+    }
+
+    let value_type = CDataType::try_from(raw_value_type).map_err(|_| {
+        tracing::error!("bind_parameter: invalid value_type: {}", raw_value_type);
+        InvalidApplicationBufferTypeSnafu.build()
+    })?;
+
+    let parameter_type = sql::SqlDataType(raw_parameter_type);
+    if !is_valid_sql_data_type(raw_parameter_type) {
+        tracing::error!(
+            "bind_parameter: invalid parameter_type: {}",
+            raw_parameter_type
+        );
+        return InvalidSqlDataTypeSnafu {
+            value: raw_parameter_type,
+        }
+        .fail();
+    }
+
+    let is_input = raw_input_output_type == sql::ParamType::Input as i16;
+    if is_input && parameter_value_ptr.is_null() && str_len_or_ind_ptr.is_null() {
+        tracing::error!(
+            "bind_parameter: both parameter_value_ptr and str_len_or_ind_ptr are null for input parameter"
+        );
+        return NullPointerSnafu.fail();
     }
 
     let stmt = stmt_from_handle(statement_handle);
@@ -386,7 +422,6 @@ pub fn bind_parameter(
         str_len_or_ind_ptr,
     };
 
-    // Store the binding
     stmt.parameter_bindings.insert(parameter_number, binding);
 
     tracing::info!(
@@ -394,6 +429,14 @@ pub fn bind_parameter(
         parameter_number
     );
     Ok(())
+}
+
+fn is_valid_param_type(value: i16) -> bool {
+    matches!(value, 1..=5)
+}
+
+fn is_valid_sql_data_type(value: i16) -> bool {
+    matches!(value, 1..=12 | 91..=95 | -11..=-1 | 101..=113)
 }
 
 /// Free statement resources based on the option
