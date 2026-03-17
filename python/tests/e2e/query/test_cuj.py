@@ -1,9 +1,11 @@
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 class TestCriticalUserJourneys:
     def test_desc_command(self, cursor):
         # When DESC SCHEMA command is executed
+        la_tz = ZoneInfo("America/Los_Angeles")
         cursor.execute("ALTER SESSION SET TIMEZONE = 'America/Los_Angeles';")
         rows = cursor.execute("desc schema snowflake.INFORMATION_SCHEMA").fetchall()
 
@@ -15,7 +17,7 @@ class TestCriticalUserJourneys:
         assert isinstance(kind, str)
 
         assert isinstance(created_on, datetime)
-        assert created_on == datetime(1970, 1, 1, 0, 0, tzinfo=timezone.utc)
+        assert created_on == datetime(1969, 12, 31, 16, 0, tzinfo=la_tz)
 
     def test_show_command(self, tmp_schema, cursor):
         # When SHOW SCHEMAS command is executed
