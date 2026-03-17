@@ -1,9 +1,14 @@
 use arrow::array::{Array, BooleanArray};
 use odbc_sys as sql;
+use serde_json::Value;
 
+use crate::api::ParameterBinding;
 use crate::cdata_types::CDataType;
+use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::param_binding::read_unaligned;
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
@@ -120,5 +125,24 @@ impl WriteODBCType for SnowflakeBoolean {
             }
             .fail(),
         }
+    }
+}
+
+impl ReadODBC for SnowflakeBoolean {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        Ok(read_unaligned::<u8>(binding) != 0)
+    }
+}
+
+impl WriteJson for SnowflakeBoolean {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        Ok(Value::String(value.to_string()))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Boolean
     }
 }

@@ -1,9 +1,16 @@
+use std::slice;
+
 use arrow::array::{Array, GenericByteArray};
 use arrow::datatypes::GenericBinaryType;
+use serde_json::Value;
 
+use crate::api::ParameterBinding;
 use crate::cdata_types::CDataType;
+use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::param_binding::buffer_data_len;
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 use odbc_sys as sql;
@@ -57,5 +64,27 @@ impl WriteODBCType for SnowflakeBinary {
             }
             .fail(),
         }
+    }
+}
+
+impl ReadODBC for SnowflakeBinary {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        let len = buffer_data_len(binding);
+        let bytes = unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len) };
+        Ok(bytes)
+    }
+}
+
+impl WriteJson for SnowflakeBinary {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        let hex: String = value.iter().map(|b| format!("{:02x}", b)).collect();
+        Ok(Value::String(hex))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Binary
     }
 }
