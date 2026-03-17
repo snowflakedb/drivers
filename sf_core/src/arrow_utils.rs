@@ -450,20 +450,6 @@ fn create_column_array(
             let min_value = min_value.unwrap();
             let max_value = max_value.unwrap();
 
-            if *scale > 0 {
-                return Ok((
-                    create_field_with_type(
-                        row_type,
-                        Some(DataType::Decimal128(*precision as u8, *scale as i8)),
-                    )?,
-                    Arc::new(
-                        arrow::array::Decimal128Array::from(decimal_values)
-                            .with_precision_and_scale(*precision as u8, *scale as i8)
-                            .context(ArrowSnafu {})?,
-                    ),
-                ));
-            }
-
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
                 cast_fixed_to_arrow::<arrow::datatypes::Int8Type>(
                     row_type,
@@ -1356,7 +1342,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fixed_column_with_scale_uses_decimal128() {
+    fn test_fixed_column_with_scale_narrows_to_int() {
         let rowset = vec![
             vec![Some("123.45".to_string())],
             vec![None],
@@ -1369,15 +1355,37 @@ mod tests {
             let col = batch
                 .column(0)
                 .as_any()
-                .downcast_ref::<arrow::array::Decimal128Array>()
+                .downcast_ref::<Int32Array>()
                 .unwrap();
-            assert_eq!(*col.data_type(), DataType::Decimal128(10, 2));
+            assert_eq!(*col.data_type(), DataType::Int32);
             assert_eq!(col.len(), 3);
             assert!(!col.is_null(0));
             assert_eq!(col.value(0), 12345);
             assert!(col.is_null(1));
             assert!(!col.is_null(2));
             assert_eq!(col.value(2), 67890);
+        } else {
+            panic!("Expected one record batch");
+        }
+    }
+
+    #[test]
+    fn test_fixed_column_with_scale_falls_back_to_decimal128_for_large_values() {
+        let rowset = vec![vec![Some("99999999999999999.99".to_string())], vec![None]];
+        let row_types = vec![RowType::fixed("col_fixed", true, 38, 2)];
+
+        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
+        if let Some(Ok(batch)) = reader.next() {
+            let col = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Decimal128Array>()
+                .unwrap();
+            assert_eq!(*col.data_type(), DataType::Decimal128(38, 2));
+            assert_eq!(col.len(), 2);
+            assert!(!col.is_null(0));
+            assert_eq!(col.value(0), 9999999999999999999i128);
+            assert!(col.is_null(1));
         } else {
             panic!("Expected one record batch");
         }
