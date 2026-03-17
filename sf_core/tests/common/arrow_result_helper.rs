@@ -141,6 +141,14 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
         ],
         "BINARY" => &["finalType", "precision", "scale", "physicalType"],
         "DECFLOAT" => &["finalType", "precision", "scale", "physicalType"],
+        "ARRAY" | "OBJECT" | "VARIANT" => &[
+            "finalType",
+            "byteLength",
+            "charLength",
+            "precision",
+            "scale",
+            "physicalType",
+        ],
         _ => &[],
     }
 }
