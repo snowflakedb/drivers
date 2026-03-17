@@ -1,4 +1,5 @@
 #include <cstring>
+#include <string>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -404,6 +405,40 @@ TEST_CASE("SQLBindParameter binds SQL_C_CHAR with empty string.", "[query][bind_
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, result, sizeof(result), &result_ind);
   CHECK_ODBC(ret, stmt);
   CHECK(std::string(result) == "");
+}
+
+TEST_CASE("SQLBindParameter binds SQL_C_WCHAR (UTF-16) string and round-trips through SELECT.",
+          "[query][bind_parameter]") {
+  // Doc: "SQLBindParameter supports binding to a Unicode C data type, even if
+  //       the underlying driver does not support Unicode data."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindparameter-function#summary
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameterized SELECT is prepared
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ? AS val", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And an SQL_C_WCHAR parameter is bound with a UTF-16 string
+  std::u16string param = u"wide hello";
+  SQLLEN indicator = param.size() * sizeof(char16_t);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_WVARCHAR, param.size(), 0,
+                         (SQLWCHAR*)param.c_str(), indicator, &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // Then executing and fetching should return the string
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  char result[256] = {};
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, result, sizeof(result), &result_ind);
+  CHECK_ODBC(ret, stmt);
+  CHECK(std::string(result) == "wide hello");
 }
 
 // =============================================================================
@@ -1061,6 +1096,60 @@ TEST_CASE("SQLFreeStmt SQL_RESET_PARAMS clears bindings and allows re-binding.",
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, result, sizeof(result), &result_ind);
   CHECK_ODBC(ret, stmt);
   CHECK(std::string(result) == "rebound");
+}
+
+TEST_CASE("SQLBindParameter rebinds parameter to different type without SQL_RESET_PARAMS.", "[query][bind_parameter]") {
+  // Doc: "Bindings remain in effect until the application calls SQLBindParameter again,
+  //       calls SQLFreeStmt with the SQL_RESET_PARAMS option..."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindparameter-function#comments
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameterized SELECT is prepared
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ? AS val", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And an integer parameter is bound and executed
+  SQLINTEGER int_param = 42;
+  SQLLEN int_ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0,
+                         &int_ind);
+  CHECK_ODBC(ret, stmt);
+
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  SQLINTEGER int_result = 0;
+  SQLLEN result_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &int_result, sizeof(int_result), &result_ind);
+  CHECK_ODBC(ret, stmt);
+  CHECK(int_result == 42);
+
+  ret = SQLCloseCursor(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // And the same parameter is rebound as a string without calling SQL_RESET_PARAMS
+  char str_param[] = "rebound_no_reset";
+  SQLLEN str_ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0,
+                         str_param, sizeof(str_param), &str_ind);
+  CHECK_ODBC(ret, stmt);
+
+  // Then re-executing should return the new string value
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  char str_result[256] = {};
+  SQLLEN str_result_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, str_result, sizeof(str_result), &str_result_ind);
+  CHECK_ODBC(ret, stmt);
+  CHECK(std::string(str_result) == "rebound_no_reset");
 }
 
 TEST_CASE("SQLExecDirect with bound parameter executes without SQLPrepare.", "[query][bind_parameter]") {

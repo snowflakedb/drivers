@@ -113,6 +113,13 @@ Feature: ODBC SQLBindParameter function behavior
     And an SQL_C_CHAR parameter is bound with an empty string
     Then executing and fetching should return an empty string
 
+  @odbc_e2e
+  Scenario: SQLBindParameter binds SQL_C_WCHAR (UTF-16) string and round-trips through SELECT.
+    Given Snowflake client is logged in
+    When a parameterized SELECT is prepared
+    And an SQL_C_WCHAR parameter is bound with a UTF-16 string
+    Then executing and fetching should return the string
+
   # ============================================================================
   # Boolean Types
   # ============================================================================
@@ -265,6 +272,14 @@ Feature: ODBC SQLBindParameter function behavior
     And the statement is executed and the result verified
     And the cursor is closed and the bound variable changed to 20
     Then re-executing should return 20
+
+  @odbc_e2e
+  Scenario: SQLBindParameter rebinds parameter to different type without SQL_RESET_PARAMS.
+    Given Snowflake client is logged in
+    When a parameterized SELECT is prepared and an integer is bound
+    And the statement is executed and the integer result is verified
+    And the same parameter is rebound as a string without SQL_RESET_PARAMS
+    Then re-executing should return the new string value
 
   @odbc_e2e
   Scenario: SQLFreeStmt SQL_RESET_PARAMS clears bindings and allows re-binding.
