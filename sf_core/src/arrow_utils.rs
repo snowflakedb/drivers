@@ -586,7 +586,7 @@ fn create_column_array(
                     Ok((field, Arc::new(Int64Array::from(normalized_epoch_values))))
                 }
                 DataType::Struct(fields) => {
-                    let null_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
+                    let validity_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
                     let epoch_values: Vec<i64> =
                         all_values.iter().map(|v| v.map_or(0, |(e, _)| e)).collect();
                     let fraction_values: Vec<i32> =
@@ -608,7 +608,7 @@ fn create_column_array(
                         (fields[1].clone(), fraction_array),
                     ];
                     let struct_array = arrow::array::StructArray::from(arrays);
-                    let null_buffer = arrow::buffer::NullBuffer::from(null_mask);
+                    let null_buffer = arrow::buffer::NullBuffer::from(validity_mask);
                     let nullable_struct = arrow::array::StructArray::new(
                         struct_array.fields().clone(),
                         struct_array.columns().to_vec(),
@@ -668,7 +668,7 @@ fn create_column_array(
             let field = create_field(row_type)?;
             match field.data_type() {
                 DataType::Struct(fields) if fields.len() == 2 => {
-                    let null_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
+                    let validity_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
                     let normalized_epoch_values: Vec<i64> = all_values
                         .iter()
                         .map(|v| {
@@ -691,7 +691,7 @@ fn create_column_array(
                         (fields[1].clone(), tz_array),
                     ];
                     let struct_array = arrow::array::StructArray::from(arrays);
-                    let null_buffer = arrow::buffer::NullBuffer::from(null_mask);
+                    let null_buffer = arrow::buffer::NullBuffer::from(validity_mask);
                     let nullable_struct = arrow::array::StructArray::new(
                         struct_array.fields().clone(),
                         struct_array.columns().to_vec(),
@@ -700,7 +700,7 @@ fn create_column_array(
                     Ok((field, Arc::new(nullable_struct)))
                 }
                 DataType::Struct(fields) if fields.len() == 3 => {
-                    let null_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
+                    let validity_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
                     let epoch_values: Vec<i64> = all_values
                         .iter()
                         .map(|v| v.map_or(0, |((e, _), _)| e))
@@ -732,7 +732,7 @@ fn create_column_array(
                         (fields[2].clone(), tz_array),
                     ];
                     let struct_array = arrow::array::StructArray::from(arrays);
-                    let null_buffer = arrow::buffer::NullBuffer::from(null_mask);
+                    let null_buffer = arrow::buffer::NullBuffer::from(validity_mask);
                     let nullable_struct = arrow::array::StructArray::new(
                         struct_array.fields().clone(),
                         struct_array.columns().to_vec(),
@@ -880,7 +880,6 @@ fn create_column_array(
 }
 
 /// Converts a string rowset with RowType metadata to Arrow format.
-/// Supports TEXT, FIXED, BOOLEAN, REAL, DATE, TIMESTAMP_NTZ, TIMESTAMP_LTZ, and TIMESTAMP_TZ types.
 /// Null values in the rowset are preserved as Arrow nulls.
 /// Assumes rowset and row_types have been validated to have matching column counts.
 pub fn convert_string_rowset_to_arrow_reader(
