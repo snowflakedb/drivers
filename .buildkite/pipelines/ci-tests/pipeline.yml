@@ -47,8 +47,8 @@ steps:
         <<: *common
         command: |
           echo "--- :mag: Test Selection"
-          pip install pyyaml -q
-          TEST_FILTER=$$(python ci/select_tests.py --driver rust --group integ,e2e --verbose)
+          pip3 install pyyaml -q
+          TEST_FILTER=$$(python3 ci/select_tests.py --driver rust --group integ,e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for rust core, skipping"
             exit 0
@@ -80,8 +80,8 @@ steps:
         <<: *common
         command: |
           echo "--- :mag: Test Selection"
-          pip install pyyaml -q
-          TEST_FILTER=$$(python ci/select_tests.py --driver python --group integ,e2e --verbose)
+          pip3 install pyyaml -q
+          TEST_FILTER=$$(python3 ci/select_tests.py --driver python --group integ,e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for python, skipping"
             exit 0
@@ -116,8 +116,8 @@ steps:
         <<: *common
         command: |
           echo "--- :mag: Test Selection"
-          pip install pyyaml -q
-          TEST_FILTER=$$(python ci/select_tests.py --driver odbc --group integ,e2e --verbose)
+          pip3 install pyyaml -q
+          TEST_FILTER=$$(python3 ci/select_tests.py --driver odbc --group integ,e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for odbc, skipping"
             exit 0
@@ -161,8 +161,8 @@ steps:
         <<: *common
         command: |
           echo "--- :mag: Test Selection"
-          pip install pyyaml -q
-          TEST_FILTER=$$(python ci/select_tests.py --driver java --group e2e --verbose)
+          pip3 install pyyaml -q
+          TEST_FILTER=$$(python3 ci/select_tests.py --driver java --group e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for jdbc, skipping"
             exit 0
