@@ -123,6 +123,40 @@ fn should_return_decfloat_as_arrow_even_if_json_result_set_is_returned() {
     )
 }
 
+#[test]
+fn should_return_variant_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_variant (\
+            v_string VARIANT, v_number VARIANT, v_bool VARIANT, \
+            v_array VARIANT, v_object VARIANT)",
+        "INSERT INTO json_result_set_variant SELECT \
+            TO_VARIANT('hello'), \
+            TO_VARIANT(123.456), \
+            TO_VARIANT(TRUE), \
+            TO_VARIANT(PARSE_JSON('[1, 2, 3]')), \
+            TO_VARIANT(PARSE_JSON('{\"key\": \"value\"}'))",
+        "SELECT * FROM json_result_set_variant",
+    )
+}
+
+#[test]
+fn should_return_object_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_object (o OBJECT)",
+        "INSERT INTO json_result_set_object SELECT PARSE_JSON('{\"a\": 1, \"b\": \"two\"}')",
+        "SELECT * FROM json_result_set_object",
+    )
+}
+
+#[test]
+fn should_return_array_as_arrow_even_if_json_result_set_is_returned() {
+    run_arrow_and_json_and_match(
+        "CREATE OR REPLACE TABLE json_result_set_array (a ARRAY)",
+        "INSERT INTO json_result_set_array SELECT PARSE_JSON('[1, \"two\", 3.0, null]')",
+        "SELECT * FROM json_result_set_array",
+    )
+}
+
 fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, select_query: &str) {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();

@@ -193,6 +193,30 @@ pub fn create_field_with_type(
             });
             Ok(Field::new(name, data_type, *nullable).with_metadata(metadata))
         }
+        RowType::Variant { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "VARIANT".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Object { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "OBJECT".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
+        RowType::Array { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "ARRAY".to_string());
+            Ok(
+                Field::new(name, data_type.unwrap_or(DataType::Utf8), *nullable)
+                    .with_metadata(metadata),
+            )
+        }
     }
 }
 
@@ -685,6 +709,9 @@ fn create_column_array(
                 }
                 .fail(),
             }
+        }
+        RowType::Variant { .. } | RowType::Object { .. } | RowType::Array { .. } => {
+            Ok((create_field(row_type)?, Arc::new(StringArray::from(values))))
         }
     }
 }

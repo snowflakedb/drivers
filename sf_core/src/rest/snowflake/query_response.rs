@@ -606,6 +606,9 @@ impl TryFrom<&RowType> for query_types::RowType {
                 ))
             }
             "DECFLOAT" => Ok(query_types::RowType::decfloat(&name, nullable)),
+            "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
+            "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
+            "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
