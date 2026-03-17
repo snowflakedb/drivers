@@ -53,6 +53,18 @@ pub enum RowType {
         name: String,
         nullable: bool,
     },
+    Variant {
+        name: String,
+        nullable: bool,
+    },
+    Object {
+        name: String,
+        nullable: bool,
+    },
+    Array {
+        name: String,
+        nullable: bool,
+    },
 }
 
 impl RowType {
@@ -147,6 +159,27 @@ impl RowType {
 
     pub fn decfloat(name: &str, nullable: bool) -> Self {
         RowType::Decfloat {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn variant(name: &str, nullable: bool) -> Self {
+        RowType::Variant {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn object(name: &str, nullable: bool) -> Self {
+        RowType::Object {
+            name: name.to_string(),
+            nullable,
+        }
+    }
+
+    pub fn array(name: &str, nullable: bool) -> Self {
+        RowType::Array {
             name: name.to_string(),
             nullable,
         }
