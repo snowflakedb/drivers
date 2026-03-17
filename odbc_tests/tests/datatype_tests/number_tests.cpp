@@ -1007,14 +1007,44 @@ TEST_CASE("SQL_DECIMAL overflow returns 22003", "[datatype][number][22003]") {
     check_numeric_out_of_range<SQL_C_UTINYINT>(stmt, 1);
   }
 
+  SECTION("SQL_C_SHORT - below i16 min") {
+    auto stmt = conn.execute_fetch("SELECT -32769::NUMBER(5,0)");
+    check_numeric_out_of_range<SQL_C_SHORT>(stmt, 1);
+  }
+
   SECTION("SQL_C_USHORT - negative") {
     auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
+    check_numeric_out_of_range<SQL_C_USHORT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_USHORT - above u16 max") {
+    auto stmt = conn.execute_fetch("SELECT 65536::NUMBER(5,0)");
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 1);
   }
 
   SECTION("SQL_C_ULONG - negative") {
     auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 1);
+  }
+
+  SECTION("SQL_C_ULONG - above u32 max") {
+    auto stmt = conn.execute_fetch("SELECT 4294967296::NUMBER(10,0)");
+    check_numeric_out_of_range<SQL_C_ULONG>(stmt, 1);
+  }
+
+  SECTION("SQL_C_SBIGINT - above i64 max") {
+    auto stmt = conn.execute_fetch("SELECT 9223372036854775808::NUMBER(19,0)");
+    check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_SBIGINT - below i64 min") {
+    auto stmt = conn.execute_fetch("SELECT -9223372036854775809::NUMBER(19,0)");
+    check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_UBIGINT - negative") {
+    auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
+    check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 1);
   }
 }
 

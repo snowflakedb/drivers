@@ -436,11 +436,26 @@ TEST_CASE("REAL overflow returns 22003", "[datatype][real][22003]") {
   // SQL_C_USHORT - negative
   check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
 
+  // SQL_C_SHORT - below i16 min
+  check_numeric_out_of_range<SQL_C_SHORT>(conn.execute_fetch("SELECT -32769.0::FLOAT"), 1);
+
+  // SQL_C_USHORT - above u16 max
+  check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT 65536.0::FLOAT"), 1);
+
   // SQL_C_LONG - above i32 max
   check_numeric_out_of_range<SQL_C_LONG>(conn.execute_fetch("SELECT 2147483648.0::FLOAT"), 1);
 
+  // SQL_C_LONG - below i32 min
+  check_numeric_out_of_range<SQL_C_LONG>(conn.execute_fetch("SELECT -2147483649.0::FLOAT"), 1);
+
   // SQL_C_ULONG - negative
   check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
+
+  // SQL_C_ULONG - above u32 max
+  check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1);
+
+  // SQL_C_UBIGINT - negative
+  check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
 }
 
 // ============================================================================
@@ -1318,6 +1333,49 @@ TEST_CASE("REAL NaN to NUMERIC returns error", "[datatype][real][nan][edge]") {
   auto random_schema = Schema::use_random_schema(conn);
 
   check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
+}
+
+// ============================================================================
+// Infinity handling for integer, bit, and numeric targets
+// Infinity must not convert to integer/bit/numeric types.
+// Per ODBC spec, Inf should produce SQL_ERROR with SQLSTATE 22003.
+// ============================================================================
+
+TEST_CASE("REAL Infinity to integer types returns 22003", "[datatype][real][infinity][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // +Inf to signed integer types
+  check_numeric_out_of_range<SQL_C_SLONG>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_SHORT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_STINYINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+
+  // +Inf to unsigned integer types
+  check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_UTINYINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+
+  // -Inf to signed integer types
+  check_numeric_out_of_range<SQL_C_SLONG>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_SBIGINT>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
+}
+
+TEST_CASE("REAL Infinity to BIT returns 22003", "[datatype][real][infinity][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
+}
+
+TEST_CASE("REAL Infinity to NUMERIC returns 22003", "[datatype][real][infinity][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
 }
 
 TEST_CASE("REAL NaN to CHAR produces NaN string", "[datatype][real][nan][edge]") {
