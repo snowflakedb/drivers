@@ -14,7 +14,7 @@ use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     RustParsingSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::read_char_str;
+use crate::conversion::param_binding::{read_char_str, read_wchar_str};
 use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -379,7 +379,11 @@ impl ReadODBC for SnowflakeVarchar {
         &self,
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, JsonBindingError> {
-        Ok(Cow::Owned(read_char_str(binding)?))
+        let s = match binding.value_type {
+            CDataType::WChar => read_wchar_str(binding)?,
+            _ => read_char_str(binding)?,
+        };
+        Ok(Cow::Owned(s))
     }
 }
 
