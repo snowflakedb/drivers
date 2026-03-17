@@ -1,6 +1,10 @@
 # Universal Driver CI Tests Pipeline
 # Runs integration and E2E tests for all drivers in parallel.
 #
+# Test selection: each step runs ci/select_tests.py to determine which tests
+# are relevant based on changed files. Steps receiving SKIP exit early without
+# building. The base ref is auto-detected from BUILDKITE_PULL_REQUEST_BASE_BRANCH.
+#
 # Each driver group runs build + test in a single step because Buildkite steps
 # run on separate agents with no shared filesystem. Splitting build/test would
 # require uploading multi-GB Rust target/ artifacts between steps.
@@ -42,6 +46,14 @@ steps:
         key: "rust-core-e2e"
         <<: *common
         command: |
+          echo "--- :mag: Test Selection"
+          pip install pyyaml -q
+          TEST_FILTER=$$(python ci/select_tests.py --driver rust --group integ,e2e --verbose)
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for rust core, skipping"
+            exit 0
+          fi
+
           ./scripts/decode_secrets.sh
           yum install -y unzip
           export PARAMETER_PATH=/workdir/parameters.json
@@ -50,7 +62,11 @@ steps:
           cargo build --package sf_core
 
           echo "--- :test_tube: Running E2E Tests"
-          cargo test --package sf_core -- --ignored
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            cargo test --package sf_core -- --ignored
+          else
+            cargo test --package sf_core -- --ignored "$$TEST_FILTER"
+          fi
         timeout_in_minutes: 30
 
   # ==========================================================================
@@ -63,6 +79,14 @@ steps:
         key: "python-integ-e2e"
         <<: *common
         command: |
+          echo "--- :mag: Test Selection"
+          pip install pyyaml -q
+          TEST_FILTER=$$(python ci/select_tests.py --driver python --group integ,e2e --verbose)
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for python, skipping"
+            exit 0
+          fi
+
           ./scripts/decode_secrets.sh
           yum install -y unzip
           export PARAMETER_PATH=/workdir/parameters.json
@@ -74,7 +98,11 @@ steps:
           hatch run test.py3.9:install-wheel
 
           echo "--- :test_tube: Running Integ + E2E Tests"
-          hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
+          else
+            hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900
+          fi
         timeout_in_minutes: 45
 
   # ==========================================================================
@@ -87,6 +115,14 @@ steps:
         key: "odbc-integ-e2e"
         <<: *common
         command: |
+          echo "--- :mag: Test Selection"
+          pip install pyyaml -q
+          TEST_FILTER=$$(python ci/select_tests.py --driver odbc --group integ,e2e --verbose)
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for odbc, skipping"
+            exit 0
+          fi
+
           ./scripts/decode_secrets.sh
           yum install -y unzip
           export PARAMETER_PATH=/workdir/parameters.json
@@ -104,10 +140,14 @@ steps:
               -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=NEW \
               .
-          cmake --build cmake-build -- -j $(nproc)
+          cmake --build cmake-build -- -j $$(nproc)
 
           echo "--- :test_tube: Running Integ + E2E Tests"
-          ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration"
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration"
+          else
+            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER"
+          fi
         timeout_in_minutes: 45
 
   # ==========================================================================
@@ -120,6 +160,14 @@ steps:
         key: "jdbc-integ-e2e"
         <<: *common
         command: |
+          echo "--- :mag: Test Selection"
+          pip install pyyaml -q
+          TEST_FILTER=$$(python ci/select_tests.py --driver java --group e2e --verbose)
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for jdbc, skipping"
+            exit 0
+          fi
+
           ./scripts/decode_secrets.sh
           yum install -y unzip
           export PARAMETER_PATH=/workdir/parameters.json
@@ -132,5 +180,14 @@ steps:
           export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
           chmod +x jdbc/gradlew
           cd jdbc
-          ./gradlew test --stacktrace
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            ./gradlew test --stacktrace
+          else
+            GRADLE_TESTS=""
+            IFS='|' read -ra PATTERNS <<< "$$TEST_FILTER"
+            for pattern in "$${PATTERNS[@]}"; do
+              GRADLE_TESTS="$$GRADLE_TESTS --tests $$pattern"
+            done
+            ./gradlew test $$GRADLE_TESTS --stacktrace
+          fi
         timeout_in_minutes: 45

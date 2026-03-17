@@ -4,8 +4,8 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    # Allow stacked PRs to trigger this workflow.
-    # detect-changes still decides whether ODBC jobs actually run.
+  # Allow stacked PRs to trigger this workflow.
+  # detect-changes still decides whether ODBC jobs actually run.
   merge_group:
     types: [ checks_requested ]
 
@@ -349,7 +349,7 @@ jobs:
           DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: NEW
-          
+
   build_rpm:
     needs: [detect-changes, odbc_unit_tests, odbc_tests]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
