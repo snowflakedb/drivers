@@ -751,48 +751,62 @@ fn create_column_array(
             let field = create_field(row_type)?;
             match field.data_type() {
                 DataType::Int32 => {
-                    let normalized: Result<Vec<i32>, ArrowUtilsError> = values
+                    let normalized: Result<Vec<Option<i32>>, ArrowUtilsError> = values
                         .into_iter()
-                        .map(|v| {
-                            let (seconds_str, fraction_str) = v.split_once('.').unwrap_or((v, ""));
-                            let seconds: i32 =
-                                seconds_str.parse().context(IntegerParsingSnafu {
-                                    value: v.to_string(),
-                                })?;
-                            let fraction: i32 = if fraction_str.is_empty() {
-                                0
-                            } else {
-                                let filled =
-                                    format!("{:0<width$}", fraction_str, width = *scale as usize);
-                                filled.parse::<i32>().context(IntegerParsingSnafu {
-                                    value: v.to_string(),
-                                })?
-                            };
-                            Ok(seconds * 10i32.pow(*scale as u32) + fraction)
+                        .map(|v| match v {
+                            None => Ok(None),
+                            Some(v) => {
+                                let (seconds_str, fraction_str) =
+                                    v.split_once('.').unwrap_or((v, ""));
+                                let seconds: i32 =
+                                    seconds_str.parse().context(IntegerParsingSnafu {
+                                        value: v.to_string(),
+                                    })?;
+                                let fraction: i32 = if fraction_str.is_empty() {
+                                    0
+                                } else {
+                                    let filled = format!(
+                                        "{:0<width$}",
+                                        fraction_str,
+                                        width = *scale as usize
+                                    );
+                                    filled.parse::<i32>().context(IntegerParsingSnafu {
+                                        value: v.to_string(),
+                                    })?
+                                };
+                                Ok(Some(seconds * 10i32.pow(*scale as u32) + fraction))
+                            }
                         })
                         .collect();
                     Ok((field, Arc::new(Int32Array::from(normalized?))))
                 }
                 DataType::Int64 => {
-                    let normalized: Result<Vec<i64>, ArrowUtilsError> = values
+                    let normalized: Result<Vec<Option<i64>>, ArrowUtilsError> = values
                         .into_iter()
-                        .map(|v| {
-                            let scale1 = *scale;
-                            let (seconds_str, fraction_str) = v.split_once('.').unwrap_or((v, ""));
-                            let seconds: i64 =
-                                seconds_str.parse().context(IntegerParsingSnafu {
-                                    value: v.to_string(),
-                                })?;
-                            let fraction: i64 = if fraction_str.is_empty() {
-                                0
-                            } else {
-                                let filled =
-                                    format!("{:0<width$}", fraction_str, width = scale1 as usize);
-                                filled.parse::<i64>().context(IntegerParsingSnafu {
-                                    value: v.to_string(),
-                                })?
-                            };
-                            Ok(seconds * 10i64.pow(scale1 as u32) + fraction)
+                        .map(|v| match v {
+                            None => Ok(None),
+                            Some(v) => {
+                                let scale1 = *scale;
+                                let (seconds_str, fraction_str) =
+                                    v.split_once('.').unwrap_or((v, ""));
+                                let seconds: i64 =
+                                    seconds_str.parse().context(IntegerParsingSnafu {
+                                        value: v.to_string(),
+                                    })?;
+                                let fraction: i64 = if fraction_str.is_empty() {
+                                    0
+                                } else {
+                                    let filled = format!(
+                                        "{:0<width$}",
+                                        fraction_str,
+                                        width = scale1 as usize
+                                    );
+                                    filled.parse::<i64>().context(IntegerParsingSnafu {
+                                        value: v.to_string(),
+                                    })?
+                                };
+                                Ok(Some(seconds * 10i64.pow(scale1 as u32) + fraction))
+                            }
                         })
                         .collect();
                     Ok((field, Arc::new(Int64Array::from(normalized?))))
@@ -805,31 +819,52 @@ fn create_column_array(
             }
         }
         RowType::Binary { .. } => {
-            let binary_values: Result<Vec<Vec<u8>>, ArrowUtilsError> = values
+            let binary_values: Result<Vec<Option<Vec<u8>>>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| hex::decode(v).context(BinaryParsingSnafu {}))
+                .map(|v| match v {
+                    None => Ok(None),
+                    Some(s) => Ok(Some(hex::decode(s).context(BinaryParsingSnafu {})?)),
+                })
                 .collect();
             let binary_values = binary_values?;
-            let refs: Vec<&[u8]> = binary_values.iter().map(|v| v.as_slice()).collect();
+            let refs: Vec<Option<&[u8]>> = binary_values.iter().map(|v| v.as_deref()).collect();
             Ok((create_field(row_type)?, Arc::new(BinaryArray::from(refs))))
         }
         RowType::Decfloat { .. } => {
-            let parsed: Result<Vec<(i16, Vec<u8>)>, ArrowUtilsError> =
-                values.into_iter().map(parse_decfloat_str).collect();
+            #[allow(clippy::type_complexity)]
+            let parsed: Result<Vec<Option<(i16, Vec<u8>)>>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| match v {
+                    None => Ok(None),
+                    Some(s) => Ok(Some(parse_decfloat_str(s)?)),
+                })
+                .collect();
             let parsed = parsed?;
-            let (exponents, mantissas): (Vec<i16>, Vec<Vec<u8>>) = parsed.into_iter().unzip();
-            let mantissa_refs: Vec<&[u8]> = mantissas.iter().map(|v| v.as_slice()).collect();
+            let exponents: Vec<Option<i16>> =
+                parsed.iter().map(|v| v.as_ref().map(|(e, _)| *e)).collect();
+            let mantissas: Vec<Option<&[u8]>> = parsed
+                .iter()
+                .map(|v| v.as_ref().map(|(_, m)| m.as_slice()))
+                .collect();
+            let null_buffer = arrow::buffer::NullBuffer::from(
+                parsed.iter().map(|v| v.is_some()).collect::<Vec<bool>>(),
+            );
 
             let field = create_field(row_type)?;
             match field.data_type() {
                 DataType::Struct(fields) => {
                     let exponent_array: Arc<dyn Array> = Arc::new(Int16Array::from(exponents));
-                    let mantissa_array: Arc<dyn Array> = Arc::new(BinaryArray::from(mantissa_refs));
-                    let values = vec![
+                    let mantissa_array: Arc<dyn Array> = Arc::new(BinaryArray::from(mantissas));
+                    let struct_array = arrow::array::StructArray::from(vec![
                         (fields[0].clone(), exponent_array),
                         (fields[1].clone(), mantissa_array),
-                    ];
-                    Ok((field, Arc::new(arrow::array::StructArray::from(values))))
+                    ]);
+                    let nullable_struct = arrow::array::StructArray::new(
+                        struct_array.fields().clone(),
+                        struct_array.columns().to_vec(),
+                        Some(null_buffer),
+                    );
+                    Ok((field, Arc::new(nullable_struct)))
                 }
                 _ => UnsupportedDataTypeSnafu {
                     data_type: format!("{:?}", field.data_type()),
