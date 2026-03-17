@@ -96,7 +96,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       ProtobufApis.databaseDriverV1.statementSetSqlQuery(statementSetSqlQueryRequest);
     } catch (DatabaseDriverService.ServiceException e) {
       logger.warn("statementSetSqlQuery failed: sql={}, hasBindings={}", sql, hasBindings, e);
-      throw new SnowflakeSQLException("Failed to set SQL query on statement", e);
+      throw SnowflakeSQLException.fromServiceException("Failed to set SQL query on statement", e);
     }
 
     StatementExecuteQueryRequest.Builder executeQueryRequestBuilder =
@@ -120,7 +120,7 @@ public class SnowflakeStatementImpl implements Statement, SnowflakeStatement {
       return executeResult;
     } catch (DatabaseDriverService.ServiceException e) {
       logger.warn("statementExecuteQuery failed: hasBindings={}", hasBindings, e);
-      throw new SnowflakeSQLException("Failed to execute statement query", e);
+      throw SnowflakeSQLException.fromServiceException("Failed to execute statement query", e);
     }
   }
 
