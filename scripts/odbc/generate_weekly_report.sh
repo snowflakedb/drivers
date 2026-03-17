@@ -35,7 +35,7 @@ for arg in "$@"; do
         --skip-reference)  SKIP_REFERENCE=true ;;
         --skip-new-driver) SKIP_NEW_DRIVER=true ;;
         --help|-h)
-            head -17 "$0" | tail -14
+            head -20 "$0" | tail -18
             exit 0
             ;;
         *)
