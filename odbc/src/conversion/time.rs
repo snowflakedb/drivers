@@ -1,3 +1,5 @@
+use arrow::array::{Array, PrimitiveArray};
+use arrow::datatypes::Int64Type;
 use chrono::{NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
@@ -5,14 +7,85 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::traits::Binding;
 use crate::conversion::traits::SnowflakeType;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::warning::Warnings;
+use crate::conversion::{ReadArrowType, WriteODBCType};
 
 pub(crate) struct SnowflakeTime;
 
 impl SnowflakeType for SnowflakeTime {
     type Representation<'a> = NaiveTime;
+}
+
+impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTime {
+    fn read_arrow_type<'a>(
+        &self,
+        array: &'a PrimitiveArray<Int64Type>,
+        row_idx: usize,
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        if array.is_null(row_idx) {
+            return Err(ReadArrowError::NullValue {
+                location: snafu::location!(),
+            });
+        }
+        let nanos_since_midnight = array.value(row_idx);
+        let secs = (nanos_since_midnight / 1_000_000_000) as u32;
+        let nanos = (nanos_since_midnight % 1_000_000_000) as u32;
+        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or(
+            ReadArrowError::NullValue {
+                location: snafu::location!(),
+            },
+        )
+    }
+}
+
+impl WriteODBCType for SnowflakeTime {
+    fn sql_type(&self) -> sql::SqlDataType {
+        sql::SqlDataType::TIME
+    }
+
+    fn column_size(&self) -> sql::ULen {
+        8
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        9
+    }
+
+    fn write_odbc_type(
+        &self,
+        snowflake_value: Self::Representation<'_>,
+        binding: &Binding,
+        get_data_offset: &mut Option<usize>,
+    ) -> Result<Warnings, WriteOdbcError> {
+        match binding.target_type {
+            CDataType::Default | CDataType::Time | CDataType::TypeTime => {
+                let time = sql::Time {
+                    hour: snowflake_value.hour() as u16,
+                    minute: snowflake_value.minute() as u16,
+                    second: snowflake_value.second() as u16,
+                };
+                binding.write_fixed(time);
+                Ok(vec![])
+            }
+            CDataType::Char => {
+                let formatted = snowflake_value.format("%H:%M:%S").to_string();
+                Ok(binding.write_char_string(&formatted, get_data_offset))
+            }
+            CDataType::WChar => {
+                let formatted = snowflake_value.format("%H:%M:%S").to_string();
+                Ok(binding.write_wchar_string(&formatted, get_data_offset))
+            }
+            _ => UnsupportedOdbcTypeSnafu {
+                target_type: binding.target_type,
+            }
+            .fail(),
+        }
+    }
 }
 
 impl ReadODBC for SnowflakeTime {
