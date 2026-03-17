@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 use snafu::ResultExt;
 
 use crate::api::ParameterBinding;
+use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
@@ -54,6 +55,24 @@ impl<T: ReadODBC + WriteJson> ParamConverter for JsonParamConverter<T> {
     }
 }
 
+/// Parameter-only converter for SQL_DECIMAL/SQL_NUMERIC: reads the value as a
+/// string (like varchar) but reports the Snowflake type as FIXED so the server
+/// applies numeric semantics.
+struct DecimalParamConverter;
+
+impl ParamConverter for DecimalParamConverter {
+    fn convert(
+        &self,
+        binding: &ParameterBinding,
+    ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
+        let s = match binding.value_type {
+            CDataType::WChar => read_wchar_str(binding)?,
+            _ => read_char_str(binding)?,
+        };
+        Ok((SnowflakeLogicalType::Fixed, Value::String(s)))
+    }
+}
+
 // =============================================================================
 // Factory
 // =============================================================================
@@ -87,11 +106,13 @@ fn make_converter(
         | sql::SqlDataType::EXT_LONG_VARCHAR
         | sql::SqlDataType::EXT_W_CHAR
         | sql::SqlDataType::EXT_W_VARCHAR
-        | sql::SqlDataType::EXT_W_LONG_VARCHAR
-        | sql::SqlDataType::DECIMAL
-        | sql::SqlDataType::NUMERIC => Ok(Box::new(JsonParamConverter {
+        | sql::SqlDataType::EXT_W_LONG_VARCHAR => Ok(Box::new(JsonParamConverter {
             snowflake_type: SnowflakeVarchar { len: 0 },
         })),
+
+        sql::SqlDataType::DECIMAL | sql::SqlDataType::NUMERIC => {
+            Ok(Box::new(DecimalParamConverter))
+        }
 
         sql::SqlDataType::EXT_BIT => Ok(Box::new(JsonParamConverter {
             snowflake_type: SnowflakeBoolean,
@@ -295,8 +316,15 @@ fn acp_bytes_to_string(bytes: &[u8]) -> Result<String, JsonBindingError> {
 use super::error::AcpConversionSnafu;
 
 /// Read a SQL_C_CHAR value, converting from the system ANSI code page to UTF-8.
+///
+/// Per ODBC spec: when the indicator is SQL_NTS or the indicator pointer is
+/// NULL, character data is null-terminated. Otherwise we use the indicated
+/// length (clamped to buffer_length).
 pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, JsonBindingError> {
-    let bytes = if binding.buffer_length == sql::NTS {
+    let null_terminated =
+        binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
+
+    let bytes = if null_terminated {
         unsafe { CStr::from_ptr(binding.parameter_value_ptr as *const c_char).to_bytes() }
     } else {
         let len = buffer_data_len(binding);
