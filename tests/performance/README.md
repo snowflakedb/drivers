@@ -448,11 +448,19 @@ The following tags are automatically attached to each metric:
 | `JENKINS_NODE` | Jenkins node label | Jenkins `JENKINS_NODE_LABEL` env var | `"regular-memory-node-snowos"` |
 | `DOCKER_MEMORY` | Container memory limit | Docker resource configuration | `"4g"` |
 | `DOCKER_CPU` | Container CPU limit | Docker resource configuration | `"2.0"` |
+| `NODE_CPU_MODEL` | Host CPU model name | `/proc/cpuinfo` | `"Intel_R__Xeon_R__Platinum_8175M"` |
+| `NODE_CPU_CORES` | Physical CPU cores | `/proc/cpuinfo` | `"16"` |
+| `NODE_CPU_THREADS` | Logical CPU threads | `os.cpu_count()` | `"32"` |
+| `NODE_MEMORY_GB` | Total host RAM (GB) | `/proc/meminfo` | `"64"` |
+| `NODE_CPU_MAX_MHZ` | CPU max frequency (MHz) | `cpufreq` / `lscpu` | `"3500"` |
+| `NODE_L3_CACHE` | L3 cache size | `sysfs` / `lscpu` | `"54M"` |
+| `NODE_INSTANCE_TYPE` | EC2 instance type (AWS only) | EC2 Instance Metadata Service (IMDSv2/v1) | `"m5.4xlarge"` |
 
 **Notes**:
 - `CLOUD_PROVIDER` extracted from parameters filename (e.g., `parameters_perf_aws.json` → `"AWS"`)
 - Old drivers have `_old` suffix (e.g., `"python_old"`)
 - Local runs use `"LOCAL"` for build and branch tags
+- **Node hardware tags** (`NODE_*`) help identify performance variance caused by Jenkins node heterogeneity — different physical machines in the pool may have different CPU models, memory sizes, and cache configurations
 
 #### Driver Version Detection
 

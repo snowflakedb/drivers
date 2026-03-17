@@ -365,81 +365,83 @@ def _log_banner(message: str, separator: str = "=" * 80):
     logger.info("")
 
 
+def _compute_percentiles(times: list) -> dict:
+    """Compute avg/min/max/P50/P95/P99 from a list of numeric values."""
+    if not times:
+        return {"avg": 0, "min": 0, "max": 0, "p50": 0, "p95": 0, "p99": 0}
+    s = sorted(times)
+    n = len(s)
+    return {
+        "avg": statistics.mean(times),
+        "min": min(times),
+        "max": max(times),
+        "p50": s[int(0.50 * n)],
+        "p95": s[int(0.95 * n)],
+        "p99": s[min(int(0.99 * n), n - 1)],
+    }
+
+
+def _log_time_section(label: str, p: dict):
+    """Log a single metrics section with consistent formatting."""
+    logger.info(f"  {label}:")
+    logger.info(f"    Average: {p['avg']:>10.2f} ms")
+    logger.info(f"    Min:     {p['min']:>10.2f} ms")
+    logger.info(f"    P50:     {p['p50']:>10.2f} ms")
+    logger.info(f"    P95:     {p['p95']:>10.2f} ms")
+    logger.info(f"    P99:     {p['p99']:>10.2f} ms")
+    logger.info(f"    Max:     {p['max']:>10.2f} ms")
+
+
+def _filter_warmup(all_times: list, total_requests: int,
+                   warmup_iterations: int, iterations: int) -> list:
+    """Strip warmup-iteration samples from the front of a time series."""
+    if not all_times or warmup_iterations <= 0 or iterations <= 0:
+        return list(all_times)
+    total_iterations = warmup_iterations + iterations
+    requests_per_iteration = total_requests / total_iterations
+    warmup_requests = int(requests_per_iteration * warmup_iterations)
+    if warmup_requests < len(all_times):
+        logger.info(f"Filtered out {warmup_requests} warmup requests "
+                     f"({warmup_iterations} iterations)")
+        return all_times[warmup_requests:]
+    return list(all_times)
+
+
 def _log_wiremock_metrics(metrics: dict, warmup_iterations: int = 0, iterations: int = 0):
     """
-    Log WireMock response time metrics in a formatted display.
-    
-    Args:
-        metrics: Dictionary containing response time statistics
-        warmup_iterations: Number of warmup iterations to exclude
-        iterations: Total test iterations (used to calculate requests per iteration)
+    Log WireMock response time metrics split into serve (stub matching) and
+    send (socket write / TCP backpressure) phases.
     """
     logger.info("")
     logger.info("=" * 80)
     logger.info("WIREMOCK RESPONSE TIME METRICS")
     logger.info("=" * 80)
-    
+
     total_requests = metrics.get("total_requests", 0)
-    
     if total_requests == 0:
         logger.info("No requests recorded")
         logger.info("=" * 80)
         logger.info("")
         return
-    
-    # Filter out warmup iterations if we have individual response times
-    all_times = metrics.get("response_times", [])
-    if all_times and warmup_iterations > 0 and iterations > 0:
-        # Calculate requests per iteration
-        total_iterations = warmup_iterations + iterations
-        requests_per_iteration = total_requests / total_iterations
-        warmup_requests = int(requests_per_iteration * warmup_iterations)
-        
-        if warmup_requests < len(all_times):
-            # Filter out warmup requests
-            filtered_times = all_times[warmup_requests:]
-            logger.info(f"Filtered out {warmup_requests} warmup requests ({warmup_iterations} iterations)")
-            
-            # Recalculate statistics
-            total_requests = len(filtered_times)
-            avg_time = statistics.mean(filtered_times)
-            min_time = min(filtered_times)
-            max_time = max(filtered_times)
-            sorted_times = sorted(filtered_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-        else:
-            # Calculate from all times (no warmup filtering)
-            avg_time = statistics.mean(all_times)
-            min_time = min(all_times)
-            max_time = max(all_times)
-            sorted_times = sorted(all_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-    else:
-        # Calculate from all times (no warmup information available)
-        if all_times:
-            avg_time = statistics.mean(all_times)
-            min_time = min(all_times)
-            max_time = max(all_times)
-            sorted_times = sorted(all_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-        else:
-            # No data
-            avg_time = min_time = max_time = p50_time = p95_time = p99_time = 0
-    
-    logger.info(f"Total Requests:        {total_requests:,}")
-    logger.info(f"Average Response Time: {avg_time:.2f} ms")
-    logger.info(f"Min Response Time:     {min_time:.2f} ms")
-    logger.info(f"Max Response Time:     {max_time:.2f} ms")
-    logger.info(f"P50 Response Time:     {p50_time:.2f} ms")
-    logger.info(f"P95 Response Time:     {p95_time:.2f} ms")
-    logger.info(f"P99 Response Time:     {p99_time:.2f} ms")
-    
+
+    serve_all = metrics.get("serve_times", [])
+    send_all = metrics.get("send_times", [])
+
+    serve_times = _filter_warmup(serve_all, total_requests, warmup_iterations, iterations)
+    send_times = _filter_warmup(send_all, total_requests, warmup_iterations, iterations)
+
+    logger.info(f"Total Requests: {len(serve_times):,}")
+    logger.info("")
+
+    _log_time_section("Serve (stub matching / processing)", _compute_percentiles(serve_times))
+    logger.info("")
+    _log_time_section("Send  (socket write to client)", _compute_percentiles(send_times))
+
+    if serve_times and send_times:
+        total_times = [s + w for s, w in zip(serve_times, send_times)]
+        logger.info("")
+        _log_time_section("Total (serve + send)", _compute_percentiles(total_times))
+
     logger.info("=" * 80)
     logger.info("")
 
