@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
+    conversion::error::JsonBindingError,
     conversion::{ConversionError, error::WriteOdbcError},
-    write_json::JsonBindingError,
 };
 use arrow::error::ArrowError;
 use odbc_sys as sql;
