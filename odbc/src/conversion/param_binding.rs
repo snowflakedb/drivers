@@ -31,7 +31,7 @@ use super::varchar::SnowflakeVarchar;
 
 /// Trait for converting an ODBC parameter binding into the Snowflake JSON
 /// binding format (`sf_type`, `Value`).
-pub trait ParamConverter {
+pub(crate) trait ParamConverter {
     fn convert(
         &self,
         binding: &ParameterBinding,
@@ -66,8 +66,24 @@ impl ParamConverter for DecimalParamConverter {
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
         let s = match binding.value_type {
+            CDataType::Char => read_char_str(binding)?,
             CDataType::WChar => read_wchar_str(binding)?,
-            _ => read_char_str(binding)?,
+            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding).to_string(),
+            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding).to_string(),
+            CDataType::SBigInt => read_unaligned::<i64>(binding).to_string(),
+            CDataType::ULong => read_unaligned::<u32>(binding).to_string(),
+            CDataType::UShort => read_unaligned::<u16>(binding).to_string(),
+            CDataType::UBigInt => read_unaligned::<u64>(binding).to_string(),
+            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding).to_string(),
+            CDataType::UTinyInt => read_unaligned::<u8>(binding).to_string(),
+            CDataType::Double => read_unaligned::<f64>(binding).to_string(),
+            CDataType::Float => read_unaligned::<f32>(binding).to_string(),
+            _ => {
+                return Err(UnsupportedParameterTypeSnafu {
+                    sql_type: sql::SqlDataType::DECIMAL,
+                }
+                .build());
+            }
         };
         Ok((SnowflakeLogicalType::Fixed, Value::String(s)))
     }
