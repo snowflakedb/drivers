@@ -1,4 +1,4 @@
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::Mutex;
 
 use super::connection::Connection;
 use super::database::Database;
@@ -11,7 +11,7 @@ pub struct DatabaseDriverV1 {
     pub(super) databases: HandleManager<Mutex<Database>>,
     pub(super) connections: HandleManager<Mutex<Connection>>,
     pub(super) statements: HandleManager<Mutex<Statement>>,
-    token_cache: OnceCell<KeyringTokenCache>,
+    token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
 }
 
 impl DatabaseDriverV1 {
@@ -20,17 +20,12 @@ impl DatabaseDriverV1 {
             databases: HandleManager::new(),
             connections: HandleManager::new(),
             statements: HandleManager::new(),
-            token_cache: OnceCell::new(),
+            token_cache: once_cell::sync::OnceCell::new(),
         }
     }
 
     pub fn token_cache(&self) -> Result<&KeyringTokenCache, TokenCacheError> {
-        if let Some(cache) = self.token_cache.get() {
-            return Ok(cache);
-        }
-        let cache = KeyringTokenCache::new()?;
-        let _ = self.token_cache.set(cache);
-        Ok(self.token_cache.get().unwrap())
+        self.token_cache.get_or_try_init(KeyringTokenCache::new)
     }
 }
 
@@ -38,8 +33,13 @@ impl DatabaseDriverV1 {
 mod tests {
     use super::*;
 
-    pub fn driver_state() -> &'static DatabaseDriverV1 {
-        &DatabaseDriverV1::new()
+    fn driver_state() -> &'static DatabaseDriverV1 {
+        thread_local! {
+            static INSTANCE: DatabaseDriverV1 = const { DatabaseDriverV1::new() };
+        }
+        // SAFETY: thread_local storage lives for the thread's lifetime, which
+        // outlives every test function running on that thread.
+        INSTANCE.with(|s| unsafe { &*(s as *const DatabaseDriverV1) })
     }
 
     #[test]

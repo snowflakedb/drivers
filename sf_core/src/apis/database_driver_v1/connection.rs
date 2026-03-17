@@ -96,7 +96,7 @@ impl DatabaseDriverV1 {
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
-                            token_cache.map(|c| c as &dyn TokenCache),
+                    token_cache.map(|c| c as &dyn TokenCache),
                 )
                 .await
                 .context(LoginSnafu)?;
