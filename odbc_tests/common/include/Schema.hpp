@@ -4,7 +4,6 @@
 #include <sql.h>
 #include <sqlext.h>
 
-#include <chrono>
 #include <functional>
 #include <random>
 #include <stdexcept>
@@ -62,7 +61,8 @@ class Schema {
 
  private:
   static std::string generate_random_name() {
-    std::mt19937 gen(std::chrono::steady_clock::now().time_since_epoch().count());
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
     return "SCHEMA_" + std::to_string(gen());
   }
 
