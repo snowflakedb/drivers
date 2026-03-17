@@ -13,9 +13,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.UUID;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 import org.junit.jupiter.api.Test;
 
 public class BasicExecuteQueryTests extends SnowflakeIntegrationTestBase {
+  private static final SFLogger logger = SFLoggerFactory.getLogger(BasicExecuteQueryTests.class);
+
   @Test
   public void shouldExecuteSimpleSelectReturningSingleValue() throws Exception {
     // Given Snowflake client is logged in
@@ -149,6 +153,8 @@ public class BasicExecuteQueryTests extends SnowflakeIntegrationTestBase {
     } finally {
       try (Statement statement = connection.createStatement()) {
         statement.execute("DROP TABLE IF EXISTS " + tableName);
+      } catch (SQLException cleanupException) {
+        logger.warn("Failed to clean up test table: {}", tableName, cleanupException);
       }
     }
   }
