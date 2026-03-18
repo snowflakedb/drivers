@@ -45,32 +45,38 @@ TEST_CASE("should convert string literals to signed c_type", "[datatype][string]
       "'9223372036854775807' AS c16, '-9223372036854775808' AS c17, '1234567890123456789' AS c18");
 
   // Then <c_type> conversions should work
-  SECTION("SQL_C_LONG") {
+  {
+    INFO("SQL_C_LONG");
     CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
     CHECK(get_data<SQL_C_LONG>(stmt, 2) == -456);
     CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
     CHECK(get_data<SQL_C_LONG>(stmt, 4) == 2147483647);
     CHECK(get_data<SQL_C_LONG>(stmt, 5) == -2147483648);
   }
-  SECTION("SQL_C_SLONG") {
+  {
+    INFO("SQL_C_SLONG");
     CHECK(get_data<SQL_C_SLONG>(stmt, 6) == 999);
     CHECK(get_data<SQL_C_SLONG>(stmt, 7) == -999);
   }
-  SECTION("SQL_C_SHORT") {
+  {
+    INFO("SQL_C_SHORT");
     CHECK(get_data<SQL_C_SHORT>(stmt, 8) == 32767);
     CHECK(get_data<SQL_C_SHORT>(stmt, 9) == -32768);
   }
-  SECTION("SQL_C_TINYINT") {
+  {
+    INFO("SQL_C_TINYINT");
     CHECK(get_data<SQL_C_TINYINT>(stmt, 10) == 100);
     CHECK(get_data<SQL_C_TINYINT>(stmt, 11) == -100);
     CHECK(get_data<SQL_C_TINYINT>(stmt, 12) == 127);
     CHECK(get_data<SQL_C_TINYINT>(stmt, 13) == -128);
   }
-  SECTION("SQL_C_STINYINT") {
+  {
+    INFO("SQL_C_STINYINT");
     CHECK(get_data<SQL_C_STINYINT>(stmt, 14) == 50);
     CHECK(get_data<SQL_C_STINYINT>(stmt, 15) == -50);
   }
-  SECTION("SQL_C_SBIGINT") {
+  {
+    INFO("SQL_C_SBIGINT");
     CHECK(get_data<SQL_C_SBIGINT>(stmt, 16) == 9223372036854775807LL);
     CHECK(get_data<SQL_C_SBIGINT>(stmt, 17) == (-9223372036854775807LL - 1));
     CHECK(get_data<SQL_C_SBIGINT>(stmt, 18) == 1234567890123456789LL);
@@ -95,18 +101,27 @@ TEST_CASE("should convert string literals to unsigned c_type", "[datatype][strin
       "'100' AS c8, '200' AS c9");
 
   // Then <c_type> conversions should work
-  SECTION("SQL_C_ULONG") {
+  {
+    INFO("SQL_C_ULONG");
     CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
     CHECK(get_data<SQL_C_ULONG>(stmt, 2) == 0);
     CHECK(get_data<SQL_C_ULONG>(stmt, 3) == 4294967295U);
   }
-  SECTION("SQL_C_USHORT") { CHECK(get_data<SQL_C_USHORT>(stmt, 4) == 65535); }
-  SECTION("SQL_C_UTINYINT") { CHECK(get_data<SQL_C_UTINYINT>(stmt, 5) == 255); }
-  SECTION("SQL_C_UBIGINT") {
+  {
+    INFO("SQL_C_USHORT");
+    CHECK(get_data<SQL_C_USHORT>(stmt, 4) == 65535);
+  }
+  {
+    INFO("SQL_C_UTINYINT");
+    CHECK(get_data<SQL_C_UTINYINT>(stmt, 5) == 255);
+  }
+  {
+    INFO("SQL_C_UBIGINT");
     CHECK(get_data<SQL_C_UBIGINT>(stmt, 6) == 18446744073709551615ULL);
     CHECK(get_data<SQL_C_UBIGINT>(stmt, 7) == 12345678901234567890ULL);
   }
-  SECTION("SQL_C_SSHORT") {
+  {
+    INFO("SQL_C_SSHORT");
     CHECK(get_data<SQL_C_SSHORT>(stmt, 8) == 100);
     CHECK(get_data<SQL_C_SSHORT>(stmt, 9) == 200);
   }
@@ -161,58 +176,77 @@ TEST_CASE("should truncate decimal string literals with fractional part when con
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals with decimal parts is executed
-  auto stmt = conn.execute_fetch(
+  const auto query =
       "SELECT '123.999' AS round_down, '-456.001' AS neg_round, '0.9' AS less_than_one, "
-      "'1.2345678901241242141241241e9' AS scientific_notation");
+      "'1.2345678901241242141241241e9' AS scientific_notation";
 
-  SECTION("TEST") {
+  {
+    INFO("TEST");
+    auto stmt = conn.execute_fetch(query);
+    // Then the string values should be truncated when converted to integer types
     auto value = get_data<SQL_C_SBIGINT>(stmt, 1);
     CHECK(value == 123);
   }
-  // Then the string values should be truncated when converted to integer types
-  SECTION("SQL_C_BIGINT") {
+  {
+    INFO("SQL_C_BIGINT");
+    auto stmt = conn.execute_fetch(query);
+    // Then the string values should be truncated when converted to integer types
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 1) == 123);
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 2) == -456);
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_LONG") {
+  {
+    INFO("SQL_C_LONG");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 1) == 123);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 2) == -456);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_LONG>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_SHORT") {
+  {
+    INFO("SQL_C_SHORT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_SHORT>(stmt, 1) == 123);
     CHECK(check_fractional_truncation<SQL_C_SHORT>(stmt, 2) == -456);
     CHECK(check_fractional_truncation<SQL_C_SHORT>(stmt, 3) == 0);
     check_numeric_out_of_range<SQL_C_SHORT>(stmt, 4);
   }
-  SECTION("SQL_C_TINYINT") {
+  {
+    INFO("SQL_C_TINYINT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_TINYINT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_TINYINT>(stmt, 3) == 0);
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 4);
   }
-  SECTION("SQL_C_UBIGINT") {
+  {
+    INFO("SQL_C_UBIGINT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_UBIGINT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_UBIGINT>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_UBIGINT>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_ULONG") {
+  {
+    INFO("SQL_C_ULONG");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_ULONG>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_ULONG>(stmt, 3) == 0);
     CHECK(check_fractional_truncation<SQL_C_ULONG>(stmt, 4) == 1234567890);
   }
-  SECTION("SQL_C_USHORT") {
+  {
+    INFO("SQL_C_USHORT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_USHORT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_USHORT>(stmt, 3) == 0);
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 4);
   }
-  SECTION("SQL_C_UTINYINT") {
+  {
+    INFO("SQL_C_UTINYINT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_fractional_truncation<SQL_C_UTINYINT>(stmt, 1) == 123);
     check_numeric_out_of_range<SQL_C_UTINYINT>(stmt, 2);
     CHECK(check_fractional_truncation<SQL_C_UTINYINT>(stmt, 3) == 0);
@@ -226,7 +260,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("SQL_C_BIGINT") {
+  {
+    INFO("SQL_C_BIGINT");
     // When Query selecting string literals without fractional part is executed
     auto stmt = conn.execute_fetch(
         "SELECT '9223372036854775807' AS min, '-9223372036854775808' AS max, '9223372036854775808' AS more_than_max, "
@@ -237,7 +272,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 4);
   }
-  SECTION("SQL_C_LONG") {
+  {
+    INFO("SQL_C_LONG");
     auto stmt = conn.execute_fetch(
         "SELECT '2147483647' AS max, '-2147483648' AS min, '2147483648' AS more_than_max, '-2147483649' AS "
         "less_than_min");
@@ -246,7 +282,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_LONG>(stmt, 3);
     check_numeric_out_of_range<SQL_C_LONG>(stmt, 4);
   }
-  SECTION("SQL_C_SHORT") {
+  {
+    INFO("SQL_C_SHORT");
     auto stmt = conn.execute_fetch(
         "SELECT '32767' AS max, '-32768' AS min, '32768' AS more_than_max, '-32769' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_SHORT>(stmt, 1) == 32767);
@@ -254,7 +291,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_SHORT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_SHORT>(stmt, 4);
   }
-  SECTION("SQL_C_TINYINT") {
+  {
+    INFO("SQL_C_TINYINT");
     auto stmt =
         conn.execute_fetch("SELECT '127' AS max, '-128' AS min, '128' AS more_than_max, '-129' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_TINYINT>(stmt, 1) == 127);
@@ -262,7 +300,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_TINYINT>(stmt, 4);
   }
-  SECTION("SQL_C_UBIGINT") {
+  {
+    INFO("SQL_C_UBIGINT");
     auto stmt = conn.execute_fetch(
         "SELECT '18446744073709551615' AS max, '0' AS min, '18446744073709551616' AS more_than_max, '-1' AS "
         "less_than_min");
@@ -271,7 +310,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 4);
   }
-  SECTION("SQL_C_ULONG") {
+  {
+    INFO("SQL_C_ULONG");
     auto stmt = conn.execute_fetch(
         "SELECT '4294967295' AS max, '0' AS min, '4294967296' AS more_than_max, '-1' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_ULONG>(stmt, 1) == 4294967295U);
@@ -279,7 +319,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 3);
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 4);
   }
-  SECTION("SQL_C_USHORT") {
+  {
+    INFO("SQL_C_USHORT");
     auto stmt =
         conn.execute_fetch("SELECT '65535' AS max, '0' AS min, '65536' AS more_than_max, '-1' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_USHORT>(stmt, 1) == 65535);
@@ -287,7 +328,8 @@ TEST_CASE("should truncate decimal string literals without fractional part when 
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 4);
   }
-  SECTION("SQL_C_UTINYINT") {
+  {
+    INFO("SQL_C_UTINYINT");
     auto stmt = conn.execute_fetch("SELECT '255' AS max, '0' AS min, '256' AS more_than_max, '-1' AS less_than_min");
     CHECK(check_no_truncation<SQL_C_UTINYINT>(stmt, 1) == 255);
     CHECK(check_no_truncation<SQL_C_UTINYINT>(stmt, 2) == 0);

@@ -12,34 +12,48 @@ TEST_CASE("should convert boolean to signed integer c_type", "[datatype][boolean
   Connection conn;
 
   // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
-  const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
+  const auto query = "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN";
 
   // Then <c_type> should return 1 for TRUE and 0 for FALSE
-  SECTION("SQL_C_LONG") {
+  {
+    INFO("SQL_C_LONG");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_LONG>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_SLONG") {
+  {
+    INFO("SQL_C_SLONG");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_SLONG>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_SLONG>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_SHORT") {
+  {
+    INFO("SQL_C_SHORT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_SHORT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_SHORT>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_SSHORT") {
+  {
+    INFO("SQL_C_SSHORT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_SSHORT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_SSHORT>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_TINYINT") {
+  {
+    INFO("SQL_C_TINYINT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_TINYINT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_TINYINT>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_STINYINT") {
+  {
+    INFO("SQL_C_STINYINT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_STINYINT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_STINYINT>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_SBIGINT") {
+  {
+    INFO("SQL_C_SBIGINT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == 0);
   }
@@ -50,22 +64,30 @@ TEST_CASE("should convert boolean to unsigned integer c_type", "[datatype][boole
   Connection conn;
 
   // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
-  const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
+  const auto query = "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN";
 
   // Then <c_type> should return 1 for TRUE and 0 for FALSE
-  SECTION("SQL_C_ULONG") {
+  {
+    INFO("SQL_C_ULONG");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_ULONG>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_USHORT") {
+  {
+    INFO("SQL_C_USHORT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_USHORT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_USHORT>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_UTINYINT") {
+  {
+    INFO("SQL_C_UTINYINT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_UTINYINT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_UTINYINT>(stmt, 2) == 0);
   }
-  SECTION("SQL_C_UBIGINT") {
+  {
+    INFO("SQL_C_UBIGINT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_UBIGINT>(stmt, 1) == 1);
     REQUIRE(check_no_truncation<SQL_C_UBIGINT>(stmt, 2) == 0);
   }

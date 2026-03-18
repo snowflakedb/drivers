@@ -95,6 +95,12 @@ Feature: ODBC number to interval type conversions
     And SQL_C_INTERVAL_MINUTE should return SQL_NULL_DATA
     And SQL_C_INTERVAL_SECOND should return SQL_NULL_DATA
 
+  @odbc_e2e
+  Scenario: NUMBER NULL to SQL_C_INTERVAL types
+    Given A Snowflake connection is established
+    When A NULL NUMBER value is queried
+    Then Indicator returns SQL_NULL_DATA
+
   # ============================================================================
   # LEADING FIELD PRECISION - Default precision (SQLSTATE 22015)
   # ============================================================================

@@ -114,7 +114,8 @@ TEST_CASE("should handle case exponent values from literals", "[decfloat]") {
   // Given Snowflake client is logged in
   Connection conn;
 
-  SECTION("max positive and min positive") {
+  {
+    INFO("max positive and min positive");
     // When Query "SELECT <query_values>" is executed
     auto stmt = conn.execute_fetch("SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT");
 
@@ -123,7 +124,8 @@ TEST_CASE("should handle case exponent values from literals", "[decfloat]") {
     CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "1e-16383");
   }
 
-  SECTION("large negative and small positive") {
+  {
+    INFO("large negative and small positive");
     // When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
     auto stmt = conn.execute_fetch("SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT");
 
@@ -455,7 +457,8 @@ TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
   // Given Snowflake client is logged in
   Connection conn;
 
-  SECTION("max exponent") {
+  {
+    INFO("max exponent");
     // When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT", SQL_NTS);
@@ -476,7 +479,8 @@ TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
   }
 
-  SECTION("large negative exponent") {
+  {
+    INFO("large negative exponent");
     // When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT", SQL_NTS);

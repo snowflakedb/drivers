@@ -59,6 +59,12 @@ TEST_CASE("should handle NULL boolean with c_type", "[datatype][boolean][convers
   };
 
   // Then <c_type> should return SQL_NULL_DATA indicator
-  SECTION("SQL_C_CHAR") { check_null(SQL_C_CHAR); }
-  SECTION("SQL_C_WCHAR") { check_null(SQL_C_WCHAR); }
+  {
+    INFO("SQL_C_CHAR");
+    check_null(SQL_C_CHAR);
+  }
+  {
+    INFO("SQL_C_WCHAR");
+    check_null(SQL_C_WCHAR);
+  }
 }
