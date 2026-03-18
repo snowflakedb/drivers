@@ -19,6 +19,7 @@ env:
   REFERENCE_PYTHON_VERSION: "3.13"
   # OS version for consistent naming across jobs
   REFERENCE_OS_VERSION: "ubuntu-latest"
+  REFERENCE_CLOUD_PROVIDER: "aws"
 
 jobs:
   detect-changes:
@@ -118,7 +119,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
-      matrix: &base_matrix
+      matrix:
         os: [ubuntu-latest, windows-11-arm]
         py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude:
@@ -539,7 +540,7 @@ jobs:
           path: python/dist
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ env.REFERENCE_CLOUD_PROVIDER }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
@@ -596,7 +597,7 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with:
-          name: results-universal-${{ env.MATRIX_KEY }}-aws
+          name: results-universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}
           path: ${{ github.workspace }}/universal-results
 
       - name: Download reference test results
@@ -615,7 +616,7 @@ jobs:
           hatch run reference:compare \
             --py ${{ env.REFERENCE_PYTHON_VERSION }} \
             --os ${{ env.REFERENCE_OS_VERSION }} \
-            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-aws.json \
+            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}.json \
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
