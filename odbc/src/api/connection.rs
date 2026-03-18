@@ -50,7 +50,10 @@ const PARAM_MAPPINGS: &[(&str, &str)] = &[
     ("CRL_ENABLED", "crl_enabled"),
     ("PASSCODE", "passcode"),
     ("PASSCODEINPASSWORD", "passcodeInPassword"),
-    ("CLIENT_STORE_TEMPORARY_CREDENTIAL", "client_store_temporary_credential"),
+    (
+        "CLIENT_STORE_TEMPORARY_CREDENTIAL",
+        "client_store_temporary_credential",
+    ),
 ];
 
 /// Parse connection string into key-value pairs
