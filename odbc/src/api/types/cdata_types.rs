@@ -1,30 +1,29 @@
-/* Copied from https://github.com/pacman82/odbc-sys */
+// C data types — copied from https://github.com/pacman82/odbc-sys
+//
+// MIT License
+//
+// Copyright (c) 2017
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-/* Orignal license: */
-/*
-MIT License
-
-Copyright (c) 2017
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-
+use crate::api::OdbcError;
+use crate::api::error::InvalidApplicationBufferTypeSnafu;
 use odbc_sys as sql;
 
 pub const C_TYPES_EXTENDED: i16 = 0x04000;
@@ -146,7 +145,7 @@ impl CDataType {
 }
 
 impl TryFrom<i16> for CDataType {
-    type Error = i16;
+    type Error = OdbcError;
 
     fn try_from(value: i16) -> Result<Self, Self::Error> {
         match value {
@@ -195,7 +194,7 @@ impl TryFrom<i16> for CDataType {
             113 => Ok(CDataType::IntervalMinuteToSecond),
             x if x == C_TYPES_EXTENDED => Ok(CDataType::SsTime2),
             x if x == C_TYPES_EXTENDED + 1 => Ok(CDataType::SsTimestampOffset),
-            other => Err(other),
+            _ => InvalidApplicationBufferTypeSnafu.fail(),
         }
     }
 }

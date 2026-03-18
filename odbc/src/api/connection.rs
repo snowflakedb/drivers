@@ -4,14 +4,13 @@ use crate::api::encoding::{
     OdbcEncoding, read_string_from_pointer, write_string_bytes, write_string_bytes_i32,
 };
 use crate::api::error::Required;
+use crate::api::error::{
+    AttributeCannotBeSetNowSnafu, InvalidPortSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu,
+    UnsupportedAttributeSnafu,
+};
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
-    error::{
-        AttributeCannotBeSetNowSnafu, InvalidPortSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu,
-        UnsupportedAttributeSnafu,
-    },
-    types::ConnectionAttribute,
+    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle, types::ConnectionAttribute,
 };
 use crate::conversion::warning::Warnings;
 use odbc_sys as sql;
@@ -247,7 +246,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
             })
             .await?;
 
-            Ok::<_, crate::api::OdbcError>((db_handle, conn_handle))
+            Ok::<_, crate::api::error::OdbcError>((db_handle, conn_handle))
         })?;
 
     tracing::info!("driver_connect: connection_init completed");

@@ -7,8 +7,8 @@ use odbc_sys as sql;
 use serde_json::Value;
 use snafu::ResultExt;
 
+use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::cdata_types::CDataType;
 use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,

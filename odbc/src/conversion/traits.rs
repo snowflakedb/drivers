@@ -2,7 +2,7 @@ use odbc_sys as sql;
 use serde_json::Value;
 
 use crate::api::ParameterBinding;
-use crate::cdata_types::{CDataType, SQL_NO_TOTAL};
+use crate::api::{CDataType, SQL_NO_TOTAL};
 use crate::conversion::error::{
     IndicatorRequiredSnafu, JsonBindingError, ReadArrowError, WriteOdbcError,
 };
@@ -109,7 +109,7 @@ impl Binding {
                     return IndicatorRequiredSnafu.fail();
                 }
                 unsafe {
-                    std::ptr::write(self.indicator_ptr, crate::cdata_types::SQL_NULL_DATA);
+                    std::ptr::write(self.indicator_ptr, crate::api::SQL_NULL_DATA);
                 }
                 Ok(())
             }

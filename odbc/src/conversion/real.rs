@@ -2,8 +2,8 @@ use arrow::array::{Array, Float64Array};
 use odbc_sys as sql;
 use serde_json::Value;
 
+use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::cdata_types::CDataType;
 use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,

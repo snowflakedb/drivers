@@ -1,6 +1,6 @@
 #[cfg(test)]
 pub(crate) mod helpers {
-    use crate::cdata_types::CDataType;
+    use crate::api::CDataType;
     use crate::conversion::traits::Binding;
     use odbc_sys as sql;
 

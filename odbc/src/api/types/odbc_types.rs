@@ -1,7 +1,6 @@
 use crate::api::bitmask::Bitmask;
 use crate::api::error::InvalidDescriptorKindSnafu;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
-use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::conversion::NumericSettings;
 use crate::conversion::warning::Warnings;
@@ -11,6 +10,8 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
 };
 use std::collections::HashMap;
+
+use super::CDataType;
 
 /// Custom Snowflake connection attribute base.
 /// Mirrors the old driver's sf_odbc.h: SQL_DRIVER_CONN_ATTR_BASE (0x4000) + 0x53
@@ -348,6 +349,168 @@ impl TryFrom<u16> for FreeStmtOption {
                 })
             }
         }
+    }
+}
+
+/// ODBC parameter direction, used in `SQLBindParameter` and the IPD's
+/// `SQL_DESC_PARAMETER_TYPE` field.
+///
+/// Source: `sqlext.h` —
+/// <https://github.com/microsoft/ODBC-Specification/blob/master/Windows/inc/sqlext.h>
+#[repr(i16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamDirection {
+    Input = 1,       // SQL_PARAM_INPUT
+    InputOutput = 2, // SQL_PARAM_INPUT_OUTPUT
+    ResultCol = 3,   // SQL_RESULT_COL (IPD only, not typical for SQLBindParameter)
+    Output = 4,      // SQL_PARAM_OUTPUT
+    ReturnValue = 5, // SQL_RETURN_VALUE (stored procedure return values)
+}
+
+impl TryFrom<sql::SmallInt> for ParamDirection {
+    type Error = OdbcError;
+
+    fn try_from(value: sql::SmallInt) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(ParamDirection::Input),
+            2 => Ok(ParamDirection::InputOutput),
+            3 => Ok(ParamDirection::ResultCol),
+            4 => Ok(ParamDirection::Output),
+            5 => Ok(ParamDirection::ReturnValue),
+            _ => {
+                tracing::error!("Invalid parameter direction: {value}");
+                Err(OdbcError::InvalidParameterType {
+                    value,
+                    location: snafu::location!(),
+                })
+            }
+        }
+    }
+}
+
+/// ODBC SQL data type identifier.
+///
+/// Source: Microsoft ODBC Specification headers —
+/// <https://github.com/microsoft/ODBC-Specification/tree/master/Windows/inc>
+#[repr(i16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlType {
+    // sql.h — core types
+    Char = 1,     // SQL_CHAR
+    Numeric = 2,  // SQL_NUMERIC
+    Decimal = 3,  // SQL_DECIMAL
+    Integer = 4,  // SQL_INTEGER
+    SmallInt = 5, // SQL_SMALLINT
+    Float = 6,    // SQL_FLOAT
+    Real = 7,     // SQL_REAL
+    Double = 8,   // SQL_DOUBLE
+    DateTime = 9, // SQL_DATETIME (header code for date/time subcodes)
+    Varchar = 12, // SQL_VARCHAR
+
+    // sqlext.h — ODBC 2.x backward-compatible types
+    Interval = 10,     // SQL_INTERVAL (header code for interval subcodes)
+    ExtTimestamp = 11, // ODBC 2.x SQL_TIMESTAMP, superseded by SQL_TYPE_TIMESTAMP (93)
+
+    // sql.h — ODBC 3.x datetime shortcuts
+    TypeDate = 91,                  // SQL_TYPE_DATE
+    TypeTime = 92,                  // SQL_TYPE_TIME
+    TypeTimestamp = 93,             // SQL_TYPE_TIMESTAMP
+    TypeTimeWithTimezone = 94,      // SQL_TYPE_TIME_WITH_TIMEZONE (ODBC 4.0)
+    TypeTimestampWithTimezone = 95, // SQL_TYPE_TIMESTAMP_WITH_TIMEZONE (ODBC 4.0)
+
+    // sqlext.h — extended types
+    LongVarchar = -1,   // SQL_LONGVARCHAR
+    Binary = -2,        // SQL_BINARY
+    VarBinary = -3,     // SQL_VARBINARY
+    LongVarBinary = -4, // SQL_LONGVARBINARY
+    BigInt = -5,        // SQL_BIGINT
+    TinyInt = -6,       // SQL_TINYINT
+    Bit = -7,           // SQL_BIT
+
+    // sqlucode.h — wide-character types
+    WChar = -8,         // SQL_WCHAR
+    WVarchar = -9,      // SQL_WVARCHAR
+    WLongVarchar = -10, // SQL_WLONGVARCHAR
+
+    // sqlext.h
+    Guid = -11, // SQL_GUID
+
+    // sqlext.h — ODBC 3.x interval types (100 + subcode)
+    IntervalYear = 101,
+    IntervalMonth = 102,
+    IntervalDay = 103,
+    IntervalHour = 104,
+    IntervalMinute = 105,
+    IntervalSecond = 106,
+    IntervalYearToMonth = 107,
+    IntervalDayToHour = 108,
+    IntervalDayToMinute = 109,
+    IntervalDayToSecond = 110,
+    IntervalHourToMinute = 111,
+    IntervalHourToSecond = 112,
+    IntervalMinuteToSecond = 113,
+}
+
+impl TryFrom<sql::SmallInt> for SqlType {
+    type Error = OdbcError;
+
+    fn try_from(value: sql::SmallInt) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(SqlType::Char),
+            2 => Ok(SqlType::Numeric),
+            3 => Ok(SqlType::Decimal),
+            4 => Ok(SqlType::Integer),
+            5 => Ok(SqlType::SmallInt),
+            6 => Ok(SqlType::Float),
+            7 => Ok(SqlType::Real),
+            8 => Ok(SqlType::Double),
+            9 => Ok(SqlType::DateTime),
+            10 => Ok(SqlType::Interval),
+            11 => Ok(SqlType::ExtTimestamp),
+            12 => Ok(SqlType::Varchar),
+            91 => Ok(SqlType::TypeDate),
+            92 => Ok(SqlType::TypeTime),
+            93 => Ok(SqlType::TypeTimestamp),
+            94 => Ok(SqlType::TypeTimeWithTimezone),
+            95 => Ok(SqlType::TypeTimestampWithTimezone),
+            -1 => Ok(SqlType::LongVarchar),
+            -2 => Ok(SqlType::Binary),
+            -3 => Ok(SqlType::VarBinary),
+            -4 => Ok(SqlType::LongVarBinary),
+            -5 => Ok(SqlType::BigInt),
+            -6 => Ok(SqlType::TinyInt),
+            -7 => Ok(SqlType::Bit),
+            -8 => Ok(SqlType::WChar),
+            -9 => Ok(SqlType::WVarchar),
+            -10 => Ok(SqlType::WLongVarchar),
+            -11 => Ok(SqlType::Guid),
+            101 => Ok(SqlType::IntervalYear),
+            102 => Ok(SqlType::IntervalMonth),
+            103 => Ok(SqlType::IntervalDay),
+            104 => Ok(SqlType::IntervalHour),
+            105 => Ok(SqlType::IntervalMinute),
+            106 => Ok(SqlType::IntervalSecond),
+            107 => Ok(SqlType::IntervalYearToMonth),
+            108 => Ok(SqlType::IntervalDayToHour),
+            109 => Ok(SqlType::IntervalDayToMinute),
+            110 => Ok(SqlType::IntervalDayToSecond),
+            111 => Ok(SqlType::IntervalHourToMinute),
+            112 => Ok(SqlType::IntervalHourToSecond),
+            113 => Ok(SqlType::IntervalMinuteToSecond),
+            _ => {
+                tracing::error!("Invalid SQL data type: {value}");
+                Err(OdbcError::InvalidSqlDataType {
+                    value,
+                    location: snafu::location!(),
+                })
+            }
+        }
+    }
+}
+
+impl From<SqlType> for sql::SqlDataType {
+    fn from(value: SqlType) -> Self {
+        sql::SqlDataType(value as i16)
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::api::CDataType;
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
     InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
@@ -7,7 +8,6 @@ use crate::api::error::{
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
 };
-use crate::cdata_types::CDataType;
 use crate::conversion::warning::Warnings;
 use crate::conversion::{Binding, ConversionError, NumericSettings, make_converter};
 use arrow::array::{Array, RecordBatchReader};
@@ -49,7 +49,7 @@ fn next_non_empty_batch(
     mut reader: ArrowArrayStreamReader,
     rows_affected: Option<i64>,
     prepared: bool,
-) -> Result<(StatementState, ()), (StatementState, crate::api::OdbcError)> {
+) -> Result<(StatementState, ()), (StatementState, crate::api::error::OdbcError)> {
     loop {
         match reader.next() {
             Some(rb) => {
@@ -198,8 +198,8 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                     }
                 }
             }
-            Err(crate::api::OdbcError::NoMoreData { .. })
-            | Err(crate::api::OdbcError::ExecutionDone { .. }) => {
+            Err(crate::api::error::OdbcError::NoMoreData { .. })
+            | Err(crate::api::error::OdbcError::ExecutionDone { .. }) => {
                 for remaining in row_idx..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }
@@ -565,7 +565,7 @@ pub fn get_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdata_types::{Double, Real, SBigInt, UBigInt};
+    use crate::api::{Double, Real, SBigInt, UBigInt};
     use arrow::array::{
         Decimal128Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, StringArray,
     };
