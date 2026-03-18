@@ -436,11 +436,26 @@ TEST_CASE("REAL overflow returns 22003", "[datatype][real][22003]") {
   // SQL_C_USHORT - negative
   check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
 
+  // SQL_C_SHORT - below i16 min
+  check_numeric_out_of_range<SQL_C_SHORT>(conn.execute_fetch("SELECT -32769.0::FLOAT"), 1);
+
+  // SQL_C_USHORT - above u16 max
+  check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT 65536.0::FLOAT"), 1);
+
   // SQL_C_LONG - above i32 max
   check_numeric_out_of_range<SQL_C_LONG>(conn.execute_fetch("SELECT 2147483648.0::FLOAT"), 1);
 
+  // SQL_C_LONG - below i32 min
+  check_numeric_out_of_range<SQL_C_LONG>(conn.execute_fetch("SELECT -2147483649.0::FLOAT"), 1);
+
   // SQL_C_ULONG - negative
   check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
+
+  // SQL_C_ULONG - above u32 max
+  check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1);
+
+  // SQL_C_UBIGINT - negative
+  check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
 }
 
 // ============================================================================
@@ -956,21 +971,6 @@ inline SQL_NUMERIC_STRUCT get_real_binary_as_numeric_with_truncation(const State
   return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
 }
 
-inline void check_real_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int start) {
-  for (int i = start; i < 16; ++i) {
-    INFO("val[" << i << "] should be 0");
-    CHECK(numeric.val[i] == 0);
-  }
-}
-
-inline unsigned long long real_numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
-  unsigned long long result = 0;
-  for (int i = 7; i >= 0; --i) {
-    result = (result << 8) | n.val[i];
-  }
-  return result;
-}
-
 TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
   SKIP_OLD_DRIVER("BD#14",
                   "Old driver returns raw f64 bytes instead of SQL_NUMERIC_STRUCT for SQL_C_BINARY on FLOAT columns");
@@ -982,7 +982,7 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 42.0::FLOAT"), 1);
     CHECK(num.sign == 1);
     CHECK(num.val[0] == 42);
-    check_real_numeric_val_zero_from(num, 1);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // negative integer value
@@ -990,14 +990,14 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT -7.0::FLOAT"), 1);
     CHECK(num.sign == 0);
     CHECK(num.val[0] == 7);
-    check_real_numeric_val_zero_from(num, 1);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // zero
   {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 0.0::FLOAT"), 1);
     CHECK(num.sign == 1);
-    check_real_numeric_val_zero_from(num, 0);
+    check_numeric_val_zero_from(num, 0);
   }
 
   // fractional value truncates with 01S07
@@ -1005,21 +1005,24 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric_with_truncation(conn.execute_fetch("SELECT 123.456::FLOAT"), 1);
     CHECK(num.sign == 1);
     CHECK(num.scale == 0);
-    CHECK(real_numeric_val_to_ull(num) == 123);
+    CHECK(numeric_val_to_ull(num) == 123);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // large integer value
   {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 1000000.0::FLOAT"), 1);
     CHECK(num.sign == 1);
-    CHECK(real_numeric_val_to_ull(num) == 1000000);
+    CHECK(numeric_val_to_ull(num) == 1000000);
+    check_numeric_val_zero_from(num, 3);
   }
 
   // negative fractional truncates with 01S07
   {
     auto num = get_real_binary_as_numeric_with_truncation(conn.execute_fetch("SELECT -99.9::FLOAT"), 1);
     CHECK(num.sign == 0);
-    CHECK(real_numeric_val_to_ull(num) == 99);
+    CHECK(numeric_val_to_ull(num) == 99);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // value 255 uses single byte
@@ -1027,7 +1030,7 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 255.0::FLOAT"), 1);
     CHECK(num.sign == 1);
     CHECK(num.val[0] == 255);
-    check_real_numeric_val_zero_from(num, 1);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // value 256 spans two bytes
@@ -1036,7 +1039,7 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     CHECK(num.sign == 1);
     CHECK(num.val[0] == 0);
     CHECK(num.val[1] == 1);
-    check_real_numeric_val_zero_from(num, 2);
+    check_numeric_val_zero_from(num, 2);
   }
 
   // NULL returns SQL_NULL_DATA
@@ -1320,6 +1323,49 @@ TEST_CASE("REAL NaN to NUMERIC returns error", "[datatype][real][nan][edge]") {
   check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
 }
 
+// ============================================================================
+// Infinity handling for integer, bit, and numeric targets
+// Infinity must not convert to integer/bit/numeric types.
+// Per ODBC spec, Inf should produce SQL_ERROR with SQLSTATE 22003.
+// ============================================================================
+
+TEST_CASE("REAL Infinity to integer types returns 22003", "[datatype][real][infinity][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // +Inf to signed integer types
+  check_numeric_out_of_range<SQL_C_SLONG>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_SHORT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_STINYINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+
+  // +Inf to unsigned integer types
+  check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_UTINYINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+
+  // -Inf to signed integer types
+  check_numeric_out_of_range<SQL_C_SLONG>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_SBIGINT>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
+}
+
+TEST_CASE("REAL Infinity to BIT returns 22003", "[datatype][real][infinity][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_BIT>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
+}
+
+TEST_CASE("REAL Infinity to NUMERIC returns 22003", "[datatype][real][infinity][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 'Infinity'::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
+}
+
 TEST_CASE("REAL NaN to CHAR produces NaN string", "[datatype][real][nan][edge]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -1331,4 +1377,244 @@ TEST_CASE("REAL NaN to CHAR produces NaN string", "[datatype][real][nan][edge]")
   CHECK(ret == SQL_SUCCESS);
   std::string result(buf);
   CHECK(result == "NaN");
+}
+
+// ============================================================================
+// Integer-valued FLOAT (.0) conversions — small values
+// FLOAT values with no fractional part must convert to integer C types
+// without triggering the 01S07 fractional-truncation warning.
+// ============================================================================
+
+TEST_CASE("REAL integer-valued .0 - small values to integer types", "[datatype][real]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // 0.0 — all integer types, no truncation
+  CHECK(check_no_truncation<SQL_C_STINYINT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0);
+  CHECK(check_no_truncation<SQL_C_UTINYINT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0);
+  CHECK(check_no_truncation<SQL_C_SHORT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0);
+  CHECK(check_no_truncation<SQL_C_USHORT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0);
+  CHECK(check_no_truncation<SQL_C_LONG>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0);
+  CHECK(check_no_truncation<SQL_C_ULONG>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0u);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0);
+  CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0u);
+
+  // 1.0 — all integer types, no truncation
+  CHECK(check_no_truncation<SQL_C_STINYINT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1);
+  CHECK(check_no_truncation<SQL_C_UTINYINT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1);
+  CHECK(check_no_truncation<SQL_C_SHORT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1);
+  CHECK(check_no_truncation<SQL_C_USHORT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1);
+  CHECK(check_no_truncation<SQL_C_LONG>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1);
+  CHECK(check_no_truncation<SQL_C_ULONG>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1u);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1);
+  CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1u);
+
+  // -1.0 — signed integer types, no truncation
+  CHECK(check_no_truncation<SQL_C_STINYINT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1) == -1);
+  CHECK(check_no_truncation<SQL_C_SHORT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1) == -1);
+  CHECK(check_no_truncation<SQL_C_LONG>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1) == -1);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1) == -1);
+
+  // -1.0 — unsigned integer types → 22003
+  check_numeric_out_of_range<SQL_C_UTINYINT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_USHORT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
+}
+
+// ============================================================================
+// Integer-valued FLOAT (.0) conversions — i32/u32 boundary values
+// Verifies exact boundary values for 32-bit integer types when the source
+// is a FLOAT with .0 (no fractional part). All values tested are exactly
+// representable in f64 (within the 2^53 mantissa range).
+// ============================================================================
+
+TEST_CASE("REAL integer-valued .0 - i32/u32 boundary conversions", "[datatype][real][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // i32 max (2147483647) — succeeds for SQL_C_LONG and wider types
+  CHECK(check_no_truncation<SQL_C_LONG>(conn.execute_fetch("SELECT 2147483647.0::FLOAT"), 1) == 2147483647);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 2147483647.0::FLOAT"), 1) == 2147483647LL);
+  CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 2147483647.0::FLOAT"), 1) == 2147483647ULL);
+
+  // i32 min (-2147483648) — succeeds for SQL_C_LONG and wider signed types
+  CHECK(check_no_truncation<SQL_C_LONG>(conn.execute_fetch("SELECT -2147483648.0::FLOAT"), 1) ==
+        (SQLINTEGER)-2147483648LL);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT -2147483648.0::FLOAT"), 1) == -2147483648LL);
+
+  // u32 max (4294967295) — succeeds for SQL_C_ULONG and wider types
+  CHECK(check_no_truncation<SQL_C_ULONG>(conn.execute_fetch("SELECT 4294967295.0::FLOAT"), 1) == 4294967295u);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 4294967295.0::FLOAT"), 1) == 4294967295LL);
+  CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 4294967295.0::FLOAT"), 1) == 4294967295ULL);
+
+  // 2^31 (2147483648) — fits u32/i64 but overflows i32
+  CHECK(check_no_truncation<SQL_C_ULONG>(conn.execute_fetch("SELECT 2147483648.0::FLOAT"), 1) == 2147483648u);
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 2147483648.0::FLOAT"), 1) == 2147483648LL);
+  check_numeric_out_of_range<SQL_C_LONG>(conn.execute_fetch("SELECT 2147483648.0::FLOAT"), 1);
+
+  // 2^32 (4294967296) — fits i64/u64 but overflows i32 and u32
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1) == 4294967296LL);
+  CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1) == 4294967296ULL);
+  check_numeric_out_of_range<SQL_C_LONG>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1);
+  check_numeric_out_of_range<SQL_C_ULONG>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1);
+}
+
+// ============================================================================
+// Integer-valued FLOAT (.0) — large values and type boundaries
+// Tests 2^53 (largest exact integer in f64), and conversions to SQL_C_DOUBLE,
+// SQL_C_CHAR, and SQL_C_NUMERIC for big integer-valued floats.
+// ============================================================================
+
+TEST_CASE("REAL integer-valued .0 - large values to wider types", "[datatype][real][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // 2^53 — largest integer exactly representable in f64
+  CHECK(check_no_truncation<SQL_C_SBIGINT>(conn.execute_fetch("SELECT 9007199254740992.0::FLOAT"), 1) ==
+        9007199254740992LL);
+  CHECK(check_no_truncation<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 9007199254740992.0::FLOAT"), 1) ==
+        9007199254740992ULL);
+
+  // SQL_C_DOUBLE — exact for integer values within f64 mantissa range
+  CHECK(check_no_truncation<SQL_C_DOUBLE>(conn.execute_fetch("SELECT 2147483647.0::FLOAT"), 1) == 2147483647.0);
+  CHECK(check_no_truncation<SQL_C_DOUBLE>(conn.execute_fetch("SELECT 4294967295.0::FLOAT"), 1) == 4294967295.0);
+  CHECK(check_no_truncation<SQL_C_DOUBLE>(conn.execute_fetch("SELECT 9007199254740992.0::FLOAT"), 1) ==
+        9007199254740992.0);
+
+  // SQL_C_CHAR — big integer-valued floats rendered as strings
+  {
+    std::string s = check_char_success(conn.execute_fetch("SELECT 2147483647.0::FLOAT"), 1);
+    CHECK(std::stoll(s) == 2147483647LL);
+  }
+  {
+    std::string s = check_char_success(conn.execute_fetch("SELECT 4294967295.0::FLOAT"), 1);
+    CHECK(std::stoll(s) == 4294967295LL);
+  }
+  {
+    std::string s = check_char_success(conn.execute_fetch("SELECT 9007199254740992.0::FLOAT"), 1);
+    CHECK_THAT(std::stod(s), Catch::Matchers::WithinRel(9007199254740992.0, 1e-14));
+  }
+}
+
+// ============================================================================
+// Integer-valued FLOAT (.0) to SQL_C_FLOAT (f64 → f32)
+// FLOAT values with .0 that exceed f32 precision (~7 decimal digits) will
+// be rounded when converted to SQL_C_FLOAT. This is not fractional truncation
+// (01S07), just precision narrowing within the floating-point domain.
+// ============================================================================
+
+TEST_CASE("REAL integer-valued .0 to SQL_C_FLOAT", "[datatype][real][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // Small exact values — identical in f32
+  CHECK(check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT 0.0::FLOAT"), 1) == 0.0f);
+  CHECK(check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT 1.0::FLOAT"), 1) == 1.0f);
+  CHECK(check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1) == -1.0f);
+  CHECK(check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT 100.0::FLOAT"), 1) == 100.0f);
+
+  // Power-of-two values — exact in f32
+  CHECK(check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT 1024.0::FLOAT"), 1) == 1024.0f);
+  CHECK(check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT 65536.0::FLOAT"), 1) == 65536.0f);
+  CHECK(check_no_truncation<SQL_C_FLOAT>(conn.execute_fetch("SELECT 16777216.0::FLOAT"), 1) == 16777216.0f);
+}
+
+// ============================================================================
+// Integer-valued FLOAT (.0) to SQL_C_NUMERIC — large boundary values
+// Verifies that big integer-valued floats are correctly encoded in the
+// SQL_NUMERIC_STRUCT (val[] bytes, sign, precision, scale).
+// ============================================================================
+
+TEST_CASE("REAL integer-valued .0 to SQL_C_NUMERIC - boundary values", "[datatype][real][numeric][edge]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // i32 max
+  {
+    auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 2147483647.0::FLOAT"), 1);
+    CHECK(numeric.sign == 1);
+    CHECK(numeric_val_to_ull(numeric) == 2147483647ULL);
+    check_numeric_val_zero_from(numeric, 4);
+  }
+
+  // i32 min (absolute value in val[])
+  {
+    auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT -2147483648.0::FLOAT"), 1);
+    CHECK(numeric.sign == 0);
+    CHECK(numeric_val_to_ull(numeric) == 2147483648ULL);
+    check_numeric_val_zero_from(numeric, 4);
+  }
+
+  // u32 max
+  {
+    auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 4294967295.0::FLOAT"), 1);
+    CHECK(numeric.sign == 1);
+    CHECK(numeric_val_to_ull(numeric) == 4294967295ULL);
+    check_numeric_val_zero_from(numeric, 4);
+  }
+
+  // 2^32
+  {
+    auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1);
+    CHECK(numeric.sign == 1);
+    CHECK(numeric_val_to_ull(numeric) == 4294967296ULL);
+    check_numeric_val_zero_from(numeric, 5);
+  }
+
+  // 2^53 (largest exact integer in f64)
+  {
+    auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 9007199254740992.0::FLOAT"), 1);
+    CHECK(numeric.sign == 1);
+    CHECK(numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    check_numeric_val_zero_from(numeric, 7);
+  }
+
+  // large negative
+  {
+    auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT -9007199254740992.0::FLOAT"), 1);
+    CHECK(numeric.sign == 0);
+    CHECK(numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    check_numeric_val_zero_from(numeric, 7);
+  }
+}
+
+// ============================================================================
+// INCOMPATIBLE CONVERSIONS — SQLSTATE 07006
+// Per ODBC spec (Appendix D, "SQL to C: Numeric"), approximate numeric types
+// (SQL_REAL, SQL_FLOAT, SQL_DOUBLE) cannot be converted to temporal or GUID
+// C types. The driver should return SQL_ERROR with SQLSTATE 07006.
+// ============================================================================
+
+TEST_CASE("REAL to temporal C types returns 07006", "[datatype][real][conversion][negative]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42.5::FLOAT");
+
+  SECTION("SQL_C_TYPE_DATE") {
+    SQL_DATE_STRUCT value = {};
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_DATE, &value, sizeof(value));
+  }
+
+  SECTION("SQL_C_TYPE_TIME") {
+    SQL_TIME_STRUCT value = {};
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIME, &value, sizeof(value));
+  }
+
+  SECTION("SQL_C_TYPE_TIMESTAMP") {
+    SQL_TIMESTAMP_STRUCT value = {};
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIMESTAMP, &value, sizeof(value));
+  }
+}
+
+// Windows Driver Manager may intercept SQL_C_GUID and return HYC00 instead of 07006.
+TEST_CASE("REAL to SQL_C_GUID returns 07006 (or HYC00 on Windows)", "[datatype][real][conversion][negative]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42.5::FLOAT");
+
+  SQLGUID value = {};
+  check_incompatible_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
 }
