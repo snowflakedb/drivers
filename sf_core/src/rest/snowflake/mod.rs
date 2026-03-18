@@ -277,12 +277,11 @@ pub async fn auth_request_data(
                 if let Some(cached_token) = cached_mfa_token {
                     data.token = Some(cached_token);
                 } else {
-                    data.ext_authn_duo_method =
-                        Some(if passcode.is_some() && !passcode_in_password {
-                            "passcode".to_string()
-                        } else {
-                            "push".to_string()
-                        });
+                    data.ext_authn_duo_method = Some(if passcode.is_some() {
+                        "passcode".to_string()
+                    } else {
+                        "push".to_string()
+                    });
                     if !passcode_in_password {
                         data.passcode = passcode.clone();
                     }
