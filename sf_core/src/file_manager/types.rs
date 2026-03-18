@@ -82,23 +82,39 @@ pub enum SourceCompressionParam {
     AutoDetect,
 }
 
+/// Cloud storage location type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocationType {
+    S3,
+    Gcs,
+    Azure,
+}
+
 #[derive(Debug, Clone)]
 pub struct StageInfo {
+    pub location_type: LocationType,
     pub bucket: String,
     pub key_prefix: String,
     pub region: String,
-    pub creds: Credentials,
-    /// S3 endpoint provided by Snowflake (e.g. for FIPS or regional routing).
-    /// When present, the S3 client uses this instead of the SDK default.
+    pub creds: CloudCredentials,
+    /// Cloud endpoint provided by Snowflake (e.g. for FIPS or regional routing).
+    /// When present, the storage client uses this instead of the default.
     pub end_point: Option<String>,
+    /// Presigned URL for GCS operations (when access tokens are not available).
+    pub presigned_url: Option<String>,
 }
 
-/// AWS credentials for S3 stage access.
+/// Cloud storage credentials.
 #[derive(Debug, Clone)]
-pub struct Credentials {
-    pub aws_key_id: String,
-    pub aws_secret_key: SensitiveString,
-    pub aws_token: SensitiveString,
+pub enum CloudCredentials {
+    /// AWS S3 credentials (access key + secret + session token).
+    S3 {
+        aws_key_id: String,
+        aws_secret_key: SensitiveString,
+        aws_token: SensitiveString,
+    },
+    /// Google Cloud Storage credentials (OAuth2 Bearer token).
+    Gcs { gcs_access_token: SensitiveString },
 }
 
 /// Encryption material for file transfer.
