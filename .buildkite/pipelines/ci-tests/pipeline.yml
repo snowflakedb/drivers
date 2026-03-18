@@ -1,10 +1,13 @@
 # Universal Driver CI Tests Pipeline
-# Runs integration and E2E tests for all drivers in parallel.
 #
-# Test selection: a lightweight pre-step runs ci/select_tests.py on the bare
-# agent (no Docker) and stores results in Buildkite meta-data. Each driver
-# step reads its filter from meta-data and skips if no relevant changes.
-# Skipped drivers are annotated on the build page for visibility.
+# Architecture: a lightweight "Test Selection" step runs on the bare agent
+# (no Docker) and determines which drivers need testing. It then dynamically
+# uploads only the needed driver steps via `buildkite-agent pipeline upload`.
+# Skipped drivers never spin up Docker — they are annotated on the build page
+# but do not appear as steps.
+#
+# The driver steps are defined in ci/generate_buildkite_pipeline.py which
+# generates the pipeline YAML programmatically.
 #
 # Each driver group runs build + test in a single step because Buildkite steps
 # run on separate agents with no shared filesystem. Splitting build/test would
@@ -17,30 +20,7 @@
 #
 # Docker image: same as used in Jenkins CI (rhel8-universal-driver-coverage)
 
-common: &common
-  agents:
-    queue: "discovery"
-    repo: "snowflakedb/universal-driver"
-  plugins:
-    - ${GLOBAL_PLUGIN}/vault_secrets:
-        secrets:
-          - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
-            env_name: "PARAMETERS_SECRET"
-    - docker#v5.11.0:
-        image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
-        propagate-environment: true
-        mount-buildkite-agent: true
-        environment:
-          - "PARAMETERS_SECRET"
-  retry:
-    automatic:
-      - exit_status: "*"
-        limit: 1
-
 steps:
-  # ==========================================================================
-  # Test Selection (runs on bare agent, no Docker)
-  # ==========================================================================
   - label: ":mag: Test Selection"
     key: "test-selection"
     agents:
@@ -48,176 +28,4 @@ steps:
       repo: "snowflakedb/universal-driver"
     command: |
       pip3 install pyyaml -q 2>/dev/null
-      for driver_group in "rust:integ,e2e" "python:integ,e2e" "odbc:integ,e2e" "java:e2e"; do
-        driver="$${driver_group%%:*}"
-        group="$${driver_group##*:}"
-        result=$$(python3 ci/select_tests.py --driver "$$driver" --group "$$group" --verbose)
-        buildkite-agent meta-data set "test-filter-$$driver" "$$result"
-        if [ "$$result" = "SKIP" ]; then
-          buildkite-agent annotate ":fast_forward: $$driver — skipped (no relevant changes)" --style "info" --context "$$driver-skip" --append
-        elif [ "$$result" = "ALL" ]; then
-          buildkite-agent annotate ":test_tube: $$driver — running ALL tests" --style "success" --context "$$driver-run" --append
-        else
-          buildkite-agent annotate ":test_tube: $$driver — filtered: $$result" --style "success" --context "$$driver-run" --append
-        fi
-      done
-
-  # ==========================================================================
-  # Rust Core
-  # ==========================================================================
-  - group: ":rust: Rust Core"
-    key: "rust-core"
-    depends_on: "test-selection"
-    steps:
-      - label: ":rust: Build + E2E Tests"
-        key: "rust-core-e2e"
-        <<: *common
-        command: |
-          echo "--- :mag: Test Selection"
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for rust core, skipping"
-            exit 0
-          fi
-
-          ./scripts/decode_secrets.sh
-          yum install -y unzip
-          export PARAMETER_PATH=/workdir/parameters.json
-
-          echo "--- :hammer: Building sf_core"
-          cargo build --package sf_core
-
-          echo "--- :test_tube: Running E2E Tests"
-          if [ "$$TEST_FILTER" = "ALL" ]; then
-            cargo test --package sf_core -- --ignored
-          else
-            cargo test --package sf_core -- --ignored "$$TEST_FILTER"
-          fi
-        timeout_in_minutes: 30
-
-  # ==========================================================================
-  # Python
-  # ==========================================================================
-  - group: ":python: Python"
-    key: "python"
-    depends_on: "test-selection"
-    steps:
-      - label: ":python: Build + Integ + E2E Tests"
-        key: "python-integ-e2e"
-        <<: *common
-        command: |
-          echo "--- :mag: Test Selection"
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-python")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for python, skipping"
-            exit 0
-          fi
-
-          ./scripts/decode_secrets.sh
-          yum install -y unzip
-          export PARAMETER_PATH=/workdir/parameters.json
-
-          cd python
-
-          echo "--- :hammer: Building Python Wheel"
-          RUSTFLAGS="" hatch build -t wheel
-          hatch run test.py3.9:install-wheel
-
-          echo "--- :test_tube: Running Integ + E2E Tests"
-          if [ "$$TEST_FILTER" = "ALL" ]; then
-            hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
-          else
-            hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900
-          fi
-        timeout_in_minutes: 45
-
-  # ==========================================================================
-  # ODBC
-  # ==========================================================================
-  - group: ":c: ODBC"
-    key: "odbc"
-    depends_on: "test-selection"
-    steps:
-      - label: ":c: Build + Integ + E2E Tests"
-        key: "odbc-integ-e2e"
-        <<: *common
-        command: |
-          echo "--- :mag: Test Selection"
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-odbc")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for odbc, skipping"
-            exit 0
-          fi
-
-          ./scripts/decode_secrets.sh
-          yum install -y unzip
-          export PARAMETER_PATH=/workdir/parameters.json
-          export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
-
-          echo "--- :hammer: Building ODBC Driver"
-          cargo build
-
-          echo "--- :hammer: Building C++ Test Suite"
-          source /opt/rh/gcc-toolset-11/enable
-          cd odbc_tests
-          mkdir -p cmake-build
-          cmake -B cmake-build \
-              -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-              -D ODBC_INCLUDE_DIR="/usr/include" \
-              -D DRIVER_TYPE=NEW \
-              .
-          cmake --build cmake-build -- -j $$(nproc)
-
-          echo "--- :test_tube: Running Integ + E2E Tests"
-          if [ "$$TEST_FILTER" = "ALL" ]; then
-            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration"
-          else
-            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER"
-          fi
-        timeout_in_minutes: 45
-
-  # ==========================================================================
-  # JDBC
-  # ==========================================================================
-  - group: ":java: JDBC"
-    key: "jdbc"
-    depends_on: "test-selection"
-    steps:
-      - label: ":java: Build + Integ + E2E Tests"
-        key: "jdbc-integ-e2e"
-        <<: *common
-        command: |
-          echo "--- :mag: Test Selection"
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-java")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for jdbc, skipping"
-            exit 0
-          fi
-
-          ./scripts/decode_secrets.sh
-          yum install -y unzip
-          export PARAMETER_PATH=/workdir/parameters.json
-
-          echo "--- :hammer: Building JDBC Bridge"
-          cargo build --package sf_core
-          cargo build --package jdbc_bridge
-
-          echo "--- :test_tube: Running Integ + E2E Tests"
-          export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
-          chmod +x jdbc/gradlew
-          cd jdbc
-          if [ "$$TEST_FILTER" = "ALL" ]; then
-            ./gradlew test --stacktrace
-          else
-            GRADLE_TESTS=""
-            IFS='|' read -ra PATTERNS <<< "$$TEST_FILTER"
-            for pattern in "$${PATTERNS[@]}"; do
-              GRADLE_TESTS="$$GRADLE_TESTS --tests $$pattern"
-            done
-            ./gradlew test $$GRADLE_TESTS --stacktrace
-          fi
-        timeout_in_minutes: 45
+      python3 ci/generate_buildkite_pipeline.py | buildkite-agent pipeline upload
