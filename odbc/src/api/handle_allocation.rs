@@ -39,6 +39,7 @@ pub fn alloc_connection() -> OdbcResult<*mut Connection> {
         child_statements: vec![],
         cached_autocommit: crate::api::types::AutocommitValue::On,
         current_catalog: None,
+        metadata_id: false,
     });
     Ok(Box::into_raw(dbc))
 }
@@ -52,6 +53,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> 
             db_handle: _,
             conn_handle,
         } => {
+            let metadata_id = conn.metadata_id;
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_new(StatementNewRequest {
                     conn_handle: Some(*conn_handle),
@@ -67,7 +69,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement> 
             // the Arc is converted to a raw pointer immediately — it is never cloned and
             // never shared across threads. Rc cannot be used because Connection: Send.
             #[allow(clippy::arc_with_non_send_sync)]
-            let stmt = Arc::new(Statement::new(conn as *mut Connection, stmt_handle));
+            let stmt = Arc::new(Statement::new(conn as *mut Connection, stmt_handle, metadata_id));
             // Defensive prune: in correct code free_statement removes each entry before
             // dropping the Arc, so Weaks here are always upgradeable. This retain is a
             // safety net against a future bug in the removal logic, not a routine cleanup.

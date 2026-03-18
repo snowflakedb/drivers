@@ -802,6 +802,24 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             tracing::debug!("set_connect_attr: ConnectionTimeout (ignored)");
             Ok(())
         }
+        ConnectionAttribute::MetadataId => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    connection.metadata_id = false;
+                    Ok(())
+                }
+                1 => {
+                    connection.metadata_id = true;
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute: attr.as_raw(),
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
         ConnectionAttribute::ConnectionDead | ConnectionAttribute::AutoIpd => {
             // Read-only attributes — cannot be set
             ReadOnlyAttributeSnafu {
@@ -1062,6 +1080,14 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             if !string_length_ptr.is_null() {
                 unsafe {
                     *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::MetadataId => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = connection.metadata_id as sql::ULen;
                 }
             }
             Ok(())

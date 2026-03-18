@@ -1,10 +1,22 @@
 use crate::api::CDataType;
-use crate::api::encoding::OdbcEncoding;
+use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu,
-    InvalidBufferLengthSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
-    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
+    ArrowArrayStreamReaderCreationSnafu,
+    CursorAlreadyOpenSnafu,
+    DisconnectedSnafu,
+    InvalidAttributeValueSnafu,
+    InvalidBufferLengthSnafu,
+    InvalidCursorStateSnafu,
+    InvalidHandleSnafu,
+    InvalidParameterNumberSnafu,
+    InvalidPrecisionOrScaleSnafu,
+    JsonBindingSnafu,
+    NoMoreDataSnafu,
+    NullPointerSnafu,
+    OdbcRuntimeSnafu,
+    ReadOnlyAttributeSnafu,
+    Required,
+    StatementNotExecutedSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -833,9 +845,29 @@ pub fn set_stmt_attr(
             stmt.ard.bind_offset_ptr = ptr;
             Ok(())
         }
+        StmtAttr::MetadataId => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    stmt.metadata_id = false;
+                    Ok(())
+                }
+                1 => {
+                    stmt.metadata_id = true;
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
         StmtAttr::SnowflakeLastQueryId => {
-            tracing::warn!("set_stmt_attr: SnowflakeLastQueryId is read-only");
-            ReadOnlyAttributeSnafu { attribute }.fail()
+            crate::api::error::ReadOnlyAttributeSnafu { attribute }.fail()
+        }
+        StmtAttr::ImpRowDesc | StmtAttr::ImpParamDesc => {
+            crate::api::error::ReadOnlyAttributeSnafu { attribute }.fail()
         }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
@@ -949,6 +981,19 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             }
             Ok(())
         }
+        StmtAttr::MetadataId => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = stmt.metadata_id as sql::ULen;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
         StmtAttr::SnowflakeLastQueryId => {
             if buffer_length < 0 {
                 return InvalidBufferLengthSnafu {
@@ -957,7 +1002,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
                 .fail();
             }
             let query_id = stmt.last_query_id.as_deref().unwrap_or("");
-            crate::api::encoding::write_string_bytes_i32::<E>(
+            write_string_bytes_i32::<E>(
                 query_id,
                 value_ptr as *mut E::Char,
                 buffer_length,
@@ -968,7 +1013,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         }
         _ => {
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
-            crate::api::error::UnknownAttributeSnafu { attribute }.fail()
+            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
         }
     }
 }

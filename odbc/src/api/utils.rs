@@ -1,6 +1,6 @@
 use crate::api::encoding::{OdbcEncoding, write_string_chars};
 use crate::api::error::{
-    ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
+    ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu, NullPointerSnafu,
     StatementNotExecutedSnafu,
 };
 use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
@@ -10,6 +10,27 @@ use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
+
+/// Process a catalog function string argument according to SQL_ATTR_METADATA_ID rules.
+///
+/// When `metadata_id` is `true`, the argument is treated as a case-insensitive identifier:
+/// - `None` (NULL pointer) → `HY009` (`InvalidUseOfNullPointer`): identifier is required.
+/// - Trailing spaces are stripped.
+/// - The string is folded to uppercase.
+///
+/// When `metadata_id` is `false` (default), the argument is treated as an ordinary search
+/// pattern and returned unchanged; `None` means "match all" (no filter applied).
+///
+/// Catalog functions must call this for every string argument except `TableType` in
+/// `SQLTables` (which is always treated as an ordinary argument per the ODBC spec).
+pub fn process_catalog_arg(arg: Option<&str>, metadata_id: bool) -> OdbcResult<Option<String>> {
+    match (arg, metadata_id) {
+        (None, true) => NullPointerSnafu.fail(),
+        (None, false) => Ok(None),
+        (Some(s), true) => Ok(Some(s.trim_end().to_uppercase())),
+        (Some(s), false) => Ok(Some(s.to_string())),
+    }
+}
 
 /// Get the number of result columns
 pub fn num_result_cols(
