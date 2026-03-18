@@ -118,7 +118,7 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
-      matrix:
+      matrix: &base_matrix
         os: [ubuntu-latest, windows-11-arm]
         py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         exclude:
@@ -293,38 +293,48 @@ jobs:
           - os: ubuntu-latest
             py: "3.9"
             hatch_env: "test"
+            cloud_provider: aws
           - os: ubuntu-latest
             py: "3.12"
             hatch_env: "test"
+            cloud_provider: gcp
           - os: ubuntu-latest
             py: "3.14"
             hatch_env: "test"
+            cloud_provider: aws
           - os: windows-11-arm
             py: "3.11"
             hatch_env: "test"
+            cloud_provider: gcp
           - os: windows-11-arm
             py: "3.12"
             hatch_env: "test"
+            cloud_provider: aws
           - os: windows-11-arm
             py: "3.13"
             hatch_env: "test"
+            cloud_provider: gcp
           - os: ubuntu-latest # Reference combination — keep in sync with REFERENCE_* env vars above
             py: "3.13"
             hatch_env: "test"
+            cloud_provider: aws
           # test integration with Pandas
           - os: ubuntu-latest
             py: "3.9"
             hatch_env: "test-pandas"
+            cloud_provider: gcp
           - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
             py: "3.13"
             hatch_env: "test-pandas"
+            cloud_provider: aws
           - os: ubuntu-latest
             py: "3.14"
             hatch_env: "test-pandas"
+            cloud_provider: gcp
     runs-on: ${{ matrix.os }}
-    name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }})
+    name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
     env:
-      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
+      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}
     steps:
       - name: Set UV cache dir
         shell: bash
@@ -375,7 +385,7 @@ jobs:
           path: python/dist
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
@@ -586,7 +596,7 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with:
-          name: results-universal-${{ env.MATRIX_KEY }}
+          name: results-universal-${{ env.MATRIX_KEY }}-aws
           path: ${{ github.workspace }}/universal-results
 
       - name: Download reference test results
@@ -605,7 +615,7 @@ jobs:
           hatch run reference:compare \
             --py ${{ env.REFERENCE_PYTHON_VERSION }} \
             --os ${{ env.REFERENCE_OS_VERSION }} \
-            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}.json \
+            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-aws.json \
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 

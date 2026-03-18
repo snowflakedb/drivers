@@ -194,14 +194,17 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+            cloud_provider: aws
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
+            cloud_provider: gcp
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+            cloud_provider: aws
     runs-on: ${{ matrix.os }}
-    name: odbc_tests (${{ matrix.name }})
+    name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -271,7 +274,7 @@ jobs:
           echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\x64\MD" >> $env:GITHUB_ENV
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
