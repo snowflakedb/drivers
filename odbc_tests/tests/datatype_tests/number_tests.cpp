@@ -41,12 +41,6 @@ inline SQL_NUMERIC_STRUCT get_binary_as_numeric(const StatementHandleWrapper& st
   return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
 }
 
-inline void check_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int start) {
-  for (int i = start; i < 16; ++i) {
-    CHECK(numeric.val[i] == 0);
-  }
-}
-
 template <int SQL_C_TYPE>
 void check_integer_columns(const StatementHandleWrapper& stmt, const std::vector<int>& exact_cols,
                            const std::vector<int>& truncated_cols, typename MetaOfSqlCType<SQL_C_TYPE>::type expected) {
@@ -642,14 +636,6 @@ TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR", "[datatype][number][wchar]") {
 // SQL_C_NUMERIC (SQL_NUMERIC_STRUCT) conversion tests
 // ============================================================================
 
-inline unsigned long long numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
-  unsigned long long result = 0;
-  for (int i = 7; i >= 0; --i) {
-    result = (result << 8) | n.val[i];
-  }
-  return result;
-}
-
 TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC", "[datatype][number][numeric]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -1007,14 +993,44 @@ TEST_CASE("SQL_DECIMAL overflow returns 22003", "[datatype][number][22003]") {
     check_numeric_out_of_range<SQL_C_UTINYINT>(stmt, 1);
   }
 
+  SECTION("SQL_C_SHORT - below i16 min") {
+    auto stmt = conn.execute_fetch("SELECT -32769::NUMBER(5,0)");
+    check_numeric_out_of_range<SQL_C_SHORT>(stmt, 1);
+  }
+
   SECTION("SQL_C_USHORT - negative") {
     auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
+    check_numeric_out_of_range<SQL_C_USHORT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_USHORT - above u16 max") {
+    auto stmt = conn.execute_fetch("SELECT 65536::NUMBER(5,0)");
     check_numeric_out_of_range<SQL_C_USHORT>(stmt, 1);
   }
 
   SECTION("SQL_C_ULONG - negative") {
     auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
     check_numeric_out_of_range<SQL_C_ULONG>(stmt, 1);
+  }
+
+  SECTION("SQL_C_ULONG - above u32 max") {
+    auto stmt = conn.execute_fetch("SELECT 4294967296::NUMBER(10,0)");
+    check_numeric_out_of_range<SQL_C_ULONG>(stmt, 1);
+  }
+
+  SECTION("SQL_C_SBIGINT - above i64 max") {
+    auto stmt = conn.execute_fetch("SELECT 9223372036854775808::NUMBER(19,0)");
+    check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_SBIGINT - below i64 min") {
+    auto stmt = conn.execute_fetch("SELECT -9223372036854775809::NUMBER(19,0)");
+    check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 1);
+  }
+
+  SECTION("SQL_C_UBIGINT - negative") {
+    auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
+    check_numeric_out_of_range<SQL_C_UBIGINT>(stmt, 1);
   }
 }
 
@@ -1634,4 +1650,44 @@ TEST_CASE("TREAT_DECIMAL_AS_INT with table columns", "[datatype][number][treat_d
     CHECK(indicator == sizeof(SQLBIGINT));
     CHECK(value == 42);
   }
+}
+
+// ============================================================================
+// INCOMPATIBLE CONVERSIONS — SQLSTATE 07006
+// Per ODBC spec (Appendix D, "SQL to C: Numeric"), exact numeric types
+// (SQL_DECIMAL, SQL_NUMERIC) cannot be converted to temporal or GUID C types.
+// The driver should return SQL_ERROR with SQLSTATE 07006.
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL to temporal C types returns 07006", "[datatype][number][conversion][negative]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+
+  SECTION("SQL_C_TYPE_DATE") {
+    SQL_DATE_STRUCT value = {};
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_DATE, &value, sizeof(value));
+  }
+
+  SECTION("SQL_C_TYPE_TIME") {
+    SQL_TIME_STRUCT value = {};
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIME, &value, sizeof(value));
+  }
+
+  SECTION("SQL_C_TYPE_TIMESTAMP") {
+    SQL_TIMESTAMP_STRUCT value = {};
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIMESTAMP, &value, sizeof(value));
+  }
+}
+
+// Windows Driver Manager may intercept SQL_C_GUID and return HYC00 instead of 07006.
+TEST_CASE("SQL_DECIMAL to SQL_C_GUID returns 07006 (or HYC00 on Windows)", "[datatype][number][conversion][negative]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+
+  SQLGUID value = {};
+  check_incompatible_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
 }
