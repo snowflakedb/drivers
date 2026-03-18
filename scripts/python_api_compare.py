@@ -8,6 +8,10 @@ every area listed in ``docs/python-wrapper-public-api-scope.md``.
 
 No native libraries or driver installation is required.
 
+Prerequisites:
+    - GitHub CLI (``gh``) must be installed and authenticated (``gh auth login``).
+    - Network access to the GitHub API is required to download reference files.
+
 Usage:
     python scripts/python_api_compare.py [--ref-tag TAG]
 
@@ -60,6 +64,7 @@ SYM_OK = f"{GREEN}\u2714{RESET}"
 SYM_MISS = f"{RED}\u2718{RESET}"
 SYM_EXTRA = f"{CYAN}+{RESET}"
 SYM_STUB = f"{YELLOW}\u25cb{RESET}"  # not-implemented stub
+SYM_WARN = f"{YELLOW}\u26a0{RESET}"  # kind mismatch / informational warning
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +222,7 @@ def _extract_all_list(tree: ast.Module) -> list[str]:
                             elt.value
                             for elt in node.value.elts
                             if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                            and not elt.value.startswith("_")
                         ]
     return []
 
@@ -233,6 +239,8 @@ def _extract_exception_classes(tree: ast.Module) -> dict[str, list[str]]:
                 elif isinstance(base, ast.Attribute):
                     bases.append(base.attr)
             # Include if it inherits from Exception/Warning/Error or another known exception
+            if node.name.startswith("_"):
+                continue
             if any(b in ("Exception", "Warning", "Error", "BaseException") for b in bases) or \
                any(b in exceptions for b in bases):
                 exceptions[node.name] = bases
@@ -421,9 +429,9 @@ def _compare_class_structure(
         return result
 
     if ref.kind == "alias" or wrap.kind == "alias":
-        # One is alias, other is a real class — show the kind mismatch
+        # One is alias, other is a real class — flag the kind mismatch
         # and, if the reference is a real class, list its fields as missing
-        result.add(SYM_OK, "(kind)", f"ref: {ref.kind}, wrapper: {wrap.kind}")
+        result.add(SYM_WARN, "(kind mismatch)", f"ref: {ref.kind}, wrapper: {wrap.kind}")
         if wrap.kind == "alias" and ref.kind in ("class", "namedtuple"):
             for f in ref.fields:
                 opt = " (optional)" if f.has_default else " (required)"
@@ -497,32 +505,26 @@ def _extract_top_level_functions(tree: ast.Module) -> set[str]:
     return result
 
 
-def _extract_top_level_classes(tree: ast.Module) -> set[str]:
-    """Extract names of top-level (non-private) classes and class aliases."""
-    result = set()
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
-            result.add(node.name)
-        # Also catch aliases like ``ResultMetadataV2 = ResultMetadata``
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and not target.id.startswith("_"):
-                    # Only include if the RHS is a Name (class alias)
-                    if isinstance(node.value, ast.Name):
-                        result.add(target.id)
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Reference driver download
 # ---------------------------------------------------------------------------
 
 
-def _download_ref_files(ref_tag: str, dest: Path) -> Path:
-    """Download reference driver files from GitHub using gh CLI."""
+GH_TIMEOUT_SECONDS = 30
+
+
+def _download_ref_files(ref_tag: str, dest: Path) -> tuple[Path, int]:
+    """Download reference driver files from GitHub using gh CLI.
+
+    Returns:
+        A tuple of (destination directory, number of files successfully downloaded).
+    """
     connector_dest = dest / "connector"
     connector_dest.mkdir(parents=True, exist_ok=True)
 
+    import base64
+
+    success_count = 0
     for ref_path in REF_FILES:
         local_name = Path(ref_path).name
         target = connector_dest / local_name
@@ -531,15 +533,28 @@ def _download_ref_files(ref_tag: str, dest: Path) -> Path:
             f"repos/{REF_REPO}/contents/{ref_path}?ref={ref_tag}",
             "--jq", ".content",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=GH_TIMEOUT_SECONDS,
+            )
+        except FileNotFoundError:
+            print(
+                f"\n  {RED}Error: 'gh' CLI not found. Install it from https://cli.github.com/ "
+                f"and run 'gh auth login'.{RESET}",
+                file=sys.stderr,
+            )
+            return connector_dest, 0
+        except subprocess.TimeoutExpired:
+            print(f"  {RED}Timeout downloading {ref_path}{RESET}", file=sys.stderr)
+            continue
         if result.returncode != 0:
             print(f"  {RED}Failed to download {ref_path}: {result.stderr.strip()}{RESET}", file=sys.stderr)
             continue
-        import base64
         content = base64.b64decode(result.stdout.strip()).decode("utf-8")
         target.write_text(content, encoding="utf-8")
+        success_count += 1
 
-    return connector_dest
+    return connector_dest, success_count
 
 
 def _parse_file(path: Path) -> ast.Module | None:
@@ -676,8 +691,10 @@ def _compare_module_functions(
 def _print_section(comp: ComparisonResult) -> None:
     missing = comp.missing_count
     stubs = comp.stub_count
+    warns = sum(1 for s, _, _ in comp.items if s == SYM_WARN)
+    extras = sum(1 for s, _, _ in comp.items if s == SYM_EXTRA)
     total = len(comp.items)
-    ok = total - missing - stubs - sum(1 for s, _, _ in comp.items if s == SYM_EXTRA)
+    ok = total - missing - stubs - warns - extras
 
     print(f"\n{BOLD}{'=' * 70}")
     print(f"  {comp.section}")
@@ -688,6 +705,8 @@ def _print_section(comp: ComparisonResult) -> None:
         status_parts.append(f"{GREEN}OK: {ok}{RESET}")
     if stubs:
         status_parts.append(f"{YELLOW}Stubs: {stubs}{RESET}")
+    if warns:
+        status_parts.append(f"{YELLOW}Warns: {warns}{RESET}")
     if missing:
         status_parts.append(f"{RED}Missing: {missing}{RESET}")
 
@@ -699,20 +718,30 @@ def _print_section(comp: ComparisonResult) -> None:
         print(f"  {sym} {name:<{max_name}}  {detail}")
 
 
+def _pct(n: int, base: int) -> str:
+    """Format *n* as a percentage of *base*, e.g. ``' (42%)'``."""
+    if base == 0:
+        return ""
+    return f" ({n * 100 / base:.0f}%)"
+
+
 def _print_overall_summary(sections: list[ComparisonResult]) -> None:
     total_missing = sum(s.missing_count for s in sections)
     total_stubs = sum(s.stub_count for s in sections)
     total_items = sum(len(s.items) for s in sections)
     total_extra = sum(1 for s in sections for sym, _, _ in s.items if sym == SYM_EXTRA)
-    total_ok = total_items - total_missing - total_stubs - total_extra
+    total_warns = sum(1 for s in sections for sym, _, _ in s.items if sym == SYM_WARN)
+    total_ok = total_items - total_missing - total_stubs - total_extra - total_warns
+    # Base for percentages: everything except wrapper-only items
+    base = total_items - total_extra
 
     print(f"\n{BOLD}{'=' * 70}")
     print(f"  Overall Summary")
     print(f"{'=' * 70}{RESET}")
     print(f"  Total compared:      {total_items}")
-    print(f"  {GREEN}Present & OK:        {total_ok}{RESET}")
-    print(f"  {YELLOW}Stubs (not impl):    {total_stubs}{RESET}")
-    print(f"  {RED}Missing from wrapper: {total_missing}{RESET}")
+    print(f"  {GREEN}Present & OK:        {total_ok}{_pct(total_ok, base)}{RESET}")
+    print(f"  {YELLOW}Stubs (not impl):    {total_stubs}{_pct(total_stubs, base)}{RESET}")
+    print(f"  {RED}Missing from wrapper: {total_missing}{_pct(total_missing, base)}{RESET}")
     print(f"  {CYAN}Wrapper-only:        {total_extra}{RESET}")
 
     if total_missing > 0:
@@ -736,7 +765,11 @@ def main() -> None:
     # Download reference files
     print(f"{BOLD}Downloading reference driver ({REF_REPO} @ {args.ref_tag})...{RESET}")
     with tempfile.TemporaryDirectory(prefix="sf_ref_") as tmpdir:
-        ref_dir = _download_ref_files(args.ref_tag, Path(tmpdir))
+        ref_dir, download_count = _download_ref_files(args.ref_tag, Path(tmpdir))
+        if download_count == 0:
+            print(f"\n  {RED}{BOLD}No reference files could be downloaded. "
+                  f"Check that 'gh' is installed and authenticated.{RESET}")
+            sys.exit(2)
 
         # Parse all files
         ref_conn_tree = _parse_file(ref_dir / "connection.py")
@@ -846,7 +879,8 @@ def main() -> None:
             elif in_ref and in_wrap:
                 helper_result.add(SYM_OK, cls_name, f"present in both (ref: {ref_struct.kind}, wrapper: {wrap_struct.kind})")
             else:
-                helper_result.add(SYM_MISS, cls_name, "not found in either (may be in other modules)")
+                # Not found in either side — skip rather than penalizing the wrapper
+                helper_result.add(SYM_EXTRA, cls_name, "not found in either (skipped)")
 
         _print_section(helper_result)
         sections.append(helper_result)
@@ -884,6 +918,11 @@ def main() -> None:
             sections.append(pandas_result)
 
         # --- Overall ---
+        if not sections:
+            print(f"\n  {RED}{BOLD}No comparison sections were produced. "
+                  f"Reference files may have failed to download or parse.{RESET}")
+            sys.exit(2)
+
         _print_overall_summary(sections)
 
     sys.exit(0 if all(s.missing_count == 0 for s in sections) else 1)
