@@ -10,6 +10,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "Database.hpp"
 #include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "ScopedSessionParam.hpp"
@@ -149,6 +150,7 @@ class CatalogStmtDefaultDSNFixture : public StmtDefaultDSNFixture {
 
  public:
   CatalogStmtDefaultDSNFixture() : StmtDefaultDSNFixture(), ctx_(ScopedSessionParam::use_connection_ctx(dbc_handle())) {
+    CatalogTestDatabase::use(dbc_handle());
     REQUIRE(ctx_.is_active());
   }
 };
