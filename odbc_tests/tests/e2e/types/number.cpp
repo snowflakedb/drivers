@@ -13,6 +13,33 @@ TEST_CASE("should cast number values to appropriate type for number and synonyms
   auto stmt = conn.execute_fetch("SELECT 0::NUMBER(10,0), 123::NUMBER(10,0), 0.00::NUMBER(10,2), 123.45::NUMBER(10,2)");
 
   // Then All values should be returned as appropriate type matching [0, 123, 0.00, 123.45]
+  for (SQLUSMALLINT col = 1; col <= 4; ++col) {
+    SQLSMALLINT data_type = 0;
+    SQLULEN column_size = 0;
+    SQLSMALLINT dec_digits = 0;
+    SQLRETURN ret =
+        SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &dec_digits, nullptr);
+    CHECK_ODBC(ret, stmt);
+    INFO("col=" << col);
+    CHECK(data_type == SQL_DECIMAL);
+    CHECK(column_size == 10);
+    CHECK(dec_digits == (col <= 2 ? 0 : 2));
+  }
+  {
+    auto stmt_syn = conn.execute_fetch("SELECT 42::DECIMAL(10,0), 42::NUMERIC(10,0)");
+    for (SQLUSMALLINT col = 1; col <= 2; ++col) {
+      SQLSMALLINT data_type = 0;
+      SQLULEN column_size = 0;
+      SQLSMALLINT dec_digits = 0;
+      SQLRETURN ret = SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size,
+                                     &dec_digits, nullptr);
+      CHECK_ODBC(ret, stmt_syn);
+      INFO("synonym col=" << col);
+      CHECK(data_type == SQL_DECIMAL);
+      CHECK(column_size == 10);
+      CHECK(dec_digits == 0);
+    }
+  }
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 123);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 0.0);
