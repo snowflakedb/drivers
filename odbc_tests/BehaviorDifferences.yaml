@@ -224,3 +224,16 @@ behavior_differences:
       SQLDescribeCol is defined to succeed in states S2-S12 (prepared or executed).
       Impact: Applications that call SQLDescribeCol after SQL_CLOSE on a prepared
       statement will now receive valid metadata instead of an error.
+
+  26:
+    name: "SQLRowCount with null RowCountPtr returns SQL_SUCCESS instead of SQL_ERROR (HY009)"
+    description: |
+      OLD driver: When SQLRowCount is called with a null RowCountPtr after
+      executing a statement, the old driver returns SQL_SUCCESS and silently
+      ignores the null pointer.
+      NEW driver: Returns SQL_ERROR with SQLSTATE HY009 (Invalid use of null
+      pointer). Although HY009 is not explicitly listed in the SQLRowCount
+      diagnostics table, it is the standard ODBC SQLSTATE for null pointer
+      arguments and is consistent with the driver's defensive validation.
+      Impact: Applications that accidentally pass nullptr to SQLRowCount will
+      now receive an error instead of silent success.

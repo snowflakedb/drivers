@@ -21,6 +21,24 @@ TEST_CASE("SQLRowCount returns HY010 when called without executing statement.", 
   CHECK(get_sqlstate(stmt) == "HY010");
 }
 
+TEST_CASE("SQLRowCount returns HY009 when called with null pointer.", "[query]") {
+  // Given Snowflake client is logged in and a statement has been executed
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS value", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // When SQLRowCount is called with a null pointer for RowCountPtr
+  ret = SQLRowCount(stmt.getHandle(), nullptr);
+
+  // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY009 (Invalid use of null pointer)
+  OLD_DRIVER_ONLY("BD#26") { REQUIRE(ret == SQL_SUCCESS); }
+  NEW_DRIVER_ONLY("BD#26") {
+    REQUIRE(ret == SQL_ERROR);
+    CHECK(get_sqlstate(stmt) == "HY009");
+  }
+}
+
 TEST_CASE("SQLRowCount returns data about number of rows affected.") {
   // Given Snowflake client is logged in
   Connection conn;
@@ -183,6 +201,53 @@ TEST_CASE("SQLRowCount returns correct count for MERGE statement.", "[query]") {
   REQUIRE(rows_affected == 2);
 }
 
+TEST_CASE("SQLRowCount returns correct count for MERGE with DELETE clause.", "[query]") {
+  // Doc: MERGE can combine INSERT, UPDATE, and DELETE operations.
+  //      SQLRowCount should return the total rows affected across all clauses.
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And a target table with data exists
+  SQLRETURN ret = SQLExecDirect(
+      stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE merge_del_target (id INT, value VARCHAR(50))", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret =
+      SQLExecDirect(stmt.getHandle(),
+                    (SQLCHAR*)"INSERT INTO merge_del_target VALUES (1, 'keep'), (2, 'remove'), (3, 'update')", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And a source table with actions exists
+  ret = SQLExecDirect(
+      stmt.getHandle(),
+      (SQLCHAR*)"CREATE TEMPORARY TABLE merge_del_source (id INT, value VARCHAR(50), action VARCHAR(10))", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLExecDirect(
+      stmt.getHandle(),
+      (SQLCHAR*)"INSERT INTO merge_del_source VALUES (2, 'x', 'delete'), (3, 'new3', 'update'), (4, 'new4', 'insert')",
+      SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // When a MERGE with INSERT, UPDATE, and DELETE clauses is executed
+  ret = SQLExecDirect(stmt.getHandle(),
+                      (SQLCHAR*)"MERGE INTO merge_del_target t USING merge_del_source s ON t.id = s.id "
+                                "WHEN MATCHED AND s.action = 'delete' THEN DELETE "
+                                "WHEN MATCHED AND s.action = 'update' THEN UPDATE SET t.value = s.value "
+                                "WHEN NOT MATCHED THEN INSERT (id, value) VALUES (s.id, s.value)",
+                      SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And SQLRowCount is called
+  SQLLEN rows_affected = 0;
+  ret = SQLRowCount(stmt.getHandle(), &rows_affected);
+  CHECK_ODBC(ret, stmt);
+
+  // Then the number of rows affected should be 3 (1 deleted + 1 updated + 1 inserted)
+  REQUIRE(rows_affected == 3);
+}
+
 TEST_CASE("SQLRowCount returns correct count for UPDATE statement.", "[query]") {
   // Doc: "SQLRowCount returns the number of rows affected by an UPDATE, INSERT,
   //       or DELETE statement."
@@ -203,6 +268,45 @@ TEST_CASE("SQLRowCount returns correct count for UPDATE statement.", "[query]") 
 
   // When an UPDATE statement affecting 2 rows is executed
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"UPDATE update_test SET value = 'updated' WHERE id <= 2", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And SQLRowCount is called
+  SQLLEN rows_affected = 0;
+  ret = SQLRowCount(stmt.getHandle(), &rows_affected);
+  CHECK_ODBC(ret, stmt);
+
+  // Then the number of rows affected should be 2
+  REQUIRE(rows_affected == 2);
+}
+
+TEST_CASE("SQLRowCount returns correct count for UPDATE with JOIN.", "[query]") {
+  // Doc: Validates calculate_rows_affected() for multi-joined updates.
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And a target table and a source table exist
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
+                                (SQLCHAR*)"CREATE TEMPORARY TABLE upd_target (id INT, status VARCHAR(20))", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret =
+      SQLExecDirect(stmt.getHandle(),
+                    (SQLCHAR*)"INSERT INTO upd_target VALUES (1, 'pending'), (2, 'pending'), (3, 'shipped')", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE upd_source (id INT, new_status VARCHAR(20))",
+                      SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"INSERT INTO upd_source VALUES (1, 'shipped'), (2, 'shipped')",
+                      SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // When an UPDATE with JOIN affecting 2 rows is executed
+  ret = SQLExecDirect(stmt.getHandle(),
+                      (SQLCHAR*)"UPDATE upd_target t SET t.status = s.new_status "
+                                "FROM upd_source s WHERE t.id = s.id",
+                      SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // And SQLRowCount is called
@@ -318,6 +422,47 @@ TEST_CASE("SQLRowCount returns correct count for INSERT INTO SELECT.", "[query]"
 
   // Then the number of rows affected should be 3
   REQUIRE(rows_affected == 3);
+}
+
+TEST_CASE("SQLRowCount returns correct count for INSERT from multi-table JOIN.", "[query]") {
+  // Doc: Validates calculate_rows_affected() for multi-table inserts
+  //      where the source involves a JOIN across multiple tables.
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And two source tables and a destination table exist
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
+                                (SQLCHAR*)"CREATE TEMPORARY TABLE ins_src_a (id INT, value VARCHAR(50))", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"INSERT INTO ins_src_a VALUES (1, 'a'), (2, 'b')", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE ins_src_b (id INT, label VARCHAR(50))",
+                      SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"INSERT INTO ins_src_b VALUES (1, 'x'), (2, 'y'), (3, 'z')", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret =
+      SQLExecDirect(stmt.getHandle(),
+                    (SQLCHAR*)"CREATE TEMPORARY TABLE ins_dst (id INT, value VARCHAR(50), label VARCHAR(50))", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // When INSERT from a multi-table JOIN subquery is executed
+  ret = SQLExecDirect(
+      stmt.getHandle(),
+      (SQLCHAR*)"INSERT INTO ins_dst SELECT a.id, a.value, b.label FROM ins_src_a a JOIN ins_src_b b ON a.id = b.id",
+      SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // And SQLRowCount is called
+  SQLLEN rows_affected = 0;
+  ret = SQLRowCount(stmt.getHandle(), &rows_affected);
+  CHECK_ODBC(ret, stmt);
+
+  // Then the number of rows affected should be 2 (only 2 rows match the JOIN)
+  REQUIRE(rows_affected == 2);
 }
 
 // =============================================================================
