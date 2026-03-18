@@ -2,6 +2,7 @@ mod api;
 pub mod c_api;
 mod cdata_types;
 mod conversion;
+pub(crate) mod error;
 
 extern crate sf_core;
 extern crate tracing;

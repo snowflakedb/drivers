@@ -1,15 +1,15 @@
-use crate::api::error::{
-    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
-    InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
-};
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
 };
 use crate::cdata_types::CDataType;
 use crate::conversion::warning::Warnings;
 use crate::conversion::{Binding, ConversionError, NumericSettings, make_converter};
+use crate::error::{
+    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
+    InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
+};
 use arrow::array::{Array, RecordBatchReader};
 use arrow::datatypes::Field;
 use arrow::ffi_stream::ArrowArrayStreamReader;
@@ -49,7 +49,7 @@ fn next_non_empty_batch(
     mut reader: ArrowArrayStreamReader,
     rows_affected: Option<i64>,
     prepared: bool,
-) -> Result<(StatementState, ()), (StatementState, crate::api::OdbcError)> {
+) -> Result<(StatementState, ()), (StatementState, crate::error::OdbcError)> {
     loop {
         match reader.next() {
             Some(rb) => {
@@ -198,8 +198,8 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                     }
                 }
             }
-            Err(crate::api::OdbcError::NoMoreData { .. })
-            | Err(crate::api::OdbcError::ExecutionDone { .. }) => {
+            Err(crate::error::OdbcError::NoMoreData { .. })
+            | Err(crate::error::OdbcError::ExecutionDone { .. }) => {
                 for remaining in row_idx..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }

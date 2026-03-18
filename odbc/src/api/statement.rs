@@ -1,18 +1,17 @@
 use crate::api::encoding::OdbcEncoding;
-use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidApplicationBufferTypeSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, InvalidParameterTypeSnafu, InvalidSqlDataTypeSnafu,
-    JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
-};
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, FreeStmtOption, OdbcResult, ParameterBinding, Statement, StatementState,
-    stmt_from_handle,
+    ConnectionState, FreeStmtOption, OdbcResult, ParamDirection, ParameterBinding, SqlType,
+    Statement, StatementState, stmt_from_handle,
 };
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
+use crate::error::{
+    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
+    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
+    NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
+};
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
@@ -376,36 +375,17 @@ pub fn bind_parameter(
         return InvalidParameterNumberSnafu.fail();
     }
 
-    if !is_valid_param_type(raw_input_output_type) {
-        tracing::error!(
-            "bind_parameter: invalid input_output_type: {}",
-            raw_input_output_type
-        );
-        return InvalidParameterTypeSnafu {
-            value: raw_input_output_type,
-        }
-        .fail();
-    }
+    let direction = ParamDirection::try_from(raw_input_output_type)?;
 
-    let value_type = CDataType::try_from(raw_value_type).map_err(|_| {
-        tracing::error!("bind_parameter: invalid value_type: {}", raw_value_type);
-        InvalidApplicationBufferTypeSnafu.build()
-    })?;
+    let value_type = CDataType::try_from(raw_value_type)?;
 
-    let parameter_type = sql::SqlDataType(raw_parameter_type);
-    if !is_valid_sql_data_type(raw_parameter_type) {
-        tracing::error!(
-            "bind_parameter: invalid parameter_type: {}",
-            raw_parameter_type
-        );
-        return InvalidSqlDataTypeSnafu {
-            value: raw_parameter_type,
-        }
-        .fail();
-    }
+    let sql_type = SqlType::try_from(raw_parameter_type)?;
+    let parameter_type: sql::SqlDataType = sql_type.into();
 
-    let is_input = raw_input_output_type == sql::ParamType::Input as i16;
-    if is_input && parameter_value_ptr.is_null() && str_len_or_ind_ptr.is_null() {
+    if direction == ParamDirection::Input
+        && parameter_value_ptr.is_null()
+        && str_len_or_ind_ptr.is_null()
+    {
         tracing::error!(
             "bind_parameter: both parameter_value_ptr and str_len_or_ind_ptr are null for input parameter"
         );
@@ -429,23 +409,6 @@ pub fn bind_parameter(
         parameter_number
     );
     Ok(())
-}
-
-/// ODBC InputOutputType values:
-/// 1 = SQL_PARAM_INPUT, 2 = SQL_PARAM_INPUT_OUTPUT,
-/// 3 = SQL_PARAM_OUTPUT, 4 = SQL_PARAM_INPUT_OUTPUT_STREAM,
-/// 5 = SQL_PARAM_OUTPUT_STREAM
-fn is_valid_param_type(value: i16) -> bool {
-    matches!(value, 1..=5)
-}
-
-/// ODBC SQL data type identifier ranges:
-///   1..=12   — core types (SQL_CHAR through SQL_VARCHAR)
-///  91..=95   — datetime types (SQL_TYPE_DATE, SQL_TYPE_TIME, SQL_TYPE_TIMESTAMP, etc.)
-///  -11..=-1  — extended types (SQL_GUID, SQL_WLONGVARCHAR, ..., SQL_BIT)
-///  101..=113 — interval types (SQL_INTERVAL_YEAR through SQL_INTERVAL_MINUTE_TO_SECOND)
-fn is_valid_sql_data_type(value: i16) -> bool {
-    matches!(value, 1..=12 | 91..=95 | -11..=-1 | 101..=113)
 }
 
 /// Free statement resources based on the option
@@ -636,7 +599,7 @@ pub fn set_stmt_attr(
         }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
-            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
+            crate::error::UnsupportedAttributeSnafu { attribute }.fail()
         }
     }
 }
@@ -747,7 +710,7 @@ pub fn get_stmt_attr(
         }
         _ => {
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
-            crate::api::error::UnknownAttributeSnafu { attribute }.fail()
+            crate::error::UnknownAttributeSnafu { attribute }.fail()
         }
     }
 }

@@ -21,12 +21,12 @@ pub fn get_desc_field(
 
     if value_ptr.is_null() {
         tracing::error!("get_desc_field: value_ptr is null");
-        return crate::api::error::NullPointerSnafu.fail();
+        return crate::error::NullPointerSnafu.fail();
     }
 
     if rec_number < 0 {
         tracing::error!("get_desc_field: invalid negative rec_number {}", rec_number);
-        return crate::api::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
+        return crate::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
 
     let field = DescField::try_from(field_identifier)?;
@@ -85,7 +85,7 @@ fn get_ard_field(
             }
             _ => {
                 tracing::warn!("get_desc_field: unsupported ARD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
+                crate::error::UnknownAttributeSnafu {
                     attribute: field as i32,
                 }
                 .fail()
@@ -100,7 +100,7 @@ fn get_ard_field(
                     "get_desc_field: no binding for record {}, returning SQL_NO_DATA",
                     rec_number
                 );
-                return crate::api::error::NoMoreDataSnafu.fail();
+                return crate::error::NoMoreDataSnafu.fail();
             }
         };
 
@@ -156,7 +156,7 @@ fn get_ard_field(
             }
             _ => {
                 tracing::warn!("get_desc_field: unsupported ARD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
+                crate::error::UnknownAttributeSnafu {
                     attribute: field as i32,
                 }
                 .fail()
@@ -196,7 +196,7 @@ fn get_ird_field(
             }
             _ => {
                 tracing::warn!("get_desc_field: unsupported IRD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
+                crate::error::UnknownAttributeSnafu {
                     attribute: field as i32,
                 }
                 .fail()
@@ -207,7 +207,7 @@ fn get_ird_field(
             "get_desc_field: IRD record fields not supported (rec={})",
             rec_number
         );
-        crate::api::error::NoMoreDataSnafu.fail()
+        crate::error::NoMoreDataSnafu.fail()
     }
 }
 
@@ -228,7 +228,7 @@ pub fn set_desc_field(
 
     if rec_number < 0 {
         tracing::error!("set_desc_field: invalid negative rec_number {}", rec_number);
-        return crate::api::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
+        return crate::error::InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
 
     let field = DescField::try_from(field_identifier)?;
@@ -252,7 +252,7 @@ fn set_ard_field(
                 let count = value_ptr as sql::SmallInt;
                 if count < 0 {
                     tracing::error!("set_desc_field: invalid negative count {}", count);
-                    return crate::api::error::InvalidDescriptorIndexSnafu { number: count }.fail();
+                    return crate::error::InvalidDescriptorIndexSnafu { number: count }.fail();
                 }
                 desc.set_desc_count(count);
                 Ok(())
@@ -265,7 +265,7 @@ fn set_ard_field(
                         "set_desc_field: invalid ARD ArraySize {}, must be >= 1",
                         size
                     );
-                    return crate::api::error::InvalidDescriptorIndexSnafu { number: 0i16 }.fail();
+                    return crate::error::InvalidDescriptorIndexSnafu { number: 0i16 }.fail();
                 }
                 desc.array_size = size;
                 Ok(())
@@ -284,7 +284,7 @@ fn set_ard_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported ARD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
+                crate::error::UnknownAttributeSnafu {
                     attribute: field as i32,
                 }
                 .fail()
@@ -296,12 +296,7 @@ fn set_ard_field(
         match field {
             DescField::Type | DescField::ConciseType => {
                 let raw = value_ptr as i16;
-                let c_type = CDataType::try_from(raw).map_err(|unknown| {
-                    tracing::error!("set_desc_field: unknown C data type discriminant {unknown}");
-                    crate::api::error::OdbcError::InvalidApplicationBufferType {
-                        location: snafu::location!(),
-                    }
-                })?;
+                let c_type = CDataType::try_from(raw)?;
                 tracing::debug!(
                     "set_desc_field: setting target_type={c_type:?} on record {column_number}",
                 );
@@ -315,7 +310,7 @@ fn set_ard_field(
                     tracing::error!(
                         "set_desc_field: precision {precision} out of valid range 0..=38"
                     );
-                    return crate::api::error::InvalidPrecisionOrScaleSnafu {
+                    return crate::error::InvalidPrecisionOrScaleSnafu {
                         reason: format!(
                             "SQL_DESC_PRECISION value {precision} is out of valid range (0-38)"
                         ),
@@ -333,7 +328,7 @@ fn set_ard_field(
                 let scale = value_ptr as i16;
                 if scale < i8::MIN as i16 || scale > i8::MAX as i16 {
                     tracing::error!("set_desc_field: scale {scale} out of valid range for i8");
-                    return crate::api::error::InvalidPrecisionOrScaleSnafu {
+                    return crate::error::InvalidPrecisionOrScaleSnafu {
                         reason: format!(
                             "SQL_DESC_SCALE value {scale} is out of valid range ({min}..={max})",
                             min = i8::MIN,
@@ -384,7 +379,7 @@ fn set_ard_field(
                     tracing::error!(
                         "set_desc_field: datetime_interval_precision {dip} out of valid range 0..=9"
                     );
-                    return crate::api::error::InvalidPrecisionOrScaleSnafu {
+                    return crate::error::InvalidPrecisionOrScaleSnafu {
                         reason: format!(
                             "SQL_DESC_DATETIME_INTERVAL_PRECISION value {dip} is out of valid range (0-9)"
                         ),
@@ -400,7 +395,7 @@ fn set_ard_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported ARD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
+                crate::error::UnknownAttributeSnafu {
                     attribute: field as i32,
                 }
                 .fail()
@@ -431,7 +426,7 @@ fn set_ird_field(
             }
             _ => {
                 tracing::warn!("set_desc_field: unsupported IRD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
+                crate::error::UnknownAttributeSnafu {
                     attribute: field as i32,
                 }
                 .fail()
@@ -442,7 +437,7 @@ fn set_ird_field(
             "set_desc_field: IRD record fields are read-only (rec={})",
             rec_number
         );
-        crate::api::error::UnknownAttributeSnafu {
+        crate::error::UnknownAttributeSnafu {
             attribute: field as i32,
         }
         .fail()

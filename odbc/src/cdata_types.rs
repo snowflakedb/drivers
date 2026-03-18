@@ -25,6 +25,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+use crate::error::{InvalidApplicationBufferTypeSnafu, OdbcError};
 use odbc_sys as sql;
 
 pub const C_TYPES_EXTENDED: i16 = 0x04000;
@@ -146,7 +147,7 @@ impl CDataType {
 }
 
 impl TryFrom<i16> for CDataType {
-    type Error = i16;
+    type Error = OdbcError;
 
     fn try_from(value: i16) -> Result<Self, Self::Error> {
         match value {
@@ -195,7 +196,7 @@ impl TryFrom<i16> for CDataType {
             113 => Ok(CDataType::IntervalMinuteToSecond),
             x if x == C_TYPES_EXTENDED => Ok(CDataType::SsTime2),
             x if x == C_TYPES_EXTENDED + 1 => Ok(CDataType::SsTimestampOffset),
-            other => Err(other),
+            _ => InvalidApplicationBufferTypeSnafu.fail(),
         }
     }
 }
