@@ -209,6 +209,7 @@ impl SnowflakeTestClient {
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(*stmt),
                 bindings,
+                timeout_seconds: None,
             })
             .unwrap()
             .result
@@ -287,6 +288,7 @@ impl SnowflakeTestClient {
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
+                timeout_seconds: None,
             })
             .unwrap();
 
@@ -316,6 +318,7 @@ impl SnowflakeTestClient {
                 .statement_execute_query_blocking(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings: None,
+                    timeout_seconds: None,
                 }) {
                 Ok(response) => Ok(response.result.unwrap()),
                 Err(e) => match *e {
@@ -403,6 +406,7 @@ impl SnowflakeTestClient {
                 .statement_execute_query_blocking(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     bindings: None,
+                    timeout_seconds: None,
                 }) {
                 Ok(response) => Ok(response.result.unwrap()),
                 Err(e) => match *e {
