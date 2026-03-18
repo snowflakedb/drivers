@@ -202,6 +202,12 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Fetch type out of range"))]
+    FetchTypeOutOfRange {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("SQLFetch cannot be mixed with SQLExtendedFetch without closing cursor"))]
     ExtendedFetchUsed {
         #[snafu(implicit)]
@@ -417,6 +423,7 @@ impl OdbcError {
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,

@@ -9,6 +9,8 @@
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("SQLFetch fetches a row from SELECT query", "[query]") {
   // Given Snowflake client is logged in
@@ -1301,4 +1303,229 @@ TEST_CASE("SQLFetch returns SQL_SUCCESS_WITH_INFO when error occurs on subset of
   if (row_status[4] == SQL_ROW_SUCCESS) {
     CHECK(result[4] == 500);
   }
+}
+
+// =============================================================================
+// SQLFetchScroll orientation validation on forward-only cursor (HY106)
+// =============================================================================
+
+TEST_CASE("SQLFetchScroll with non-NEXT orientations on forward-only cursor returns HY106.", "[query]") {
+  // Doc: "HY106 - Fetch type out of range: The value of the SQL_ATTR_CURSOR_TYPE
+  //       statement attribute was SQL_CURSOR_FORWARD_ONLY, and the value of
+  //       argument FetchOrientation was not SQL_FETCH_NEXT."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetchscroll-function#diagnostics
+
+  // Given Snowflake client is logged in and a result set exists on a forward-only cursor
+  Connection conn;
+  auto stmt = conn.execute("SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY id");
+
+  SQLULEN cursor_type = 0;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, NULL);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(cursor_type == SQL_CURSOR_FORWARD_ONLY);
+
+  // And the first row is fetched successfully
+  ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  // When SQLFetchScroll is called with each non-NEXT orientation
+  struct OrientationCase {
+    SQLSMALLINT orientation;
+    const char* name;
+  };
+  OrientationCase cases[] = {
+      {SQL_FETCH_PRIOR, "SQL_FETCH_PRIOR"},       {SQL_FETCH_FIRST, "SQL_FETCH_FIRST"},
+      {SQL_FETCH_LAST, "SQL_FETCH_LAST"},         {SQL_FETCH_ABSOLUTE, "SQL_FETCH_ABSOLUTE"},
+      {SQL_FETCH_RELATIVE, "SQL_FETCH_RELATIVE"},
+  };
+
+  // Then each should return SQL_ERROR with SQLSTATE HY106
+  for (const auto& c : cases) {
+    INFO("Orientation: " << c.name);
+    ret = SQLFetchScroll(stmt.getHandle(), c.orientation, 1);
+    CHECK_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY106"));
+  }
+}
+
+// =============================================================================
+// SQLFetchScroll function sequence errors
+// =============================================================================
+
+TEST_CASE("SQLFetchScroll returns HY010 when called without executing statement.", "[query]") {
+  // Doc: "HY010 - Function sequence error: (DM) The specified StatementHandle was
+  //       not in an executed state. The function was called without first calling
+  //       SQLExecDirect, SQLExecute or a catalog function."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetchscroll-function#diagnostics
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLFetchScroll is called without executing any statement first
+  SQLRETURN ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+
+  // Then SQLFetchScroll should return SQL_ERROR with SQLSTATE HY010
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+}
+
+TEST_CASE("SQLFetchScroll returns 24000 when no result set exists after DDL.", "[query]") {
+  // Doc: "24000 - Invalid cursor state: The StatementHandle was in an executed state
+  //       but no result set was associated with the StatementHandle."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetchscroll-function#diagnostics
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  auto schema = Schema::use_random_schema(conn);
+
+  // When a DDL statement is executed (no result set)
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("CREATE TABLE fetch_scroll_test (id INT)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // And SQLFetchScroll is called on the statement with no result set
+  ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+
+  // Then SQLFetchScroll should return SQL_ERROR with SQLSTATE 24000
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("24000"));
+}
+
+// =============================================================================
+// Repeated SQL_NO_DATA after end of result set
+// =============================================================================
+
+TEST_CASE("SQLFetch returns SQL_NO_DATA consistently after end of result set.", "[query]") {
+  // Doc: "If the first row of the new rowset is after the end of the result set,
+  //       SQLFetch returns SQL_NO_DATA."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetch-function#positioning-the-cursor
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute("SELECT 1 AS value");
+
+  // When all rows are consumed
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then subsequent SQLFetch calls should consistently return SQL_NO_DATA
+  for (int i = 0; i < 3; i++) {
+    INFO("Repeated SQL_NO_DATA call #" << (i + 1));
+    ret = SQLFetch(stmt.getHandle());
+    CHECK(ret == SQL_NO_DATA);
+  }
+}
+
+TEST_CASE("SQLFetchScroll returns SQL_NO_DATA consistently after end of result set.", "[query]") {
+  // Doc: "If the first row of the new rowset is after the end of the result set,
+  //       SQLFetchScroll returns SQL_NO_DATA."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetchscroll-function#sql_fetch_next
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute("SELECT 1 AS value");
+
+  // When all rows are consumed via SQLFetchScroll
+  SQLRETURN ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then subsequent SQLFetchScroll calls should consistently return SQL_NO_DATA
+  for (int i = 0; i < 3; i++) {
+    INFO("Repeated SQL_NO_DATA call #" << (i + 1));
+    ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+    CHECK(ret == SQL_NO_DATA);
+  }
+}
+
+TEST_CASE("SQLFetch returns SQL_NO_DATA on empty result set and stays consistent.", "[query]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute("SELECT 1 WHERE 1=0");
+
+  // When SQLFetch is called on an empty result set
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+
+  // Then subsequent calls should also return SQL_NO_DATA
+  ret = SQLFetch(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+// =============================================================================
+// SQLFetchScroll with SQL_FETCH_NEXT block cursor validation
+// =============================================================================
+
+TEST_CASE("SQLFetchScroll with SQL_FETCH_NEXT fetches block cursor rows correctly.", "[query]") {
+  // Doc: "SQL_FETCH_NEXT - Return the next rowset. This is equivalent to calling SQLFetch."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetchscroll-function#sql_fetch_next
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // And SQL_ATTR_ROW_ARRAY_SIZE is set for block cursor
+  constexpr int array_size = 5;
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  // And SQL_ATTR_ROW_STATUS_PTR and SQL_ATTR_ROWS_FETCHED_PTR are set
+  SQLUSMALLINT row_status[array_size] = {SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW};
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLULEN rows_fetched = 0;
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
+  REQUIRE_ODBC(ret, stmt);
+
+  // And a query returning 12 rows is executed
+  ret = SQLExecDirect(stmt.getHandle(),
+                      sqlchar("SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 12)) ORDER BY id"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // And columns are bound
+  SQLBIGINT result[array_size] = {0};
+  SQLLEN indicator[array_size] = {0};
+  ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, 0, (SQLLEN*)&indicator);
+  REQUIRE_ODBC(ret, stmt);
+
+  // When the first block is fetched via SQLFetchScroll SQL_FETCH_NEXT
+  ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+
+  // Then all 5 rows should be fetched successfully
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(rows_fetched == 5);
+  for (int i = 0; i < array_size; i++) {
+    CHECK(row_status[i] == SQL_ROW_SUCCESS);
+    CHECK(result[i] == i);
+  }
+
+  // When the second block is fetched
+  ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+
+  // Then rows 5-9 should be fetched
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(rows_fetched == 5);
+  for (int i = 0; i < array_size; i++) {
+    CHECK(row_status[i] == SQL_ROW_SUCCESS);
+    CHECK(result[i] == i + 5);
+  }
+
+  // When the third (partial) block is fetched
+  ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+
+  // Then only 2 rows should be fetched, with remaining marked SQL_ROW_NOROW
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(rows_fetched == 2);
+  for (int i = 0; i < 2; i++) {
+    CHECK(row_status[i] == SQL_ROW_SUCCESS);
+    CHECK(result[i] == i + 10);
+  }
+  for (int i = 2; i < array_size; i++) {
+    CHECK(row_status[i] == SQL_ROW_NOROW);
+  }
+
+  // And the next call should return SQL_NO_DATA
+  ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
+  CHECK(ret == SQL_NO_DATA);
 }
