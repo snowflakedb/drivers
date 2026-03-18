@@ -38,6 +38,28 @@ REF_REPO = "snowflakedb/snowflake-connector-python"
 REF_CONNECTOR_PREFIX = "src/snowflake/connector"
 
 # Files to download from the reference driver
+# Members excluded from the wrapper scope (not counted towards coverage).
+# These are reference-driver internals or features intentionally omitted.
+EXCLUDED_FROM_PUPR = {
+    # crl configuration
+    "allow_certificates_without_crl_url",
+    "cert_revocation_check_mode",
+    "crl_cache_cleanup_interval_hours",
+    "crl_cache_dir",
+    "crl_cache_removal_delay_days",
+    "crl_cache_start_cleanup",
+    "crl_cache_validity_hours",
+    "crl_connection_timeout_ms",
+    "crl_download_max_size",
+    "crl_read_timeout_ms",
+    "enable_crl_cache",
+    "enable_crl_file_cache",
+    # pandas helpers
+    "build_location_helper",
+    "chunk_helper",
+    "make_pd_writer",
+}
+
 REF_FILES = [
     f"{REF_CONNECTOR_PREFIX}/connection.py",
     f"{REF_CONNECTOR_PREFIX}/cursor.py",
@@ -65,6 +87,8 @@ SYM_MISS = f"{RED}\u2718{RESET}"
 SYM_EXTRA = f"{CYAN}+{RESET}"
 SYM_STUB = f"{YELLOW}\u25cb{RESET}"  # not-implemented stub
 SYM_WARN = f"{YELLOW}\u26a0{RESET}"  # kind mismatch / informational warning
+DIM = "\033[2m"
+SYM_EXCLUDED = f"{DIM}\u2205{RESET}"  # excluded from scope
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +607,10 @@ class ComparisonResult:
     def stub_count(self) -> int:
         return sum(1 for sym, _, _ in self.items if sym == SYM_STUB)
 
+    @property
+    def excluded_count(self) -> int:
+        return sum(1 for sym, _, _ in self.items if sym == SYM_EXCLUDED)
+
 
 def _compare_class(
     ref_api: ClassAPI,
@@ -597,12 +625,17 @@ def _compare_class(
         wrap_member = wrapper_api.members.get(name)
 
         if ref_member and not wrap_member:
-            result.add(SYM_MISS, name, f"missing ({ref_member.kind} in reference)")
+            if name in EXCLUDED_FROM_PUPR:
+                result.add(SYM_EXCLUDED, name, f"excluded ({ref_member.kind} in reference)")
+            else:
+                result.add(SYM_MISS, name, f"missing ({ref_member.kind} in reference)")
         elif wrap_member and not ref_member:
             pep_tag = " [pep249]" if wrap_member.is_pep249 else ""
             result.add(SYM_EXTRA, name, f"wrapper-only {wrap_member.kind}{pep_tag}")
         elif wrap_member and ref_member:
-            if wrap_member.status is ImplStatus.NOT_IMPLEMENTED:
+            if name in EXCLUDED_FROM_PUPR:
+                result.add(SYM_EXCLUDED, name, f"excluded")
+            elif wrap_member.status is ImplStatus.NOT_IMPLEMENTED:
                 result.add(SYM_STUB, name, f"stub (raises NotImplementedError)")
             elif wrap_member.status is ImplStatus.NOT_SUPPORTED:
                 result.add(SYM_OK, name, f"not supported (by design)")
@@ -674,7 +707,10 @@ def _compare_module_functions(
 
     for name in all_names:
         if name in ref_funcs and name not in wrapper_funcs:
-            result.add(SYM_MISS, name, "missing from wrapper")
+            if name in EXCLUDED_FROM_PUPR:
+                result.add(SYM_EXCLUDED, name, "excluded")
+            else:
+                result.add(SYM_MISS, name, "missing from wrapper")
         elif name in wrapper_funcs and name not in ref_funcs:
             result.add(SYM_EXTRA, name, "wrapper-only")
         else:
@@ -691,9 +727,10 @@ def _compare_module_functions(
 def _print_section(comp: ComparisonResult) -> None:
     missing = comp.missing_count
     stubs = comp.stub_count
+    excluded = comp.excluded_count
     warns = sum(1 for s, _, _ in comp.items if s == SYM_WARN)
     extras = sum(1 for s, _, _ in comp.items if s == SYM_EXTRA)
-    total = len(comp.items)
+    total = len(comp.items) - excluded
     ok = total - missing - stubs - warns - extras
 
     print(f"\n{BOLD}{'=' * 70}")
@@ -709,13 +746,18 @@ def _print_section(comp: ComparisonResult) -> None:
         status_parts.append(f"{YELLOW}Warns: {warns}{RESET}")
     if missing:
         status_parts.append(f"{RED}Missing: {missing}{RESET}")
+    if excluded:
+        status_parts.append(f"{DIM}Excluded: {excluded}{RESET}")
 
     print(f"  {'  |  '.join(status_parts)}")
     print(f"{'-' * 70}")
 
     max_name = max((len(n) for _, n, _ in comp.items), default=0)
     for sym, name, detail in comp.items:
-        print(f"  {sym} {name:<{max_name}}  {detail}")
+        if sym == SYM_EXCLUDED:
+            print(f"  {sym} {DIM}{name:<{max_name}}  {detail}{RESET}")
+        else:
+            print(f"  {sym} {name:<{max_name}}  {detail}")
 
 
 def _pct(n: int, base: int) -> str:
@@ -728,11 +770,14 @@ def _pct(n: int, base: int) -> str:
 def _print_overall_summary(sections: list[ComparisonResult]) -> None:
     total_missing = sum(s.missing_count for s in sections)
     total_stubs = sum(s.stub_count for s in sections)
-    total_items = sum(len(s.items) for s in sections)
+    total_excluded = sum(s.excluded_count for s in sections)
+    total_all = sum(len(s.items) for s in sections)
     total_extra = sum(1 for s in sections for sym, _, _ in s.items if sym == SYM_EXTRA)
     total_warns = sum(1 for s in sections for sym, _, _ in s.items if sym == SYM_WARN)
+    # Excluded items are not counted in the totals
+    total_items = total_all - total_excluded
     total_ok = total_items - total_missing - total_stubs - total_extra - total_warns
-    # Base for percentages: everything except wrapper-only items
+    # Base for percentages: everything except wrapper-only and excluded items
     base = total_items - total_extra
 
     print(f"\n{BOLD}{'=' * 70}")
@@ -743,6 +788,8 @@ def _print_overall_summary(sections: list[ComparisonResult]) -> None:
     print(f"  {YELLOW}Stubs (not impl):    {total_stubs}{_pct(total_stubs, base)}{RESET}")
     print(f"  {RED}Missing from wrapper: {total_missing}{_pct(total_missing, base)}{RESET}")
     print(f"  {CYAN}Wrapper-only:        {total_extra}{RESET}")
+    if total_excluded:
+        print(f"  {DIM}Excluded from scope: {total_excluded}{RESET}")
 
     if total_missing > 0:
         print(f"\n  {RED}{BOLD}Wrapper is missing {total_missing} member(s) from the reference driver.{RESET}")
@@ -909,7 +956,10 @@ def main() -> None:
                 sections.append(pandas_comp)
             else:
                 for fn in sorted(ref_pandas_funcs):
-                    pandas_result.add(SYM_MISS, fn, "pandas_tools.py not found in wrapper")
+                    if fn in EXCLUDED_FROM_PUPR:
+                        pandas_result.add(SYM_EXCLUDED, fn, "excluded")
+                    else:
+                        pandas_result.add(SYM_MISS, fn, "pandas_tools.py not found in wrapper")
                 _print_section(pandas_result)
                 sections.append(pandas_result)
         else:
