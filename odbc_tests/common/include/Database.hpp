@@ -20,7 +20,7 @@
 // The database is NOT dropped automatically -- each test creates its own
 // connection, so there is no single connection that outlives them all.
 // Snowflake account-level cleanup (or a CI post-step) should remove stale
-// CATALOG_TEST_DB_* databases.
+// CATALOGTESTDB* databases.
 class CatalogTestDatabase {
  public:
   CatalogTestDatabase() = delete;
@@ -42,7 +42,10 @@ class CatalogTestDatabase {
   static std::string generate_name() {
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    return "CATALOG_TEST_DB_" + std::to_string(gen());
+    // No underscores: ODBC treats '_' as a single-char wildcard in pattern
+    // arguments, which can prevent the reference driver from scoping metadata
+    // queries to the correct database.
+    return "CATALOGTESTDB" + std::to_string(gen());
   }
 
   static void execute(SQLHDBC dbc, const std::string& sql) {

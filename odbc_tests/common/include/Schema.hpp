@@ -63,7 +63,10 @@ class Schema {
   static std::string generate_random_name() {
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    return "SCHEMA_" + std::to_string(gen());
+    // No underscores: ODBC treats '_' as a single-char wildcard in pattern
+    // arguments (SchemaName, TableName), which prevents the reference driver
+    // from scoping SHOW commands to the specific schema.
+    return "SCHEMA" + std::to_string(gen());
   }
 
   static std::function<void(const std::string&)> make_dbc_executor(SQLHDBC dbc) {
