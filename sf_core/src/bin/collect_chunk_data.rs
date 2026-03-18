@@ -367,6 +367,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sql: alter_sql.to_string(),
             bindings: None,
             describe_only: None,
+            timeout_seconds: None,
         },
         QueryExecutionMode::Blocking,
     )
@@ -385,6 +386,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sql: cli.sql.clone(),
             bindings: None,
             describe_only: None,
+            timeout_seconds: None,
         },
         QueryExecutionMode::Blocking,
     )

@@ -42,6 +42,7 @@ async fn should_include_request_id_in_query_parameters() {
             sql: "SELECT 1".to_string(),
             bindings: None,
             describe_only: None,
+            timeout_seconds: None,
         },
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
@@ -118,6 +119,7 @@ async fn should_retry_sync_query_on_connection_reset() {
             sql: "SELECT 1".to_string(),
             bindings: None,
             describe_only: None,
+            timeout_seconds: None,
         },
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
@@ -177,6 +179,7 @@ async fn should_use_sync_mode_by_default() {
             sql: "SELECT 1".to_string(),
             bindings: None,
             describe_only: None,
+            timeout_seconds: None,
         },
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
@@ -199,6 +202,115 @@ async fn should_use_sync_mode_by_default() {
             body
         );
     }
+}
+
+#[tokio::test]
+async fn should_include_statement_timeout_in_parameters_when_set() {
+    // Given a server that captures the request body
+    let captured_bodies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let captured_clone = captured_bodies.clone();
+
+    let (addr, server) = spawn_capture_server(1, move |request| {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            captured_clone
+                .lock()
+                .unwrap()
+                .push(request[body_start + 4..].to_string());
+        }
+        json_response(
+            r#"{"success":true,"data":{"queryId":"test-query-id","rowtype":[],"rowset":[]}}"#,
+        )
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let query_params = test_query_params(&addr);
+
+    // When I execute a query with timeout_seconds set
+    let result = snowflake_query_with_client(
+        &client,
+        query_params,
+        "test-token",
+        QueryInput {
+            sql: "SELECT 1".to_string(),
+            bindings: None,
+            describe_only: None,
+            timeout_seconds: Some(42),
+        },
+        &RetryPolicy::default(),
+        QueryExecutionMode::Blocking,
+    )
+    .await;
+
+    assert!(result.is_ok(), "Query should succeed");
+    server.abort();
+
+    // Then the request body should include STATEMENT_TIMEOUT_IN_SECONDS=42 in the parameters field
+    let bodies = captured_bodies.lock().unwrap();
+    assert!(!bodies.is_empty(), "Should have captured a request body");
+    let body = &bodies[0];
+    assert!(
+        body.contains("STATEMENT_TIMEOUT_IN_SECONDS"),
+        "Request body should contain STATEMENT_TIMEOUT_IN_SECONDS: {}",
+        body
+    );
+    assert!(
+        body.contains("42"),
+        "Request body should contain the timeout value 42: {}",
+        body
+    );
+}
+
+#[tokio::test]
+async fn should_not_include_parameters_when_timeout_not_set() {
+    // Given a server that captures the request body
+    let captured_bodies = Arc::new(Mutex::new(Vec::<String>::new()));
+    let captured_clone = captured_bodies.clone();
+
+    let (addr, server) = spawn_capture_server(1, move |request| {
+        if let Some(body_start) = request.find("\r\n\r\n") {
+            captured_clone
+                .lock()
+                .unwrap()
+                .push(request[body_start + 4..].to_string());
+        }
+        json_response(
+            r#"{"success":true,"data":{"queryId":"test-query-id","rowtype":[],"rowset":[]}}"#,
+        )
+    })
+    .await;
+
+    let client = reqwest::Client::new();
+    let query_params = test_query_params(&addr);
+
+    // When I execute a query with no timeout
+    let result = snowflake_query_with_client(
+        &client,
+        query_params,
+        "test-token",
+        QueryInput {
+            sql: "SELECT 1".to_string(),
+            bindings: None,
+            describe_only: None,
+            timeout_seconds: None,
+        },
+        &RetryPolicy::default(),
+        QueryExecutionMode::Blocking,
+    )
+    .await;
+
+    assert!(result.is_ok(), "Query should succeed");
+    server.abort();
+
+    // Then the request body should not include a parameters field
+    let bodies = captured_bodies.lock().unwrap();
+    assert!(!bodies.is_empty(), "Should have captured a request body");
+    let body = &bodies[0];
+    assert!(
+        !body.contains("STATEMENT_TIMEOUT_IN_SECONDS"),
+        "Request body should not contain STATEMENT_TIMEOUT_IN_SECONDS: {}",
+        body
+    );
 }
 
 // Helper functions

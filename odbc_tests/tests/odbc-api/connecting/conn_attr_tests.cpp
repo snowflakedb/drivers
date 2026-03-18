@@ -84,11 +84,10 @@ TEST_CASE("should return SQL_CD_TRUE after disconnect", "[odbc-api][conn_attr][c
   } else {
     // Validate that the failure is for an expected reason: HY010 (function sequence error)
     // or 08003 (connection not open), depending on the DM.
-    char sqlstate[6] = {};
-    SQLRETURN diag_ret = SQLGetDiagRec(SQL_HANDLE_DBC, dbc.getHandle(), 1, reinterpret_cast<SQLCHAR*>(sqlstate),
-                                       nullptr, nullptr, 0, nullptr);
+    SQLCHAR sqlstate[6] = {};
+    SQLRETURN diag_ret = SQLGetDiagRec(SQL_HANDLE_DBC, dbc.getHandle(), 1, sqlstate, nullptr, nullptr, 0, nullptr);
     CHECK(SQL_SUCCEEDED(diag_ret));
-    std::string state(sqlstate);
+    std::string state(reinterpret_cast<const char*>(sqlstate));
     CHECK((state == "HY010" || state == "08003"));
   }
 }
@@ -287,7 +286,10 @@ TEST_CASE("should return 3D000 when setting SQL_ATTR_CURRENT_CATALOG to nonexist
   if (get_driver_type() == DRIVER_TYPE::NEW) {
     REQUIRE_EXPECTED_ERROR(ret, "3D000", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
   } else {
-    CHECK(ret == SQL_ERROR);
+    // Old driver propagates the Snowflake USE error as HY000 or 42000 (Simba framework
+    // does not map USE failures to 3D000).
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, conn.handleWrapper().getHandle()),
+                 OdbcMatchers::IsError() && (OdbcMatchers::HasSqlState("HY000") || OdbcMatchers::HasSqlState("42000")));
   }
 }
 #endif  // !defined(_WIN32)

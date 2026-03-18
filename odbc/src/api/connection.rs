@@ -740,11 +740,20 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::TxnIsolation => {
-            // Snowflake supports only READ_COMMITTED. Accept it silently; substitute any
-            // other requested level with READ_COMMITTED and return 01S02 per ODBC spec.
-            // NOTE: HY011 when a transaction is open is deferred to SNOW-3240589.
-            if value_ptr as sql::UInteger != SQL_TXN_READ_COMMITTED {
+            // Snowflake always runs at READ COMMITTED. Full isolation-level support
+            // (HY011 when a transaction is open) is deferred to SNOW-3240589.
+            // Per ODBC spec §SQLSetConnectAttr: emit 01S02 whenever the driver
+            // substitutes the requested value.  READ_COMMITTED is accepted as-is;
+            // every other level is silently substituted so pools / ORMs that
+            // read-then-restore the isolation level see the expected warning.
+            let requested = value_ptr as sql::UInteger;
+            if requested != SQL_TXN_READ_COMMITTED {
+                tracing::debug!(
+                    "set_connect_attr: TxnIsolation={requested} substituted with READ_COMMITTED"
+                );
                 warnings.push(Warning::OptionValueChanged);
+            } else {
+                tracing::debug!("set_connect_attr: TxnIsolation=READ_COMMITTED accepted");
             }
             Ok(())
         }

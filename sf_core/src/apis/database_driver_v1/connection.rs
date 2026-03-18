@@ -118,7 +118,7 @@ impl DatabaseDriverV1 {
         let result = async {
             self.statement_set_sql_query(stmt_handle, sql.to_string())
                 .await?;
-            self.statement_execute_query(stmt_handle, None).await
+            self.statement_execute_query(stmt_handle, None, None).await
         }
         .await;
         if let Err(e) = self.statement_release(stmt_handle) {

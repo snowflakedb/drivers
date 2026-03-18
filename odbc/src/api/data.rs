@@ -180,6 +180,12 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     let bind_offset_ptr = stmt.ard.bind_offset_ptr;
     let row_status_ptr = stmt.ird.array_status_ptr;
     let rows_fetched_ptr = stmt.ird.rows_processed_ptr;
+    let max_rows = stmt.max_rows;
+
+    // Enforce SQL_ATTR_MAX_ROWS: if the limit has already been reached, stop.
+    if max_rows > 0 && stmt.rows_returned >= max_rows {
+        return NoMoreDataSnafu.fail();
+    }
 
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut stmt.state)?;
@@ -188,6 +194,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
         }
         match execute_bindings_for_row(stmt, 0, 0, 0) {
             Ok(row_warnings) => {
+                stmt.rows_returned += 1;
                 let status = if row_warnings.is_empty() {
                     RowStatus::Success
                 } else {
@@ -214,6 +221,13 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     let mut has_error = false;
 
     for row_idx in 0..array_size {
+        // Stop if max_rows limit reached mid-rowset.
+        if max_rows > 0 && stmt.rows_returned + rows_fetched as sql::ULen >= max_rows {
+            for remaining in row_idx..array_size {
+                write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+            }
+            break;
+        }
         match advance_cursor(&mut stmt.state) {
             Ok(()) => {
                 rows_fetched += 1;
@@ -252,6 +266,8 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
             }
         }
     }
+
+    stmt.rows_returned += rows_fetched as sql::ULen;
 
     if !rows_fetched_ptr.is_null() {
         unsafe { *rows_fetched_ptr = rows_fetched as sql::ULen };

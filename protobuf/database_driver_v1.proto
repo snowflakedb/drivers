@@ -626,6 +626,7 @@ message StatementGetParameterSchemaResponse {
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
   optional QueryBindings bindings = 2;  // None = no bindings
+  optional uint32 timeout_seconds = 3;  // 0 / absent = no timeout override
 }
 
 message StatementExecuteQueryResponse {

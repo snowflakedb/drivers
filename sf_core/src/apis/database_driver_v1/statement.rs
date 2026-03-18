@@ -270,7 +270,7 @@ pub struct PrepareResult {
 impl DatabaseDriverV1 {
     pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
         let result = self
-            .execute_query_internal(stmt_handle, None, Some(true))
+            .execute_query_internal(stmt_handle, None, Some(true), None)
             .await?;
         Ok(PrepareResult {
             stream: result.stream,
@@ -311,8 +311,9 @@ impl DatabaseDriverV1 {
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
+        timeout_seconds: Option<u32>,
     ) -> Result<ExecuteResult, ApiError> {
-        self.execute_query_internal(stmt_handle, bindings, None)
+        self.execute_query_internal(stmt_handle, bindings, None, timeout_seconds)
             .await
     }
 
@@ -321,6 +322,7 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
+        timeout_seconds: Option<u32>,
     ) -> Result<ExecuteResult, ApiError> {
         let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
@@ -372,6 +374,7 @@ impl DatabaseDriverV1 {
             sql: query.clone(),
             bindings: query_bindings,
             describe_only,
+            timeout_seconds,
         };
 
         let response = {

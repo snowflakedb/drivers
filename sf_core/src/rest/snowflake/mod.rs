@@ -153,6 +153,7 @@ pub struct QueryInput<'a> {
     pub sql: String,
     pub bindings: Option<&'a RawValue>,
     pub describe_only: Option<bool>,
+    pub timeout_seconds: Option<u32>,
 }
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
@@ -1104,7 +1105,14 @@ async fn execute_sync_query<'a>(
             .as_millis() as i64,
         is_internal: false,
         describe_only: query_input.describe_only,
-        parameters: None,
+        parameters: query_input.timeout_seconds.map(|t| {
+            let mut m = HashMap::new();
+            m.insert(
+                "STATEMENT_TIMEOUT_IN_SECONDS".to_string(),
+                serde_json::Value::Number(t.into()),
+            );
+            m
+        }),
         bindings: query_input.bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
