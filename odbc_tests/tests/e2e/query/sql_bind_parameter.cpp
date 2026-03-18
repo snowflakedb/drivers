@@ -1071,8 +1071,7 @@ TEST_CASE("SQLFreeStmt SQL_RESET_PARAMS clears bindings and allows re-binding.",
 
   SQLINTEGER int_param = 42;
   SQLLEN int_ind = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0,
-                         &int_ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0, &int_ind);
   CHECK_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -1091,8 +1090,8 @@ TEST_CASE("SQLFreeStmt SQL_RESET_PARAMS clears bindings and allows re-binding.",
   // And a new string parameter is bound to the same parameter position
   char str_param[] = "rebound";
   SQLLEN str_ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0,
-                         str_param, sizeof(str_param), &str_ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0, str_param,
+                         sizeof(str_param), &str_ind);
   CHECK_ODBC(ret, stmt);
 
   // Then re-executing should return the new string value
@@ -1124,8 +1123,7 @@ TEST_CASE("SQLBindParameter rebinds parameter to different type without SQL_RESE
   // And an integer parameter is bound and executed
   SQLINTEGER int_param = 42;
   SQLLEN int_ind = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0,
-                         &int_ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0, &int_ind);
   CHECK_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -1145,8 +1143,8 @@ TEST_CASE("SQLBindParameter rebinds parameter to different type without SQL_RESE
   // And the same parameter is rebound as a string without calling SQL_RESET_PARAMS
   char str_param[] = "rebound_no_reset";
   SQLLEN str_ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0,
-                         str_param, sizeof(str_param), &str_ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0, str_param,
+                         sizeof(str_param), &str_ind);
   CHECK_ODBC(ret, stmt);
 
   // Then re-executing should return the new string value
@@ -1174,8 +1172,8 @@ TEST_CASE("SQLExecDirect with bound parameter executes without SQLPrepare.", "[q
   // When a parameter is bound before calling SQLExecDirect
   SQLINTEGER param = 77;
   SQLLEN indicator = 0;
-  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0,
-                                   &indicator);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
   CHECK_ODBC(ret, stmt);
 
   // And SQLExecDirect is called with a parameterized query
