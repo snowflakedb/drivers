@@ -836,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn test_object_type_maps_to_text() {
+    fn test_object_type_maps_to_object() {
         let row_type = RowType {
             name: "obj_col".to_string(),
             type_: "OBJECT".to_string(),
@@ -851,17 +851,15 @@ mod tests {
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
             converted,
-            crate::query_types::RowType::Text {
+            crate::query_types::RowType::Object {
                 ref name,
                 nullable: true,
-                length: 1024,
-                byte_length: 4096,
             } if name == "obj_col"
         ));
     }
 
     #[test]
-    fn test_variant_type_maps_to_text() {
+    fn test_variant_type_maps_to_variant() {
         let row_type = RowType {
             name: "var_col".to_string(),
             type_: "VARIANT".to_string(),
@@ -876,17 +874,15 @@ mod tests {
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
             converted,
-            crate::query_types::RowType::Text {
+            crate::query_types::RowType::Variant {
                 ref name,
                 nullable: false,
-                length: 0,
-                byte_length: 0,
             } if name == "var_col"
         ));
     }
 
     #[test]
-    fn test_array_type_maps_to_text() {
+    fn test_array_type_maps_to_array() {
         let row_type = RowType {
             name: "arr_col".to_string(),
             type_: "ARRAY".to_string(),
@@ -901,11 +897,9 @@ mod tests {
         let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
         assert!(matches!(
             converted,
-            crate::query_types::RowType::Text {
+            crate::query_types::RowType::Array {
                 ref name,
                 nullable: true,
-                length: 512,
-                byte_length: 2048,
             } if name == "arr_col"
         ));
     }
