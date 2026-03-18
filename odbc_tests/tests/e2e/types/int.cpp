@@ -17,6 +17,33 @@ TEST_CASE("should cast integer values to appropriate type for int and synonyms",
   auto stmt = conn.execute_fetch("SELECT 0::INT, 1000000::INT, 9223372036854775807::BIGINT");
 
   // Then All values should be returned as appropriate type with no precision loss
+  for (SQLUSMALLINT col = 1; col <= 3; ++col) {
+    SQLSMALLINT data_type = 0;
+    SQLULEN column_size = 0;
+    SQLSMALLINT dec_digits = 0;
+    SQLRETURN ret =
+        SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &dec_digits, nullptr);
+    CHECK_ODBC(ret, stmt);
+    INFO("col=" << col);
+    CHECK(data_type == SQL_DECIMAL);
+    CHECK(column_size == 38);
+    CHECK(dec_digits == 0);
+  }
+  {
+    auto stmt_syn = conn.execute_fetch("SELECT 42::INTEGER, 42::SMALLINT, 42::TINYINT, 42::BYTEINT");
+    for (SQLUSMALLINT col = 1; col <= 4; ++col) {
+      SQLSMALLINT data_type = 0;
+      SQLULEN column_size = 0;
+      SQLSMALLINT dec_digits = 0;
+      SQLRETURN ret = SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size,
+                                     &dec_digits, nullptr);
+      CHECK_ODBC(ret, stmt_syn);
+      INFO("synonym col=" << col);
+      CHECK(data_type == SQL_DECIMAL);
+      CHECK(column_size == 38);
+      CHECK(dec_digits == 0);
+    }
+  }
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 2) == 1000000);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 9223372036854775807LL);
