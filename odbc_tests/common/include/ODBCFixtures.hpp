@@ -12,6 +12,7 @@
 
 #include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
+#include "ScopedSessionParam.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 
@@ -137,6 +138,18 @@ class StmtFixture : public DbcFixture {
 class StmtDefaultDSNFixture : public StmtFixture {
  public:
   StmtDefaultDSNFixture() : StmtFixture(DataSourceConfig::Snowflake()) {}
+};
+
+// ============================================================================
+// Catalog Fixture (scopes metadata queries to the current database/schema)
+// ============================================================================
+
+class CatalogStmtDefaultDSNFixture : public StmtDefaultDSNFixture {
+  ScopedSessionParam ctx_;
+
+ public:
+  CatalogStmtDefaultDSNFixture()
+      : StmtDefaultDSNFixture(), ctx_(ScopedSessionParam::use_connection_ctx(dbc_handle())) {}
 };
 
 // ============================================================================

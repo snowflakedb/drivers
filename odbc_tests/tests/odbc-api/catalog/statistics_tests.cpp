@@ -24,7 +24,7 @@
 // SQLStatistics - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: Result set has correct number of columns",
                  "[odbc-api][catalog][statistics]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -45,7 +45,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Result set has correct n
   REQUIRE(numCols == 13);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][statistics]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -83,7 +83,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Result set column names 
 // SQLStatistics - Empty Result Set (Snowflake limitation)
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Returns empty result set for table with primary key",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: Returns empty result set for table with primary key",
                  "[odbc-api][catalog][statistics]") {
   // Note: Snowflake does not expose index/statistics metadata through ODBC.
   // SQLStatistics always returns an empty result set.
@@ -105,7 +105,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Returns empty result set
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: SQL_INDEX_UNIQUE returns empty",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: SQL_INDEX_UNIQUE returns empty",
                  "[odbc-api][catalog][statistics]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -127,7 +127,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: SQL_INDEX_UNIQUE returns
 // SQLStatistics - Statement Reuse & SQLRowCount
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Can call multiple times after close cursor",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: Can call multiple times after close cursor",
                  "[odbc-api][catalog][statistics]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -151,7 +151,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: Can call multiple times 
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: SQLRowCount returns -1", "[odbc-api][catalog][statistics]") {
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: SQLRowCount returns -1",
+                 "[odbc-api][catalog][statistics]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret =
@@ -181,14 +182,14 @@ TEST_CASE("SQLStatistics: SQL_INVALID_HANDLE for null statement handle", "[odbc-
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: HY090 - Negative TableName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: HY090 - Negative TableName length",
                  "[odbc-api][catalog][statistics][error]") {
   const SQLRETURN ret =
       SQLStatistics(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLStatistics: 24000 - Cursor already open",
                  "[odbc-api][catalog][statistics][error]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 

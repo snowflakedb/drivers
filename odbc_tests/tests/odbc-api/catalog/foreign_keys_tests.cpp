@@ -21,7 +21,7 @@
 // SQLForeignKeys - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: Result set has correct number of columns",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -53,7 +53,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Result set has correct 
   REQUIRE(numCols == 14);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: Result set column names match ODBC 3.x spec",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -103,7 +103,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Result set column names
 // SQLForeignKeys - Data Verification
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: FK table returns foreign key referencing PK table",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: FK table returns foreign key referencing PK table",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -153,7 +153,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: FK table returns foreig
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: PK table returns foreign keys referencing it",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: PK table returns foreign keys referencing it",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -199,7 +199,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: PK table returns foreig
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Both PK and FK table specified returns matching relationship",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture,
+                 "SQLForeignKeys: Both PK and FK table specified returns matching relationship",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -238,7 +239,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Both PK and FK table sp
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture,
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture,
                  "SQLForeignKeys: PK table referenced by multiple children returns all relationships",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
@@ -280,7 +281,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
   REQUIRE(rowCount == 2);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Table without foreign keys returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: Table without foreign keys returns empty result set",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -301,7 +302,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Table without foreign k
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Non-existent table returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: Non-existent table returns empty result set",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -322,7 +323,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Non-existent table retu
 // SQLForeignKeys - Statement Reuse
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Can call multiple times on same statement after close cursor",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture,
+                 "SQLForeignKeys: Can call multiple times on same statement after close cursor",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -362,7 +364,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: Can call multiple times
   REQUIRE(count2 == 1);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: SQLRowCount after catalog function call",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: SQLRowCount after catalog function call",
                  "[odbc-api][foreignkeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -394,7 +396,7 @@ TEST_CASE("SQLForeignKeys: SQL_INVALID_HANDLE for null statement handle", "[odbc
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY009 - Both PKTableName and FKTableName are null",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: HY009 - Both PKTableName and FKTableName are null",
                  "[odbc-api][foreignkeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -402,7 +404,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY009 - Both PKTableNam
   REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative PKCatalogName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative PKCatalogName length",
                  "[odbc-api][foreignkeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -411,7 +413,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative PKCata
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative FKTableName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative FKTableName length",
                  "[odbc-api][foreignkeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -420,7 +422,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: HY090 - Negative FKTabl
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLForeignKeys: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLForeignKeys: 24000 - Cursor already open",
                  "[odbc-api][foreignkeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 

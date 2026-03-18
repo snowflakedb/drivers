@@ -21,7 +21,7 @@
 // SQLColumns - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Result set has correct number of columns",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -35,7 +35,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set has correct numb
   REQUIRE(numCols == 19);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -72,7 +72,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names mat
 // SQLColumns - Data Verification
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Returns correct column metadata for known table",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Returns correct column metadata for known table",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -121,7 +121,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Returns correct column meta
   REQUIRE(columnNames[3] == "ACTIVE");
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Returns correct data types for known columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Returns correct data types for known columns",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -169,7 +169,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Returns correct data types 
   REQUIRE(rowCount == 2);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: ORDINAL_POSITION is sequential starting from 1",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: ORDINAL_POSITION is sequential starting from 1",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -199,7 +199,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: ORDINAL_POSITION is sequent
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: NULLABLE column reports correct nullability",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: NULLABLE column reports correct nullability",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -238,7 +238,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: NULLABLE column reports cor
 // SQLColumns - Search Patterns
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: ColumnName wildcard % returns all columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: ColumnName wildcard % returns all columns",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -262,7 +262,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: ColumnName wildcard % retur
   REQUIRE(rowCount == 3);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: NULL ColumnName returns all columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: NULL ColumnName returns all columns",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -286,7 +286,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: NULL ColumnName returns all
   REQUIRE(rowCount == 2);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Specific ColumnName filters results",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Specific ColumnName filters results",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -314,7 +314,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Specific ColumnName filters
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Underscore _ wildcard matches single character",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Underscore _ wildcard matches single character",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -348,7 +348,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Underscore _ wildcard match
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Non-existent table returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Non-existent table returns empty result set",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -368,7 +368,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Non-existent table returns 
 // SQLColumns - Parameter Variations
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Various parameter combinations are accepted",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: Various parameter combinations are accepted",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -409,7 +409,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Various parameter combinati
 // SQLColumns - Statement Reuse
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Can call multiple times on same statement after close cursor",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture,
+                 "SQLColumns: Can call multiple times on same statement after close cursor",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -443,7 +444,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Can call multiple times on 
   REQUIRE(count2 == 1);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: SQLRowCount after catalog function call",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: SQLRowCount after catalog function call",
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -466,7 +467,7 @@ TEST_CASE("SQLColumns: SQL_INVALID_HANDLE for null statement handle", "[odbc-api
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative CatalogName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: HY090 - Negative CatalogName length",
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -475,7 +476,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative CatalogNam
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative SchemaName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: HY090 - Negative SchemaName length",
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -483,7 +484,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative SchemaName
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative TableName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: HY090 - Negative TableName length",
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -491,7 +492,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative TableName 
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative ColumnName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: HY090 - Negative ColumnName length",
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -499,7 +500,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative ColumnName
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumns: 24000 - Cursor already open",
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 

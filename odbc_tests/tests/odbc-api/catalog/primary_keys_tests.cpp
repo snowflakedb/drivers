@@ -21,7 +21,7 @@
 // SQLPrimaryKeys - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: Result set has correct number of columns",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -44,7 +44,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Result set has correct 
   REQUIRE(numCols == 6);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: Result set column names match ODBC 3.x spec",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -85,7 +85,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Result set column names
 // SQLPrimaryKeys - Data Verification
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Returns primary key for single-column PK",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: Returns primary key for single-column PK",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -127,7 +127,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Returns primary key for
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Returns composite primary key with correct KEY_SEQ",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: Returns composite primary key with correct KEY_SEQ",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -167,7 +167,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Returns composite prima
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Table without primary key returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: Table without primary key returns empty result set",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -188,7 +188,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Table without primary k
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Non-existent table returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: Non-existent table returns empty result set",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -208,7 +208,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Non-existent table retu
 // SQLPrimaryKeys - Parameter Variations
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Various parameter combinations are accepted",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: Various parameter combinations are accepted",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -248,7 +248,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Various parameter combi
 // SQLPrimaryKeys - Statement Reuse
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Can call multiple times on same statement after close cursor",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture,
+                 "SQLPrimaryKeys: Can call multiple times on same statement after close cursor",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -280,7 +281,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Can call multiple times
   REQUIRE(count2 == 1);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: SQLRowCount after catalog function call",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: SQLRowCount after catalog function call",
                  "[odbc-api][primarykeys][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -311,7 +312,7 @@ TEST_CASE("SQLPrimaryKeys: SQL_INVALID_HANDLE for null statement handle", "[odbc
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative CatalogName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative CatalogName length",
                  "[odbc-api][primarykeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -319,7 +320,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative Catalo
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative SchemaName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative SchemaName length",
                  "[odbc-api][primarykeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -327,7 +328,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative Schema
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative TableName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative TableName length",
                  "[odbc-api][primarykeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -335,7 +336,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative TableN
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLPrimaryKeys: 24000 - Cursor already open",
                  "[odbc-api][primarykeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 

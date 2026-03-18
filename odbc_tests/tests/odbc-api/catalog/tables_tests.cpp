@@ -20,7 +20,7 @@
 // SQLTables - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Result set has correct number of columns",
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -42,7 +42,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Result set has correct numbe
   REQUIRE(numCols == 5);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -77,7 +77,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Result set column names matc
 // SQLTables - Data Verification
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Returns known table with correct metadata",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Returns known table with correct metadata",
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -114,7 +114,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Returns known table with cor
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Returns view with TABLE_TYPE VIEW", "[odbc-api][catalog][tables]") {
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Returns view with TABLE_TYPE VIEW",
+                 "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_base (id INT)"), SQL_NTS);
@@ -142,7 +143,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Returns view with TABLE_TYPE
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Non-existent table returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Non-existent table returns empty result set",
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
   const std::string currentDb = get_current_database(dbc_handle());
@@ -155,7 +156,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Non-existent table returns e
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: TABLE_TYPE filter restricts results",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: TABLE_TYPE filter restricts results",
                  "[odbc-api][catalog][tables]") {
   auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -215,7 +216,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: TABLE_TYPE filter restricts 
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Wildcard search finds table", "[odbc-api][catalog][tables]") {
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Wildcard search finds table",
+                 "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_wild (id INT)"), SQL_NTS);
@@ -240,7 +242,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Wildcard search finds table"
 // SQLTables - Parameter Variations
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Various parameter combinations are accepted",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Various parameter combinations are accepted",
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -277,7 +279,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Various parameter combinatio
 // SQLTables - Statement Reuse & SQLRowCount
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Can call multiple times after close cursor",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: Can call multiple times after close cursor",
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -305,7 +307,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Can call multiple times afte
   REQUIRE(count2 == 1);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: SQLRowCount returns -1", "[odbc-api][catalog][tables]") {
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: SQLRowCount returns -1", "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_rowcount (id INT)"), SQL_NTS);
@@ -333,25 +335,25 @@ TEST_CASE("SQLTables: SQL_INVALID_HANDLE for null statement handle", "[odbc-api]
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative CatalogName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: HY090 - Negative CatalogName length",
                  "[odbc-api][catalog][tables][error]") {
   const SQLRETURN ret = SQLTables(stmt_handle(), sqlchar("DB"), -999, nullptr, 0, sqlchar("T"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative SchemaName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][tables][error]") {
   const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, sqlchar("S"), -999, sqlchar("T"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative TableName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: HY090 - Negative TableName length",
                  "[odbc-api][catalog][tables][error]") {
   const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("T"), -999, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLTables: 24000 - Cursor already open",
                  "[odbc-api][catalog][tables][error]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 

@@ -21,7 +21,7 @@
 // SQLProcedureColumns - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: Result set has correct number of columns",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -47,7 +47,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set has cor
   REQUIRE(numCols == 21);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -97,7 +97,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set column 
 // SQLProcedureColumns - Data Verification
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Returns parameters for known procedure",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: Returns parameters for known procedure",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -149,7 +149,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Returns parameters
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Non-existent procedure returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: Non-existent procedure returns empty result set",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -166,7 +166,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Non-existent proce
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Specific ColumnName filters results",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: Specific ColumnName filters results",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -200,7 +200,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Specific ColumnNam
 // SQLProcedureColumns - Parameter Variations
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter combinations are accepted",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter combinations are accepted",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP("Long-running: multiple catalog round-trips cause timeout");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
@@ -245,7 +245,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter 
 // SQLProcedureColumns - Statement Reuse
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture,
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture,
                  "SQLProcedureColumns: Can call multiple times on same statement after close cursor",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP("Long-running: multiple catalog round-trips cause timeout");
@@ -283,7 +283,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
   REQUIRE(count2 == 2);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: SQLRowCount after catalog function call",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: SQLRowCount after catalog function call",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -319,7 +319,7 @@ TEST_CASE("SQLProcedureColumns: SQL_INVALID_HANDLE for null statement handle",
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative CatalogName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative CatalogName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -328,7 +328,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative C
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative SchemaName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative SchemaName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -337,7 +337,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative S
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ProcName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ProcName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -345,7 +345,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative P
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ColumnName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative ColumnName length",
                  "[odbc-api][procedurecolumns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
@@ -354,7 +354,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative C
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLProcedureColumns: 24000 - Cursor already open",
                  "[odbc-api][procedurecolumns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 

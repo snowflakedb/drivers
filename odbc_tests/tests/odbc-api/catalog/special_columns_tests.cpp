@@ -24,7 +24,7 @@
 // SQLSpecialColumns - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: Result set has correct number of columns",
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -46,7 +46,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set has corre
   REQUIRE(numCols == 8);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -83,7 +83,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set column na
 // SQLSpecialColumns - Empty Result Set (Snowflake limitation)
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_BEST_ROWID returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: SQL_BEST_ROWID returns empty result set",
                  "[odbc-api][catalog][specialcolumns]") {
   // Note: Snowflake does not support row identifiers, so SQLSpecialColumns
   // always returns an empty result set for SQL_BEST_ROWID.
@@ -106,7 +106,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_BEST_ROWID retur
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_ROWVER returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: SQL_ROWVER returns empty result set",
                  "[odbc-api][catalog][specialcolumns]") {
   // Note: Snowflake does not have auto-updated version columns, so
   // SQLSpecialColumns always returns an empty result set for SQL_ROWVER.
@@ -129,7 +129,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_ROWVER returns e
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Various scope and nullable combinations return empty",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture,
+                 "SQLSpecialColumns: Various scope and nullable combinations return empty",
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -161,7 +162,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Various scope and nu
 // SQLSpecialColumns - Statement Reuse & SQLRowCount
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Can call multiple times after close cursor",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: Can call multiple times after close cursor",
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -187,7 +188,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Can call multiple ti
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQLRowCount returns -1",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: SQLRowCount returns -1",
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -219,14 +220,14 @@ TEST_CASE("SQLSpecialColumns: SQL_INVALID_HANDLE for null statement handle",
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: HY090 - Negative TableName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: HY090 - Negative TableName length",
                  "[odbc-api][catalog][specialcolumns][error]") {
   const SQLRETURN ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999,
                                           SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLSpecialColumns: 24000 - Cursor already open",
                  "[odbc-api][catalog][specialcolumns][error]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 

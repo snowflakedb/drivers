@@ -24,7 +24,7 @@
 // SQLColumnPrivileges - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Result set has correct number of columns",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: Result set has correct number of columns",
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -45,7 +45,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Result set has cor
   REQUIRE(numCols == 8);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -81,7 +81,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Result set column 
 // SQLColumnPrivileges - Empty Result Set (Snowflake limitation)
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Returns empty result set for existing table",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: Returns empty result set for existing table",
                  "[odbc-api][catalog][columnprivileges]") {
   // Note: Snowflake does NOT support traditional SQL column-level GRANT privileges
   // (e.g., GRANT SELECT(col)). SQLColumnPrivileges always returns an empty result set.
@@ -103,7 +103,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Returns empty resu
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Various parameter combinations return empty",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: Various parameter combinations return empty",
                  "[odbc-api][catalog][columnprivileges]") {
   // Note: Cannot verify actual search pattern/parameter behavior since Snowflake doesn't
   // support column privileges. These tests only verify that various parameter combinations
@@ -147,7 +147,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Various parameter 
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Non-existent table returns empty result set",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: Non-existent table returns empty result set",
                  "[odbc-api][catalog][columnprivileges]") {
   // Note: Cannot distinguish between "table doesn't exist" and "no privileges exist"
   // since Snowflake doesn't support column privileges - both return empty result sets.
@@ -168,7 +168,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Non-existent table
 // SQLColumnPrivileges - Statement Reuse & SQLRowCount
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Can call multiple times after close cursor",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: Can call multiple times after close cursor",
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -192,7 +192,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Can call multiple 
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: SQLRowCount returns -1",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: SQLRowCount returns -1",
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
@@ -223,40 +223,40 @@ TEST_CASE("SQLColumnPrivileges: SQL_INVALID_HANDLE for null statement handle",
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY009 - NULL TableName pointer",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: HY009 - NULL TableName pointer",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, nullptr, SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative CatalogName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative CatalogName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), sqlchar("DB"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative SchemaName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative TableName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative TableName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative ColumnName length",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative ColumnName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret =
       SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, sqlchar("COLUMN"), -999);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: 24000 - Cursor already open",
+TEST_CASE_METHOD(CatalogStmtDefaultDSNFixture, "SQLColumnPrivileges: 24000 - Cursor already open",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
