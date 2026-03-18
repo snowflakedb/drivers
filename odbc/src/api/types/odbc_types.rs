@@ -265,6 +265,10 @@ pub enum DescField {
     DataPtr = 1010,
     /// `SQL_DESC_OCTET_LENGTH` (1013) — length in bytes of the data buffer.
     OctetLength = 1013,
+    /// `SQL_DESC_PARAMETER_TYPE` (1015) — parameter direction (IPD only).
+    ParameterType = 1015,
+    /// `SQL_DESC_NULLABLE` (1008) — whether the parameter is nullable (IPD only).
+    Nullable = 1008,
 }
 
 impl TryFrom<i16> for DescField {
@@ -284,9 +288,11 @@ impl TryFrom<i16> for DescField {
             1004 => Ok(DescField::OctetLengthPtr),
             1005 => Ok(DescField::Precision),
             1006 => Ok(DescField::Scale),
+            1008 => Ok(DescField::Nullable),
             1009 => Ok(DescField::IndicatorPtr),
             1010 => Ok(DescField::DataPtr),
             1013 => Ok(DescField::OctetLength),
+            1015 => Ok(DescField::ParameterType),
             _ => {
                 tracing::warn!("Unknown descriptor field identifier: {}", value);
                 Err(OdbcError::UnknownAttribute {
@@ -539,16 +545,8 @@ impl Default for ArdDescriptor {
 
 impl ArdDescriptor {
     pub fn new() -> Self {
-        Self::with_kind(DescriptorKind::Ard)
-    }
-
-    pub fn new_apd() -> Self {
-        Self::with_kind(DescriptorKind::Apd)
-    }
-
-    fn with_kind(kind: DescriptorKind) -> Self {
         Self {
-            kind,
+            kind: DescriptorKind::Ard,
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -571,6 +569,50 @@ impl ArdDescriptor {
         for col in 1..=count {
             self.bindings.entry(col as u16).or_default();
         }
+    }
+}
+
+/// Application Parameter Descriptor (APD).
+///
+/// Stores parameter binding information from the application's perspective:
+/// C data types, data buffer pointers, and indicator pointers.
+/// A pointer to this struct is returned as the descriptor handle via
+/// `SQLGetStmtAttr(SQL_ATTR_APP_PARAM_DESC)`.
+#[repr(C)]
+pub struct ApdDescriptor {
+    kind: DescriptorKind,
+    pub records: HashMap<u16, ApdRecord>,
+    /// `SQL_DESC_ARRAY_SIZE` — number of parameter sets (default 1).
+    pub array_size: usize,
+    /// `SQL_DESC_BIND_TYPE` — 0 = column-wise (default).
+    pub bind_type: sql::ULen,
+    /// `SQL_DESC_BIND_OFFSET_PTR` — default null.
+    pub bind_offset_ptr: *mut sql::Len,
+}
+
+impl Default for ApdDescriptor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ApdDescriptor {
+    pub fn new() -> Self {
+        Self {
+            kind: DescriptorKind::Apd,
+            records: HashMap::new(),
+            array_size: 1,
+            bind_type: 0,
+            bind_offset_ptr: std::ptr::null_mut(),
+        }
+    }
+
+    pub fn desc_count(&self) -> u16 {
+        self.records.keys().copied().max().unwrap_or(0)
+    }
+
+    pub fn clear(&mut self) {
+        self.records.clear();
     }
 }
 
@@ -598,16 +640,8 @@ impl Default for IrdDescriptor {
 
 impl IrdDescriptor {
     pub fn new() -> Self {
-        Self::with_kind(DescriptorKind::Ird)
-    }
-
-    pub fn new_ipd() -> Self {
-        Self::with_kind(DescriptorKind::Ipd)
-    }
-
-    fn with_kind(kind: DescriptorKind) -> Self {
         Self {
-            kind,
+            kind: DescriptorKind::Ird,
             desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -615,10 +649,53 @@ impl IrdDescriptor {
     }
 }
 
+/// Implementation Parameter Descriptor (IPD).
+///
+/// Stores the implementation-side view of bound parameters: SQL data types,
+/// precision, scale, and parameter direction.
+/// A pointer to this struct is returned as the descriptor handle via
+/// `SQLGetStmtAttr(SQL_ATTR_IMP_PARAM_DESC)`.
+#[repr(C)]
+pub struct IpdDescriptor {
+    kind: DescriptorKind,
+    pub records: HashMap<u16, IpdRecord>,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
+    pub array_status_ptr: *mut u16,
+    /// `SQL_DESC_ROWS_PROCESSED_PTR` — default null.
+    pub rows_processed_ptr: *mut sql::ULen,
+}
+
+impl Default for IpdDescriptor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IpdDescriptor {
+    pub fn new() -> Self {
+        Self {
+            kind: DescriptorKind::Ipd,
+            records: HashMap::new(),
+            array_status_ptr: std::ptr::null_mut(),
+            rows_processed_ptr: std::ptr::null_mut(),
+        }
+    }
+
+    pub fn desc_count(&self) -> u16 {
+        self.records.keys().copied().max().unwrap_or(0)
+    }
+
+    pub fn clear(&mut self) {
+        self.records.clear();
+    }
+}
+
 /// A resolved descriptor reference returned by `desc_ref_from_handle`.
 pub enum DescriptorRef<'a> {
     Ard(&'a mut ArdDescriptor),
     Ird(&'a mut IrdDescriptor),
+    Apd(&'a mut ApdDescriptor),
+    Ipd(&'a mut IpdDescriptor),
 }
 
 /// Convert a descriptor handle (returned by `SQLGetStmtAttr`) back to a
@@ -629,18 +706,24 @@ pub fn desc_ref_from_handle<'a>(handle: sql::Handle) -> OdbcResult<DescriptorRef
             location: snafu::location!(),
         });
     }
-    // Read the raw discriminant byte at offset 0 and validate before
-    // interpreting it as a DescriptorKind enum to avoid UB on corrupt handles.
     let raw_kind = unsafe { *(handle as *const u8) };
     let kind = DescriptorKind::try_from(raw_kind)?;
     match kind {
-        DescriptorKind::Ard | DescriptorKind::Apd => {
+        DescriptorKind::Ard => {
             let desc = unsafe { &mut *(handle as *mut ArdDescriptor) };
             Ok(DescriptorRef::Ard(desc))
         }
-        DescriptorKind::Ird | DescriptorKind::Ipd => {
+        DescriptorKind::Ird => {
             let desc = unsafe { &mut *(handle as *mut IrdDescriptor) };
             Ok(DescriptorRef::Ird(desc))
+        }
+        DescriptorKind::Apd => {
+            let desc = unsafe { &mut *(handle as *mut ApdDescriptor) };
+            Ok(DescriptorRef::Apd(desc))
+        }
+        DescriptorKind::Ipd => {
+            let desc = unsafe { &mut *(handle as *mut IpdDescriptor) };
+            Ok(DescriptorRef::Ipd(desc))
         }
     }
 }
@@ -704,6 +787,59 @@ pub struct Connection {
     pub numeric_settings: NumericSettings,
 }
 
+/// Application Parameter Descriptor (APD) record.
+///
+/// Stores the application-side view of a bound parameter: the C data type,
+/// the pointer to the application's data buffer, its length, and the
+/// indicator/length pointer. Populated by `SQLBindParameter` or
+/// `SQLSetDescField` on the APD handle.
+#[derive(Debug, Clone)]
+pub struct ApdRecord {
+    pub value_type: CDataType,
+    pub data_ptr: sql::Pointer,
+    pub buffer_length: sql::Len,
+    pub str_len_or_ind_ptr: *mut sql::Len,
+}
+
+impl Default for ApdRecord {
+    fn default() -> Self {
+        Self {
+            value_type: CDataType::Default,
+            data_ptr: std::ptr::null_mut(),
+            buffer_length: 0,
+            str_len_or_ind_ptr: std::ptr::null_mut(),
+        }
+    }
+}
+
+/// Implementation Parameter Descriptor (IPD) record.
+///
+/// Stores the implementation-side view of a bound parameter: the SQL data type,
+/// column size, decimal digits, and parameter direction. Populated by
+/// `SQLBindParameter` or `SQLSetDescField` on the IPD handle.
+#[derive(Debug, Clone)]
+pub struct IpdRecord {
+    pub parameter_type: sql::SqlDataType,
+    pub column_size: sql::ULen,
+    pub decimal_digits: sql::SmallInt,
+    pub direction: sql::SmallInt,
+    pub nullable: sql::SmallInt,
+}
+
+impl Default for IpdRecord {
+    fn default() -> Self {
+        Self {
+            parameter_type: sql::SqlDataType::VARCHAR,
+            column_size: 0,
+            decimal_digits: 0,
+            direction: sql::ParamType::Input as sql::SmallInt,
+            nullable: 2, // SQL_NULLABLE_UNKNOWN
+        }
+    }
+}
+
+/// Combined view of APD + IPD records, reconstructed at execution time
+/// for consumption by the parameter conversion pipeline.
 #[derive(Debug, Clone)]
 pub struct ParameterBinding {
     pub parameter_type: sql::SqlDataType,
@@ -711,6 +847,18 @@ pub struct ParameterBinding {
     pub parameter_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
     pub str_len_or_ind_ptr: *mut sql::Len,
+}
+
+impl ParameterBinding {
+    pub fn from_apd_ipd(apd: &ApdRecord, ipd: &IpdRecord) -> Self {
+        Self {
+            parameter_type: ipd.parameter_type,
+            value_type: apd.value_type,
+            parameter_value_ptr: apd.data_ptr,
+            buffer_length: apd.buffer_length,
+            str_len_or_ind_ptr: apd.str_len_or_ind_ptr,
+        }
+    }
 }
 
 pub enum StatementState {
@@ -828,11 +976,10 @@ pub struct Statement<'a> {
     pub conn: &'a mut Connection,
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
-    pub parameter_bindings: HashMap<u16, ParameterBinding>,
     pub ard: ArdDescriptor,
     pub ird: IrdDescriptor,
-    pub apd: ArdDescriptor,
-    pub ipd: IrdDescriptor,
+    pub apd: ApdDescriptor,
+    pub ipd: IpdDescriptor,
     pub diagnostic_info: DiagnosticInfo,
     pub get_data_state: Option<GetDataState>,
     /// `SQL_ATTR_CURSOR_TYPE` — default `ForwardOnly`.

@@ -603,6 +603,43 @@ pub unsafe extern "C" fn SQLNumResultCols(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLNumParams(
+    statement_handle: sql::Handle,
+    param_count_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::num_params(statement_handle, param_count_ptr);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLDescribeParam(
+    statement_handle: sql::Handle,
+    parameter_number: sql::USmallInt,
+    data_type_ptr: *mut sql::SmallInt,
+    parameter_size_ptr: *mut sql::ULen,
+    decimal_digits_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::describe_param(
+        statement_handle,
+        parameter_number,
+        data_type_ptr,
+        parameter_size_ptr,
+        decimal_digits_ptr,
+        nullable_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLRowCount(
     statement_handle: sql::Handle,
     row_count_ptr: *mut sql::Len,

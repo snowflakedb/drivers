@@ -8,8 +8,8 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, FreeStmtOption, OdbcResult, ParamDirection, ParameterBinding, SqlType,
-    Statement, StatementState, stmt_from_handle,
+    ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection,
+    ParameterBinding, SqlType, Statement, StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
@@ -43,7 +43,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
             let stmt_handle = stmt.stmt_handle;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -214,7 +214,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_execute_query(StatementExecuteQueryRequest {
@@ -320,17 +320,18 @@ fn create_execute_state(
 /// until after the bindings have been consumed by `statement_execute_query`,
 /// because `BinaryDataPtr` holds a raw pointer into the owned `String`.
 fn apply_parameter_bindings(
-    parameter_bindings: &std::collections::HashMap<u16, ParameterBinding>,
+    apd: &crate::api::ApdDescriptor,
+    ipd: &crate::api::IpdDescriptor,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
-    if parameter_bindings.is_empty() {
+    if apd.records.is_empty() {
         return Ok((None, None));
     }
     tracing::info!(
         "apply_parameter_bindings: Found {} bound parameters",
-        parameter_bindings.len()
+        apd.records.len()
     );
 
-    let json_string = odbc_bindings_to_json(parameter_bindings).context(JsonBindingSnafu {})?;
+    let json_string = odbc_bindings_to_json(apd, ipd).context(JsonBindingSnafu {})?;
 
     let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
     let json_data_len = json_string.len();
@@ -357,7 +358,7 @@ pub fn bind_parameter(
     raw_input_output_type: sql::SmallInt,
     raw_value_type: sql::SmallInt,
     raw_parameter_type: sql::SmallInt,
-    _column_size: sql::ULen,
+    column_size: sql::ULen,
     decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
@@ -416,15 +417,26 @@ pub fn bind_parameter(
 
     let stmt = stmt_from_handle(statement_handle);
 
-    let binding = ParameterBinding {
-        parameter_type,
-        value_type,
-        parameter_value_ptr,
-        buffer_length,
-        str_len_or_ind_ptr,
-    };
+    stmt.apd.records.insert(
+        parameter_number,
+        ApdRecord {
+            value_type,
+            data_ptr: parameter_value_ptr,
+            buffer_length,
+            str_len_or_ind_ptr,
+        },
+    );
 
-    stmt.parameter_bindings.insert(parameter_number, binding);
+    stmt.ipd.records.insert(
+        parameter_number,
+        IpdRecord {
+            parameter_type,
+            column_size,
+            decimal_digits,
+            direction: raw_input_output_type,
+            ..IpdRecord::default()
+        },
+    );
 
     tracing::info!(
         "bind_parameter: Successfully bound parameter {}",
@@ -492,10 +504,93 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
         }
         FreeStmtOption::ResetParams => {
             tracing::info!("free_stmt: Resetting all parameters");
-            stmt.parameter_bindings.clear();
+            stmt.apd.clear();
+            stmt.ipd.clear();
         }
     }
 
+    Ok(())
+}
+
+/// Return the number of parameters in the statement via the IPD descriptor.
+pub fn num_params(
+    statement_handle: sql::Handle,
+    param_count_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("num_params: statement_handle={:?}", statement_handle);
+
+    if param_count_ptr.is_null() {
+        return NullPointerSnafu.fail();
+    }
+
+    let stmt = stmt_from_handle(statement_handle);
+    let count = stmt.ipd.desc_count();
+
+    unsafe {
+        *param_count_ptr = count as sql::SmallInt;
+    }
+
+    tracing::info!("num_params: {} parameters", count);
+    Ok(())
+}
+
+/// Describe a bound parameter via the IPD descriptor.
+pub fn describe_param(
+    statement_handle: sql::Handle,
+    parameter_number: sql::USmallInt,
+    data_type_ptr: *mut sql::SmallInt,
+    parameter_size_ptr: *mut sql::ULen,
+    decimal_digits_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!(
+        "describe_param: statement_handle={:?}, parameter_number={}",
+        statement_handle,
+        parameter_number
+    );
+
+    if parameter_number == 0 {
+        return InvalidParameterNumberSnafu.fail();
+    }
+
+    let stmt = stmt_from_handle(statement_handle);
+    let ipd_rec = stmt.ipd.records.get(&parameter_number).ok_or_else(|| {
+        tracing::error!(
+            "describe_param: parameter #{} not found in IPD",
+            parameter_number
+        );
+        InvalidParameterNumberSnafu.build()
+    })?;
+
+    if !data_type_ptr.is_null() {
+        unsafe {
+            *data_type_ptr = ipd_rec.parameter_type.0;
+        }
+    }
+    if !parameter_size_ptr.is_null() {
+        unsafe {
+            *parameter_size_ptr = ipd_rec.column_size;
+        }
+    }
+    if !decimal_digits_ptr.is_null() {
+        unsafe {
+            *decimal_digits_ptr = ipd_rec.decimal_digits;
+        }
+    }
+    if !nullable_ptr.is_null() {
+        unsafe {
+            *nullable_ptr = ipd_rec.nullable;
+        }
+    }
+
+    tracing::info!(
+        "describe_param: parameter {} type={:?} size={} digits={} nullable={}",
+        parameter_number,
+        ipd_rec.parameter_type,
+        ipd_rec.column_size,
+        ipd_rec.decimal_digits,
+        ipd_rec.nullable,
+    );
     Ok(())
 }
 
@@ -681,14 +776,14 @@ pub fn get_stmt_attr(
             Ok(())
         }
         StmtAttr::AppParamDesc => {
-            let apd_ptr = &mut stmt.apd as *mut crate::api::ArdDescriptor as sql::Handle;
+            let apd_ptr = &mut stmt.apd as *mut crate::api::ApdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = apd_ptr;
             }
             Ok(())
         }
         StmtAttr::ImpParamDesc => {
-            let ipd_ptr = &mut stmt.ipd as *mut crate::api::IrdDescriptor as sql::Handle;
+            let ipd_ptr = &mut stmt.ipd as *mut crate::api::IpdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = ipd_ptr;
             }
