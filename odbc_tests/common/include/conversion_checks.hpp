@@ -135,10 +135,12 @@ inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQ
 // when the source SQL type cannot be converted to the requested C target type — for
 // example, numeric to temporal (DATE/TIME/TIMESTAMP) or numeric to GUID.
 //
-// On Windows the ODBC Driver Manager may intercept certain unsupported target types
-// (notably SQL_C_GUID, target_type = -11) and return HYC00 ("Optional feature not
-// implemented") before the driver is even invoked. The relaxed check that also
-// accepts HYC00 is therefore limited to _WIN32 builds; Linux/macOS must see 07006.
+// On Windows the ODBC Driver Manager may intercept specific unsupported target types
+// before the driver is even invoked and return HYC00 ("Optional feature not
+// implemented") instead of 07006. Known intercepted types:
+//   - SQL_C_GUID (target_type = -11)
+// The relaxed check is scoped to _WIN32 builds AND only to these known target types;
+// all other target types must return exactly 07006 on every platform.
 inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type,
                                           void* buffer, SQLLEN buffer_size) {
   SQLLEN indicator = -999;
@@ -149,7 +151,11 @@ inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQ
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
 #ifdef _WIN32
-  CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
+  if (target_type == SQL_C_GUID) {
+    CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
+  } else {
+    CHECK(sqlstate == "07006");
+  }
 #else
   CHECK(sqlstate == "07006");
 #endif
