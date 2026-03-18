@@ -108,7 +108,6 @@ class MemberInfo:
     kind: str  # "method", "property", "staticmethod", "classmethod"
     status: ImplStatus = ImplStatus.IMPLEMENTED
     is_pep249: bool = False
-    has_setter: bool = False
 
 
 @dataclass
@@ -193,15 +192,6 @@ def _extract_class_api(tree: ast.Module, class_name: str, *, check_status: bool 
     if cls_node is None:
         return api
 
-    # Collect setter names
-    setter_names: set[str] = set()
-    for item in cls_node.body:
-        if isinstance(item, ast.FunctionDef):
-            for dec in item.decorator_list:
-                if isinstance(dec, ast.Attribute) and dec.attr == "setter":
-                    if isinstance(dec.value, ast.Name):
-                        setter_names.add(dec.value.id)
-
     seen: set[str] = set()
     for item in cls_node.body:
         if not isinstance(item, ast.FunctionDef):
@@ -223,14 +213,12 @@ def _extract_class_api(tree: ast.Module, class_name: str, *, check_status: bool 
         kind = _determine_kind(item)
         status = _determine_status(item) if check_status else ImplStatus.IMPLEMENTED
         is_pep249 = _has_decorator(item, "pep249")
-        has_setter = name in setter_names
 
         api.members[name] = MemberInfo(
             name=name,
             kind=kind,
             status=status,
             is_pep249=is_pep249,
-            has_setter=has_setter,
         )
     return api
 
@@ -252,22 +240,37 @@ def _extract_all_list(tree: ast.Module) -> list[str]:
 
 
 def _extract_exception_classes(tree: ast.Module) -> dict[str, list[str]]:
-    """Extract exception class names and their base classes."""
-    exceptions: dict[str, list[str]] = {}
+    """Extract exception class names and their base classes.
+
+    Uses a two-pass approach so the result is independent of ``ast.walk``
+    traversal order: first collect every class and its bases, then
+    determine which are exceptions by walking the inheritance graph.
+    """
+    all_classes: dict[str, list[str]] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            bases = []
+            if node.name.startswith("_"):
+                continue
+            bases: list[str] = []
             for base in node.bases:
                 if isinstance(base, ast.Name):
                     bases.append(base.id)
                 elif isinstance(base, ast.Attribute):
                     bases.append(base.attr)
-            # Include if it inherits from Exception/Warning/Error or another known exception
-            if node.name.startswith("_"):
+            all_classes[node.name] = bases
+
+    # Seed: well-known root exception/warning types
+    roots = {"Exception", "Warning", "Error", "BaseException"}
+    exceptions: dict[str, list[str]] = {}
+    changed = True
+    while changed:
+        changed = False
+        for name, bases in all_classes.items():
+            if name in exceptions:
                 continue
-            if any(b in ("Exception", "Warning", "Error", "BaseException") for b in bases) or \
-               any(b in exceptions for b in bases):
-                exceptions[node.name] = bases
+            if any(b in roots or b in exceptions for b in bases):
+                exceptions[name] = bases
+                changed = True
     return exceptions
 
 
@@ -584,7 +587,11 @@ def _download_ref_files(ref_tag: str, dest: Path) -> tuple[Path, int]:
 def _parse_file(path: Path) -> ast.Module | None:
     if not path.exists():
         return None
-    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        print(f"  {RED}Failed to parse {path}: {exc}{RESET}", file=sys.stderr)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -690,9 +697,9 @@ def _compare_exceptions(
             if ref_bases == wrap_bases:
                 result.add(SYM_OK, name, f"matches (inherits: {', '.join(sorted(ref_bases))})")
             else:
-                result.add(SYM_OK, name,
-                           f"present (ref bases: {', '.join(sorted(ref_bases))}; "
-                           f"wrapper bases: {', '.join(sorted(wrap_bases))})")
+                result.add(SYM_WARN, name,
+                           f"base mismatch (ref: {', '.join(sorted(ref_bases))}; "
+                           f"wrapper: {', '.join(sorted(wrap_bases))})")
 
     return result
 
@@ -832,6 +839,7 @@ def main() -> None:
         wrap_pandas_tree = _parse_file(WRAPPER_PKG / "pandas_tools.py")
 
         sections: list[ComparisonResult] = []
+        parse_failures: list[str] = []
 
         print(f"\n{BOLD}Python Wrapper vs Reference Driver — API Comparison{RESET}")
         print(f"{'=' * 70}")
@@ -848,6 +856,7 @@ def main() -> None:
             _print_section(conn_comp)
             sections.append(conn_comp)
         else:
+            parse_failures.append("connection")
             print(f"\n  {RED}Could not parse connection files{RESET}")
 
         # --- Section 1+2: Cursor class ---
@@ -874,6 +883,7 @@ def main() -> None:
             _print_section(cursor_comp)
             sections.append(cursor_comp)
         else:
+            parse_failures.append("cursor")
             print(f"\n  {RED}Could not parse cursor files{RESET}")
 
         # --- Section 2: __all__ exports ---
@@ -884,6 +894,7 @@ def main() -> None:
             _print_section(all_comp)
             sections.append(all_comp)
         else:
+            parse_failures.append("__init__")
             print(f"\n  {RED}Could not parse __init__ files{RESET}")
 
         # --- Section 4: Exception hierarchy ---
@@ -894,6 +905,7 @@ def main() -> None:
             _print_section(exc_comp)
             sections.append(exc_comp)
         else:
+            parse_failures.append("errors")
             print(f"\n  {RED}Could not parse errors files{RESET}")
 
         # --- Section 5: Helper classes ---
@@ -926,8 +938,8 @@ def main() -> None:
             elif in_ref and in_wrap:
                 helper_result.add(SYM_OK, cls_name, f"present in both (ref: {ref_struct.kind}, wrapper: {wrap_struct.kind})")
             else:
-                # Not found in either side — skip rather than penalizing the wrapper
-                helper_result.add(SYM_EXTRA, cls_name, "not found in either (skipped)")
+                # Not found in either side — don't add to report
+                pass
 
         _print_section(helper_result)
         sections.append(helper_result)
@@ -975,7 +987,12 @@ def main() -> None:
 
         _print_overall_summary(sections)
 
-    sys.exit(0 if all(s.missing_count == 0 for s in sections) else 1)
+        if parse_failures:
+            print(f"  {RED}{BOLD}Warning: failed to parse/compare: "
+                  f"{', '.join(parse_failures)}{RESET}\n")
+
+    has_missing = any(s.missing_count > 0 for s in sections)
+    sys.exit(0 if not has_missing and not parse_failures else 1)
 
 
 if __name__ == "__main__":
