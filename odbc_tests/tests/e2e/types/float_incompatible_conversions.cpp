@@ -15,21 +15,10 @@
 
 #include "Connection.hpp"
 #include "compatibility.hpp"
+#include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
-
-static void check_restricted_conversion(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type,
-                                        void* buffer, SQLLEN buffer_size) {
-  SQLLEN indicator = -999;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, target_type, buffer, buffer_size, &indicator);
-  auto records = get_diag_rec(stmt);
-  std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
-  INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
-  REQUIRE(ret == SQL_ERROR);
-  REQUIRE(!records.empty());
-  CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
-}
 
 static void check_single_interval_conversion(Connection& conn, const char* query, SQLSMALLINT target_type) {
   auto stmt = conn.execute_fetch(query);
@@ -80,19 +69,19 @@ TEST_CASE("should fail converting float to temporal C types", "[datatype][float]
   // Then SQL_C_TYPE_DATE conversion should fail with restricted data type error
   {
     SQL_DATE_STRUCT value = {};
-    check_restricted_conversion(stmt, 1, SQL_C_TYPE_DATE, &value, sizeof(value));
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_DATE, &value, sizeof(value));
   }
 
   // And SQL_C_TYPE_TIME conversion should fail with restricted data type error
   {
     SQL_TIME_STRUCT value = {};
-    check_restricted_conversion(stmt, 1, SQL_C_TYPE_TIME, &value, sizeof(value));
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIME, &value, sizeof(value));
   }
 
   // And SQL_C_TYPE_TIMESTAMP conversion should fail with restricted data type error
   {
     SQL_TIMESTAMP_STRUCT value = {};
-    check_restricted_conversion(stmt, 1, SQL_C_TYPE_TIMESTAMP, &value, sizeof(value));
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIMESTAMP, &value, sizeof(value));
   }
 }
 
@@ -174,6 +163,6 @@ TEST_CASE("should fail converting float to SQL_C_GUID", "[datatype][float][conve
   // Then SQL_C_GUID conversion should fail with restricted data type error
   {
     SQLGUID value = {};
-    check_restricted_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
+    check_incompatible_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
   }
 }

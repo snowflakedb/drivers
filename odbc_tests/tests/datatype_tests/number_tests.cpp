@@ -1673,18 +1673,6 @@ TEST_CASE("TREAT_DECIMAL_AS_INT with table columns", "[datatype][number][treat_d
 // The driver should return SQL_ERROR with SQLSTATE 07006.
 // ============================================================================
 
-static void check_number_restricted_conversion(const StatementHandleWrapper& stmt, SQLUSMALLINT col,
-                                               SQLSMALLINT target_type, void* buffer, SQLLEN buffer_size) {
-  SQLLEN indicator = -999;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, target_type, buffer, buffer_size, &indicator);
-  auto records = get_diag_rec(stmt);
-  std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
-  INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
-  REQUIRE(ret == SQL_ERROR);
-  REQUIRE(!records.empty());
-  CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
-}
-
 TEST_CASE("SQL_DECIMAL to temporal C types returns 07006", "[datatype][number][conversion][negative]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -1693,17 +1681,17 @@ TEST_CASE("SQL_DECIMAL to temporal C types returns 07006", "[datatype][number][c
 
   SECTION("SQL_C_TYPE_DATE") {
     SQL_DATE_STRUCT value = {};
-    check_number_restricted_conversion(stmt, 1, SQL_C_TYPE_DATE, &value, sizeof(value));
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_DATE, &value, sizeof(value));
   }
 
   SECTION("SQL_C_TYPE_TIME") {
     SQL_TIME_STRUCT value = {};
-    check_number_restricted_conversion(stmt, 1, SQL_C_TYPE_TIME, &value, sizeof(value));
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIME, &value, sizeof(value));
   }
 
   SECTION("SQL_C_TYPE_TIMESTAMP") {
     SQL_TIMESTAMP_STRUCT value = {};
-    check_number_restricted_conversion(stmt, 1, SQL_C_TYPE_TIMESTAMP, &value, sizeof(value));
+    check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIMESTAMP, &value, sizeof(value));
   }
 }
 
@@ -1714,5 +1702,5 @@ TEST_CASE("SQL_DECIMAL to SQL_C_GUID returns 07006", "[datatype][number][convers
   auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
 
   SQLGUID value = {};
-  check_number_restricted_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
+  check_incompatible_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
 }

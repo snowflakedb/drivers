@@ -129,4 +129,28 @@ inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQ
   return std::u16string(buffer, indicator / sizeof(char16_t));
 }
 
+// Verifies that a SQLGetData conversion fails with an incompatible-conversion SQLSTATE.
+//
+// The ODBC spec mandates SQLSTATE 07006 ("Restricted data type attribute violation")
+// when the source SQL type cannot be converted to the requested C target type — for
+// example, numeric to temporal (DATE/TIME/TIMESTAMP) or numeric to GUID.
+//
+// However, the Windows ODBC Driver Manager may intercept certain unsupported target
+// types (notably SQL_C_GUID, target_type = -11) and return HYC00 ("Optional feature
+// not implemented") before the driver is even invoked. Both SQLSTATEs correctly
+// indicate that the conversion is not supported; this helper accepts either one so
+// that the same test code works on all platforms (Linux/macOS return 07006, Windows
+// may return HYC00 for specific target types).
+inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type,
+                                          void* buffer, SQLLEN buffer_size) {
+  SQLLEN indicator = -999;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, target_type, buffer, buffer_size, &indicator);
+  auto records = get_diag_rec(stmt);
+  std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
+  INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
+  REQUIRE(ret == SQL_ERROR);
+  REQUIRE(!records.empty());
+  CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
+}
+
 #endif  // CONVERSION_CHECKS_HPP
