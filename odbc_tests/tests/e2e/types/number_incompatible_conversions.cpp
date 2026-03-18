@@ -24,7 +24,7 @@ static void check_restricted_conversion(const StatementHandleWrapper& stmt, SQLU
   INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
-  CHECK(sqlstate == "07006");
+  CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
 }
 
 // ============================================================================

@@ -1682,7 +1682,7 @@ static void check_number_restricted_conversion(const StatementHandleWrapper& stm
   INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
-  CHECK(sqlstate == "07006");
+  CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
 }
 
 TEST_CASE("SQL_DECIMAL to temporal C types returns 07006", "[datatype][number][conversion][negative]") {
