@@ -370,6 +370,10 @@ pub fn bind_parameter(
         raw_parameter_type
     );
 
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
+
     if parameter_number == 0 {
         tracing::error!("bind_parameter: parameter_number cannot be 0");
         return InvalidParameterNumberSnafu.fail();
