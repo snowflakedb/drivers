@@ -971,21 +971,6 @@ inline SQL_NUMERIC_STRUCT get_real_binary_as_numeric_with_truncation(const State
   return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
 }
 
-inline void check_real_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int start) {
-  for (int i = start; i < 16; ++i) {
-    INFO("val[" << i << "] should be 0");
-    CHECK(numeric.val[i] == 0);
-  }
-}
-
-inline unsigned long long real_numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
-  unsigned long long result = 0;
-  for (int i = 7; i >= 0; --i) {
-    result = (result << 8) | n.val[i];
-  }
-  return result;
-}
-
 TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
   SKIP_OLD_DRIVER("BD#14",
                   "Old driver returns raw f64 bytes instead of SQL_NUMERIC_STRUCT for SQL_C_BINARY on FLOAT columns");
@@ -997,7 +982,7 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 42.0::FLOAT"), 1);
     CHECK(num.sign == 1);
     CHECK(num.val[0] == 42);
-    check_real_numeric_val_zero_from(num, 1);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // negative integer value
@@ -1005,14 +990,14 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT -7.0::FLOAT"), 1);
     CHECK(num.sign == 0);
     CHECK(num.val[0] == 7);
-    check_real_numeric_val_zero_from(num, 1);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // zero
   {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 0.0::FLOAT"), 1);
     CHECK(num.sign == 1);
-    check_real_numeric_val_zero_from(num, 0);
+    check_numeric_val_zero_from(num, 0);
   }
 
   // fractional value truncates with 01S07
@@ -1020,21 +1005,24 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric_with_truncation(conn.execute_fetch("SELECT 123.456::FLOAT"), 1);
     CHECK(num.sign == 1);
     CHECK(num.scale == 0);
-    CHECK(real_numeric_val_to_ull(num) == 123);
+    CHECK(numeric_val_to_ull(num) == 123);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // large integer value
   {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 1000000.0::FLOAT"), 1);
     CHECK(num.sign == 1);
-    CHECK(real_numeric_val_to_ull(num) == 1000000);
+    CHECK(numeric_val_to_ull(num) == 1000000);
+    check_numeric_val_zero_from(num, 3);
   }
 
   // negative fractional truncates with 01S07
   {
     auto num = get_real_binary_as_numeric_with_truncation(conn.execute_fetch("SELECT -99.9::FLOAT"), 1);
     CHECK(num.sign == 0);
-    CHECK(real_numeric_val_to_ull(num) == 99);
+    CHECK(numeric_val_to_ull(num) == 99);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // value 255 uses single byte
@@ -1042,7 +1030,7 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     auto num = get_real_binary_as_numeric(conn.execute_fetch("SELECT 255.0::FLOAT"), 1);
     CHECK(num.sign == 1);
     CHECK(num.val[0] == 255);
-    check_real_numeric_val_zero_from(num, 1);
+    check_numeric_val_zero_from(num, 1);
   }
 
   // value 256 spans two bytes
@@ -1051,7 +1039,7 @@ TEST_CASE("REAL to SQL_C_BINARY", "[datatype][real][binary]") {
     CHECK(num.sign == 1);
     CHECK(num.val[0] == 0);
     CHECK(num.val[1] == 1);
-    check_real_numeric_val_zero_from(num, 2);
+    check_numeric_val_zero_from(num, 2);
   }
 
   // NULL returns SQL_NULL_DATA
@@ -1546,42 +1534,48 @@ TEST_CASE("REAL integer-valued .0 to SQL_C_NUMERIC - boundary values", "[datatyp
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 2147483647.0::FLOAT"), 1);
     CHECK(numeric.sign == 1);
-    CHECK(real_numeric_val_to_ull(numeric) == 2147483647ULL);
+    CHECK(numeric_val_to_ull(numeric) == 2147483647ULL);
+    check_numeric_val_zero_from(numeric, 4);
   }
 
   // i32 min (absolute value in val[])
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT -2147483648.0::FLOAT"), 1);
     CHECK(numeric.sign == 0);
-    CHECK(real_numeric_val_to_ull(numeric) == 2147483648ULL);
+    CHECK(numeric_val_to_ull(numeric) == 2147483648ULL);
+    check_numeric_val_zero_from(numeric, 4);
   }
 
   // u32 max
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 4294967295.0::FLOAT"), 1);
     CHECK(numeric.sign == 1);
-    CHECK(real_numeric_val_to_ull(numeric) == 4294967295ULL);
+    CHECK(numeric_val_to_ull(numeric) == 4294967295ULL);
+    check_numeric_val_zero_from(numeric, 4);
   }
 
   // 2^32
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 4294967296.0::FLOAT"), 1);
     CHECK(numeric.sign == 1);
-    CHECK(real_numeric_val_to_ull(numeric) == 4294967296ULL);
+    CHECK(numeric_val_to_ull(numeric) == 4294967296ULL);
+    check_numeric_val_zero_from(numeric, 5);
   }
 
   // 2^53 (largest exact integer in f64)
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT 9007199254740992.0::FLOAT"), 1);
     CHECK(numeric.sign == 1);
-    CHECK(real_numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    CHECK(numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    check_numeric_val_zero_from(numeric, 7);
   }
 
   // large negative
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch("SELECT -9007199254740992.0::FLOAT"), 1);
     CHECK(numeric.sign == 0);
-    CHECK(real_numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    CHECK(numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    check_numeric_val_zero_from(numeric, 7);
   }
 }
 

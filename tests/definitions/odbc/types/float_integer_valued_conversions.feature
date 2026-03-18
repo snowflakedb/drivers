@@ -43,7 +43,7 @@ Feature: ODBC float integer-valued (.0) conversions to fixed-width C types
   @odbc_e2e
   Scenario: should convert large integer-valued floats to wider types and strings
     # 2^53 is the largest integer exactly representable in f64.
-    # Tests conversion to SQL_C_SBIGINT, SQL_C_DOUBLE, and SQL_C_CHAR.
+    # Tests conversion to SQL_C_SBIGINT, SQL_C_UBIGINT, SQL_C_DOUBLE, and SQL_C_CHAR.
     Given Snowflake client is logged in
     When Large integer-valued float values are queried
     Then 2^53 should convert exactly to SQL_C_SBIGINT and SQL_C_UBIGINT

@@ -153,4 +153,24 @@ inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQ
   CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
 }
 
+// Decodes the first 8 bytes of SQL_NUMERIC_STRUCT.val[] as a little-endian
+// unsigned 64-bit integer. Sufficient for values up to 2^64-1.
+inline unsigned long long numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
+  unsigned long long result = 0;
+  for (int i = 7; i >= 0; --i) {
+    result = (result << 8) | n.val[i];
+  }
+  return result;
+}
+
+// Asserts that val[start..15] in a SQL_NUMERIC_STRUCT are all zero.
+// Use after numeric_val_to_ull to verify the driver did not set stale bytes
+// beyond the value's actual byte width.
+inline void check_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int start) {
+  for (int i = start; i < 16; ++i) {
+    INFO("val[" << i << "] should be 0");
+    CHECK(numeric.val[i] == 0);
+  }
+}
+
 #endif  // CONVERSION_CHECKS_HPP

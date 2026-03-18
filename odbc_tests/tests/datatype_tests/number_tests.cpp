@@ -41,12 +41,6 @@ inline SQL_NUMERIC_STRUCT get_binary_as_numeric(const StatementHandleWrapper& st
   return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
 }
 
-inline void check_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int start) {
-  for (int i = start; i < 16; ++i) {
-    CHECK(numeric.val[i] == 0);
-  }
-}
-
 template <int SQL_C_TYPE>
 void check_integer_columns(const StatementHandleWrapper& stmt, const std::vector<int>& exact_cols,
                            const std::vector<int>& truncated_cols, typename MetaOfSqlCType<SQL_C_TYPE>::type expected) {
@@ -641,14 +635,6 @@ TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR", "[datatype][number][wchar]") {
 // ============================================================================
 // SQL_C_NUMERIC (SQL_NUMERIC_STRUCT) conversion tests
 // ============================================================================
-
-inline unsigned long long numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
-  unsigned long long result = 0;
-  for (int i = 7; i >= 0; --i) {
-    result = (result << 8) | n.val[i];
-  }
-  return result;
-}
 
 TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC", "[datatype][number][numeric]") {
   Connection conn;

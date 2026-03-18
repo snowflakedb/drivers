@@ -15,14 +15,6 @@
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
 
-static unsigned long long numeric_val_to_ull(const SQL_NUMERIC_STRUCT& n) {
-  unsigned long long result = 0;
-  for (int i = 7; i >= 0; --i) {
-    result = (result << 8) | n.val[i];
-  }
-  return result;
-}
-
 // ============================================================================
 // Small .0 values to integer C types
 // ============================================================================
@@ -197,6 +189,7 @@ TEST_CASE("should encode large integer-valued floats correctly in SQL_C_NUMERIC"
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch(q_i32_max), 1);
     CHECK(numeric.sign == 1);
     CHECK(numeric_val_to_ull(numeric) == 2147483647ULL);
+    check_numeric_val_zero_from(numeric, 4);
   }
 
   // And i32 min should encode as negative in SQL_NUMERIC_STRUCT
@@ -204,6 +197,7 @@ TEST_CASE("should encode large integer-valued floats correctly in SQL_C_NUMERIC"
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch(q_i32_min), 1);
     CHECK(numeric.sign == 0);
     CHECK(numeric_val_to_ull(numeric) == 2147483648ULL);
+    check_numeric_val_zero_from(numeric, 4);
   }
 
   // And u32 max should encode correctly in SQL_NUMERIC_STRUCT
@@ -211,6 +205,7 @@ TEST_CASE("should encode large integer-valued floats correctly in SQL_C_NUMERIC"
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch(q_u32_max), 1);
     CHECK(numeric.sign == 1);
     CHECK(numeric_val_to_ull(numeric) == 4294967295ULL);
+    check_numeric_val_zero_from(numeric, 4);
   }
 
   // And 2^32 and 2^53 should encode correctly in SQL_NUMERIC_STRUCT
@@ -218,15 +213,18 @@ TEST_CASE("should encode large integer-valued floats correctly in SQL_C_NUMERIC"
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch(q_2_32), 1);
     CHECK(numeric.sign == 1);
     CHECK(numeric_val_to_ull(numeric) == 4294967296ULL);
+    check_numeric_val_zero_from(numeric, 5);
   }
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch(q_2_53), 1);
     CHECK(numeric.sign == 1);
     CHECK(numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    check_numeric_val_zero_from(numeric, 7);
   }
   {
     auto numeric = check_no_truncation<SQL_C_NUMERIC>(conn.execute_fetch(q_neg_2_53), 1);
     CHECK(numeric.sign == 0);
     CHECK(numeric_val_to_ull(numeric) == 9007199254740992ULL);
+    check_numeric_val_zero_from(numeric, 7);
   }
 }
