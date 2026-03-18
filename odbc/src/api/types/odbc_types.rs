@@ -91,6 +91,8 @@ pub enum ConnectionAttribute {
     ConnectionDead,
     /// SQL_ATTR_AUTO_IPD (10001) — read-only
     AutoIpd,
+    /// SQL_ATTR_METADATA_ID (10014) — identifier vs. pattern treatment for catalog functions
+    MetadataId,
 
     // Custom Snowflake attributes (matching sf_odbc.h)
     /// SQL_SF_CONN_ATTR_PRIV_KEY — EVP_PKEY pointer (not supported in new driver)
@@ -120,6 +122,7 @@ impl ConnectionAttribute {
             113 => Some(Self::ConnectionTimeout),
             1209 => Some(Self::ConnectionDead),
             10001 => Some(Self::AutoIpd),
+            10014 => Some(Self::MetadataId),
             x if x == SQL_SF_CONN_ATTR_BASE + 1 => Some(Self::PrivKey),
             x if x == SQL_SF_CONN_ATTR_BASE + 2 => Some(Self::Application),
             x if x == SQL_SF_CONN_ATTR_BASE + 3 => Some(Self::PrivKeyContent),
@@ -147,6 +150,7 @@ impl ConnectionAttribute {
             Self::ConnectionTimeout => 113,
             Self::ConnectionDead => 1209,
             Self::AutoIpd => 10001,
+            Self::MetadataId => 10014,
             Self::PrivKey => SQL_SF_CONN_ATTR_BASE + 1,
             Self::Application => SQL_SF_CONN_ATTR_BASE + 2,
             Self::PrivKeyContent => SQL_SF_CONN_ATTR_BASE + 3,
@@ -277,6 +281,8 @@ pub enum StmtAttr {
     ImpRowDesc = 10012,
     /// `SQL_ATTR_IMP_PARAM_DESC` — handle to the Implementation Parameter Descriptor.
     ImpParamDesc = 10013,
+    /// `SQL_ATTR_METADATA_ID` (10014) — identifier vs. pattern treatment for catalog functions.
+    MetadataId = 10014,
     /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (2000100) — last query ID (read-only string).
     SnowflakeLastQueryId = 2000100,
 }
@@ -298,6 +304,7 @@ impl TryFrom<i32> for StmtAttr {
             10011 => Ok(StmtAttr::AppParamDesc),
             10012 => Ok(StmtAttr::ImpRowDesc),
             10013 => Ok(StmtAttr::ImpParamDesc),
+            10014 => Ok(StmtAttr::MetadataId),
             2000100 => Ok(StmtAttr::SnowflakeLastQueryId),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
@@ -886,6 +893,8 @@ pub struct Connection {
     /// this from the server per spec; the field is used to track the catalog for
     /// internal purposes (e.g. logging, future optimizations).
     pub current_catalog: Option<String>,
+    /// SQL_ATTR_METADATA_ID — identifier vs. pattern treatment for catalog functions (default false)
+    pub metadata_id: bool,
 }
 
 // Safety: Send is required so that the async runtime can transfer ownership of the
@@ -1126,6 +1135,8 @@ pub struct Statement {
     pub cursor_type: CursorType,
     /// `SQL_ATTR_MAX_LENGTH` — default 0 (no limit). Stored but not enforced.
     pub max_length: sql::ULen,
+    /// `SQL_ATTR_METADATA_ID` — inherited from connection at allocation time (default false).
+    pub metadata_id: bool,
     /// Set when `SQLExtendedFetch` has been used on this statement.
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
@@ -1151,7 +1162,7 @@ unsafe impl Send for Statement {}
 
 impl Statement {
     /// Construct a new Statement for the given connection.
-    pub fn new(conn: *mut Connection, stmt_handle: StatementHandle) -> Self {
+    pub fn new(conn: *mut Connection, stmt_handle: StatementHandle, metadata_id: bool) -> Self {
         Self {
             conn,
             stmt_handle,
@@ -1165,6 +1176,7 @@ impl Statement {
             cursor_type: CursorType::ForwardOnly,
             max_length: 0,
             used_extended_fetch: false,
+            metadata_id,
             last_query_id: None,
             cancel_token: CancellationToken::new(),
         }

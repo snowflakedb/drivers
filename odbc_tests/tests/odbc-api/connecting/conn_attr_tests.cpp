@@ -348,3 +348,72 @@ TEST_CASE("should set SQL_ATTR_AUTOCOMMIT back to ON on a live connection",
   REQUIRE(ret == SQL_SUCCESS);
   CHECK(autocommit == SQL_AUTOCOMMIT_ON);
 }
+
+// ============================================================================
+// SQL_ATTR_METADATA_ID (10014)
+// ============================================================================
+
+TEST_CASE("should get SQL_ATTR_METADATA_ID default as SQL_FALSE", "[odbc-api][conn_attr][metadata_id][connecting]") {
+  // Given A connected DBC handle (SQLGetConnectAttr on an unconnected handle is not reliably
+  // forwarded to the driver by all Driver Managers before a driver is loaded)
+  Connection conn;
+
+  // When SQL_ATTR_METADATA_ID is queried without being set
+  SQLULEN metadata_id = 99;
+  SQLRETURN ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_METADATA_ID, &metadata_id, 0, nullptr);
+
+  // Then It should return SQL_FALSE (0) by default
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(metadata_id == SQL_FALSE);
+}
+
+TEST_CASE("should set SQL_ATTR_METADATA_ID to SQL_TRUE on a live connection",
+          "[odbc-api][conn_attr][metadata_id][connecting]") {
+  // Given A connected DBC handle
+  Connection conn;
+
+  // When SQL_ATTR_METADATA_ID is set to SQL_TRUE
+  SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_METADATA_ID,
+                                    reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return SQL_TRUE
+  SQLULEN metadata_id = 99;
+  ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_METADATA_ID, &metadata_id, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(metadata_id == SQL_TRUE);
+}
+
+TEST_CASE("should set SQL_ATTR_METADATA_ID to SQL_FALSE on a live connection",
+          "[odbc-api][conn_attr][metadata_id][connecting]") {
+  // Given A connected DBC handle with METADATA_ID set to SQL_TRUE
+  Connection conn;
+  SQLRETURN ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_METADATA_ID,
+                                    reinterpret_cast<SQLPOINTER>(SQL_TRUE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // When SQL_ATTR_METADATA_ID is set back to SQL_FALSE
+  ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_METADATA_ID,
+                          reinterpret_cast<SQLPOINTER>(SQL_FALSE), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return SQL_FALSE
+  SQLULEN metadata_id = 99;
+  ret = SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_METADATA_ID, &metadata_id, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(metadata_id == SQL_FALSE);
+}
+
+TEST_CASE("should return HY024 for invalid SQL_ATTR_METADATA_ID value", "[odbc-api][conn_attr][metadata_id][error]") {
+  // Given An allocated DBC handle (not connected)
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ConnectionHandleWrapper dbc = env.createConnectionHandle();
+
+  // When SQL_ATTR_METADATA_ID is set to an invalid value
+  ret = SQLSetConnectAttr(dbc.getHandle(), SQL_ATTR_METADATA_ID, reinterpret_cast<SQLPOINTER>(99), 0);
+
+  // Then It should return SQL_ERROR with SQLSTATE HY024
+  REQUIRE_EXPECTED_ERROR(ret, "HY024", dbc.getHandle(), SQL_HANDLE_DBC);
+}
