@@ -53,7 +53,7 @@ class TestBinaryLob:
         # This is the limit before enabling the 2025_03 behavior change bundle
 
         # And Table with BINARY column exists
-        execute_query(f"CREATE TABLE {table_name} (val BINARY)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val BINARY)")
 
         # When Binary value of 8MB size (8,388,608 bytes) is inserted
 
@@ -80,7 +80,7 @@ class TestBinaryLob:
         # Requires 2025_03 behavior change bundle
 
         # And Table with BINARY(67108864) column exists
-        execute_query(f"CREATE TABLE {table_name} (val BINARY(67108864))")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val BINARY(67108864))")
 
         # When Binary value of 64MB size (67,108,864 bytes) is inserted
 

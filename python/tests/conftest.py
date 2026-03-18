@@ -125,17 +125,25 @@ def executemany_insert(cursor):
     return _executemany_insert
 
 
-@pytest.fixture
-def tmp_schema(cursor):
-    """Create a temporary schema."""
+@pytest.fixture(scope="session")
+def tmp_schema(connection_factory):
+    """Single schema shared across the test session.
+
+    Uses a dedicated connection so schema lifecycle does not compete with test
+    queries. Tables inside must use CREATE OR REPLACE TEMPORARY TABLE to avoid
+    name conflicts between tests and to ensure cleanup at session end.
+    """
     import uuid
 
     schema_name = f"test_schema_{uuid.uuid4().hex}"
-    cursor.execute(f"CREATE SCHEMA {schema_name}")
-    try:
-        yield schema_name
-    finally:
-        cursor.execute(f"DROP SCHEMA {schema_name}")
+    with connection_factory() as schema_conn:
+        with schema_conn.cursor() as cur:
+            cur.execute(f"CREATE SCHEMA {schema_name}")
+        try:
+            yield schema_name
+        finally:
+            with schema_conn.cursor() as cur:
+                cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
 
 
 @pytest.fixture

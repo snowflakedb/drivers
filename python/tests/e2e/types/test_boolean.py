@@ -78,7 +78,7 @@ class TestBooleanTable:
         table_name = f"{tmp_schema}.boolean_table"
 
         # And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
-        execute_query(f"CREATE TABLE {table_name} (col1 BOOLEAN, col2 BOOLEAN, col3 BOOLEAN)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col1 BOOLEAN, col2 BOOLEAN, col3 BOOLEAN)")
 
         # And Row (TRUE, FALSE, TRUE) is inserted
         execute_query(f"INSERT INTO {table_name} VALUES (TRUE, FALSE, TRUE)")
@@ -95,7 +95,7 @@ class TestBooleanTable:
         table_name = f"{tmp_schema}.null_table"
 
         # And Table with BOOLEAN column exists
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col BOOLEAN)")
 
         # And Rows [NULL, TRUE, FALSE] are inserted
         execute_query(f"INSERT INTO {table_name} VALUES (NULL), (TRUE), (FALSE)")
@@ -114,7 +114,7 @@ class TestBooleanTable:
 
         # And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
 
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col BOOLEAN)")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT (seq8() % 2 = 0)::BOOLEAN "
@@ -163,7 +163,7 @@ class TestBooleanBinding:
         table_name = f"{tmp_schema}.boolean_bind_table"
 
         # And Table with BOOLEAN column exists
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col BOOLEAN)")
 
         # When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
         test_values = [(True,), (False,), (None,)]

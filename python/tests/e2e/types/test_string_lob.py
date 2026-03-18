@@ -43,7 +43,7 @@ class TestStringLob:
         # Corner case: string at the historical LOB limit (16 MB = 16,777,216 bytes)
 
         # And A temporary table with VARCHAR column is created
-        execute_query(f"CREATE TABLE {table_name} (val VARCHAR)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val VARCHAR)")
 
         # When A string of 16777216 ASCII characters is generated and inserted
 
@@ -69,7 +69,7 @@ class TestStringLob:
         # Corner case: string at maximum LOB limit (128 MB) - requires Increased LOB Size feature
 
         # And A temporary table with VARCHAR column is created
-        execute_query(f"CREATE TABLE {table_name} (val VARCHAR(134217728))")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val VARCHAR(134217728))")
 
         # When A string of 134217728 ASCII characters is generated and inserted
 

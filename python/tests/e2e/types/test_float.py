@@ -195,7 +195,7 @@ class TestFloatTable:
         table_name = f"{tmp_schema}.float_table_{float_type.replace(' ', '_').lower()}"
 
         # And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         test_values = [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
         for val in test_values:
             execute_query(f"INSERT INTO {table_name} VALUES ({val})")
@@ -216,7 +216,7 @@ class TestFloatTable:
         table_name = f"{tmp_schema}.special_float_table_{float_type.replace(' ', '_').lower()}"
 
         # And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(
             f"INSERT INTO {table_name} VALUES\n"
             f"('NaN'::{float_type}),\n"
@@ -243,7 +243,7 @@ class TestFloatTable:
 
         # And Table with <type> column exists with boundary values
         # [1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 123456789012345.0]
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         boundary_values = [
             FLOAT_MAX,
             FLOAT_MIN,
@@ -268,7 +268,7 @@ class TestFloatTable:
         table_name = f"{tmp_schema}.null_table_{float_type.replace(' ', '_').lower()}"
 
         # And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(f"INSERT INTO {table_name} VALUES (NULL), (123.456), (NULL), (-789.012)")
 
         # When Query "SELECT * FROM <table>" is executed
@@ -290,7 +290,7 @@ class TestFloatTable:
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} "
@@ -342,7 +342,7 @@ class TestFloatBinding:
         table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
 
         # And Table with <type> column exists
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
 
         # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
 

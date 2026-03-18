@@ -238,7 +238,7 @@ class TestIntTable:
         table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
 
         # And Table with <type> column exists with values <insert_values>
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
         batch_insert(execute_query, table_name, insert_values)
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
@@ -258,7 +258,7 @@ class TestIntTable:
 
         # And Table with <type> column exists with values
         # [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
         batch_insert(execute_query, table_name, [INT38_MIN, INT38_MAX])
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
@@ -277,7 +277,10 @@ class TestIntTable:
         table_name = f"{tmp_schema}.different_int_column_sizes"
 
         # And Table with four INT columns exists
-        execute_query(f"CREATE TABLE {table_name} (col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} "
+            f"(col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)"
+        )
 
         # And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
         execute_query(
@@ -308,7 +311,7 @@ class TestIntBinding:
         table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
 
         # And Table with <type> column exists
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
 
         # When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
         test_values = [0, INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT64_SIGNED_MAX]
@@ -332,7 +335,7 @@ class TestIntBinding:
         table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
 
         # And Table with <type> column exists
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
 
         # When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
         test_values = [0, 42, INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT64_SIGNED_MAX]

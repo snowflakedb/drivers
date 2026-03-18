@@ -141,7 +141,7 @@ class TestTimestampNtzTable:
         table_name = f"{tmp_schema}.timestamp_ntz_table_{values_name}"
 
         # And Table with TIMESTAMP_NTZ column exists with values <insert_values>
-        execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_NTZ)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col TIMESTAMP_NTZ)")
         batch_insert(execute_query, table_name, insert_values, quote_strings=True)
 
         # When Query "SELECT * FROM <table> ORDER BY col NULLS LAST" is executed
@@ -161,7 +161,7 @@ class TestTimestampNtzTable:
         table_name = f"{tmp_schema}.large_timestamp_ntz_table"
 
         # And Table with TIMESTAMP_NTZ column exists with 50000 sequential timestamp values
-        execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_NTZ)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col TIMESTAMP_NTZ)")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1, "
@@ -223,7 +223,7 @@ class TestTimestampNtzBinding:
         table_name = f"{tmp_schema}.timestamp_ntz_bind_table"
 
         # And Table with TIMESTAMP_NTZ column exists
-        execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_NTZ)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col TIMESTAMP_NTZ)")
 
         # When Timestamp values are bulk-inserted using multirow binding
         test_values = [
