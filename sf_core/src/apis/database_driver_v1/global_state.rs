@@ -33,18 +33,11 @@ impl DatabaseDriverV1 {
 mod tests {
     use super::*;
 
-    fn driver_state() -> &'static DatabaseDriverV1 {
-        thread_local! {
-            static INSTANCE: DatabaseDriverV1 = const { DatabaseDriverV1::new() };
-        }
-        // SAFETY: thread_local storage lives for the thread's lifetime, which
-        // outlives every test function running on that thread.
-        INSTANCE.with(|s| unsafe { &*(s as *const DatabaseDriverV1) })
-    }
+    static DRIVER_STATE: DatabaseDriverV1 = DatabaseDriverV1::new();
 
     #[test]
     fn token_cache_lazy_init_succeeds() {
-        let result = driver_state().token_cache();
+        let result = DRIVER_STATE.token_cache();
         assert!(
             result.is_ok(),
             "token_cache() should succeed: {:?}",
@@ -54,8 +47,8 @@ mod tests {
 
     #[test]
     fn token_cache_returns_same_instance() {
-        let first = driver_state().token_cache().expect("first call failed");
-        let second = driver_state().token_cache().expect("second call failed");
+        let first = DRIVER_STATE.token_cache().expect("first call failed");
+        let second = DRIVER_STATE.token_cache().expect("second call failed");
         assert!(
             std::ptr::eq(first, second),
             "token_cache() should return the same instance on repeated calls"
