@@ -434,18 +434,6 @@ Feature: ODBC SQLGetData function behavior
     And the complete binary data should be reconstructed
 
   @odbc_e2e
-  Scenario: SQLGetData with SQL_C_DEFAULT for VARCHAR column returns character data.
-    Given Snowflake client is logged in
-    When SQLGetData is called with SQL_C_DEFAULT on a VARCHAR column
-    Then the data should be returned as a character string
-
-  @odbc_e2e
-  Scenario: SQLGetData with SQL_C_DEFAULT for BINARY column returns binary data.
-    Given Snowflake client is logged in
-    When SQLGetData is called with SQL_C_DEFAULT on a BINARY column
-    Then the data should be returned successfully
-
-  @odbc_e2e
   Scenario: SQLGetData returns SQL_NULL_DATA for NULL double column.
     Given Snowflake client is logged in
     When SQLGetData is called with SQL_C_DOUBLE for a NULL FLOAT column

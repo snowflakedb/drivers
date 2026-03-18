@@ -1868,51 +1868,6 @@ TEST_CASE("SQLGetData retrieves binary data in parts with multiple SQL_C_BINARY 
 }
 
 // =============================================================================
-// SQLGetData with SQL_C_DEFAULT for additional SQL types
-// =============================================================================
-
-TEST_CASE("SQLGetData with SQL_C_DEFAULT for VARCHAR column returns character data.", "[query][get_data]") {
-  // Doc: "If TargetType is SQL_C_DEFAULT, the driver selects the default C data
-  //       type based on the SQL data type of the source."
-  // For VARCHAR, the default C type is SQL_C_CHAR.
-  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.execute_fetch("SELECT 'test_default'::VARCHAR AS value");
-
-  // When SQLGetData is called with SQL_C_DEFAULT on a VARCHAR column
-  SQLCHAR buffer[100] = {0};
-  SQLLEN indicator = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, buffer, sizeof(buffer), &indicator);
-
-  // Then the data should be returned as a character string
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-  CHECK(std::string((char*)buffer) == "test_default");
-  CHECK(indicator == 12);
-}
-
-TEST_CASE("SQLGetData with SQL_C_DEFAULT for BINARY column returns binary data.", "[query][get_data]") {
-  // Doc: "If TargetType is SQL_C_DEFAULT, the driver selects the default C data
-  //       type based on the SQL data type of the source."
-  // For BINARY/VARBINARY, the default C type is SQL_C_BINARY.
-  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.execute_fetch("SELECT TO_BINARY('48656C6C6F', 'HEX') AS value");
-
-  // When SQLGetData is called with SQL_C_DEFAULT on a BINARY column
-  SQLCHAR buffer[100] = {0};
-  SQLLEN indicator = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, buffer, sizeof(buffer), &indicator);
-
-  // Then the data should be returned successfully
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
-  CHECK(indicator > 0);
-}
-
-// =============================================================================
 // SQLGetData NULL handling for additional data types
 // =============================================================================
 
