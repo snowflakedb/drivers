@@ -38,6 +38,24 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
   auto stmt = conn.execute_fetch("SELECT 0.0::FLOAT, 123.456::FLOAT, 1.23e10::FLOAT, 'NaN'::FLOAT, 'inf'::FLOAT");
 
   // Then All values should be returned as appropriate type
+  for (SQLUSMALLINT col = 1; col <= 5; ++col) {
+    SQLSMALLINT data_type = 0;
+    SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
+    CHECK_ODBC(ret, stmt);
+    INFO("col=" << col);
+    CHECK(data_type == SQL_DOUBLE);
+  }
+  {
+    auto stmt_syn = conn.execute_fetch("SELECT 42.5::DOUBLE, 42.5::REAL");
+    for (SQLUSMALLINT col = 1; col <= 2; ++col) {
+      SQLSMALLINT data_type = 0;
+      SQLRETURN ret =
+          SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
+      CHECK_ODBC(ret, stmt_syn);
+      INFO("synonym col=" << col);
+      CHECK(data_type == SQL_DOUBLE);
+    }
+  }
   double val1 = get_data<SQL_C_DOUBLE>(stmt, 1);
   double val2 = get_data<SQL_C_DOUBLE>(stmt, 2);
   double val3 = get_data<SQL_C_DOUBLE>(stmt, 3);
