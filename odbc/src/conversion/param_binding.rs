@@ -7,8 +7,8 @@ use std::{
 use serde_json::{Map, Value};
 use snafu::ResultExt;
 
+use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
@@ -366,7 +366,7 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdata_types::CDataType;
+    use crate::api::CDataType;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 

@@ -1,9 +1,9 @@
 use crate::api::OdbcResult;
-use crate::conversion::warning::{Warning, Warnings};
-use crate::error::{
+use crate::api::error::{
     InvalidBufferLengthSnafu, NullPointerSnafu, TextConversionFromUtf8Snafu,
     TextConversionFromUtf16Snafu, TextConversionUtf8Snafu,
 };
+use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use snafu::ResultExt;
 use std::cmp::min;

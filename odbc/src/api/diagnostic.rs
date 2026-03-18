@@ -7,13 +7,14 @@ use crate::{
     api::{
         Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
         encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
-        env_from_handle, stmt_from_handle,
+        env_from_handle,
+        error::{
+            InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
+            NoMoreDataSnafu,
+        },
+        stmt_from_handle,
     },
     conversion::warning::{Warning, Warnings},
-    error::{
-        InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
-        NoMoreDataSnafu,
-    },
 };
 use odbc_sys as sql;
 

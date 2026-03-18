@@ -1,10 +1,10 @@
+use crate::api::error::{DisconnectedSnafu, InvalidHandleSnafu, OdbcRuntimeSnafu, Required};
 use crate::api::{
     ArdDescriptor, Connection, ConnectionState, Environment, IrdDescriptor, OdbcResult, Statement,
     StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
     runtime::{env_allocated, env_freed, global},
 };
-use crate::error::{DisconnectedSnafu, InvalidHandleSnafu, OdbcRuntimeSnafu, Required};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     StatementNewRequest, StatementReleaseRequest,

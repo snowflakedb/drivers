@@ -4,8 +4,8 @@
 
 #![allow(non_snake_case)]
 
+use crate::api::CDataType;
 use crate::api::{self, Narrow, ToSqlReturn, Wide};
-use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 
 /// # Safety

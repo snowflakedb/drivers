@@ -5,9 +5,7 @@ use error_trace::ErrorTrace;
 use odbc_sys as sql;
 use snafu::{Location, Snafu};
 
-use crate::{
-    cdata_types::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError,
-};
+use crate::{api::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError};
 
 #[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]

@@ -5,6 +5,7 @@ pub mod descriptor;
 pub mod diagnostic;
 pub mod encoding;
 pub mod environment;
+pub mod error;
 pub mod handle_allocation;
 pub mod runtime;
 pub mod sql_state;
@@ -12,8 +13,8 @@ pub mod statement;
 pub mod types;
 pub mod utils;
 
-pub use crate::error::OdbcError;
 pub use encoding::{Narrow, Wide};
+pub use error::OdbcError;
 pub use sql_state::SqlState;
 pub use types::OdbcResult;
 pub use types::*;

@@ -1,17 +1,17 @@
+use crate::api::CDataType;
 use crate::api::encoding::OdbcEncoding;
+use crate::api::error::{
+    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
+    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
+    NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
+};
 use crate::api::runtime::global;
 use crate::api::{
     ConnectionState, FreeStmtOption, OdbcResult, ParamDirection, ParameterBinding, SqlType,
     Statement, StatementState, stmt_from_handle,
 };
-use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
-use crate::error::{
-    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
-    NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
-};
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
@@ -603,7 +603,7 @@ pub fn set_stmt_attr(
         }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
-            crate::error::UnsupportedAttributeSnafu { attribute }.fail()
+            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
         }
     }
 }
@@ -714,7 +714,7 @@ pub fn get_stmt_attr(
         }
         _ => {
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
-            crate::error::UnknownAttributeSnafu { attribute }.fail()
+            crate::api::error::UnknownAttributeSnafu { attribute }.fail()
         }
     }
 }

@@ -2,8 +2,8 @@ use arrow::array::{Array, BooleanArray};
 use odbc_sys as sql;
 use serde_json::Value;
 
+use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::cdata_types::CDataType;
 use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::param_binding::read_unaligned;

@@ -1,11 +1,11 @@
 use crate::api::encoding::{OdbcEncoding, write_string_chars};
-use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
-use crate::conversion::warning::Warnings;
-use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
-use crate::error::{
+use crate::api::error::{
     ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
     StatementNotExecutedSnafu,
 };
+use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
+use crate::conversion::warning::Warnings;
+use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use snafu::ResultExt;
@@ -31,7 +31,7 @@ pub fn num_result_cols(
 
     if column_count_ptr.is_null() {
         tracing::warn!("num_result_cols: null column_count_ptr");
-        return crate::error::NullPointerSnafu.fail();
+        return crate::api::error::NullPointerSnafu.fail();
     }
     unsafe {
         std::ptr::write(column_count_ptr, num_cols);
@@ -52,7 +52,7 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
 
     if row_count_ptr.is_null() {
         tracing::warn!("row_count: null row_count_ptr");
-        return crate::error::NullPointerSnafu.fail();
+        return crate::api::error::NullPointerSnafu.fail();
     }
     unsafe {
         std::ptr::write(row_count_ptr, row_count);
