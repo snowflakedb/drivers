@@ -205,17 +205,36 @@ impl JdbcHandler {
         let lines: Vec<&str> = content.lines().collect();
         let mut in_method = false;
         let mut brace_count = 0;
+        let mut method_start_line: usize = 0;
+
+        let new_driver_re = Regex::new(r#"//\s*NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+        let old_driver_re = Regex::new(r#"//\s*OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+        let skip_old_re = Regex::new(r#"//\s*SKIP_OLD_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
+        let skip_new_re = Regex::new(r#"//\s*SKIP_NEW_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
+        let assume_new_re =
+            Regex::new(r#"assumeTrue\s*\(\s*isNewDriver\s*\(\s*\).*?(BD#\d+)"#).unwrap();
+        let assume_old_re =
+            Regex::new(r#"assumeTrue\s*\(\s*isOldDriver\s*\(\s*\).*?(BD#\d+)"#).unwrap();
+
+        let default_loc = || BehaviorDifferenceLocation {
+            new_behaviour_file: None,
+            new_behaviour_line: None,
+            old_behaviour_file: None,
+            old_behaviour_line: None,
+            old_driver_skipped: false,
+            new_driver_skipped: false,
+        };
 
         for (line_num, line) in lines.iter().enumerate() {
             let line = line.trim();
 
-            // Check for method start
             let is_method = line.contains(&format!("void {method_name}("))
                 || line.contains(&format!("{method_name}("))
                 || line.contains(&format!("static void {method_name}("));
 
             if !line.starts_with("//") && is_method && !in_method {
                 in_method = true;
+                method_start_line = line_num + 1;
                 brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
                 continue;
             }
@@ -227,61 +246,46 @@ impl JdbcHandler {
                     break;
                 }
 
-                // Look for Behavior Difference annotations in Java comments
-                let new_driver_re =
-                    Regex::new(r#"//\s*NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
-                let old_driver_re =
-                    Regex::new(r#"//\s*OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+                let rel_path = file_path
+                    .strip_prefix(&self.workspace_root)
+                    .unwrap_or(file_path)
+                    .to_string_lossy()
+                    .to_string();
 
-                if let Some(captures) = new_driver_re.captures(line) {
-                    if let Some(breaking_change_reference) = captures.get(1) {
-                        let breaking_change_reference = breaking_change_reference.as_str();
-                        let breaking_change_id =
-                            self.extract_breaking_change_id(breaking_change_reference);
+                // (regex, sets_new_behaviour, use_method_start_line, sets_old_skipped, sets_new_skipped)
+                let matchers: &[(&Regex, bool, bool, bool, bool)] = &[
+                    (&new_driver_re, true, false, false, false),
+                    (&old_driver_re, false, false, false, false),
+                    (&skip_old_re, true, true, true, false),
+                    (&skip_new_re, false, true, false, true),
+                    (&assume_new_re, true, true, true, false),
+                    (&assume_old_re, false, true, false, true),
+                ];
 
-                        let breaking_change_location = breaking_changes
-                            .entry(breaking_change_id)
-                            .or_insert_with(|| BehaviorDifferenceLocation {
-                                new_behaviour_file: None,
-                                new_behaviour_line: None,
-                                old_behaviour_file: None,
-                                old_behaviour_line: None,
-                            });
-
-                        breaking_change_location.new_behaviour_file = Some(
-                            file_path
-                                .strip_prefix(&self.workspace_root)
-                                .unwrap_or(file_path)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                        breaking_change_location.new_behaviour_line = Some(line_num + 1);
-                    }
-                }
-
-                if let Some(captures) = old_driver_re.captures(line) {
-                    if let Some(breaking_change_reference) = captures.get(1) {
-                        let breaking_change_reference = breaking_change_reference.as_str();
-                        let breaking_change_id =
-                            self.extract_breaking_change_id(breaking_change_reference);
-
-                        let breaking_change_location = breaking_changes
-                            .entry(breaking_change_id)
-                            .or_insert_with(|| BehaviorDifferenceLocation {
-                                new_behaviour_file: None,
-                                new_behaviour_line: None,
-                                old_behaviour_file: None,
-                                old_behaviour_line: None,
-                            });
-
-                        breaking_change_location.old_behaviour_file = Some(
-                            file_path
-                                .strip_prefix(&self.workspace_root)
-                                .unwrap_or(file_path)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                        breaking_change_location.old_behaviour_line = Some(line_num + 1);
+                for &(re, is_new, use_method_start, skip_old, skip_new) in matchers {
+                    if let Some(captures) = re.captures(line) {
+                        if let Some(id_match) = captures.get(1) {
+                            let bd_id = self.extract_breaking_change_id(id_match.as_str());
+                            let loc = breaking_changes.entry(bd_id).or_insert_with(default_loc);
+                            let line_no = if use_method_start {
+                                method_start_line
+                            } else {
+                                line_num + 1
+                            };
+                            if is_new {
+                                loc.new_behaviour_file = Some(rel_path.clone());
+                                loc.new_behaviour_line = Some(line_no);
+                            } else {
+                                loc.old_behaviour_file = Some(rel_path.clone());
+                                loc.old_behaviour_line = Some(line_no);
+                            }
+                            if skip_old {
+                                loc.old_driver_skipped = true;
+                            }
+                            if skip_new {
+                                loc.new_driver_skipped = true;
+                            }
+                        }
                     }
                 }
             }

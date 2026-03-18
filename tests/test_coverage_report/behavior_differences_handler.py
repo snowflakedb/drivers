@@ -81,6 +81,11 @@ class BehaviorDifferencesHandler:
                             converted_impl['old_behaviour_file'] = impl['old_behaviour_file']
                             converted_impl['old_behaviour_line'] = impl['old_behaviour_line']
                         
+                        if impl.get('old_driver_skipped'):
+                            converted_impl['old_driver_skipped'] = True
+                        if impl.get('new_driver_skipped'):
+                            converted_impl['new_driver_skipped'] = True
+                        
                         result[lang][behavior_difference_id].append(converted_impl)
         
         return result
