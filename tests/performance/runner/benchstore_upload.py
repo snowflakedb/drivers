@@ -24,9 +24,18 @@ from benchstore.client.quickstore import Quickstore
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from runner.container import get_resource_limits
-from runner.utils import perf_tests_root
+from runner.utils import perf_tests_root, collect_node_info
 
 logger = logging.getLogger(__name__)
+
+# Benchstore only allows A-Za-z0-9 - _ = . : in tag strings.
+_TAG_SANITIZE_RE = re.compile(r"[^A-Za-z0-9\-_=.:]")
+
+
+def _sanitize_tag(tag: str) -> str:
+    """Replace characters not allowed by Benchstore with underscores."""
+    return _TAG_SANITIZE_RE.sub("_", tag)
+
 
 PROJECT_NAME = "SnowDrivers"
 BENCHMARK_NAME = "Universal_Driver"
@@ -419,6 +428,9 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     
     jenkins_node = os.getenv('JENKINS_NODE_LABEL', 'UNKNOWN')
     
+    # Collect host hardware info for node equivalence tracking
+    node_info = collect_node_info()
+    
     for (driver, driver_type), csv_file_list in csv_groups.items():
         # Get versions from run metadata
         metadata_key = (driver, driver_type)
@@ -454,25 +466,19 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
             f"DOCKER_CPU={docker_cpu}",
+            f"NODE_CPU_MODEL={node_info.get('node_cpu_model', 'UNKNOWN')}",
+            f"NODE_CPU_CORES={node_info.get('node_cpu_cores', 'UNKNOWN')}",
+            f"NODE_CPU_THREADS={node_info.get('node_cpu_threads', 'UNKNOWN')}",
+            f"NODE_MEMORY_GB={node_info.get('node_memory_gb', 'UNKNOWN')}",
+            f"NODE_CPU_MAX_MHZ={node_info.get('node_cpu_max_mhz', 'UNKNOWN')}",
+            f"NODE_L3_CACHE={node_info.get('node_l3_cache', 'UNKNOWN')}",
         ]
         
-        # Create Quickstore input once for this group
-        default_comparable_tags = [
-            f"BUILD_NUMBER={build_number}",
-            f"BRANCH_NAME={branch_name}",
-            f"ARCHITECTURE={architecture}",
-            f"OS={os_info}",
-            f"DRIVER={driver_tag_value}",
-            f"SERVER_VERSION={server_version}",
-            f"DRIVER_VERSION={client_version}",
-            f"BUILD_RUST_VERSION={build_rust_version}",
-            f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
-            f"CLOUD_PROVIDER={cloud_provider}",
-            f"REGION={region}",
-            f"JENKINS_NODE={jenkins_node}",
-            f"DOCKER_MEMORY={docker_memory}",
-            f"DOCKER_CPU={docker_cpu}",
-        ]
+        if "node_instance_type" in node_info:
+            tags.append(f"NODE_INSTANCE_TYPE={node_info['node_instance_type']}")
+        
+        tags = [_sanitize_tag(t) for t in tags]
+        default_comparable_tags = list(tags)
         
         quickstore_input = benchstore_pb2.QuickstoreInput(
             benchmark_name_lookup=benchstore_pb2.BenchmarkNameLookup(
