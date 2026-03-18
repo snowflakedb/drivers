@@ -91,8 +91,8 @@ def load_config(config_path):
     try:
         result = subprocess.run(
             [sys.executable, "-c",
-             f"import yaml,json; print(json.dumps(yaml.safe_load(open('{config_path}'))))"],
-            capture_output=True, text=True, check=True
+             "import yaml,json; print(json.dumps(yaml.safe_load(open('{}'))))".format(config_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True
         )
         return json.loads(result.stdout)
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -105,18 +105,18 @@ def _ensure_base_ref_available(base_ref):
     try:
         subprocess.run(
             ["git", "cat-file", "-t", base_ref],
-            capture_output=True, text=True, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True,
         )
     except subprocess.CalledProcessError:
         remote_branch = base_ref.replace("origin/", "", 1) if base_ref.startswith("origin/") else base_ref
-        print(f"Fetching {remote_branch} (not available locally)...", file=sys.stderr)
+        print("Fetching {} (not available locally)...".format(remote_branch), file=sys.stderr)
         try:
             subprocess.run(
-                ["git", "fetch", "origin", f"{remote_branch}", "--depth=1"],
-                capture_output=True, text=True, check=True,
+                ["git", "fetch", "origin", remote_branch, "--depth=1"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True,
             )
         except subprocess.CalledProcessError:
-            print(f"WARNING: failed to fetch {remote_branch}", file=sys.stderr)
+            print("WARNING: failed to fetch {}".format(remote_branch), file=sys.stderr)
 
 
 def get_changed_files(base_ref):
@@ -127,7 +127,8 @@ def get_changed_files(base_ref):
         ["git", "diff", "--name-only", base_ref],
     ]:
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       universal_newlines=True, check=True)
             files = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
             if files:
                 return files
