@@ -10,6 +10,7 @@ crate-type = ["dylib", "rlib"]
 default = ["protobuf"]
 fips = ["rustls/fips"]
 protobuf = ["prost", "proto_utils"]
+auth_mfa_e2e = []
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
