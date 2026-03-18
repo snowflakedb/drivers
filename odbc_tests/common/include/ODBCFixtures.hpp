@@ -148,8 +148,9 @@ class CatalogStmtDefaultDSNFixture : public StmtDefaultDSNFixture {
   ScopedSessionParam ctx_;
 
  public:
-  CatalogStmtDefaultDSNFixture()
-      : StmtDefaultDSNFixture(), ctx_(ScopedSessionParam::use_connection_ctx(dbc_handle())) {}
+  CatalogStmtDefaultDSNFixture() : StmtDefaultDSNFixture(), ctx_(ScopedSessionParam::use_connection_ctx(dbc_handle())) {
+    REQUIRE(ctx_.is_active());
+  }
 };
 
 // ============================================================================
