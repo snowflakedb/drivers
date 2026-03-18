@@ -1,22 +1,11 @@
 use crate::api::CDataType;
 use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu,
-    CursorAlreadyOpenSnafu,
-    DisconnectedSnafu,
-    InvalidAttributeValueSnafu,
-    InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu,
-    InvalidHandleSnafu,
-    InvalidParameterNumberSnafu,
-    InvalidPrecisionOrScaleSnafu,
-    JsonBindingSnafu,
-    NoMoreDataSnafu,
-    NullPointerSnafu,
-    OdbcRuntimeSnafu,
-    ReadOnlyAttributeSnafu,
-    Required,
-    StatementNotExecutedSnafu,
+    ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu,
+    InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu,
+    InvalidHandleSnafu, InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu,
+    JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
+    ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -31,7 +20,8 @@ use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConnectionGetParameterRequest, ConnectionHandle,
     QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
-    StatementPrepareRequest, StatementSetSqlQueryRequest, query_bindings,
+    StatementNewRequest, StatementPrepareRequest, StatementReleaseRequest,
+    StatementSetSqlQueryRequest, query_bindings,
 };
 use snafu::ResultExt;
 use tokio_util::sync::CancellationToken;
@@ -69,25 +59,100 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             db_handle: _,
             conn_handle,
         } => {
+            let conn_h = *conn_handle;
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, false)?;
             let stmt_handle = stmt.stmt_handle;
+            let query_timeout = stmt.query_timeout;
 
             stmt.cancel_token = CancellationToken::new();
             let _cancel_token = stmt.cancel_token.clone();
             // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
             // _cancel_token.cancelled() to support cross-thread SQLCancel.
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                // Set session-level timeout using a temporary statement handle so
+                // it can be unset after the main query without touching stmt_handle.
+                let tmp_stmt_opt = if query_timeout > 0 {
+                    let tmp_resp = c
+                        .statement_new(StatementNewRequest {
+                            conn_handle: Some(conn_h),
+                        })
+                        .await?;
+                    let h = tmp_resp.stmt_handle.ok_or_else(|| {
+                        proto_utils::ProtoError::Transport(
+                            "Temporary statement handle is required".to_string(),
+                        )
+                    })?;
+                    let set_result = async {
+                        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                            stmt_handle: Some(h),
+                            query: format!(
+                                "ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {query_timeout}"
+                            ),
+                        })
+                        .await?;
+                        c.statement_execute_query(StatementExecuteQueryRequest {
+                            stmt_handle: Some(h),
+                            bindings: None,
+                        })
+                        .await
+                    }
+                    .await;
+                    if let Err(e) = set_result {
+                        let _ = c
+                            .statement_release(StatementReleaseRequest {
+                                stmt_handle: Some(h),
+                            })
+                            .await;
+                        return Err(e);
+                    }
+                    Some(h)
+                } else {
+                    None
+                };
+
                 c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     query: statement_text.to_string(),
                 })
                 .await?;
 
-                c.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings,
-                })
-                .await
+                let main_result = c
+                    .statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt_handle),
+                        bindings,
+                    })
+                    .await;
+
+                // Reset session timeout regardless of main query outcome.
+                if let Some(h) = tmp_stmt_opt {
+                    let set_result = c
+                        .statement_set_sql_query(StatementSetSqlQueryRequest {
+                            stmt_handle: Some(h),
+                            query: "ALTER SESSION UNSET STATEMENT_TIMEOUT_IN_SECONDS".to_string(),
+                        })
+                        .await;
+                    if set_result.is_ok() {
+                        let _ = c
+                            .statement_execute_query(StatementExecuteQueryRequest {
+                                stmt_handle: Some(h),
+                                bindings: None,
+                            })
+                            .await;
+                    }
+                    if let Err(e) = c
+                        .statement_release(StatementReleaseRequest {
+                            stmt_handle: Some(h),
+                        })
+                        .await
+                    {
+                        tracing::warn!(
+                            "exec_direct: failed to release timeout statement handle: {:?}",
+                            e
+                        );
+                    }
+                }
+
+                main_result
             });
 
             tracing::info!("exec_direct: response={:?}", response);
@@ -104,6 +169,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
                 }
             );
             set_state(stmt, execute_state);
+            stmt.rows_returned = 0;
             stmt.last_query_id = query_id.filter(|s| !s.is_empty());
             if is_zero_dml {
                 return NoMoreDataSnafu.fail();
@@ -283,12 +349,14 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         _ => false,
     };
 
+    let query_timeout = stmt.query_timeout;
     let conn = unsafe { &mut *stmt.conn_ptr() };
     match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
             conn_handle,
         } => {
+            let conn_h = *conn_handle;
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, prepared)?;
 
             stmt.cancel_token = CancellationToken::new();
@@ -296,11 +364,82 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
             // _cancel_token.cancelled() to support cross-thread SQLCancel.
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-                c.statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    bindings,
-                })
-                .await
+                let tmp_stmt_opt = if query_timeout > 0 {
+                    let tmp_resp = c
+                        .statement_new(StatementNewRequest {
+                            conn_handle: Some(conn_h),
+                        })
+                        .await?;
+                    let h = tmp_resp.stmt_handle.ok_or_else(|| {
+                        proto_utils::ProtoError::Transport(
+                            "Temporary statement handle is required".to_string(),
+                        )
+                    })?;
+                    let set_result = async {
+                        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+                            stmt_handle: Some(h),
+                            query: format!(
+                                "ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {query_timeout}"
+                            ),
+                        })
+                        .await?;
+                        c.statement_execute_query(StatementExecuteQueryRequest {
+                            stmt_handle: Some(h),
+                            bindings: None,
+                        })
+                        .await
+                    }
+                    .await;
+                    if let Err(e) = set_result {
+                        let _ = c
+                            .statement_release(StatementReleaseRequest {
+                                stmt_handle: Some(h),
+                            })
+                            .await;
+                        return Err(e);
+                    }
+                    Some(h)
+                } else {
+                    None
+                };
+
+                let main_result = c
+                    .statement_execute_query(StatementExecuteQueryRequest {
+                        stmt_handle: Some(stmt.stmt_handle),
+                        bindings,
+                    })
+                    .await;
+
+                // Reset session timeout regardless of main query outcome.
+                if let Some(h) = tmp_stmt_opt {
+                    let set_result = c
+                        .statement_set_sql_query(StatementSetSqlQueryRequest {
+                            stmt_handle: Some(h),
+                            query: "ALTER SESSION UNSET STATEMENT_TIMEOUT_IN_SECONDS".to_string(),
+                        })
+                        .await;
+                    if set_result.is_ok() {
+                        let _ = c
+                            .statement_execute_query(StatementExecuteQueryRequest {
+                                stmt_handle: Some(h),
+                                bindings: None,
+                            })
+                            .await;
+                    }
+                    if let Err(e) = c
+                        .statement_release(StatementReleaseRequest {
+                            stmt_handle: Some(h),
+                        })
+                        .await
+                    {
+                        tracing::warn!(
+                            "execute: failed to release timeout statement handle: {:?}",
+                            e
+                        );
+                    }
+                }
+
+                main_result
             })?;
 
             tracing::info!("execute: Successfully executed statement");
@@ -321,6 +460,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             if is_zero_dml {
                 return NoMoreDataSnafu.fail();
             }
+            stmt.rows_returned = 0;
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -869,6 +1009,147 @@ pub fn set_stmt_attr(
         StmtAttr::ImpRowDesc | StmtAttr::ImpParamDesc => {
             crate::api::error::ReadOnlyAttributeSnafu { attribute }.fail()
         }
+        StmtAttr::QueryTimeout => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: QueryTimeout = {}", val);
+            stmt.query_timeout = val;
+            Ok(())
+        }
+        StmtAttr::MaxRows => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: MaxRows = {}", val);
+            stmt.max_rows = val;
+            Ok(())
+        }
+        StmtAttr::Noscan => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 | 1 => {
+                    stmt.noscan = val;
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::Concurrency => {
+            // 24000 if a cursor is open
+            if matches!(
+                stmt.state.as_ref(),
+                StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
+            ) {
+                tracing::error!("set_stmt_attr: Concurrency cannot be set while cursor is open");
+                return InvalidCursorStateSnafu.fail();
+            }
+            let val = value_ptr as sql::ULen;
+            match val {
+                1 => {
+                    // SQL_CONCUR_READ_ONLY — accepted directly
+                    stmt.concurrency = val;
+                    Ok(())
+                }
+                2..=4 => {
+                    // SQL_CONCUR_LOCK / SQL_CONCUR_ROWVER / SQL_CONCUR_VALUES
+                    // Snowflake cursors are always read-only; substitute and warn
+                    stmt.concurrency = 1; // SQL_CONCUR_READ_ONLY
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::CursorScrollable => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    // SQL_NONSCROLLABLE — accepted
+                    stmt.cursor_scrollable = val;
+                    Ok(())
+                }
+                1 => {
+                    // SQL_SCROLLABLE — substitute with SQL_NONSCROLLABLE + 01S02
+                    stmt.cursor_scrollable = 0;
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::CursorSensitivity => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    // SQL_UNSPECIFIED — accepted
+                    stmt.cursor_sensitivity = val;
+                    Ok(())
+                }
+                1 | 2 => {
+                    // SQL_INSENSITIVE / SQL_SENSITIVE — substitute with SQL_UNSPECIFIED + 01S02
+                    stmt.cursor_sensitivity = 0;
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+                _ => InvalidAttributeValueSnafu {
+                    attribute,
+                    value: val as i64,
+                }
+                .fail(),
+            }
+        }
+        StmtAttr::EnableAutoIpd => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    // SQL_FALSE — accepted (no-op)
+                    tracing::debug!("set_stmt_attr: EnableAutoIpd = SQL_FALSE (no-op)");
+                    Ok(())
+                }
+                _ => {
+                    // SQL_TRUE and other values — HYC00 (optional feature not implemented)
+                    tracing::debug!("set_stmt_attr: EnableAutoIpd = SQL_TRUE is not supported");
+                    UnsupportedFeatureSnafu.fail()
+                }
+            }
+        }
+        StmtAttr::KeysetSize => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: KeysetSize = {}", val);
+            stmt.keyset_size = val;
+            Ok(())
+        }
+        StmtAttr::SimulateCursor => {
+            let val = value_ptr as sql::ULen;
+            match val {
+                0 => {
+                    // SQL_SC_NON_UNIQUE — accepted
+                    stmt.simulate_cursor = val;
+                    Ok(())
+                }
+                _ => {
+                    // Other values — substitute with SQL_SC_NON_UNIQUE + 01S02
+                    stmt.simulate_cursor = 0;
+                    warnings.push(Warning::OptionValueChanged);
+                    Ok(())
+                }
+            }
+        }
+        StmtAttr::RetrieveData => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: RetrieveData = {}", val);
+            stmt.retrieve_data = val;
+            Ok(())
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
@@ -1009,6 +1290,96 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
                 string_length_ptr,
                 Some(warnings),
             );
+            Ok(())
+        }
+        StmtAttr::QueryTimeout => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.query_timeout };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::MaxRows => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.max_rows };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::Noscan => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.noscan };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::Concurrency => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.concurrency };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::CursorScrollable => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.cursor_scrollable };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::CursorSensitivity => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.cursor_sensitivity };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::EnableAutoIpd => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = 0 }; // Always SQL_FALSE
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::KeysetSize => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.keyset_size };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::SimulateCursor => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.simulate_cursor };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::RetrieveData => {
+            if !value_ptr.is_null() {
+                unsafe { *(value_ptr as *mut sql::ULen) = stmt.retrieve_data };
+            }
+            if !string_length_ptr.is_null() {
+                unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
             Ok(())
         }
         _ => {

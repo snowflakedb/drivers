@@ -252,19 +252,69 @@ impl TryFrom<sql::ULen> for CursorType {
     }
 }
 
+/// ODBC statement attribute value constants.
+/// `SQL_CONCUR_READ_ONLY` (1) — read-only cursor concurrency (default).
+pub const SQL_CONCUR_READ_ONLY: sql::ULen = 1;
+/// `SQL_CONCUR_LOCK` (2) — cursor concurrency with locking.
+pub const SQL_CONCUR_LOCK: sql::ULen = 2;
+/// `SQL_CONCUR_ROWVER` (3) — cursor concurrency with row versioning.
+pub const SQL_CONCUR_ROWVER: sql::ULen = 3;
+/// `SQL_CONCUR_VALUES` (4) — cursor concurrency with optimistic values.
+pub const SQL_CONCUR_VALUES: sql::ULen = 4;
+/// `SQL_NONSCROLLABLE` (0) — non-scrollable cursor (default).
+pub const SQL_NONSCROLLABLE: sql::ULen = 0;
+/// `SQL_SCROLLABLE` (1) — scrollable cursor.
+pub const SQL_SCROLLABLE: sql::ULen = 1;
+/// `SQL_UNSPECIFIED` (0) — unspecified cursor sensitivity (default).
+pub const SQL_UNSPECIFIED: sql::ULen = 0;
+/// `SQL_INSENSITIVE` (1) — insensitive cursor.
+pub const SQL_INSENSITIVE: sql::ULen = 1;
+/// `SQL_SENSITIVE` (2) — sensitive cursor.
+pub const SQL_SENSITIVE: sql::ULen = 2;
+/// `SQL_NOSCAN_OFF` (0) — scan for escape sequences (default).
+pub const SQL_NOSCAN_OFF: sql::ULen = 0;
+/// `SQL_NOSCAN_ON` (1) — do not scan for escape sequences.
+pub const SQL_NOSCAN_ON: sql::ULen = 1;
+/// `SQL_SC_NON_UNIQUE` (0) — simulate non-unique cursors (default).
+pub const SQL_SC_NON_UNIQUE: sql::ULen = 0;
+/// `SQL_RD_OFF` (0) — do not retrieve data after positioned update.
+pub const SQL_RD_OFF: sql::ULen = 0;
+/// `SQL_RD_ON` (1) — retrieve data after positioned update (default).
+pub const SQL_RD_ON: sql::ULen = 1;
+
 /// ODBC statement attribute identifiers (matching `SQL_ATTR_*` constants from `sql.h`).
 #[repr(i32)]
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StmtAttr {
+    /// `SQL_ATTR_CURSOR_SCROLLABLE` (-1) — whether the cursor is scrollable.
+    CursorScrollable = -1,
+    /// `SQL_ATTR_CURSOR_SENSITIVITY` (-2) — cursor sensitivity to changes.
+    CursorSensitivity = -2,
+    /// `SQL_ATTR_QUERY_TIMEOUT` (0) — query timeout in seconds (0 = no timeout).
+    QueryTimeout = 0,
+    /// `SQL_ATTR_MAX_ROWS` (1) — maximum rows returned (0 = no limit).
+    MaxRows = 1,
+    /// `SQL_ATTR_NOSCAN` (2) — whether to scan for ODBC escape sequences.
+    Noscan = 2,
     /// `SQL_ATTR_MAX_LENGTH` (3) — maximum amount of data returned from character/binary columns.
     MaxLength = 3,
     /// `SQL_ATTR_ROW_BIND_TYPE` (5) — row-wise vs column-wise binding.
     RowBindType = 5,
     /// `SQL_ATTR_CURSOR_TYPE` (6) — type of cursor.
     CursorType = 6,
+    /// `SQL_ATTR_CONCURRENCY` (7) — cursor concurrency.
+    Concurrency = 7,
+    /// `SQL_ATTR_KEYSET_SIZE` (8) — keyset size for keyset-driven cursors.
+    KeysetSize = 8,
+    /// `SQL_ATTR_SIMULATE_CURSOR` (10) — how to simulate positioned update/delete statements.
+    SimulateCursor = 10,
+    /// `SQL_ATTR_RETRIEVE_DATA` (11) — whether to retrieve data after a positioned update.
+    RetrieveData = 11,
     /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
+    /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
+    EnableAutoIpd = 15,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
@@ -292,10 +342,20 @@ impl TryFrom<i32> for StmtAttr {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
+            -2 => Ok(StmtAttr::CursorSensitivity),
+            -1 => Ok(StmtAttr::CursorScrollable),
+            0 => Ok(StmtAttr::QueryTimeout),
+            1 => Ok(StmtAttr::MaxRows),
+            2 => Ok(StmtAttr::Noscan),
             3 => Ok(StmtAttr::MaxLength),
             5 => Ok(StmtAttr::RowBindType),
             6 => Ok(StmtAttr::CursorType),
+            7 => Ok(StmtAttr::Concurrency),
+            8 => Ok(StmtAttr::KeysetSize),
+            10 => Ok(StmtAttr::SimulateCursor),
+            11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
+            15 => Ok(StmtAttr::EnableAutoIpd),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
@@ -1123,6 +1183,27 @@ pub struct Statement {
     /// Per ODBC spec, `SQLFetch` cannot be mixed with `SQLExtendedFetch`
     /// without first closing the cursor via `SQLFreeStmt(SQL_CLOSE)`.
     pub used_extended_fetch: bool,
+    /// `SQL_ATTR_QUERY_TIMEOUT` — query timeout in seconds (default 0 = no timeout).
+    pub query_timeout: sql::ULen,
+    /// `SQL_ATTR_NOSCAN` — whether to scan for ODBC escape sequences (default SQL_NOSCAN_OFF = 0).
+    pub noscan: sql::ULen,
+    /// `SQL_ATTR_MAX_ROWS` — maximum rows returned (default 0 = no limit).
+    pub max_rows: sql::ULen,
+    /// Rows returned to the application so far in the current result set.
+    /// Reset to 0 on each execution. Used to enforce `max_rows`.
+    pub rows_returned: sql::ULen,
+    /// `SQL_ATTR_CONCURRENCY` — cursor concurrency (default SQL_CONCUR_READ_ONLY = 1).
+    pub concurrency: sql::ULen,
+    /// `SQL_ATTR_CURSOR_SCROLLABLE` — cursor scrollability (default SQL_NONSCROLLABLE = 0).
+    pub cursor_scrollable: sql::ULen,
+    /// `SQL_ATTR_CURSOR_SENSITIVITY` — cursor sensitivity (default SQL_UNSPECIFIED = 0).
+    pub cursor_sensitivity: sql::ULen,
+    /// `SQL_ATTR_KEYSET_SIZE` — keyset size for keyset-driven cursors (default 0).
+    pub keyset_size: sql::ULen,
+    /// `SQL_ATTR_SIMULATE_CURSOR` — simulate positioned update/delete (default SQL_SC_NON_UNIQUE = 0).
+    pub simulate_cursor: sql::ULen,
+    /// `SQL_ATTR_RETRIEVE_DATA` — whether to retrieve data after positioned update (default SQL_RD_ON = 1).
+    pub retrieve_data: sql::ULen,
     /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
     pub last_query_id: Option<String>,
     /// Cancelled by `SQLCancel` (possibly from another thread) and observed
@@ -1157,8 +1238,18 @@ impl Statement {
             get_data_state: None,
             cursor_type: CursorType::ForwardOnly,
             max_length: 0,
-            used_extended_fetch: false,
             metadata_id,
+            used_extended_fetch: false,
+            query_timeout: 0,
+            noscan: SQL_NOSCAN_OFF,
+            max_rows: 0,
+            rows_returned: 0,
+            concurrency: SQL_CONCUR_READ_ONLY,
+            cursor_scrollable: SQL_NONSCROLLABLE,
+            cursor_sensitivity: SQL_UNSPECIFIED,
+            keyset_size: 0,
+            simulate_cursor: SQL_SC_NON_UNIQUE,
+            retrieve_data: SQL_RD_ON,
             last_query_id: None,
             cancel_token: CancellationToken::new(),
         }
