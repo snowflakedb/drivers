@@ -10,7 +10,6 @@ Feature: TIMESTAMP_NTZ Python-specific behaviour
     # Truncation, not rounding: digits 7–9 are discarded regardless of their value.
     # The .999999999 case is the critical proof: rounding would increment the second,
     # truncation does not.
-    Given Snowflake client is logged in
     When Query "SELECT '<input>'::TIMESTAMP_NTZ" is executed
     Then Result should contain [<expected>]
     And Values should not have timezone info

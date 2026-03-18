@@ -16,8 +16,6 @@ class TestBooleanTypeCasting:
     """Tests for BOOLEAN type casting to appropriate type."""
 
     def test_should_cast_boolean_values_to_appropriate_type(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN" is executed
         result = execute_query("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN", single_row=True)
@@ -33,8 +31,6 @@ class TestBooleanLiteral:
     """Tests for BOOLEAN type using SELECT with literals (no tables)."""
 
     def test_should_select_boolean_literals(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
         result = execute_query("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN", single_row=True)
@@ -44,8 +40,6 @@ class TestBooleanLiteral:
         assert_type(result, bool)
 
     def test_should_handle_null_values_from_literals(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN" is executed
         result = execute_query("SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN", single_row=True)
@@ -55,8 +49,6 @@ class TestBooleanLiteral:
         assert_type(result, bool, can_be_none=True)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
 
@@ -75,8 +67,6 @@ class TestBooleanTable:
     """Tests for BOOLEAN type using table operations."""
 
     def test_should_select_boolean_values_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
         table_name = f"{tmp_schema}.boolean_table"
@@ -93,8 +83,6 @@ class TestBooleanTable:
         assert result == (True, False, True)
 
     def test_should_handle_null_values_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with BOOLEAN column exists
         table_name = f"{tmp_schema}.null_table"
@@ -112,8 +100,6 @@ class TestBooleanTable:
         assert_type(result, bool, can_be_none=True)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
 
@@ -141,8 +127,6 @@ class TestBooleanBinding:
     """Tests for BOOLEAN type using parameter binding."""
 
     def test_should_select_boolean_using_parameter_binding(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed
         # with bound boolean values [TRUE, FALSE, TRUE]
@@ -153,8 +137,6 @@ class TestBooleanBinding:
         assert_type(result, bool)
 
     def test_should_select_null_boolean_using_parameter_binding(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
         result = execute_query("SELECT ?::BOOLEAN", (None,), single_row=True)
@@ -163,8 +145,6 @@ class TestBooleanBinding:
         assert result == (None,)
 
     def test_should_insert_boolean_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with BOOLEAN column exists
         table_name = f"{tmp_schema}.boolean_bind_table"

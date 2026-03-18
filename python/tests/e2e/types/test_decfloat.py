@@ -49,8 +49,6 @@ class TestDecfloatTypeCasting:
     """Tests for DECFLOAT type casting to appropriate type."""
 
     def test_should_cast_decfloat_values_to_appropriate_type(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT 0::DECFLOAT, 123.456::DECFLOAT, 1.23e37::DECFLOAT,
         # '12345678901234567890123456789012345678'::DECFLOAT" is executed
@@ -68,8 +66,6 @@ class TestDecfloatLiteral:
     """Tests for DECFLOAT type using SELECT with literals (no tables)."""
 
     def test_should_select_decfloat_literals(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT 0::DECFLOAT, 1.5::DECFLOAT, -1.5::DECFLOAT,
         # 123.456789::DECFLOAT, -987.654321::DECFLOAT" is executed
@@ -88,8 +84,6 @@ class TestDecfloatLiteral:
         assert_type(result, Decimal)
 
     def test_should_handle_full_38_digit_precision_values_from_literals(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT '12345678901234567890123456789012345678'::DECFLOAT,
         # '1.2345678901234567890123456789012345678E+100'::DECFLOAT,
@@ -122,8 +116,6 @@ class TestDecfloatLiteral:
         ids=["max_positive_and_min_positive", "large_negative_and_small_positive"],
     )
     def test_should_handle_case_exponent_values_from_literals(self, execute_query, sql, expected):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT <query_values>" is executed
         result = execute_query(sql, single_row=True)
@@ -133,8 +125,6 @@ class TestDecfloatLiteral:
         assert_type(result, Decimal)
 
     def test_should_handle_null_values_from_literals(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
         result = execute_query("SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT", single_row=True)
@@ -144,8 +134,6 @@ class TestDecfloatLiteral:
         assert_type(result, Decimal, can_be_none=True)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
 
@@ -168,8 +156,6 @@ class TestDecfloatTable:
     """Tests for DECFLOAT type using table operations."""
 
     def test_should_select_decfloats_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
         table_name = f"{tmp_schema}.decfloat_table"
@@ -193,8 +179,6 @@ class TestDecfloatTable:
         assert_type(result, Decimal)
 
     def test_should_handle_full_38_digit_precision_values_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with DECFLOAT column exists with values
         # [12345678901234567890123456789012345678,
@@ -215,8 +199,6 @@ class TestDecfloatTable:
         assert_type(result, Decimal)
 
     def test_should_handle_extreme_exponent_values_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with DECFLOAT column exists with values
         # [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
@@ -240,8 +222,6 @@ class TestDecfloatTable:
         assert_type(result, Decimal)
 
     def test_should_handle_null_values_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
         table_name = f"{tmp_schema}.null_table"
@@ -257,8 +237,6 @@ class TestDecfloatTable:
         assert_type(values, Decimal, can_be_none=True)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with DECFLOAT column exists with values from 0 to 19999
 
@@ -286,8 +264,6 @@ class TestDecfloatBinding:
     """Tests for DECFLOAT type using parameter binding."""
 
     def test_should_select_decfloat_using_parameter_binding(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed
         # with bound DECFLOAT values [123.456, -789.012, 42.0]
@@ -302,8 +278,6 @@ class TestDecfloatBinding:
         assert_type(result, Decimal)
 
     def test_should_select_null_decfloat_using_parameter_binding(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
         result = execute_query("SELECT ?::DECFLOAT", (None,), single_row=True)
@@ -322,8 +296,6 @@ class TestDecfloatBinding:
         ids=["max_exponent", "large_negative_exponent"],
     )
     def test_should_select_case_decfloat_using_parameter_binding(self, execute_query, type_name, value):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
         result = execute_query(
@@ -337,8 +309,6 @@ class TestDecfloatBinding:
         assert_type(result, Decimal)
 
     def test_should_insert_decfloat_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with DECFLOAT column exists
         table_name = f"{tmp_schema}.decfloat_bind_table"
@@ -362,8 +332,6 @@ class TestDecfloatBinding:
     def test_should_insert_extreme_decfloat_values_using_parameter_binding(
         self, execute_query, executemany_insert, tmp_schema
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with DECFLOAT column exists
         table_name = f"{tmp_schema}.decfloat_extreme_bind_table"

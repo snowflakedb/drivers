@@ -21,8 +21,6 @@ class TestPyformatPositionalBinding:
 
     def test_should_bind_basic_types_with_positional_pyformat(self, execute_query, cursor):
         """Test basic type binding with %s placeholders."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
 
         # When Query "SELECT %s, %s, %s, %s, %s" is executed
         #   with positional parameters [42, 3.14, "hello", True, None]
@@ -41,8 +39,6 @@ class TestPyformatPositionalBinding:
 
     def test_should_bind_string_with_single_quote(self, execute_query, cursor):
         """Test string binding with single quote character."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter "it's a test"
         cursor.execute("SELECT %s", ("it's a test",))
         result = cursor.fetchone()
@@ -51,8 +47,6 @@ class TestPyformatPositionalBinding:
 
     def test_should_bind_string_with_double_quote(self, execute_query, cursor):
         """Test string binding with double quote character."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter containing double quotes
         cursor.execute("SELECT %s", ('hello "world"',))
         result = cursor.fetchone()
@@ -61,8 +55,6 @@ class TestPyformatPositionalBinding:
 
     def test_should_bind_string_with_backslash(self, execute_query, cursor):
         """Test string binding with backslash character."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter "path\to\file"
         cursor.execute("SELECT %s", ("path\\to\\file",))
         result = cursor.fetchone()
@@ -71,8 +63,6 @@ class TestPyformatPositionalBinding:
 
     def test_should_bind_string_with_newline(self, execute_query, cursor):
         """Test string binding with newline character."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter containing newline
         cursor.execute("SELECT %s", ("line1\nline2",))
         result = cursor.fetchone()
@@ -81,8 +71,6 @@ class TestPyformatPositionalBinding:
 
     def test_should_bind_string_with_tab(self, execute_query, cursor):
         """Test string binding with tab character."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter containing tab
         cursor.execute("SELECT %s", ("col1\tcol2",))
         result = cursor.fetchone()
@@ -91,8 +79,6 @@ class TestPyformatPositionalBinding:
 
     def test_should_bind_string_with_carriage_return(self, execute_query, cursor):
         """Test string binding with carriage return character."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter containing carriage return
         cursor.execute("SELECT %s", ("line1\rline2",))
         result = cursor.fetchone()
@@ -106,8 +92,6 @@ class TestPyformatNamedBinding:
 
     def test_should_bind_basic_types_with_named_pyformat(self, execute_query, cursor):
         """Test basic type binding with %(name)s placeholders."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
 
         # When Query "SELECT %(a)s, %(b)s, %(c)s" is executed
         #   with named parameters (a=100, b="test", c=True)
@@ -121,8 +105,6 @@ class TestPyformatNamedBinding:
 
     def test_should_bind_same_parameter_multiple_times(self, execute_query, cursor):
         """Test that the same named parameter can be used multiple times."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %(val)s, %(val)s, %(val)s" is executed
         #   with named parameter (val=42)
         sql = "SELECT %(val)s, %(val)s, %(val)s"
@@ -134,8 +116,6 @@ class TestPyformatNamedBinding:
 
     def test_should_bind_with_mixed_order_named_params(self, execute_query, cursor):
         """Test named parameters used in different order than dict."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %(z)s, %(a)s, %(m)s" is executed
         #   with named parameters (a=1, m=2, z=3)
         sql = "SELECT %(z)s, %(a)s, %(m)s"
@@ -152,8 +132,6 @@ class TestEscapeHandling:
 
     def test_should_escape_special_characters(self, execute_query, cursor, tmp_schema):
         """Test that special characters are properly escaped."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_escape"
         cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
@@ -186,8 +164,6 @@ class TestEscapeHandling:
 
     def test_should_prevent_sql_injection_with_positional_binding(self, execute_query, cursor, tmp_schema):
         """Test that SQL injection attempts are safely escaped."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_injection"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -207,8 +183,6 @@ class TestEscapeHandling:
 
     def test_should_prevent_sql_injection_with_named_binding(self, execute_query, cursor, tmp_schema):
         """Test that SQL injection attempts are safely escaped with named params."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_injection_named"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -228,8 +202,6 @@ class TestEscapeHandling:
 
     def test_should_handle_complex_escape_sequence(self, execute_query, cursor):
         """Test complex string with multiple escape sequences."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with a complex string
         #   containing quotes, backslashes, and newlines
         complex_string = "',an\\\\escaped\"line\n"
@@ -245,8 +217,6 @@ class TestQuoteHandling:
 
     def test_should_quote_null_as_null(self, execute_query, cursor):
         """Test that None is converted to NULL."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter None
         cursor.execute("SELECT %s", (None,))
         result = cursor.fetchone()
@@ -255,8 +225,6 @@ class TestQuoteHandling:
 
     def test_should_quote_boolean_true(self, execute_query, cursor):
         """Test that True is properly handled."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter True
         cursor.execute("SELECT %s", (True,))
         result = cursor.fetchone()
@@ -265,8 +233,6 @@ class TestQuoteHandling:
 
     def test_should_quote_boolean_false(self, execute_query, cursor):
         """Test that False is properly handled."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter False
         cursor.execute("SELECT %s", (False,))
         result = cursor.fetchone()
@@ -275,8 +241,6 @@ class TestQuoteHandling:
 
     def test_should_quote_integer(self, execute_query, cursor):
         """Test that integers are properly handled."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter 12345
         cursor.execute("SELECT %s", (12345,))
         result = cursor.fetchone()
@@ -285,8 +249,6 @@ class TestQuoteHandling:
 
     def test_should_quote_negative_integer(self, execute_query, cursor):
         """Test that negative integers are properly handled."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter -12345
         cursor.execute("SELECT %s", (-12345,))
         result = cursor.fetchone()
@@ -295,8 +257,6 @@ class TestQuoteHandling:
 
     def test_should_quote_float(self, execute_query, cursor):
         """Test that floats are properly handled."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter 3.14159
         cursor.execute("SELECT %s", (3.14159,))
         result = cursor.fetchone()
@@ -305,8 +265,6 @@ class TestQuoteHandling:
 
     def test_should_quote_empty_string(self, execute_query, cursor):
         """Test that empty string is properly handled."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter ""
         cursor.execute("SELECT %s", ("",))
         result = cursor.fetchone()
@@ -315,8 +273,6 @@ class TestQuoteHandling:
 
     def test_should_quote_binary_data(self, execute_query, cursor):
         """Test that binary data is properly handled."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s::BINARY" is executed with binary parameter
         binary_data = b"\x00\x01\x02\xff"
         cursor.execute("SELECT %s::BINARY", (binary_data,))
@@ -331,8 +287,6 @@ class TestListBinding:
 
     def test_should_bind_list_for_in_clause(self, execute_query, cursor, tmp_schema):
         """Test list parameter for IN clause."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_list_in"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -357,8 +311,6 @@ class TestTableOperationsWithPyformat:
 
     def test_should_insert_with_positional_pyformat(self, execute_query, cursor, tmp_schema):
         """Test INSERT with %s positional binding."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_insert_pyformat"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -374,8 +326,6 @@ class TestTableOperationsWithPyformat:
 
     def test_should_insert_with_named_pyformat(self, execute_query, cursor, tmp_schema):
         """Test INSERT with %(name)s named binding."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_insert_named"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -395,8 +345,6 @@ class TestTableOperationsWithPyformat:
 
     def test_should_update_with_pyformat(self, execute_query, cursor, tmp_schema):
         """Test UPDATE with pyformat binding."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_update_pyformat"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -414,8 +362,6 @@ class TestTableOperationsWithPyformat:
 
     def test_should_delete_with_pyformat(self, execute_query, cursor, tmp_schema):
         """Test DELETE with pyformat binding."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_delete_pyformat"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -434,8 +380,6 @@ class TestTableOperationsWithPyformat:
 
     def test_should_select_where_with_pyformat(self, execute_query, cursor, tmp_schema):
         """Test SELECT WHERE with pyformat binding."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
         table_name = f"{tmp_schema}.test_select_pyformat"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
@@ -461,8 +405,6 @@ class TestExecutemanyWithPyformat:
 
     def test_should_executemany_with_dict_params(self, execute_query, cursor, tmp_schema):
         """Test executemany with dictionary parameters."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany_dict"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -479,8 +421,6 @@ class TestExecutemanyWithPyformat:
 
     def test_should_executemany_with_tuple_params(self, execute_query, cursor, tmp_schema):
         """Test executemany with tuple parameters."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany_tuple"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
@@ -502,8 +442,6 @@ class TestFormatBinding:
 
     def test_should_bind_with_format_style(self, execute_query, cursor):
         """Test basic binding with format paramstyle."""
-        # Given Snowflake client is logged in with format paramstyle
-        pass
         # When Query "SELECT %s, %s, %s" is executed with parameters (1, "test", True)
         sql = "SELECT %s, %s, %s"
         params = (1, "test", True)
@@ -514,8 +452,6 @@ class TestFormatBinding:
 
     def test_should_escape_special_chars_with_format(self, execute_query, cursor):
         """Test escape handling with format paramstyle."""
-        # Given Snowflake client is logged in with format paramstyle
-        pass
         # When Query "SELECT %s" is executed with parameter "it's a 'test'"
         cursor.execute("SELECT %s", ("it's a 'test'",))
         result = cursor.fetchone()
@@ -529,8 +465,6 @@ class TestClientSideBindingErrors:
 
     def test_should_raise_error_for_too_many_positional_parameters(self, execute_query, cursor):
         """Test that too many positional parameters raises TypeError."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s, %s" is executed with 3 parameters
         sql = "SELECT %s, %s"
         params = (1, 2, 3)
@@ -540,8 +474,6 @@ class TestClientSideBindingErrors:
 
     def test_should_raise_error_for_not_enough_positional_parameters(self, execute_query, cursor):
         """Test that not enough positional parameters raises TypeError."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s, %s, %s" is executed with 2 parameters
         sql = "SELECT %s, %s, %s"
         params = (1, 2)
@@ -551,8 +483,6 @@ class TestClientSideBindingErrors:
 
     def test_should_raise_error_for_missing_named_parameter(self, execute_query, cursor):
         """Test that missing named parameter raises KeyError."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %(name)s, %(age)s" is executed
         #   with only (name="Alice")
         sql = "SELECT %(name)s, %(age)s"
@@ -563,8 +493,6 @@ class TestClientSideBindingErrors:
 
     def test_should_ignore_extra_named_parameters(self, execute_query, cursor):
         """Test that extra named parameters are silently ignored (Python behavior)."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %(name)s" is executed
         #   with (name="Alice", extra="ignored")
         cursor.execute("SELECT %(name)s", dict(name="Alice", extra="ignored"))
@@ -597,8 +525,6 @@ class TestDecimalBinding:
         """Test that Decimal values are properly handled."""
         from decimal import Decimal
 
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s" is executed with Decimal("123.456")
         cursor.execute("SELECT %s", (Decimal("123.456"),))
         result = cursor.fetchone()
@@ -609,8 +535,6 @@ class TestDecimalBinding:
         """Test Decimal with high precision."""
         from decimal import Decimal
 
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # When Query "SELECT %s::NUMBER(38,18)" is executed with high-precision Decimal
         value = Decimal("12345678901234567890.123456789012345678")
         cursor.execute("SELECT %s::NUMBER(38,18)", (value,))
@@ -625,8 +549,6 @@ class TestLiteralPercentInQuery:
 
     def test_should_handle_like_with_percent_wildcard(self, execute_query, cursor, tmp_schema):
         """Test LIKE queries with %% escaped percent signs."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_like_percent"
         cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
@@ -646,8 +568,6 @@ class TestLiteralPercentInQuery:
 
     def test_should_handle_like_with_param_and_percent(self, execute_query, cursor, tmp_schema):
         """Test LIKE with both parameter and literal percent."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_like_mixed"
         cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
@@ -672,8 +592,6 @@ class TestListBindingWithSpecialChars:
 
     def test_should_bind_list_with_special_chars_in_strings(self, execute_query, cursor, tmp_schema):
         """Test list binding where strings contain special characters."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_list_special"
         cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
@@ -704,8 +622,6 @@ class TestFormatParamstyleErrors:
         """Test that dict parameters raise ProgrammingError with format paramstyle."""
         from snowflake.connector import ProgrammingError
 
-        # Given Snowflake client is logged in with format paramstyle
-        pass
         # When Query "SELECT %(name)s" is executed with dict parameters
         sql = "SELECT %(name)s"
         params = dict(name="Alice")
@@ -720,8 +636,6 @@ class TestExecutemanyRowcount:
 
     def test_should_accumulate_rowcount_in_executemany(self, execute_query, cursor, tmp_schema):
         """Test that executemany accumulates rowcount across iterations."""
-        # Given Snowflake client is logged in with pyformat paramstyle
-        pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany_rowcount"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")

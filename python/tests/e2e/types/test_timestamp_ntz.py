@@ -51,8 +51,6 @@ class TestTimestampNtzTypeCasting:
     """Tests for TIMESTAMP_NTZ type casting to appropriate type."""
 
     def test_should_cast_timestamp_ntz_values_to_appropriate_type(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ" is executed
         result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ", single_row=True)
@@ -75,8 +73,6 @@ class TestTimestampNtzLiteral:
         ],
     )
     def test_should_select_timestamp_ntz_values(self, execute_query, query_values, expected_values):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT <query_values>" is executed
         select_cols = ", ".join(f"'{v}'::TIMESTAMP_NTZ" for v in query_values)
@@ -89,8 +85,6 @@ class TestTimestampNtzLiteral:
         assert all(v.tzinfo is None for v in result)
 
     def test_should_handle_null_values_for_timestamp_ntz(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ" is executed
         result = execute_query(
@@ -103,8 +97,6 @@ class TestTimestampNtzLiteral:
         assert tuple(result) == (TS_2024_JAN, None)
 
     def test_should_download_large_result_set_with_multiple_chunks_for_timestamp_ntz(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1,
         #   '2024-01-01 00:00:00'::TIMESTAMP_NTZ) as ts
@@ -139,8 +131,6 @@ class TestTimestampNtzTable:
     def test_should_select_values_from_table_for_timestamp_ntz(
         self, execute_query, tmp_schema, values_name, insert_values, expected_values, can_be_none
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with TIMESTAMP_NTZ column exists with values <insert_values>
         table_name = f"{tmp_schema}.timestamp_ntz_table_{values_name}"
@@ -160,8 +150,6 @@ class TestTimestampNtzTable:
     def test_should_download_large_result_set_with_multiple_chunks_from_table_for_timestamp_ntz(
         self, execute_query, tmp_schema
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with TIMESTAMP_NTZ column exists with 50000 sequential timestamp values
         table_name = f"{tmp_schema}.large_timestamp_ntz_table"
@@ -194,8 +182,6 @@ class TestTimestampNtzBinding:
     """
 
     def test_should_select_timestamp_ntz_using_parameter_binding(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ" is executed with bound timestamp values
         result = execute_query(
@@ -213,8 +199,6 @@ class TestTimestampNtzBinding:
     def test_should_return_null_when_selecting_timestamp_ntz_using_parameter_binding_with_null_value(
         self, execute_query
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound NULL value
         result = execute_query("SELECT ?::TIMESTAMP_NTZ", (None,), single_row=True)
@@ -223,8 +207,6 @@ class TestTimestampNtzBinding:
         assert result == (None,)
 
     def test_should_insert_timestamp_ntz_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with TIMESTAMP_NTZ column exists
         table_name = f"{tmp_schema}.timestamp_ntz_bind_table"
@@ -257,8 +239,6 @@ class TestTimestampNtzBinding:
     def test_should_store_utc_equivalent_when_binding_timezone_aware_datetime_to_timestamp_ntz(
         self, execute_query, aware_input, expected
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound aware datetime <input>
         result = execute_query("SELECT ?::TIMESTAMP_NTZ", (aware_input,), single_row=True)
@@ -282,8 +262,6 @@ class TestTimestampNtzAliases:
     def test_should_return_naive_datetime_for_type_name_alias_when_session_mapping_is_timestamp_ntz(
         self, execute_query, type_name
     ):
-        # Given Snowflake client is logged in
-        pass
 
         try:
             # And Session TIMESTAMP_TYPE_MAPPING is set to TIMESTAMP_NTZ
@@ -302,8 +280,6 @@ class TestTimestampNtzAliases:
     def test_should_return_aware_datetime_for_timestamp_alias_when_session_mapping_is_timestamp_ltz(
         self, execute_query
     ):
-        # Given Snowflake client is logged in
-        pass
 
         try:
             # And Session TIMESTAMP_TYPE_MAPPING is set to TIMESTAMP_LTZ
@@ -339,8 +315,6 @@ class TestTimestampNtzPrecision:
     def test_should_truncate_nanosecond_precision_to_microseconds_for_timestamp_ntz(
         self, execute_query, input_str, expected
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT '<input>'::TIMESTAMP_NTZ" is executed
         result = execute_query(f"SELECT '{input_str}'::TIMESTAMP_NTZ", single_row=True)

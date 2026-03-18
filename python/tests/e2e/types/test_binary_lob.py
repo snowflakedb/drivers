@@ -49,9 +49,6 @@ class TestBinaryLob:
         # Default maximum binary size is 8MB (8,388,608 bytes)
         # This is the limit before enabling the 2025_03 behavior change bundle
 
-        # Given Snowflake client is logged in
-        pass
-
         # And Table with BINARY column exists
         table_name = f"{tmp_schema}.lob_8mb_table"
         execute_query(f"CREATE TABLE {table_name} (val BINARY)")
@@ -76,9 +73,6 @@ class TestBinaryLob:
     def test_should_handle_extended_maximum_binary_size(self, execute_query, tmp_schema):
         # Extended maximum binary size is 64MB (67,108,864 bytes)
         # Requires 2025_03 behavior change bundle
-
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with BINARY(67108864) column exists
         table_name = f"{tmp_schema}.lob_64mb_table"

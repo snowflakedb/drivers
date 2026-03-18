@@ -21,12 +21,10 @@ from tests.utils import shared_test_data_dir
     ],
 )
 def test_should_auto_detect_standard_compression_types_when_source_compression_set_to_auto_detect(
-    execute_query, connection, expected_compression, filename
+    connection, expected_compression, filename
 ):
+    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
-        # Given Snowflake client is logged in
-        pass
-
         # And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE)
         stage_name, test_file_path = create_stage_and_get_compression_file(
             cursor, f"TEST_STAGE_{expected_compression}", expected_compression
@@ -78,12 +76,10 @@ def test_should_auto_detect_standard_compression_types_when_source_compression_s
     ],
 )
 def test_should_upload_compressed_files_with_source_compression_set_to_explicit_types(
-    execute_query, connection, compression, filename
+    connection, compression, filename
 ):
+    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
-        # Given Snowflake client is logged in
-        pass
-
         # And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE)
         stage_name, test_file_path = create_stage_and_get_compression_file(
             cursor, f"TEST_STAGE_{compression}", compression
@@ -111,13 +107,10 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
 
 
 def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and_auto_compress_set_to_false(
-    execute_query,
     connection,
 ):
+    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
-        # Given Snowflake client is logged in
-        pass
-
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(
             cursor, "TEST_STAGE_NONE_NO_AUTO_COMPRESS", "NONE"
@@ -137,13 +130,10 @@ def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and
 
 
 def test_should_not_compress_file_when_source_compression_set_to_none_and_auto_compress_set_to_false(
-    execute_query,
     connection,
 ):
+    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
-        # Given Snowflake client is logged in
-        pass
-
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(
             cursor, "TEST_STAGE_NONE_NO_AUTO_COMPRESS", "NONE"
@@ -162,13 +152,10 @@ def test_should_not_compress_file_when_source_compression_set_to_none_and_auto_c
 
 
 def test_should_compress_uncompressed_file_when_source_compression_set_to_auto_detect_and_auto_compress_set_to_true(
-    execute_query,
     connection,
 ):
+    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
-        # Given Snowflake client is logged in
-        pass
-
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(cursor, "TEST_STAGE_AUTO_COMPRESS", "NONE")
         filename = "test_data.csv"
@@ -187,13 +174,10 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_auto_d
 
 
 def test_should_compress_uncompressed_file_when_source_compression_set_to_none_and_auto_compress_set_to_true(
-    execute_query,
     connection,
 ):
+    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
-        # Given Snowflake client is logged in
-        pass
-
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(
             cursor, "TEST_STAGE_NONE_AUTO_COMPRESS", "NONE"
@@ -212,11 +196,9 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_none_a
         assert_put_compression_result(result, filename, "NONE", expected_target, "GZIP")
 
 
-def test_should_return_error_for_unsupported_compression_type(execute_query, connection):
+def test_should_return_error_for_unsupported_compression_type(connection):
+    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
-        # Given Snowflake client is logged in
-        pass
-
         # And File compressed with unsupported format
         stage_name, test_file_path = create_stage_and_get_compression_file(cursor, "TEST_STAGE_UNSUPPORTED", "LZMA")
 

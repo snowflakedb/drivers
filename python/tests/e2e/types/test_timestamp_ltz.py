@@ -60,8 +60,6 @@ class TestTimestampLtzTypeCasting:
     """Tests for TIMESTAMP_LTZ type casting to appropriate type."""
 
     def test_should_cast_timestamp_ltz_values_to_appropriate_type(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ" is executed
         result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_LTZ", single_row=True)
@@ -93,8 +91,6 @@ class TestTimestampLtzLiteral:
         ids=[c[0] for c in LITERAL_SELECT_TEST_CASES],
     )
     def test_should_select_timestamp_ltz_values(self, execute_query, values, query_values, expected_values):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT <query_values>" is executed
         select_cols = ", ".join(f"'{v}'::TIMESTAMP_LTZ" for v in query_values)
@@ -105,8 +101,6 @@ class TestTimestampLtzLiteral:
         assert tuple(to_utc(result)) == expected_values
 
     def test_should_handle_null_values_for_timestamp_ltz(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ, NULL::TIMESTAMP_LTZ" is executed
         result = execute_query(
@@ -119,8 +113,6 @@ class TestTimestampLtzLiteral:
         assert tuple(to_utc(result)) == (TS_2024_JAN, None)
 
     def test_should_download_large_result_set_with_multiple_chunks_for_timestamp_ltz(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1,
         #   '2024-01-01 00:00:00 +00:00'::TIMESTAMP_LTZ) as ts
@@ -156,8 +148,6 @@ class TestTimestampLtzTable:
     def test_should_select_values_from_table_for_timestamp_ltz(
         self, execute_query, tmp_schema, values_name, insert_values, expected_values, can_be_none
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with TIMESTAMP_LTZ column exists with values <insert_values>
         table_name = f"{tmp_schema}.timestamp_ltz_table_{values_name}"
@@ -175,8 +165,6 @@ class TestTimestampLtzTable:
     def test_should_download_large_result_set_with_multiple_chunks_from_table_for_timestamp_ltz(
         self, execute_query, tmp_schema
     ):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with TIMESTAMP_LTZ column exists with 50000 sequential timestamp values
         table_name = f"{tmp_schema}.large_timestamp_ltz_table"
@@ -207,8 +195,6 @@ class TestTimestampLtzBinding:
     """
 
     def test_should_select_timestamp_ltz_using_parameter_binding(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ" is executed with bound timestamp values
         result = execute_query(
@@ -222,8 +208,6 @@ class TestTimestampLtzBinding:
         assert len(result) == 2
 
     def test_should_select_null_timestamp_ltz_using_parameter_binding(self, execute_query):
-        # Given Snowflake client is logged in
-        pass
 
         # When Query "SELECT ?::TIMESTAMP_LTZ" is executed with bound NULL value
         result = execute_query("SELECT ?::TIMESTAMP_LTZ", (None,), single_row=True)
@@ -232,8 +216,6 @@ class TestTimestampLtzBinding:
         assert result == (None,)
 
     def test_should_insert_timestamp_ltz_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
-        # Given Snowflake client is logged in
-        pass
 
         # And Table with TIMESTAMP_LTZ column exists
         table_name = f"{tmp_schema}.timestamp_ltz_bind_table"

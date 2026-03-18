@@ -39,9 +39,6 @@ class TestStringLob:
     def test_should_handle_lob_string_at_historical_16_mb_limit(self, execute_query, tmp_schema):
         # Corner case: string at the historical LOB limit (16 MB = 16,777,216 bytes)
 
-        # Given Snowflake client is logged in
-        pass
-
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.lob_16mb_table"
         execute_query(f"CREATE TABLE {table_name} (val VARCHAR)")
@@ -65,9 +62,6 @@ class TestStringLob:
 
     def test_should_handle_lob_string_at_maximum_128_mb_limit_with_increased_lob_size(self, execute_query, tmp_schema):
         # Corner case: string at maximum LOB limit (128 MB) - requires Increased LOB Size feature
-
-        # Given Snowflake client is logged in
-        pass
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.lob_128mb_table"
