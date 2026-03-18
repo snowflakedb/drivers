@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 
 #include <catch2/catch_test_macros.hpp>
@@ -1740,6 +1741,9 @@ TEST_CASE("SQLGetData with BufferLength 0 for SQL_C_CHAR returns data length wit
 
   // And the indicator should contain the full data length
   CHECK((indicator == 11 || indicator == SQL_NO_TOTAL));
+
+  // And the buffer should remain unchanged (no data written)
+  CHECK(buffer[0] == 'X');
 }
 
 TEST_CASE("SQLGetData with BufferLength 0 for SQL_C_BINARY returns data length without writing data.",
@@ -1763,6 +1767,9 @@ TEST_CASE("SQLGetData with BufferLength 0 for SQL_C_BINARY returns data length w
 
   // And the indicator should contain the full data length
   CHECK((indicator == 5 || indicator == SQL_NO_TOTAL));
+
+  // And the buffer should remain unchanged (no data written)
+  CHECK(buffer[0] == 0xFF);
 }
 
 // =============================================================================
@@ -1840,18 +1847,21 @@ TEST_CASE("SQLGetData retrieves binary data in parts with multiple SQL_C_BINARY 
   // Then the first call should return the first 4 bytes with SQL_SUCCESS_WITH_INFO
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
-  result.append(reinterpret_cast<char*>(buffer), 4);
+  CHECK((indicator == 10 || indicator == SQL_NO_TOTAL));
+  result.append(reinterpret_cast<char*>(buffer), sizeof(buffer));
 
   // And the second call should return the next 4 bytes
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
-  result.append(reinterpret_cast<char*>(buffer), 4);
+  CHECK((indicator == 6 || indicator == SQL_NO_TOTAL));
+  result.append(reinterpret_cast<char*>(buffer), sizeof(buffer));
 
   // And the third call should return the last 2 bytes with SQL_SUCCESS
   memset(buffer, 0, sizeof(buffer));
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccess());
-  result.append(reinterpret_cast<char*>(buffer), static_cast<size_t>(indicator));
+  CHECK(indicator == 2);
+  result.append(reinterpret_cast<char*>(buffer), std::min(static_cast<size_t>(indicator), sizeof(buffer)));
 
   // And the complete binary data should be reconstructed
   CHECK(result == "HelloWorld");
