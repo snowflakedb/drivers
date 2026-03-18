@@ -160,7 +160,7 @@ TEST_CASE("should fail converting float to SQL_C_GUID", "[datatype][float][conve
   // When Query "SELECT 42.5::FLOAT" is executed
   auto stmt = conn.execute_fetch("SELECT 42.5::FLOAT");
 
-  // Then SQL_C_GUID conversion should fail with restricted data type error
+  // Then SQL_C_GUID conversion should fail with restricted data type error (07006, or HYC00 on Windows)
   {
     SQLGUID value = {};
     check_incompatible_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));

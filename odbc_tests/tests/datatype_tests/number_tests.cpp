@@ -1681,7 +1681,8 @@ TEST_CASE("SQL_DECIMAL to temporal C types returns 07006", "[datatype][number][c
   }
 }
 
-TEST_CASE("SQL_DECIMAL to SQL_C_GUID returns 07006", "[datatype][number][conversion][negative]") {
+// Windows Driver Manager may intercept SQL_C_GUID and return HYC00 instead of 07006.
+TEST_CASE("SQL_DECIMAL to SQL_C_GUID returns 07006 (or HYC00 on Windows)", "[datatype][number][conversion][negative]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 

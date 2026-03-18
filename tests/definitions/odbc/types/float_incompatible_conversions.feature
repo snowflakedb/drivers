@@ -64,6 +64,7 @@ Feature: ODBC float incompatible C type conversions
   Scenario: should fail converting float to SQL_C_GUID
     # ODBC spec does not list SQL_C_GUID as a valid target for numeric SQL types.
     # Expected SQLSTATE: 07006 (Restricted data type attribute violation)
+    # On Windows the Driver Manager may intercept SQL_C_GUID and return HYC00.
     Given Snowflake client is logged in
     When Query "SELECT 42.5::FLOAT" is executed
-    Then SQL_C_GUID conversion should fail with restricted data type error
+    Then SQL_C_GUID conversion should fail with restricted data type error (07006, or HYC00 on Windows)

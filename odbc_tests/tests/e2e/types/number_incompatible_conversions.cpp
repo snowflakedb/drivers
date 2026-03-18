@@ -56,7 +56,7 @@ TEST_CASE("should fail converting number to SQL_C_GUID", "[datatype][number][con
   // When Query "SELECT 42::NUMBER(10,0)" is executed
   auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
 
-  // Then SQL_C_GUID conversion should fail with SQLSTATE 07006
+  // Then SQL_C_GUID conversion should fail with SQLSTATE 07006 (or HYC00 on Windows)
   {
     SQLGUID value = {};
     check_incompatible_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
