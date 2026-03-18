@@ -99,8 +99,8 @@ def annotate(message, style="info", context="default"):
 
 
 RUST_COMMAND = """\
-TEST_FILTER=$(buildkite-agent meta-data get "test-filter-rust")
-echo "Filter: $TEST_FILTER"
+TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
+echo "Filter: $$TEST_FILTER"
 
 ./scripts/decode_secrets.sh
 yum install -y unzip
@@ -110,16 +110,16 @@ echo "--- :hammer: Building sf_core"
 cargo build --package sf_core
 
 echo "--- :test_tube: Running E2E Tests"
-if [ "$TEST_FILTER" = "ALL" ]; then
+if [ "$$TEST_FILTER" = "ALL" ]; then
   cargo test --package sf_core -- --ignored
 else
-  cargo test --package sf_core -- --ignored "$TEST_FILTER"
+  cargo test --package sf_core -- --ignored "$$TEST_FILTER"
 fi
 """
 
 PYTHON_COMMAND = """\
-TEST_FILTER=$(buildkite-agent meta-data get "test-filter-python")
-echo "Filter: $TEST_FILTER"
+TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-python")
+echo "Filter: $$TEST_FILTER"
 
 ./scripts/decode_secrets.sh
 yum install -y unzip
@@ -132,16 +132,16 @@ RUSTFLAGS="" hatch build -t wheel
 hatch run test.py3.9:install-wheel
 
 echo "--- :test_tube: Running Integ + E2E Tests"
-if [ "$TEST_FILTER" = "ALL" ]; then
+if [ "$$TEST_FILTER" = "ALL" ]; then
   hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
 else
-  hatch run test.py3.9:all -- $TEST_FILTER -v --timeout=900
+  hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900
 fi
 """
 
 ODBC_COMMAND = """\
-TEST_FILTER=$(buildkite-agent meta-data get "test-filter-odbc")
-echo "Filter: $TEST_FILTER"
+TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-odbc")
+echo "Filter: $$TEST_FILTER"
 
 ./scripts/decode_secrets.sh
 yum install -y unzip
@@ -160,19 +160,19 @@ cmake -B cmake-build \\
     -D ODBC_INCLUDE_DIR="/usr/include" \\
     -D DRIVER_TYPE=NEW \\
     .
-cmake --build cmake-build -- -j $(nproc)
+cmake --build cmake-build -- -j $$(nproc)
 
 echo "--- :test_tube: Running Integ + E2E Tests"
-if [ "$TEST_FILTER" = "ALL" ]; then
+if [ "$$TEST_FILTER" = "ALL" ]; then
   ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration"
 else
-  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$TEST_FILTER"
+  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER"
 fi
 """
 
 JDBC_COMMAND = """\
-TEST_FILTER=$(buildkite-agent meta-data get "test-filter-java")
-echo "Filter: $TEST_FILTER"
+TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-java")
+echo "Filter: $$TEST_FILTER"
 
 ./scripts/decode_secrets.sh
 yum install -y unzip
@@ -186,15 +186,15 @@ echo "--- :test_tube: Running Integ + E2E Tests"
 export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
 chmod +x jdbc/gradlew
 cd jdbc
-if [ "$TEST_FILTER" = "ALL" ]; then
+if [ "$$TEST_FILTER" = "ALL" ]; then
   ./gradlew test --stacktrace
 else
   GRADLE_TESTS=""
-  IFS='|' read -ra PATTERNS <<< "$TEST_FILTER"
-  for pattern in "${PATTERNS[@]}"; do
-    GRADLE_TESTS="$GRADLE_TESTS --tests $pattern"
+  IFS='|' read -ra PATTERNS <<< "$$TEST_FILTER"
+  for pattern in "$${PATTERNS[@]}"; do
+    GRADLE_TESTS="$$GRADLE_TESTS --tests $$pattern"
   done
-  ./gradlew test $GRADLE_TESTS --stacktrace
+  ./gradlew test $$GRADLE_TESTS --stacktrace
 fi
 """
 
