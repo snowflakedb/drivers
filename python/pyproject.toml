@@ -51,6 +51,7 @@ test = [
     "brotli",
     "zstandard",
     "tomlkit",
+    "tzdata",
 ]
 dev = [
     "ruff",
