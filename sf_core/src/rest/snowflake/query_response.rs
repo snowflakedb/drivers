@@ -20,7 +20,7 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<String>>>,
+    pub rowset: Option<Vec<Vec<Option<String>>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
@@ -490,7 +490,8 @@ impl Data {
         if value.is_empty() { None } else { Some(value) }
     }
 
-    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<String>>, &Vec<RowType>)> {
+    #[allow(clippy::type_complexity)]
+    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<Option<String>>>, &Vec<RowType>)> {
         match (self.rowset.as_ref(), self.row_type.as_ref()) {
             (Some(rowset), Some(row_type)) => Some((rowset, row_type)),
             (Some(_), None) => {
@@ -519,7 +520,7 @@ pub enum RowsetData<'a> {
         chunk_base64: &'a str,
     },
     JsonRowset {
-        rowset: &'a Vec<Vec<String>>,
+        rowset: &'a Vec<Vec<Option<String>>>,
         rowtype: &'a Vec<RowType>,
     },
     NoData,
@@ -756,4 +757,173 @@ pub enum QueryResponseError {
         #[snafu(implicit)]
         location: snafu::Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_rowset_with_null_values() {
+        let json = r#"{
+            "data": {
+                "rowset": [["val1", null, "val3"], [null, "val2", null]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": false, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c3", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+
+        let rowset = response.data.rowset.as_ref().unwrap();
+        assert_eq!(rowset.len(), 2);
+
+        // First row: "val1", null, "val3"
+        assert_eq!(rowset[0][0], Some("val1".to_string()));
+        assert_eq!(rowset[0][1], None);
+        assert_eq!(rowset[0][2], Some("val3".to_string()));
+
+        // Second row: null, "val2", null
+        assert_eq!(rowset[1][0], None);
+        assert_eq!(rowset[1][1], Some("val2".to_string()));
+        assert_eq!(rowset[1][2], None);
+    }
+
+    #[test]
+    fn test_deserialize_rowset_all_nulls() {
+        let json = r#"{
+            "data": {
+                "rowset": [[null, null]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let rowset = response.data.rowset.as_ref().unwrap();
+        assert_eq!(rowset[0][0], None);
+        assert_eq!(rowset[0][1], None);
+    }
+
+    #[test]
+    fn test_to_json_rowset_with_nulls() {
+        let json = r#"{
+            "data": {
+                "rowset": [["a", null], [null, "b"]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let (rowset, row_types) = response.data.to_json_rowset().unwrap();
+        assert_eq!(rowset.len(), 2);
+        assert_eq!(row_types.len(), 2);
+    }
+
+    #[test]
+    fn test_object_type_maps_to_object() {
+        let row_type = RowType {
+            name: "obj_col".to_string(),
+            type_: "OBJECT".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(1024),
+            byte_length: Some(4096),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Object {
+                ref name,
+                nullable: true,
+            } if name == "obj_col"
+        ));
+    }
+
+    #[test]
+    fn test_variant_type_maps_to_variant() {
+        let row_type = RowType {
+            name: "var_col".to_string(),
+            type_: "VARIANT".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Variant {
+                ref name,
+                nullable: false,
+            } if name == "var_col"
+        ));
+    }
+
+    #[test]
+    fn test_array_type_maps_to_array() {
+        let row_type = RowType {
+            name: "arr_col".to_string(),
+            type_: "ARRAY".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(512),
+            byte_length: Some(2048),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Array {
+                ref name,
+                nullable: true,
+            } if name == "arr_col"
+        ));
+    }
+
+    #[test]
+    fn test_unsupported_column_type_returns_error() {
+        let row_type = RowType {
+            name: "bad_col".to_string(),
+            type_: "GEOGRAPHY".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("GEOGRAPHY"),
+                "Error should mention the unsupported type: {err}"
+            ),
+            Ok(_) => panic!("Expected error for unsupported column type GEOGRAPHY"),
+        }
+    }
 }
