@@ -4,7 +4,7 @@
 The script downloads the reference driver source from GitHub, then uses the
 ``ast`` module to compare public methods, properties, ``__all__`` exports,
 exception classes, helper classes, and the ``pandas_tools`` module — covering
-every area listed in ``docs/python-wrapper-public-api-scope.md``.
+every area listed in [scope doc](https://docs.google.com/document/d/167q6SvqhrYGDmkK1xS8qAgl-EZYzn_jPguxB9jVmanA/edit?tab=t.0).
 
 No native libraries or driver installation is required.
 
