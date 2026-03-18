@@ -13,7 +13,7 @@ use crate::config::ParamStore;
 use crate::config::config_manager;
 use crate::config::param_registry::{ParamKey, param_names};
 use crate::config::path_resolver::ConfigPaths;
-use crate::config::rest_parameters::{ClientInfo, LoginParameters};
+use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
@@ -90,7 +90,24 @@ impl DatabaseDriverV1 {
                     create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                         .context(TlsClientCreationSnafu)?;
 
-                let token_cache = self.token_cache().ok();
+                let mfa_caching_requested = matches!(
+                    &login_parameters.login_method,
+                    LoginMethod::UserPasswordMfa {
+                        client_store_temporary_credential: true,
+                        ..
+                    }
+                );
+
+                let token_cache = match self.token_cache() {
+                    Ok(cache) => Some(cache),
+                    Err(err) => {
+                        if mfa_caching_requested {
+                            return Err(err).context(TokenCacheInitializationSnafu);
+                        }
+                        tracing::warn!("Token cache initialization failed: {err}");
+                        None
+                    }
+                };
 
                 let login_result = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,

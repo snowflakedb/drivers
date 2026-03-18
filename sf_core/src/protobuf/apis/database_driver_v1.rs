@@ -337,6 +337,11 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::Base64Decoding { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::TokenCacheInitialization { source, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                detail: source.to_string(),
+            })),
+        },
         ApiError::Configuration {
             source: ConfigError::ConfigFileRead { .. },
             ..
@@ -449,6 +454,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::Query { .. } => StatusCode::InternalError,
         ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
+        ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
         ApiError::ArrowParsing { .. } => StatusCode::InternalError,
         ApiError::Base64Decoding { .. } => StatusCode::InternalError,

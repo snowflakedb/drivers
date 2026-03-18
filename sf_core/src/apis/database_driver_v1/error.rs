@@ -7,6 +7,7 @@ use crate::chunks::ChunkError;
 pub use crate::config::ConfigError;
 pub use crate::rest::snowflake::RestError;
 use crate::tls::error::TlsError;
+use crate::token_cache::TokenCacheError;
 
 #[derive(Debug, Snafu, ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
@@ -99,6 +100,14 @@ pub enum ApiError {
     #[snafu(display("Invalid refresh state: {message}"))]
     InvalidRefreshState {
         message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "MFA token caching was requested but the token cache failed to initialize: {source}"
+    ))]
+    TokenCacheInitialization {
+        source: TokenCacheError,
         #[snafu(implicit)]
         location: Location,
     },
