@@ -227,17 +227,18 @@ pub struct StageInfo {
     #[serde(rename = "endPoint")]
     end_point: Option<String>,
 
-    // unused fields
     #[serde(rename = "locationType")]
-    _location_type: Option<String>,
+    location_type: Option<String>,
+    #[serde(rename = "presignedUrl")]
+    presigned_url: Option<String>,
+
+    // unused fields
     #[serde(rename = "path")]
     _path: Option<String>,
     #[serde(rename = "storageAccount")]
     _storage_account: Option<String>,
     #[serde(rename = "isClientSideEncrypted")]
     _is_client_side_encrypted: Option<bool>,
-    #[serde(rename = "presignedUrl")]
-    _presigned_url: Option<String>,
     #[serde(rename = "useS3RegionalUrl")]
     _use_s3_regional_url: Option<bool>,
     #[serde(rename = "useRegionalUrl")]
@@ -255,6 +256,9 @@ pub struct Credentials {
     #[serde(rename = "AWS_TOKEN")]
     aws_token: Option<String>,
 
+    #[serde(rename = "GCS_ACCESS_TOKEN")]
+    gcs_access_token: Option<String>,
+
     // unused fields
     #[serde(rename = "AWS_ID")]
     _aws_id: Option<String>,
@@ -262,8 +266,6 @@ pub struct Credentials {
     _aws_key: Option<String>,
     #[serde(rename = "AZURE_SAS_TOKEN")]
     _azure_sas_token: Option<String>,
-    #[serde(rename = "GCS_ACCESS_TOKEN")]
-    _gcs_access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -622,6 +624,24 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
     type Error = QueryResponseError;
 
     fn try_from(value: &StageInfo) -> Result<Self, Self::Error> {
+        // Determine location type (default to S3 for backward compatibility)
+        let location_type = match value.location_type.as_deref() {
+            Some("GCS") => file_manager::LocationType::Gcs,
+            Some("AZURE") => {
+                return InvalidFormatSnafu {
+                    message: "Azure storage is not yet supported".to_string(),
+                }
+                .fail();
+            }
+            Some("S3") | None => file_manager::LocationType::S3,
+            Some(other) => {
+                return InvalidFormatSnafu {
+                    message: format!("Unknown location type: {other}"),
+                }
+                .fail();
+            }
+        };
+
         let location = value
             .location
             .as_ref()
@@ -631,7 +651,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .clone();
 
         let bucket_separator = location.find('/').context(InvalidFormatSnafu {
-            message: format!("Invalid S3 location format: {location}"),
+            message: format!("Invalid location format: {location}"),
         })?;
 
         let bucket = location[..bucket_separator].to_string();
@@ -648,13 +668,49 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             })?
             .clone();
 
-        let creds: file_manager::Credentials = value
-            .creds
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "stage info -> credentials",
-            })?
-            .try_into()?;
+        // Build credentials based on location type
+        let creds_data = value.creds.as_ref().context(MissingParameterSnafu {
+            parameter: "stage info -> credentials",
+        })?;
+
+        let creds = match location_type {
+            file_manager::LocationType::S3 => file_manager::CloudCredentials::S3 {
+                aws_key_id: creds_data
+                    .aws_key_id
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws key id",
+                    })?
+                    .clone(),
+                aws_secret_key: creds_data
+                    .aws_secret_key
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws secret key",
+                    })?
+                    .clone()
+                    .into(),
+                aws_token: creds_data
+                    .aws_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws token",
+                    })?
+                    .clone()
+                    .into(),
+            },
+            file_manager::LocationType::Gcs => file_manager::CloudCredentials::Gcs {
+                gcs_access_token: creds_data
+                    .gcs_access_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> gcs access token",
+                    })?
+                    .clone()
+                    .into(),
+            },
+            file_manager::LocationType::Azure => unreachable!("Azure rejected above"),
+        };
 
         let end_point = value
             .end_point
@@ -662,48 +718,20 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .filter(|ep| !ep.is_empty())
             .cloned();
 
+        let presigned_url = value
+            .presigned_url
+            .as_ref()
+            .filter(|url| !url.is_empty())
+            .cloned();
+
         Ok(file_manager::StageInfo {
+            location_type,
             bucket,
             key_prefix,
             region,
             creds,
             end_point,
-        })
-    }
-}
-
-impl TryFrom<&Credentials> for file_manager::Credentials {
-    type Error = QueryResponseError;
-
-    fn try_from(value: &Credentials) -> Result<Self, Self::Error> {
-        let aws_key_id = value
-            .aws_key_id
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws key id",
-            })?
-            .clone();
-
-        let aws_secret_key = value
-            .aws_secret_key
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws secret key",
-            })?
-            .clone();
-
-        let aws_token = value
-            .aws_token
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws token",
-            })?
-            .clone();
-
-        Ok(file_manager::Credentials {
-            aws_key_id,
-            aws_secret_key: aws_secret_key.into(),
-            aws_token: aws_token.into(),
+            presigned_url,
         })
     }
 }
