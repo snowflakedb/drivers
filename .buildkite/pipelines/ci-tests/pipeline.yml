@@ -50,7 +50,7 @@ steps:
           pip3 install pyyaml -q
           TEST_FILTER=$$(python3 ci/select_tests.py --driver rust --group integ,e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for rust core, skipping"
+            buildkite-agent annotate ":fast_forward: Rust Core — skipped (no relevant changes)" --style "info" --context "rust-skip"
             exit 0
           fi
 
@@ -83,7 +83,7 @@ steps:
           pip3 install pyyaml -q
           TEST_FILTER=$$(python3 ci/select_tests.py --driver python --group integ,e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for python, skipping"
+            buildkite-agent annotate ":fast_forward: Python — skipped (no relevant changes)" --style "info" --context "python-skip"
             exit 0
           fi
 
@@ -119,7 +119,7 @@ steps:
           pip3 install pyyaml -q
           TEST_FILTER=$$(python3 ci/select_tests.py --driver odbc --group integ,e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for odbc, skipping"
+            buildkite-agent annotate ":fast_forward: ODBC — skipped (no relevant changes)" --style "info" --context "odbc-skip"
             exit 0
           fi
 
@@ -164,7 +164,7 @@ steps:
           pip3 install pyyaml -q
           TEST_FILTER=$$(python3 ci/select_tests.py --driver java --group e2e --verbose)
           if [ "$$TEST_FILTER" = "SKIP" ]; then
-            echo "No relevant changes for jdbc, skipping"
+            buildkite-agent annotate ":fast_forward: JDBC — skipped (no relevant changes)" --style "info" --context "jdbc-skip"
             exit 0
           fi
 
