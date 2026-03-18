@@ -1,5 +1,5 @@
 mod cdata_types;
-mod types;
+mod odbc_types;
 
 pub use cdata_types::*;
-pub use types::*;
+pub use odbc_types::*;
