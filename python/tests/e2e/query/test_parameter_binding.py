@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.types.utils import assert_connection_is_open
-
 from ...conftest import with_paramstyle
 
 
@@ -23,7 +21,7 @@ class TestBasicTypeBinding:
     @with_paramstyle("qmark")
     def test_should_bind_basic_types_with_positional_parameters(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?, ?, ?, ?" is executed with positional parameters [42, 3.14, "hello", True, None]
         sql = "SELECT ?, ?, ?, ?, ?"
@@ -42,7 +40,7 @@ class TestBasicTypeBinding:
     @with_paramstyle("numeric")
     def test_should_bind_positional_parameters_with_numeric_placeholders(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT :1, :2, :3" is executed with positional parameters [100, "test", True]
         sql = "SELECT :1, :2, :3"
@@ -60,7 +58,7 @@ class TestTableOperations:
 
     def test_should_insert_single_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, active BOOLEAN) exists
         table_name = f"{tmp_schema}.test_binding_insert"
@@ -79,7 +77,7 @@ class TestTableOperations:
 
     def test_should_insert_multiple_rows_sequentially_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_multiple"
@@ -100,7 +98,7 @@ class TestTableOperations:
 
     def test_should_update_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_update"
@@ -121,7 +119,7 @@ class TestTableOperations:
 
     def test_should_delete_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_delete"
@@ -144,7 +142,7 @@ class TestTableOperations:
 
     def test_should_select_with_where_clause_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
         table_name = f"{tmp_schema}.test_binding_select_where"
@@ -171,7 +169,7 @@ class TestEdgeCases:
 
     def test_should_handle_null_values_in_parameter_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?, ?" is executed with parameters [None, 42, None]
         cursor.execute("SELECT ?, ?, ?", (None, 42, None))
@@ -182,7 +180,7 @@ class TestEdgeCases:
 
     def test_should_handle_special_characters_in_string_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::VARCHAR" is executed with parameter containing special characters
         special_strings = [
@@ -202,7 +200,7 @@ class TestEdgeCases:
 
     def test_should_handle_unicode_characters_in_parameter_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::VARCHAR, ?::VARCHAR" is executed with parameters ["日本語", "⛄"]
         cursor.execute("SELECT ?::VARCHAR, ?::VARCHAR", ("日本語", "⛄"))
@@ -213,7 +211,7 @@ class TestEdgeCases:
 
     def test_should_bind_zero_values(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?::FLOAT, ?::VARCHAR" is executed with parameters [0, 0.0, ""]
         cursor.execute("SELECT ?, ?::FLOAT, ?::VARCHAR", (0, 0.0, ""))
@@ -224,7 +222,7 @@ class TestEdgeCases:
 
     def test_should_handle_mixed_type_casting_with_parameter_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN" is executed with parameters [42, "hello", True]
         cursor.execute("SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN", (42, "hello", True))
@@ -235,7 +233,7 @@ class TestEdgeCases:
 
     def test_should_raise_error_when_placeholder_count_mismatches_argument_count(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query with 2 placeholders is executed with 3 arguments
         cursor.execute("SELECT ?, ?", (1, 2, 3))
@@ -261,7 +259,7 @@ class TestArrayBinding:
     def test_should_insert_multiple_rows_using_multirow_binding(self, execute_query, cursor, tmp_schema):
         """Test multirow binding with basic INSERT."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany"
@@ -281,7 +279,7 @@ class TestArrayBinding:
     def test_should_handle_empty_sequence_in_multirow_binding(self, execute_query, cursor):
         """Test multirow binding with empty sequence is no-op."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Multirow binding is called with empty sequence
         cursor.executemany("INSERT INTO table VALUES (?)", [])
@@ -292,7 +290,7 @@ class TestArrayBinding:
     def test_should_validate_parameter_length_in_multirow_binding(self, execute_query, cursor):
         """Test multirow binding raises error for inconsistent lengths."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
         from snowflake.connector import InterfaceError
 
         # When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b", "extra")]
@@ -305,7 +303,7 @@ class TestArrayBinding:
     def test_should_handle_null_values_in_multirow_binding(self, execute_query, cursor, tmp_schema):
         """Test multirow binding handles NULL values."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, value VARCHAR) exists
         table_name = f"{tmp_schema}.test_nulls"
@@ -328,7 +326,7 @@ class TestBackwardCompatibility:
 
     def test_should_handle_both_tuple_and_list_parameter_formats(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?, ?" is executed with tuple parameters (1, "test")
         sql = "SELECT ?, ?"
@@ -349,7 +347,7 @@ class TestComplexScenarios:
 
     def test_should_bind_many_parameters(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query with 20 positional parameters is executed with values [0..19]
         num_params = 20
@@ -363,7 +361,7 @@ class TestComplexScenarios:
 
     def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_in_clause"

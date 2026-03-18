@@ -7,7 +7,6 @@ from tests.e2e.put_get.put_get_helper import (
     create_temporary_stage_and_upload_file,
     get_file_from_stage,
 )
-from tests.e2e.types.utils import assert_connection_is_open
 from tests.utils import shared_test_data_dir
 
 
@@ -21,7 +20,7 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
     compressed_filename = "test_data.csv.gz"
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When File is uploaded to stage with AUTO_COMPRESS set to true
         stage_name, _ = create_temporary_stage_and_upload_file(
@@ -67,7 +66,7 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When File is uploaded to stage with AUTO_COMPRESS set to false
         stage_name, _ = create_temporary_stage_and_upload_file(

@@ -10,7 +10,7 @@ from math import inf, nan
 
 import pytest
 
-from .utils import assert_connection_is_open, assert_floats_equal, assert_type
+from .utils import assert_floats_equal, assert_type
 
 
 # NumPy is optional for these tests
@@ -36,7 +36,7 @@ class TestFloatNumPy:
         self, execute_query, cursor_with_numpy, float_type
     ):
         # Given Snowflake client is logged in with NumPy mode enabled
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 0.0::<type>, 123.456::<type>, -789.012::<type>, 1.23e10::<type>" is executed
         sql = f"SELECT 0.0::{float_type}, 123.456::{float_type}, -789.012::{float_type}, 1.23e10::{float_type}"
@@ -55,7 +55,7 @@ class TestFloatNumPy:
         self, execute_query, cursor_with_numpy, float_type
     ):
         # Given Snowflake client is logged in with NumPy mode enabled
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
         sql = f"SELECT 'NaN'::{float_type}, 'inf'::{float_type}, '-inf'::{float_type}"

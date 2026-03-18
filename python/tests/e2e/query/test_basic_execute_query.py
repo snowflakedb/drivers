@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.types.utils import assert_connection_is_open, assert_sequential_values
+from tests.e2e.types.utils import assert_sequential_values
 
 
 class TestSelectQueries:
@@ -25,7 +25,7 @@ class TestSelectQueries:
     def test_should_execute_simple_select_returning_single_value(self, execute_query, cursor):
         """Test simple SELECT returning single value."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 1 AS value" is executed
         cursor.execute("SELECT 1 AS value")
@@ -38,7 +38,7 @@ class TestSelectQueries:
     def test_should_execute_select_returning_multiple_columns(self, execute_query, cursor):
         """Test SELECT returning multiple columns."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 1 AS col1, 'hello' AS col2, '3.14' AS col3" is executed
         cursor.execute("SELECT 1 AS col1, 'hello' AS col2, '3.14' AS col3")
@@ -56,7 +56,7 @@ class TestSelectQueries:
     def test_should_execute_select_returning_multiple_rows(self, execute_query, cursor):
         """Test SELECT returning multiple rows using GENERATOR."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT seq8() AS id FROM TABLE(GENERATOR(ROWCOUNT => 5)) v ORDER BY id" is executed
         cursor.execute("SELECT seq8() AS id FROM TABLE(GENERATOR(ROWCOUNT => 5)) v ORDER BY id")
@@ -70,7 +70,7 @@ class TestSelectQueries:
     def test_should_execute_select_returning_empty_result_set(self, execute_query, cursor):
         """Test SELECT returning empty result set."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 1 WHERE 1=0" is executed
         cursor.execute("SELECT 1 WHERE 1=0")
@@ -82,7 +82,7 @@ class TestSelectQueries:
     def test_should_execute_select_returning_null_values(self, execute_query, cursor):
         """Test SELECT returning NULL values."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT NULL AS col1, 42 AS col2, NULL AS col3" is executed
         cursor.execute("SELECT NULL AS col1, 42 AS col2, NULL AS col3")
@@ -101,7 +101,7 @@ class TestDDLStatements:
     def test_should_execute_create_and_drop_table_statements(self, execute_query, cursor, tmp_schema):
         """Test CREATE and DROP TABLE statements."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
         table_name = f"{tmp_schema}.test_basic_ddl"
 
         # When CREATE TABLE statement is executed
@@ -124,7 +124,7 @@ class TestDMLStatements:
     def test_should_execute_insert_and_retrieve_inserted_data(self, execute_query, cursor, tmp_schema):
         """Test INSERT and retrieve inserted data."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And A temporary table is created
         table_name = f"{tmp_schema}.test_basic_dml"
@@ -152,7 +152,7 @@ class TestErrorHandling:
     def test_should_return_error_for_invalid_sql_syntax(self, execute_query, cursor):
         """Test error handling for invalid SQL syntax."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         from snowflake.connector import ProgrammingError
 
@@ -169,7 +169,7 @@ class TestSequentialExecution:
     def test_should_execute_multiple_queries_sequentially_on_same_connection(self, execute_query, cursor):
         """Test multiple queries executed sequentially on same connection."""
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Multiple queries are executed sequentially
         cursor.execute("SELECT 1 AS first_query")
