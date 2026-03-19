@@ -27,7 +27,7 @@ static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(s
 // STRING TRUNCATION
 // ============================================================================
 
-// Byte lenght of data is longer than the buffer length, so the data is truncated.
+// Byte length of data is longer than the buffer length, so the data is truncated.
 TEST_CASE("should truncate string data when byte length is longer than the buffer length",
           "[datatype][string][conversion][char]") {
   // Given Snowflake client is logged in
@@ -81,7 +81,8 @@ TEST_CASE("should truncate wide string data when byte length is longer than the 
   CHECK(buffer[sizeof(buffer) / sizeof(char16_t) - 1] == 0);
 
   // And the indicator should show the actual byte length of the original string in wide char format
-  CHECK(indicator == SQL_NO_TOTAL);  // Length of original string in bytes (52 chars * 2 bytes per wide char)
+  NEW_DRIVER_ONLY("BD#25") { CHECK(indicator == 98); }
+  OLD_DRIVER_ONLY("BD#25") { CHECK((indicator == 98 || indicator == SQL_NO_TOTAL)); }
 }
 
 // ============================================================================

@@ -194,7 +194,7 @@ behavior_differences:
       Impact: Applications that parse the DECFLOAT values will now receive values in properly formatted scientific notation.
       TODO: To be fixed in old driver (SNOW-3229401)
 
-  24:
+  22:
     name: "SQLNumResultCols returns 0 after SQL_CLOSE on prepared statement"
     description: |
       OLD driver: After Prepare -> Execute -> SQL_CLOSE, SQLNumResultCols returns 0.
@@ -209,7 +209,7 @@ behavior_differences:
       Impact: Applications that rely on SQLNumResultCols after SQL_CLOSE on a
       prepared statement will now receive the correct count.
 
-  25:
+  23:
     name: "SQLDescribeCol fails after SQL_CLOSE on prepared statement"
     description: |
       OLD driver: After Prepare -> Execute -> SQL_CLOSE, SQLDescribeCol returns
@@ -225,7 +225,66 @@ behavior_differences:
       Impact: Applications that call SQLDescribeCol after SQL_CLOSE on a prepared
       statement will now receive valid metadata instead of an error.
 
+  24:
+    name: "SQL_C_WCHAR chunked SQLGetData fits fewer characters per call"
+    description: |
+      OLD driver: With an 8-byte SQLWCHAR buffer, the old driver fits only
+      2 data wide characters + NUL instead of the expected 3 + NUL. This
+      appears to stem from using sizeof(wchar_t) (4 bytes on Linux) for
+      buffer capacity calculation instead of sizeof(SQLWCHAR).
+      NEW driver: Computes capacity using sizeof(SQLWCHAR) = 2, fitting
+      3 data characters + NUL in an 8-byte buffer.
+      Spec reference: unixODBC defines SQLWCHAR as unsigned short (2 bytes)
+      by default via typedef WCHAR SQLWCHAR where WCHAR = unsigned short.
+      Source: https://github.com/lurcher/unixODBC/blob/master/include/sqltypes.h
+      Impact: Chunked SQL_C_WCHAR retrieval returns more data per call in the
+      new driver. Applications using iterative SQLGetData will complete in
+      fewer round-trips.
+
+  25:
+    name: "SQLGetData truncation indicator is consistently the actual data length"
+    description: |
+      OLD driver: The truncation indicator returned by the old driver is
+      inconsistent across target C types and platforms:
+        - SQL_C_BINARY truncation: always returns actual byte length.
+        - SQL_C_CHAR truncation via SQLGetData: returns actual length on
+          x86_64 Linux but SQL_NO_TOTAL (-4) on arm64.
+        - SQL_C_CHAR truncation via SQLBindCol: always returns actual length.
+        - SQL_C_WCHAR truncation (string source): returns SQL_NO_TOTAL.
+        - SQL_C_WCHAR truncation (binary source): returns actual byte length.
+      NEW driver: Always sets the indicator to the actual total byte length
+      of the remaining data, regardless of platform, source type, or
+      target C type. This makes indicator behavior deterministic and
+      portable.
+      Rationale: The ODBC specification states that when data is truncated,
+      "SQLGetData returns the length of the data available to return" and
+      that SQL_NO_TOTAL should only be used when the driver "cannot determine
+      the length of the long data." Since the driver always knows the data
+      length, returning it is more correct and more useful. This lets
+      applications pre-allocate appropriately-sized buffers on subsequent
+      calls instead of guessing.
+      Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
+      Impact: Applications that check the indicator after a truncated
+      SQLGetData call will now always receive the actual byte count.
+      Applications that previously handled both values (as recommended by
+      the ODBC spec) are unaffected. The consistent behavior eliminates a
+      class of platform-specific bugs where applications worked on one
+      architecture but failed on another due to SQL_NO_TOTAL handling.
+
   26:
+    name: "SQLDescribeCol reports SQL_VARBINARY for BINARY columns instead of SQL_BINARY"
+    description: |
+      OLD driver: Reports data_type as SQL_BINARY (-2) for Snowflake BINARY
+      columns via SQLDescribeCol.
+      NEW driver: Reports data_type as SQL_VARBINARY (-3).
+      Rationale: Snowflake BINARY is a variable-length type (up to 8 MB).
+      The ODBC specification defines SQL_BINARY for fixed-length binary and
+      SQL_VARBINARY for variable-length binary. SQL_VARBINARY is the
+      semantically correct type for Snowflake's BINARY.
+      Impact: Most applications treat SQL_BINARY and SQL_VARBINARY
+      interchangeably. Applications that switch on the exact data_type value
+      may need to handle SQL_VARBINARY in addition to SQL_BINARY.
+  27:
     name: "SQLRowCount with null RowCountPtr returns SQL_SUCCESS instead of SQL_ERROR (HY009)"
     description: |
       OLD driver: When SQLRowCount is called with a null RowCountPtr after

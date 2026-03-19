@@ -15,7 +15,9 @@ use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 use odbc_sys as sql;
 
-pub(crate) struct SnowflakeBinary;
+pub(crate) struct SnowflakeBinary {
+    pub len: u32,
+}
 
 impl SnowflakeType for SnowflakeBinary {
     type Representation<'a> = &'a [u8];
@@ -36,13 +38,23 @@ impl ReadArrowType<GenericByteArray<GenericBinaryType<i32>>> for SnowflakeBinary
     }
 }
 
+/// Convert a nibble (4-bit value) to its uppercase ASCII hex character
+fn hex_digit_to_ascii(nibble: u8) -> u8 {
+    let masked = nibble & 0xF;
+    match masked {
+        0..=9 => b'0' + masked,
+        10..=15 => b'A' + (masked - 10),
+        _ => unreachable!(),
+    }
+}
+
 impl WriteODBCType for SnowflakeBinary {
     fn sql_type(&self) -> sql::SqlDataType {
         odbc_sys::SqlDataType::EXT_VAR_BINARY
     }
 
     fn column_size(&self) -> sql::ULen {
-        8_388_608
+        self.len as sql::ULen
     }
 
     fn decimal_digits(&self) -> sql::SmallInt {
@@ -58,6 +70,48 @@ impl WriteODBCType for SnowflakeBinary {
         match binding.target_type {
             CDataType::Default | CDataType::Binary => {
                 Ok(binding.write_binary(snowflake_value, get_data_offset))
+            }
+            CDataType::Char => {
+                let total_hex_len = (snowflake_value.len() * 2) as sql::Len;
+                let converter = |pos: usize| {
+                    let byte_idx = pos / 2;
+                    let nibble_offset = pos % 2;
+
+                    if byte_idx >= snowflake_value.len() {
+                        return None;
+                    }
+
+                    let b = snowflake_value[byte_idx];
+                    let hex_byte = if nibble_offset == 0 {
+                        hex_digit_to_ascii(b >> 4)
+                    } else {
+                        hex_digit_to_ascii(b & 0x0F)
+                    };
+                    Some(hex_byte)
+                };
+
+                Ok(binding.write_char_from_fn(converter, total_hex_len, get_data_offset))
+            }
+            CDataType::WChar => {
+                let total_hex_len = (snowflake_value.len() * 2) as sql::Len;
+                let converter = |pos: usize| {
+                    let byte_idx = pos / 2;
+                    let nibble_offset = pos % 2;
+
+                    if byte_idx >= snowflake_value.len() {
+                        return None;
+                    }
+
+                    let b = snowflake_value[byte_idx];
+                    let hex_byte = if nibble_offset == 0 {
+                        hex_digit_to_ascii(b >> 4)
+                    } else {
+                        hex_digit_to_ascii(b & 0x0F)
+                    };
+                    Some(hex_byte as u16)
+                };
+
+                Ok(binding.write_wchar_from_fn(converter, total_hex_len, get_data_offset))
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
