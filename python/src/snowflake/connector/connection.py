@@ -382,9 +382,14 @@ class Connection:
         return SnowflakeRestful(connection=self)
 
     @internal_api
-    def _get_connection_info(self) -> ConnectionGetInfoResponse:
+    def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
         """Refresh connection details for connection"""
-        return self.db_api.connection_get_info(ConnectionGetInfoRequest(conn_handle=self.conn_handle))
+        return self.db_api.connection_get_info(
+            ConnectionGetInfoRequest(
+                conn_handle=self.conn_handle,
+                include_master_token=include_master_token,
+            )
+        )
 
     @internal_api
     @backward_compatibility

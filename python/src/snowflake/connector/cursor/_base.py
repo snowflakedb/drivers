@@ -74,7 +74,6 @@ class FetchMode(enum.Enum):
 
 
 def _requires_open(func: F) -> F:
-
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
         if self.is_closed():

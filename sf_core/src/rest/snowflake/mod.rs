@@ -119,6 +119,29 @@ struct RefreshSessionData {
     master_validity: Option<std::time::Duration>,
 }
 
+/// Response from the token request endpoint (ISSUE/RENEW).
+/// Unlike `RefreshSessionResponse`, fields like `masterToken` and `sessionId`
+/// may be absent depending on the request type.
+#[derive(Debug, serde::Deserialize)]
+struct TokenRequestResponse {
+    data: Option<TokenRequestData>,
+    message: Option<String>,
+    code: Option<String>,
+    success: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TokenRequestData {
+    #[serde(rename = "sessionToken")]
+    session_token: String,
+    #[serde(
+        rename = "validityInSecondsST",
+        deserialize_with = "auth::deserialize_seconds_as_duration",
+        default
+    )]
+    validity: Option<std::time::Duration>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryExecutionMode {
     Blocking,
@@ -681,6 +704,111 @@ pub async fn refresh_session(
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
+    })
+}
+
+/// Result of a token request (ISSUE or RENEW).
+pub struct TokenRequestResult {
+    pub session_token: SensitiveString,
+    /// Validity in seconds as returned by the server.
+    /// `None` when the server omits the validity field.
+    pub validity_in_seconds: Option<i64>,
+}
+
+impl std::fmt::Debug for TokenRequestResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenRequestResult")
+            .field("session_token", &"[REDACTED]")
+            .field("validity_in_seconds", &self.validity_in_seconds)
+            .finish()
+    }
+}
+
+/// Send a token request (ISSUE or RENEW) to the Snowflake server.
+///
+/// This reuses the same endpoint and authentication as `refresh_session`
+/// but allows specifying the request type and returns minimal structured data.
+pub async fn token_request(
+    client: &reqwest::Client,
+    server_url: &str,
+    client_info: &ClientInfo,
+    tokens: &SessionTokens,
+    request_type: &str,
+) -> Result<TokenRequestResult, RestError> {
+    let token_url = Url::parse(server_url)
+        .and_then(|base| base.join(TOKEN_REQUEST_PATH))
+        .context(UrlJoinSnafu {
+            path: TOKEN_REQUEST_PATH,
+        })?;
+
+    let body = serde_json::json!({
+        "oldSessionToken": tokens.session_token.reveal(),
+        "requestType": request_type,
+    });
+
+    let request = client
+        .post(token_url)
+        .query(&[
+            ("requestId", uuid::Uuid::new_v4().to_string()),
+            ("request_guid", uuid::Uuid::new_v4().to_string()),
+        ])
+        .header(
+            header::AUTHORIZATION,
+            format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
+        )
+        .header(header::ACCEPT, "application/json")
+        .header("User-Agent", user_agent(client_info))
+        .json(&body)
+        .build()
+        .context(RequestConstructionSnafu {
+            request: "token request",
+        })?;
+
+    let response = client.execute(request).await.context(CommunicationSnafu {
+        context: "Failed to execute token request",
+    })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return TokenRequestHttpSnafu {
+            operation: request_type.to_string(),
+            status,
+        }
+        .fail();
+    }
+
+    let token_response =
+        response
+            .json::<TokenRequestResponse>()
+            .await
+            .context(CommunicationSnafu {
+                context: "Failed to parse token request response",
+            })?;
+
+    if !token_response.success {
+        let message = token_response
+            .message
+            .unwrap_or_else(|| "Unknown error".to_string());
+        let code = token_response
+            .code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        return TokenRequestFailedSnafu {
+            operation: request_type.to_string(),
+            message,
+            code,
+        }
+        .fail();
+    }
+
+    let data = token_response.data.context(MissingResponseFieldSnafu {
+        field: "token request data",
+    })?;
+
+    Ok(TokenRequestResult {
+        session_token: data.session_token.into(),
+        validity_in_seconds: data.validity.and_then(|d| i64::try_from(d.as_secs()).ok()),
     })
 }
 
@@ -1350,6 +1478,21 @@ pub enum RestError {
     },
     #[snafu(display("Session refresh failed: {message} (code: {code})"))]
     SessionRefreshFailed {
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Token request ({operation}) HTTP request failed with status {status}"))]
+    TokenRequestHttp {
+        operation: String,
+        status: reqwest::StatusCode,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Token request ({operation}) failed: {message} (code: {code})"))]
+    TokenRequestFailed {
+        operation: String,
         message: String,
         code: i32,
         #[snafu(implicit)]

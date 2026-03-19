@@ -238,8 +238,12 @@ impl From<NativeExecuteResult> for ExecuteResult {
     }
 }
 
-impl From<ConnectionInfo> for ConnectionGetInfoResponse {
-    fn from(info: ConnectionInfo) -> Self {
+impl ConnectionGetInfoResponse {
+    /// Build from `ConnectionInfo`, optionally revealing `master_token`.
+    ///
+    /// `master_token` is only populated when `include_master_token` is true
+    /// to minimize accidental exposure of sensitive material.
+    fn from_info(info: ConnectionInfo, include_master_token: bool) -> Self {
         ConnectionGetInfoResponse {
             host: info.host,
             port: info.port,
@@ -252,6 +256,11 @@ impl From<ConnectionInfo> for ConnectionGetInfoResponse {
             database: info.database,
             schema: info.schema,
             warehouse: info.warehouse,
+            master_token: if include_master_token {
+                info.master_token.map(|t| t.reveal().to_string())
+            } else {
+                None
+            },
         }
     }
 }
@@ -426,6 +435,14 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 detail: source.to_string(),
             })),
         },
+        ApiError::HttpRequest { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
+        ApiError::TokenRequest { source, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                detail: source.to_string(),
+            })),
+        },
         ApiError::Configuration {
             source: ConfigError::ConfigFileRead { .. },
             ..
@@ -565,6 +582,8 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
         ApiError::ArrowParsing { .. } => StatusCode::InternalError,
         ApiError::Base64Decoding { .. } => StatusCode::InternalError,
+        ApiError::HttpRequest { .. } => StatusCode::GenericError,
+        ApiError::TokenRequest { .. } => StatusCode::AuthenticationError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
@@ -1026,7 +1045,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .await
             .to_protobuf()?;
 
-        Ok(ConnectionGetInfoResponse::from(info))
+        Ok(ConnectionGetInfoResponse::from_info(
+            info,
+            input.include_master_token,
+        ))
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self, _input))]
@@ -1179,6 +1201,63 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .to_protobuf()?;
 
         Ok(result.into())
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_send_http", skip(self, input))]
+    async fn connection_send_http(
+        &self,
+        input: ConnectionSendHttpRequest,
+    ) -> Result<ConnectionSendHttpResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let result = self
+            .driver
+            .connection_send_http_request(
+                conn_handle.into(),
+                input.method,
+                input.url,
+                input.headers,
+                input.body,
+            )
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionSendHttpResponse {
+            status_code: result.status_code,
+            headers: result.headers,
+            body: result.body,
+        })
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_request_token", skip(self, input))]
+    async fn connection_request_token(
+        &self,
+        input: ConnectionTokenRequest,
+    ) -> Result<ConnectionTokenResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let request_type = match TokenRequestType::try_from(input.request_type) {
+            Ok(TokenRequestType::Issue) => "ISSUE",
+            Ok(TokenRequestType::Renew) => "RENEW",
+            _ => {
+                return Err(DriverException {
+                    message: "request_type must be ISSUE or RENEW".to_string(),
+                    status_code: StatusCode::InvalidArgument as i32,
+                    ..Default::default()
+                });
+            }
+        };
+
+        let result = self
+            .driver
+            .connection_token_request(conn_handle.into(), request_type.to_string())
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionTokenResponse {
+            session_token: result.session_token.reveal().to_string(),
+            validity_in_seconds: result.validity_in_seconds,
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]

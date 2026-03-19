@@ -357,6 +357,9 @@ message ConnectionReleaseResponse {
 message ConnectionGetInfoRequest {
   ConnectionHandle conn_handle = 1;
   repeated InfoCode info_codes = 2;
+  // Opt-in to include sensitive tokens (e.g. master_token) in the response.
+  // Defaults to false; only set when the caller needs tokens for REST-compat.
+  bool include_master_token = 3;
 }
 
 message ConnectionGetInfoResponse {
@@ -371,6 +374,7 @@ message ConnectionGetInfoResponse {
   optional string database = 9;
   optional string schema = 10;
   optional string warehouse = 11;
+  optional string master_token = 12;
 }
 
 message ConnectionGetObjectsRequest {
@@ -443,6 +447,40 @@ message ConnectionValidateOptionsRequest {
 
 message ConnectionValidateOptionsResponse {
   repeated ValidationIssue issues = 1;
+}
+
+// HTTP request via sf_core (uses connection's TLS/OCSP/CRL client).
+// URL is resolved relative to the connection's server_url.
+// Auth is always the current session token (managed by sf_core).
+message ConnectionSendHttpRequest {
+  ConnectionHandle conn_handle = 1;
+  string method = 2;              // GET, POST, PUT, DELETE, PATCH
+  string url = 3;                 // relative URL path (e.g. "/session/token-request")
+  map<string, string> headers = 4;
+  optional bytes body = 5;
+}
+
+message ConnectionSendHttpResponse {
+  int32 status_code = 1;
+  map<string, string> headers = 2;
+  bytes body = 3;
+}
+
+enum TokenRequestType {
+  TOKEN_REQUEST_TYPE_UNSPECIFIED = 0;
+  TOKEN_REQUEST_TYPE_ISSUE = 1;
+  TOKEN_REQUEST_TYPE_RENEW = 2;
+}
+
+// Token request (ISSUE/RENEW) — executed entirely in sf_core with master token
+message ConnectionTokenRequest {
+  ConnectionHandle conn_handle = 1;
+  TokenRequestType request_type = 2;
+}
+
+message ConnectionTokenResponse {
+  string session_token = 1;
+  optional int64 validity_in_seconds = 2;
 }
 
 // Fetch the result of a previously executed query by its Snowflake Query ID.
@@ -768,6 +806,10 @@ service DatabaseDriver {
   // Fetch the result of a previously executed query by Snowflake Query ID
   rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  // Generic HTTP request through sf_core's TLS/OCSP/CRL client
+  rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
+  // Token request (ISSUE/RENEW) executed with master token in sf_core
+  rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);

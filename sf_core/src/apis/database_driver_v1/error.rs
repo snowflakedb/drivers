@@ -92,6 +92,19 @@ pub enum ApiError {
         location: Location,
         source: RestError,
     },
+    #[snafu(display("HTTP request failed: {context}: {source}"))]
+    HttpRequest {
+        context: String,
+        #[snafu(implicit)]
+        location: Location,
+        source: reqwest::Error,
+    },
+    #[snafu(display("Token request failed: {source}"))]
+    TokenRequest {
+        #[snafu(implicit)]
+        location: Location,
+        source: RestError,
+    },
     #[snafu(display("Master token expired, full re-authentication required"))]
     MasterTokenExpired {
         #[snafu(implicit)]
