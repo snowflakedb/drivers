@@ -8,8 +8,8 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection,
-    ParameterBinding, SqlType, Statement, StatementState, stmt_from_handle,
+    ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, SqlType,
+    Statement, StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
