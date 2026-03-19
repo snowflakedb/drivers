@@ -100,7 +100,9 @@ jobs:
               - 'rust-toolchain.toml'
               - 'tests/!(performance|tests_format_validator|test_coverage_report)/**'
               - '.github/workflows/**'
+              - '.buildkite/**'
               - 'scripts/**'
+              - 'ci/**'
             docs_only:
               - '**/*.md'
               - 'LICENSE'

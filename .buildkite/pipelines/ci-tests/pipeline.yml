@@ -27,5 +27,6 @@ steps:
       queue: "discovery"
       repo: "snowflakedb/universal-driver"
     command: |
-      pip3 install pyyaml -q 2>/dev/null
+      set -euo pipefail
+      pip3 install pyyaml -q
       python3 ci/generate_buildkite_pipeline.py | buildkite-agent pipeline upload

@@ -113,6 +113,7 @@ def annotate(message, style="info", context="default"):
 
 
 RUST_COMMAND = """\
+set -euo pipefail
 TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
 echo "Filter: $$TEST_FILTER"
 
@@ -126,22 +127,25 @@ cargo install cargo2junit 2>/dev/null || true
 
 echo "--- :test_tube: Running E2E Tests"
 mkdir -p results
+export RUSTC_BOOTSTRAP=1
 if [ "$$TEST_FILTER" = "ALL" ]; then
-  cargo test --package sf_core -- --ignored -Z unstable-options --format json 2>&1 | cargo2junit > results/rust-junit.xml
+  cargo test --package sf_core -- --ignored -Z unstable-options --format json --report-time 2>&1 | cargo2junit > results/rust-junit.xml
 else
   # cargo test uses substring matching — run once per filter and merge JSON streams
   IFS='|' read -ra FILTERS <<< "$$TEST_FILTER"
   for filter in "$${FILTERS[@]}"; do
     echo "Running: cargo test -- --ignored $$filter"
-    cargo test --package sf_core -- --ignored "$$filter" -Z unstable-options --format json 2>&1
+    cargo test --package sf_core -- --ignored "$$filter" -Z unstable-options --format json --report-time 2>&1
   done | cargo2junit > results/rust-junit.xml
 fi
+unset RUSTC_BOOTSTRAP
 
 echo "--- :buildkite: Uploading test results"
 buildkite-agent artifact upload "results/*-junit.xml"
 """
 
 PYTHON_COMMAND = """\
+set -euo pipefail
 TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-python")
 echo "Filter: $$TEST_FILTER"
 
@@ -168,6 +172,7 @@ buildkite-agent artifact upload "results/*-junit.xml"
 """
 
 ODBC_COMMAND = """\
+set -euo pipefail
 TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-odbc")
 echo "Filter: $$TEST_FILTER"
 
@@ -203,6 +208,7 @@ buildkite-agent artifact upload "results/*-junit.xml"
 """
 
 JDBC_COMMAND = """\
+set -euo pipefail
 TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-java")
 echo "Filter: $$TEST_FILTER"
 

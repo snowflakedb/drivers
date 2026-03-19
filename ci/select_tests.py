@@ -244,20 +244,18 @@ def select_tests(driver, changed_files, config, group="all"):
 
         for rule in rules:
             rule_name = rule.get("name", "")
-            if rule_name in matched_rules:
-                continue
-
             rule_paths = rule.get("paths", [])
+            already_matched = rule_name in matched_rules
+
             for f in changed_files:
                 if file_matches_any(f, rule_paths):
                     claimed_files.add(f)
-                    matched_rules.add(rule_name)
-
-                    # Get the driver's test config (may be a dict with groups or a string)
-                    driver_tests = rule.get("tests", {}).get(driver)
-                    filters = _extract_filters_for_group(driver_tests, groups)
-                    collected_filters.extend(filters)
-                    break
+                    if not already_matched:
+                        matched_rules.add(rule_name)
+                        driver_tests = rule.get("tests", {}).get(driver)
+                        filters = _extract_filters_for_group(driver_tests, groups)
+                        collected_filters.extend(filters)
+                        already_matched = True
 
     if collected_filters:
         separator = DRIVER_SEPARATOR.get(driver, "|")

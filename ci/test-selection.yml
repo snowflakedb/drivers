@@ -21,6 +21,11 @@
 #   python ci/select_tests.py --driver java --group e2e
 #   python ci/select_tests.py --driver java --group unit       # single group
 #
+# Filter format note:
+#   Rust filters use "|" as separator in this config. cargo test uses substring
+#   matching (NOT regex), so the pipeline runner splits on "|" and runs cargo
+#   test once per filter.
+#
 # Test filter formats:
 #   rust unit:   cargo test --package sf_core --lib <filter>
 #   rust integ:  cargo test --package sf_core --test integration <filter>
