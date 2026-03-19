@@ -14,18 +14,20 @@
 #include "Connection.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_return_code.hpp"
 
 class Schema {
  public:
   Schema(Connection& conn, const std::string& schema_name)
       : execute_fn([&conn](const std::string& sql) { conn.execute(sql); }), schema_name(schema_name) {
-    execute_fn("CREATE SCHEMA IF NOT EXISTS " + schema_name);
-    use_schema_with_retry(conn.handleWrapper().getHandle());
+    SQLHANDLE dbc_handle = conn.handleWrapper().getHandle();
+    create_schema_with_diagnostics(dbc_handle);
+    use_schema_with_retry(dbc_handle);
   }
 
   Schema(const SQLHDBC dbc, const std::string& schema_name)
       : execute_fn(make_dbc_executor(dbc)), schema_name(schema_name) {
-    execute_fn("CREATE SCHEMA IF NOT EXISTS " + schema_name);
+    create_schema_with_diagnostics(dbc);
     use_schema_with_retry(dbc);
   }
 
@@ -67,6 +69,55 @@ class Schema {
     std::random_device rd;
     std::mt19937_64 gen(rd());
     return "SCHEMA_" + std::to_string(gen());
+  }
+
+  void create_schema_with_diagnostics(SQLHANDLE dbc) {
+    const std::string sql = "CREATE SCHEMA IF NOT EXISTS " + schema_name;
+
+    SQLHSTMT stmt = SQL_NULL_HSTMT;
+    SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
+    if (!SQL_SUCCEEDED(ret)) {
+      WARN("[Schema] CREATE: SQLAllocHandle failed for " << schema_name);
+      execute_fn(sql);
+      return;
+    }
+
+    ret = SQLExecDirect(stmt, sqlchar(sql.c_str()), SQL_NTS);
+
+    auto diags = get_diag_rec(SQL_HANDLE_STMT, stmt);
+    SQLLEN row_count = -1;
+    SQLRowCount(stmt, &row_count);
+
+    WARN("[Schema] CREATE " << schema_name << ": ret=" << return_code_to_string(ret) << " row_count=" << row_count
+                            << " diag_count=" << diags.size());
+
+    for (size_t i = 0; i < diags.size(); ++i) {
+      WARN("[Schema]   diag[" << i << "] SQLSTATE=" << diags[i].sqlState << " NativeError=" << diags[i].nativeError
+                              << " " << diags[i].messageText);
+    }
+
+    if (SQL_SUCCEEDED(ret) && row_count != 0) {
+      SQLSMALLINT col_count = 0;
+      SQLNumResultCols(stmt, &col_count);
+      while (SQLFetch(stmt) == SQL_SUCCESS) {
+        std::string row;
+        for (SQLSMALLINT col = 1; col <= col_count; ++col) {
+          char buf[1024] = {};
+          SQLLEN indicator = 0;
+          SQLGetData(stmt, col, SQL_C_CHAR, buf, sizeof(buf), &indicator);
+          if (!row.empty()) row += ", ";
+          row += (indicator == SQL_NULL_DATA) ? "NULL" : std::string(buf);
+        }
+        WARN("[Schema]   row: " << row);
+      }
+    }
+
+    SQLFreeStmt(stmt, SQL_CLOSE);
+    SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+
+    if (!SQL_SUCCEEDED(ret)) {
+      execute_fn(sql);
+    }
   }
 
   // Retry USE SCHEMA with exponential backoff: 250ms, 500ms, 1000ms (~2s total),
