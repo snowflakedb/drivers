@@ -317,6 +317,18 @@ pub enum StmtAttr {
     UseBookmarks = 12,
     /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
     EnableAutoIpd = 15,
+    /// `SQL_ATTR_PARAM_BIND_OFFSET_PTR` (17) — pointer to offset applied to parameter binding pointers (APD).
+    ParamBindOffsetPtr = 17,
+    /// `SQL_ATTR_PARAM_BIND_TYPE` (18) — column-wise (0) or row-wise binding for parameters (APD).
+    ParamBindType = 18,
+    /// `SQL_ATTR_PARAM_OPERATION_PTR` (19) — pointer to per-parameter operation array (APD).
+    ParamOperationPtr = 19,
+    /// `SQL_ATTR_PARAM_STATUS_PTR` (20) — pointer to per-parameter status array (IPD).
+    ParamStatusPtr = 20,
+    /// `SQL_ATTR_PARAMS_PROCESSED_PTR` (21) — pointer to count of parameters processed (IPD).
+    ParamsProcessedPtr = 21,
+    /// `SQL_ATTR_PARAMSET_SIZE` (22) — number of parameter sets in the parameter arrays (APD).
+    ParamsetSize = 22,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
@@ -362,6 +374,12 @@ impl TryFrom<i32> for StmtAttr {
             11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
             15 => Ok(StmtAttr::EnableAutoIpd),
+            17 => Ok(StmtAttr::ParamBindOffsetPtr),
+            18 => Ok(StmtAttr::ParamBindType),
+            19 => Ok(StmtAttr::ParamOperationPtr),
+            20 => Ok(StmtAttr::ParamStatusPtr),
+            21 => Ok(StmtAttr::ParamsProcessedPtr),
+            22 => Ok(StmtAttr::ParamsetSize),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
@@ -691,6 +709,8 @@ pub struct ArdDescriptor {
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` / `SQL_ATTR_ROW_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` on APD / `SQL_ATTR_PARAM_OPERATION_PTR` — default null.
+    pub array_status_ptr: *mut u16,
 }
 
 impl Default for ArdDescriptor {
@@ -707,6 +727,7 @@ impl ArdDescriptor {
             array_size: 1,
             bind_type: 0,
             bind_offset_ptr: std::ptr::null_mut(),
+            array_status_ptr: std::ptr::null_mut(),
         }
     }
 
@@ -744,6 +765,8 @@ pub struct ApdDescriptor {
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_PARAM_OPERATION_PTR` — default null.
+    pub array_status_ptr: *mut u16,
 }
 
 impl Default for ApdDescriptor {
@@ -760,6 +783,7 @@ impl ApdDescriptor {
             array_size: 1,
             bind_type: 0,
             bind_offset_ptr: std::ptr::null_mut(),
+            array_status_ptr: std::ptr::null_mut(),
         }
     }
 
@@ -1036,6 +1060,8 @@ impl Default for IpdRecord {
 #[derive(Debug, Clone)]
 pub struct ParameterBinding {
     pub sql_data_type: sql::SqlDataType,
+    /// Alias for `sql_data_type` used by the array execution path.
+    pub parameter_type: sql::SqlDataType,
     pub value_type: CDataType,
     pub parameter_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
@@ -1046,6 +1072,7 @@ impl ParameterBinding {
     pub fn from_apd_ipd(apd: &ApdRecord, ipd: &IpdRecord) -> Self {
         Self {
             sql_data_type: ipd.sql_data_type,
+            parameter_type: ipd.sql_data_type,
             value_type: apd.value_type,
             parameter_value_ptr: apd.data_ptr,
             buffer_length: apd.buffer_length,

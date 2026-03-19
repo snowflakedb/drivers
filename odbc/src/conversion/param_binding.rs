@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     ffi::{CStr, c_char},
     mem, slice, str,
 };
@@ -15,7 +16,8 @@ use super::boolean::SnowflakeBoolean;
 use super::date::SnowflakeDate;
 use super::error::{
     InvalidParameterIndicesSnafu, InvalidUtf8Snafu, JsonBindingError, NullPointerSnafu,
-    NumericMagnitudeOverflowSnafu, SerializationSnafu, UnsupportedParameterTypeSnafu,
+    NumericMagnitudeOverflowSnafu, SerializationSnafu, UnsupportedCDataTypeSnafu,
+    UnsupportedParameterTypeSnafu,
     WCharConversionSnafu,
 };
 use super::number::{NumericSqlType, SnowflakeNumber};
@@ -482,6 +484,222 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
         unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u16, unit_len) }
     };
     String::from_utf16(units).map_err(|_| WCharConversionSnafu.build())
+}
+
+// =============================================================================
+// Array binding support
+// =============================================================================
+
+/// Map SQL data type to the Snowflake logical type string used in array binding JSON.
+///
+/// This mirrors `make_converter` but returns only the type label without requiring
+/// a value to convert. Used for array bindings where the type is set once for all rows.
+fn sql_type_to_sf_logical_type(
+    sql_type: &sql::SqlDataType,
+) -> Result<SnowflakeLogicalType, JsonBindingError> {
+    match *sql_type {
+        sql::SqlDataType::INTEGER
+        | sql::SqlDataType::SMALLINT
+        | sql::SqlDataType::EXT_BIG_INT
+        | sql::SqlDataType::EXT_TINY_INT
+        | sql::SqlDataType::DECIMAL
+        | sql::SqlDataType::NUMERIC => Ok(SnowflakeLogicalType::Fixed),
+
+        sql::SqlDataType::REAL | sql::SqlDataType::FLOAT | sql::SqlDataType::DOUBLE => {
+            Ok(SnowflakeLogicalType::Real)
+        }
+
+        sql::SqlDataType::VARCHAR
+        | sql::SqlDataType::CHAR
+        | sql::SqlDataType::EXT_LONG_VARCHAR
+        | sql::SqlDataType::EXT_W_CHAR
+        | sql::SqlDataType::EXT_W_VARCHAR
+        | sql::SqlDataType::EXT_W_LONG_VARCHAR => Ok(SnowflakeLogicalType::Text),
+
+        sql::SqlDataType::EXT_BIT => Ok(SnowflakeLogicalType::Boolean),
+
+        sql::SqlDataType::EXT_BINARY
+        | sql::SqlDataType::EXT_VAR_BINARY
+        | sql::SqlDataType::EXT_LONG_VAR_BINARY => Ok(SnowflakeLogicalType::Binary),
+
+        sql::SqlDataType::DATE => Ok(SnowflakeLogicalType::Date),
+
+        sql::SqlDataType::TIME => Ok(SnowflakeLogicalType::Time),
+
+        sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => {
+            Ok(SnowflakeLogicalType::TimestampNtz)
+        }
+
+        _ => {
+            tracing::error!(
+                "sql_type_to_sf_logical_type: unsupported type {:?}",
+                sql_type
+            );
+            UnsupportedParameterTypeSnafu {
+                sql_type: *sql_type,
+            }
+            .fail()
+        }
+    }
+}
+
+/// Compute the byte stride between consecutive elements in column-wise array binding.
+///
+/// Uses `buffer_length` when positive; falls back to the natural size of fixed-width C
+/// types when `buffer_length <= 0`. Returns an error for variable-length types that
+/// require an explicit `buffer_length`.
+fn column_wise_stride(binding: &ParameterBinding) -> Result<usize, JsonBindingError> {
+    if binding.buffer_length > 0 {
+        return Ok(binding.buffer_length as usize);
+    }
+    let size = match binding.value_type {
+        CDataType::Bit | CDataType::UTinyInt | CDataType::STinyInt => 1,
+        CDataType::Short | CDataType::UShort | CDataType::SShort => 2,
+        CDataType::Long | CDataType::ULong | CDataType::SLong => 4,
+        CDataType::SBigInt | CDataType::UBigInt => 8,
+        CDataType::Float => 4,
+        CDataType::Double => 8,
+        other => {
+            tracing::error!(
+                "column_wise_stride: variable-length C type {other:?} requires buffer_length > 0"
+            );
+            return UnsupportedCDataTypeSnafu { c_type: other }.fail();
+        }
+    };
+    Ok(size)
+}
+
+/// Compute `(value_ptr, ind_ptr)` for a specific row within a parameter array.
+///
+/// Handles both column-wise (`bind_type == 0`) and row-wise (`bind_type == struct_size`)
+/// layouts, plus the optional byte offset from `bind_offset`.
+fn compute_element_ptrs(
+    binding: &ParameterBinding,
+    row: usize,
+    bind_type: usize,
+    bind_offset: sql::Len,
+) -> Result<(sql::Pointer, *mut sql::Len), JsonBindingError> {
+    let byte_offset = if bind_offset > 0 {
+        bind_offset as usize
+    } else {
+        0
+    };
+
+    if bind_type == 0 {
+        // Column-wise: consecutive elements advance by buffer_length (or type size)
+        let stride = column_wise_stride(binding)?;
+        let eff_val = unsafe {
+            (binding.parameter_value_ptr as *const u8)
+                .add(byte_offset)
+                .add(row * stride) as sql::Pointer
+        };
+        let eff_ind = if binding.str_len_or_ind_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            unsafe {
+                let base =
+                    (binding.str_len_or_ind_ptr as *const u8).add(byte_offset) as *mut sql::Len;
+                base.add(row)
+            }
+        };
+        Ok((eff_val, eff_ind))
+    } else {
+        // Row-wise: both data and indicator advance by the struct size
+        let struct_size = bind_type;
+        let eff_val = unsafe {
+            (binding.parameter_value_ptr as *const u8)
+                .add(byte_offset)
+                .add(row * struct_size) as sql::Pointer
+        };
+        let eff_ind = if binding.str_len_or_ind_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            unsafe {
+                (binding.str_len_or_ind_ptr as *const u8)
+                    .add(byte_offset)
+                    .add(row * struct_size) as *mut sql::Len
+            }
+        };
+        Ok((eff_val, eff_ind))
+    }
+}
+
+/// `SQL_PARAM_IGNORE` value in the operation array (`SQL_ATTR_PARAM_OPERATION_PTR`).
+const SQL_PARAM_IGNORE: u16 = 1;
+
+/// Convert ODBC parameter array bindings to JSON for server-side binding.
+///
+/// When `array_size > 1`, each parameter's `"value"` becomes a JSON array:
+/// ```json
+/// {"1": {"type": "FIXED", "value": ["1", "2", "3"]}}
+/// ```
+/// Rows where `operation_ptr[row] == SQL_PARAM_IGNORE` are omitted from the arrays.
+///
+/// # Safety
+/// All `parameter_value_ptr` and `str_len_or_ind_ptr` pointers in `bindings` must remain
+/// valid for the duration of this call. `operation_ptr`, if non-null, must point to an
+/// array of at least `array_size` elements.
+pub fn odbc_bindings_to_json_array(
+    bindings: &HashMap<u16, ParameterBinding>,
+    array_size: usize,
+    bind_type: usize,
+    bind_offset: sql::Len,
+    operation_ptr: *const u16,
+) -> Result<String, JsonBindingError> {
+    let mut json_bindings = Map::new();
+    let max_key = bindings.keys().copied().max().unwrap_or(0);
+
+    for param_num in 1..=max_key {
+        let binding = bindings.get(&param_num).ok_or_else(|| {
+            tracing::error!(
+                "odbc_bindings_to_json_array: parameter #{param_num} not found. \
+                 Bindings must be contiguous and start at 1."
+            );
+            InvalidParameterIndicesSnafu.build()
+        })?;
+
+        let converter = make_converter(&binding.parameter_type)?;
+        let snowflake_type = sql_type_to_sf_logical_type(&binding.parameter_type)?;
+
+        let mut value_array = Vec::with_capacity(array_size);
+        for row in 0..array_size {
+            if !operation_ptr.is_null() && unsafe { *operation_ptr.add(row) } == SQL_PARAM_IGNORE {
+                continue;
+            }
+
+            let (eff_val, eff_ind) = compute_element_ptrs(binding, row, bind_type, bind_offset)?;
+
+            let row_binding = ParameterBinding {
+                sql_data_type: binding.parameter_type,
+                parameter_type: binding.parameter_type,
+                value_type: binding.value_type,
+                parameter_value_ptr: eff_val,
+                buffer_length: binding.buffer_length,
+                str_len_or_ind_ptr: eff_ind,
+            };
+
+            let json_val = if is_null_indicator(&row_binding) {
+                Value::Null
+            } else {
+                if row_binding.parameter_value_ptr.is_null() {
+                    return NullPointerSnafu.fail();
+                }
+                let (_, v) = converter.convert(&row_binding)?;
+                v
+            };
+            value_array.push(json_val);
+        }
+
+        let mut binding_obj = Map::new();
+        binding_obj.insert(
+            "type".to_string(),
+            Value::String(snowflake_type.as_str().to_string()),
+        );
+        binding_obj.insert("value".to_string(), Value::Array(value_array));
+        json_bindings.insert(param_num.to_string(), Value::Object(binding_obj));
+    }
+
+    serde_json::to_string(&Value::Object(json_bindings)).context(SerializationSnafu)
 }
 
 // =============================================================================
