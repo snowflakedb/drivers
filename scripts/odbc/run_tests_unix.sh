@@ -1,6 +1,13 @@
 #!/bin/bash
 # Run ODBC tests on Unix (Linux/macOS)
-# Required env vars: DRIVER_PATH, PARAMETER_PATH, DRIVER_TYPE
+#
+# Required env vars:
+#   DRIVER_PATH       Path to the ODBC driver shared library
+#   PARAMETER_PATH    Path to parameters.json
+#   DRIVER_TYPE       "NEW" or "OLD"
+#
+# Optional env vars:
+#   FORCE_RUN_NOT_IMPLEMENTED   Set to "ON" to disable SKIP_NEW_DRIVER_NOT_IMPLEMENTED
 set -euo pipefail
 
 cd "$(dirname "$0")/../../odbc_tests"
@@ -20,11 +27,17 @@ else
     NPROC=$(nproc)
 fi
 
+CMAKE_EXTRA_ARGS=()
+if [[ "${FORCE_RUN_NOT_IMPLEMENTED:-}" == "ON" ]]; then
+    CMAKE_EXTRA_ARGS+=(-D FORCE_RUN_NOT_IMPLEMENTED=ON)
+fi
+
 mkdir -p "$BUILD_DIR"
 cmake -B "$BUILD_DIR" \
     -D ODBC_LIBRARY="${ODBC_LIBRARY}" \
     -D ODBC_INCLUDE_DIR="${ODBC_INCLUDE_DIR}" \
     -D DRIVER_TYPE="${DRIVER_TYPE}" \
+    "${CMAKE_EXTRA_ARGS[@]+"${CMAKE_EXTRA_ARGS[@]}"}" \
     .
 cmake --build "$BUILD_DIR" -- -j $((NPROC * 2))
 ctest -j $((NPROC * 4)) -C Debug --test-dir "$BUILD_DIR" --output-on-failure --output-junit results.xml "$@"
