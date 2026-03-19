@@ -27,6 +27,9 @@ from ._internal.binding_converters import (
     ParamStyle,
 )
 from ._internal.decorators import pep249
+from ._internal.extras import check_dependency
+from ._internal.extras import pandas as pd
+from ._internal.extras import pyarrow as pa
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
@@ -41,6 +44,9 @@ from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
+    from pandas import DataFrame
+    from pyarrow import Table
+
     from .connection import Connection
 
 Row = tuple[Any, ...]
@@ -784,19 +790,26 @@ class SnowflakeCursorBase(abc.ABC):
         """Query the result of a previously executed query."""
         raise NotImplementedError("query_result is not yet implemented")
 
-    def fetch_arrow_batches(self, **kwargs: Any) -> Iterator[Any]:
+    def fetch_arrow_batches(
+        self,
+        force_microsecond_precision: bool = False,
+    ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
         raise NotImplementedError("fetch_arrow_batches is not yet implemented")
 
-    def fetch_arrow_all(self, **kwargs: Any) -> Any:
+    def fetch_arrow_all(
+        self,
+        force_return_table: bool = False,
+        force_microsecond_precision: bool = False,
+    ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
         raise NotImplementedError("fetch_arrow_all is not yet implemented")
 
-    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[Any]:
+    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
         """Fetch Pandas DataFrames in batches."""
         raise NotImplementedError("fetch_pandas_batches is not yet implemented")
 
-    def fetch_pandas_all(self, **kwargs: Any) -> Any:
+    def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
         raise NotImplementedError("fetch_pandas_all is not yet implemented")
 
@@ -811,6 +824,12 @@ class SnowflakeCursorBase(abc.ABC):
     def get_result_batches(self) -> list[Any] | None:
         """Get the previously executed query's ResultBatches if available."""
         raise NotImplementedError("get_result_batches is not yet implemented")
+
+    def check_can_use_arrow_resultset(self) -> None:
+        check_dependency(pa)
+
+    def check_can_use_pandas(self) -> None:
+        check_dependency(pd)
 
 
 # ======================================================================
