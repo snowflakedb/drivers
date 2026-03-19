@@ -5,6 +5,7 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -166,9 +167,11 @@ inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQ
 
 inline std::string get_data_default_as_string(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   char buffer[1000];
-  SQLLEN indicator;
+  SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_DEFAULT, buffer, sizeof(buffer), &indicator);
-  CHECK(ret == SQL_SUCCESS);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(indicator >= 0);
+  REQUIRE(indicator < static_cast<SQLLEN>(sizeof(buffer)));
   return std::string(buffer, indicator);
 }
 
@@ -176,21 +179,25 @@ inline SQL_NUMERIC_STRUCT get_binary_as_numeric(const StatementHandleWrapper& st
   char buffer[100] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
-  return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  SQL_NUMERIC_STRUCT result;
+  std::memcpy(&result, buffer, sizeof(SQL_NUMERIC_STRUCT));
+  return result;
 }
 
 inline SQL_NUMERIC_STRUCT get_binary_as_numeric_with_truncation(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   char buffer[100] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  REQUIRE(indicator == sizeof(SQL_NUMERIC_STRUCT));
   auto records = get_diag_rec(stmt);
   CHECK(records.size() == 1);
   CHECK(records[0].sqlState == "01S07");
-  return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+  SQL_NUMERIC_STRUCT result;
+  std::memcpy(&result, buffer, sizeof(SQL_NUMERIC_STRUCT));
+  return result;
 }
 
 template <int SQL_C_TYPE>

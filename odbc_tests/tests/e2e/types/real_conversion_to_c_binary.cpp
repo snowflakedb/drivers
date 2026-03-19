@@ -2,6 +2,8 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <cstring>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
@@ -122,12 +124,13 @@ TEST_CASE("REAL SQL_C_BINARY negative zero", "[e2e][types][real][binary][edge]")
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
   // Then SQL_SUCCESS_WITH_INFO with 01S07 and SQL_NUMERIC_STRUCT has sign=0, val=0
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   CHECK(get_sqlstate(stmt) == "01S07");
-  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
-  auto* numeric = reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
-  CHECK(numeric->sign == 0);
-  CHECK(numeric->val[0] == 0);
+  REQUIRE(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  SQL_NUMERIC_STRUCT numeric;
+  std::memcpy(&numeric, buffer, sizeof(SQL_NUMERIC_STRUCT));
+  CHECK(numeric.sign == 0);
+  CHECK(numeric.val[0] == 0);
 }
 
 TEST_CASE("REAL NULL to SQL_C_BINARY", "[real][conversion][c_binary][null]") {
