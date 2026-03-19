@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "Connection.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 
 class Schema {
@@ -68,7 +69,8 @@ class Schema {
     return "SCHEMA_" + std::to_string(gen());
   }
 
-  // Retry USE SCHEMA with exponential backoff: 250ms, 500ms, 1000ms (~2s total).
+  // Retry USE SCHEMA with exponential backoff: 250ms, 500ms, 1000ms (~2s total),
+  // but only for SQLSTATE 42000 ("Object does not exist") to avoid masking real errors.
   // On the final attempt, fall through to execute_fn so failures produce
   // the same diagnostics as the original non-retry code path.
   void use_schema_with_retry(SQLHANDLE dbc) {
@@ -83,14 +85,22 @@ class Schema {
       }
 
       ret = SQLExecDirect(stmt, sqlchar(sql.c_str()), SQL_NTS);
-      SQLFreeStmt(stmt, SQL_CLOSE);
-      SQLFreeHandle(SQL_HANDLE_STMT, stmt);
 
       if (SQL_SUCCEEDED(ret)) {
+        SQLFreeStmt(stmt, SQL_CLOSE);
+        SQLFreeHandle(SQL_HANDLE_STMT, stmt);
         return;
       }
 
-      WARN("[Schema] USE SCHEMA " << schema_name << " failed, retrying in " << delay_ms << "ms");
+      std::string state = get_sqlstate(SQL_HANDLE_STMT, stmt);
+      SQLFreeStmt(stmt, SQL_CLOSE);
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+
+      if (state != "42000") {
+        break;
+      }
+
+      WARN("[Schema] USE SCHEMA " << schema_name << " failed (SQLSTATE 42000), retrying in " << delay_ms << "ms");
       std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
     }
 
