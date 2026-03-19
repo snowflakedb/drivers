@@ -15,7 +15,9 @@ use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, WriteODBCType};
 
-pub(crate) struct SnowflakeTime;
+pub(crate) struct SnowflakeTime {
+    pub(crate) scale: u32,
+}
 
 impl SnowflakeType for SnowflakeTime {
     type Representation<'a> = NaiveTime;
@@ -32,9 +34,14 @@ impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTime {
                 location: snafu::location!(),
             });
         }
-        let nanos_since_midnight = array.value(row_idx);
-        let secs = (nanos_since_midnight / 1_000_000_000) as u32;
-        let nanos = (nanos_since_midnight % 1_000_000_000) as u32;
+        let raw = array.value(row_idx);
+        let divisor = 10i64.pow(self.scale);
+        let secs = (raw / divisor) as u32;
+        // TODO: when scale < 9, the fractional part has fewer digits than nanoseconds;
+        // we multiply up to nano-precision here. When scale > 9 is ever encountered
+        // (shouldn't happen for Snowflake TIME), this would need clamping.
+        let frac = (raw % divisor) as u32;
+        let nanos = frac * 10u32.pow(9 - self.scale);
         NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or(
             ReadArrowError::NullValue {
                 location: snafu::location!(),
@@ -49,11 +56,15 @@ impl WriteODBCType for SnowflakeTime {
     }
 
     fn column_size(&self) -> sql::ULen {
-        8
+        if self.scale == 0 {
+            8
+        } else {
+            9 + self.scale as sql::ULen
+        }
     }
 
     fn decimal_digits(&self) -> sql::SmallInt {
-        9
+        self.scale as sql::SmallInt
     }
 
     fn write_odbc_type(
@@ -63,6 +74,9 @@ impl WriteODBCType for SnowflakeTime {
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
+            // TODO: SQL_C_TYPE_TIME has no fractional-seconds field — sub-second
+            // precision is silently truncated. Consider emitting a truncation
+            // warning (SQLSTATE 01S07) when scale > 0.
             CDataType::Default | CDataType::Time | CDataType::TypeTime => {
                 let time = sql::Time {
                     hour: snowflake_value.hour() as u16,
@@ -72,6 +86,9 @@ impl WriteODBCType for SnowflakeTime {
                 binding.write_fixed(time);
                 Ok(vec![])
             }
+            // TODO: include fractional seconds in the formatted string when
+            // scale > 0 (e.g. "%H:%M:%S%.f" or a custom formatter that
+            // respects the column's scale).
             CDataType::Char => {
                 let formatted = snowflake_value.format("%H:%M:%S").to_string();
                 Ok(binding.write_char_string(&formatted, get_data_offset))

@@ -179,7 +179,10 @@ impl SnowflakeFieldType {
                 }))
             }
             "DATE" => Ok(Self::Date(date::SnowflakeDate)),
-            "TIME" => Ok(Self::Time(time::SnowflakeTime)),
+            "TIME" => {
+                let scale = get_field_metadata(field, "scale")?;
+                Ok(Self::Time(time::SnowflakeTime { scale }))
+            }
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz)),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => Ok(Self::Binary(binary::SnowflakeBinary)),
