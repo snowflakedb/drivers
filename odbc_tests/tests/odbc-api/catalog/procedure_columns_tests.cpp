@@ -7,13 +7,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "Schema.hpp"
+#include "ReadOnlyDbFixture.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
-#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -21,23 +19,12 @@
 // SQLProcedureColumns - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set has correct number of columns",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Result set has correct number of columns",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      sqlchar("CREATE PROCEDURE test_pc_numcols(p1 VARCHAR) RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'"),
-      SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_NUMCOLS"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: Reference driver returns 21 columns (ODBC 3.x spec defines 19, driver adds 2 extra)
@@ -47,23 +34,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set has cor
   REQUIRE(numCols == 21);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      sqlchar("CREATE PROCEDURE test_pc_colnames(p1 VARCHAR) RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'"),
-      SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_COLNAMES"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: Reference driver returns 21 columns (19 spec + 2 driver-specific)
@@ -97,23 +73,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Result set column 
 // SQLProcedureColumns - Data Verification
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Returns parameters for known procedure",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Returns parameters for known procedure",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                sqlchar("CREATE PROCEDURE test_pc_params(p_name VARCHAR, p_age FLOAT)"
-                                        " RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p_name; END'"),
-                                SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_PARAMS"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::MULTI_PARAM_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   char procCat[256] = {};
@@ -128,61 +93,45 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Returns parameters
   SQLGetData(stmt_handle(), 2, SQL_C_CHAR, procSchem, sizeof(procSchem), nullptr);
   SQLGetData(stmt_handle(), 3, SQL_C_CHAR, procName, sizeof(procName), nullptr);
   SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
-  REQUIRE(std::string(procCat) == currentDb);
-  REQUIRE(std::string(procSchem) == schema.name());
-  REQUIRE(std::string(procName) == "TEST_PC_PARAMS");
+  REQUIRE(std::string(procCat) == database_name());
+  REQUIRE(std::string(procSchem) == schema_name());
+  REQUIRE(std::string(procName) == readonly_db::MULTI_PARAM_PROC);
   REQUIRE(std::string(colName).empty());
 
-  // Input parameter P_NAME
+  // Input parameter PNAME
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
   SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
-  REQUIRE(std::string(colName) == "P_NAME");
+  REQUIRE(std::string(colName) == "PNAME");
 
-  // Input parameter P_AGE
+  // Input parameter PAGE
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
   SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
-  REQUIRE(std::string(colName) == "P_AGE");
+  REQUIRE(std::string(colName) == "PAGE");
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Non-existent procedure returns empty result set",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Non-existent procedure returns empty result set",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  SQLRETURN ret =
-      SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                          sqlchar("NONEXISTENT_PROC_XYZ_99999"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar("NONEXISTENTPROCXYZ99999"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Specific ColumnName filters results",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Specific ColumnName filters results",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                sqlchar("CREATE PROCEDURE test_pc_filter(p_id INTEGER, p_name VARCHAR)"
-                                        " RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p_name; END'"),
-                                SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_FILTER"), SQL_NTS, sqlchar("P_NAME"), SQL_NTS);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::PROC_FILTER), SQL_NTS, sqlchar("PNAME"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -190,7 +139,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Specific ColumnNam
 
   char colName[256] = {};
   SQLGetData(stmt_handle(), 4, SQL_C_CHAR, colName, sizeof(colName), nullptr);
-  REQUIRE(std::string(colName) == "P_NAME");
+  REQUIRE(std::string(colName) == "PNAME");
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -200,27 +149,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Specific ColumnNam
 // SQLProcedureColumns - Parameter Variations
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter combinations are accepted",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: Various parameter combinations are accepted",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP("Long-running: multiple catalog round-trips cause timeout");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                sqlchar("CREATE PROCEDURE test_pc_variations(p1 VARCHAR)"
-                                        " RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'"),
-                                SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-  const std::string& schemaName = schema.name();
-
   // Return value + 1 input parameter = 2 rows
   // Explicit catalog, schema, proc with SQL_NTS
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schemaName.c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_VARIATIONS"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count1 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -230,10 +167,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter 
   REQUIRE(ret == SQL_SUCCESS);
 
   // Explicit string lengths instead of SQL_NTS
-  const std::string proc = "TEST_PC_VARIATIONS";
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), static_cast<SQLSMALLINT>(currentDb.length()),
-                            sqlchar(schemaName.c_str()), static_cast<SQLSMALLINT>(schemaName.length()),
-                            sqlchar(proc.c_str()), static_cast<SQLSMALLINT>(proc.length()), nullptr, 0);
+  const std::string proc = readonly_db::BASIC_PROC;
+  const std::string db = database_name();
+  const std::string schema = schema_name();
+  ret = SQLProcedureColumns(stmt_handle(), sqlchar(db.c_str()), static_cast<SQLSMALLINT>(db.length()),
+                            sqlchar(schema.c_str()), static_cast<SQLSMALLINT>(schema.length()), sqlchar(proc.c_str()),
+                            static_cast<SQLSMALLINT>(proc.length()), nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count2 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -245,25 +184,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: Various parameter 
 // SQLProcedureColumns - Statement Reuse
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture,
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture,
                  "SQLProcedureColumns: Can call multiple times on same statement after close cursor",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP("Long-running: multiple catalog round-trips cause timeout");
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                sqlchar("CREATE PROCEDURE test_pc_reuse(p1 VARCHAR)"
-                                        " RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'"),
-                                SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_REUSE"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   // Return value + 1 input parameter = 2 rows
   int count1 = 0;
@@ -274,8 +202,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_REUSE"), SQL_NTS, nullptr, 0);
+  ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                            sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count2 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -283,23 +211,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
   REQUIRE(count2 == 2);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: SQLRowCount after catalog function call",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: SQLRowCount after catalog function call",
                  "[odbc-api][procedurecolumns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                sqlchar("CREATE PROCEDURE test_pc_rowcount(p1 VARCHAR)"
-                                        " RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'"),
-                                SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_ROWCOUNT"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLLEN rowCount = 0;
@@ -354,28 +271,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: HY090 - Negative C
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLProcedureColumns: 24000 - Cursor already open",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLProcedureColumns: 24000 - Cursor already open",
                  "[odbc-api][procedurecolumns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                sqlchar("CREATE PROCEDURE test_pc_cursor(p1 VARCHAR)"
-                                        " RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'"),
-                                SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_CURSOR"), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                                      sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Second call without closing cursor
-  ret = SQLProcedureColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
-                            sqlchar("TEST_PC_CURSOR"), SQL_NTS, nullptr, 0);
+  ret = SQLProcedureColumns(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                            sqlchar(readonly_db::BASIC_PROC), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }
 
