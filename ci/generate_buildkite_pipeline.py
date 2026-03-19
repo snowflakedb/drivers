@@ -115,22 +115,23 @@ cargo build --package sf_core
 cargo install cargo2junit 2>/dev/null || true
 
 echo "--- :test_tube: Running E2E Tests"
-mkdir -p results
+mkdir -p /workdir/junit-results
 export RUSTC_BOOTSTRAP=1
 if [ "$$TEST_FILTER" = "ALL" ]; then
-  cargo test --package sf_core -- --ignored -Z unstable-options --format json --report-time 2>&1 | cargo2junit > results/rust-junit.xml
+  cargo test --package sf_core -- --ignored -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
 else
   # cargo test uses substring matching — run once per filter and merge JSON streams
   IFS='|' read -ra FILTERS <<< "$$TEST_FILTER"
   for filter in "$${FILTERS[@]}"; do
     echo "Running: cargo test -- --ignored $$filter"
     cargo test --package sf_core -- --ignored "$$filter" -Z unstable-options --format json --report-time 2>&1
-  done | cargo2junit > results/rust-junit.xml
+  done | cargo2junit > /workdir/junit-results/rust-junit.xml
 fi
 unset RUSTC_BOOTSTRAP
 
 echo "--- :buildkite: Uploading test results"
-buildkite-agent artifact upload "results/*-junit.xml"
+buildkite-agent artifact upload "junit-results/*.xml"
+buildkite-agent annotate ":white_check_mark: Rust Core -- passed" --style "success" --context "rust-result"
 """
 
 PYTHON_COMMAND = """\
@@ -149,15 +150,17 @@ RUSTFLAGS="" hatch build -t wheel
 hatch run test.py3.9:install-wheel
 
 echo "--- :test_tube: Running Integ + E2E Tests"
-mkdir -p results
+mkdir -p /workdir/junit-results
 if [ "$$TEST_FILTER" = "ALL" ]; then
-  hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=results/python-junit.xml
+  hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
 else
-  hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=results/python-junit.xml
+  hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
 fi
 
 echo "--- :buildkite: Uploading test results"
-buildkite-agent artifact upload "results/*-junit.xml"
+cd /workdir
+buildkite-agent artifact upload "junit-results/*.xml"
+buildkite-agent annotate ":white_check_mark: Python -- passed" --style "success" --context "python-result"
 """
 
 ODBC_COMMAND = """\
@@ -185,15 +188,17 @@ cmake -B cmake-build \\
 cmake --build cmake-build -- -j $$(nproc)
 
 echo "--- :test_tube: Running Integ + E2E Tests"
-mkdir -p results
+mkdir -p /workdir/junit-results
 if [ "$$TEST_FILTER" = "ALL" ]; then
-  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit results/odbc-junit.xml
+  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit /workdir/junit-results/odbc-junit.xml
 else
-  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit results/odbc-junit.xml
+  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
 fi
 
 echo "--- :buildkite: Uploading test results"
-buildkite-agent artifact upload "results/*-junit.xml"
+cd /workdir
+buildkite-agent artifact upload "junit-results/*.xml"
+buildkite-agent annotate ":white_check_mark: ODBC -- passed" --style "success" --context "odbc-result"
 """
 
 JDBC_COMMAND = """\
@@ -225,10 +230,11 @@ else
 fi
 
 echo "--- :buildkite: Uploading test results"
-mkdir -p results
-cp build/test-results/test/*.xml results/ 2>/dev/null || true
-cd ..
-buildkite-agent artifact upload "results/*-junit.xml;jdbc/build/test-results/test/*.xml"
+mkdir -p /workdir/junit-results
+cp build/test-results/test/*.xml /workdir/junit-results/ 2>/dev/null || true
+cd /workdir
+buildkite-agent artifact upload "junit-results/*.xml"
+buildkite-agent annotate ":white_check_mark: JDBC -- passed" --style "success" --context "jdbc-result"
 """
 
 DRIVER_STEPS = {
@@ -314,18 +320,15 @@ def main():
             active.append(name)
         print("  {}: {}".format(name, result), file=sys.stderr)
 
-    if skipped:
-        annotate(
-            ":fast_forward: Skipped (no relevant changes): " + ", ".join(skipped),
-            style="info", context="skipped",
-        )
+    lines = []
     for name in active:
         set_metadata("test-filter-" + name, filters[name])
         label = "ALL tests" if filters[name] == "ALL" else "filtered: " + filters[name]
-        annotate(
-            ":test_tube: {} -- {}".format(name, label),
-            style="success", context="{}-run".format(name),
-        )
+        lines.append(":arrow_forward: {} -- {}".format(name, label))
+    if skipped:
+        lines.append(":fast_forward: skipped: " + ", ".join(skipped))
+    if lines:
+        annotate("\n".join(lines), style="info", context="test-selection")
 
     steps = [build_step(name) for name in active]
 
@@ -339,7 +342,7 @@ def main():
             "label": ":junit: Annotate test results",
             "plugins": [{
                 "junit-annotate#v2.4.1": {
-                    "artifacts": "results/*-junit.xml;jdbc/build/test-results/test/*.xml",
+                    "artifacts": "junit-results/*.xml",
                     "always-annotate": True,
                 }
             }],
