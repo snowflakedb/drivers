@@ -6,14 +6,14 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
-use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::error::{
+    JsonBindingError, ReadArrowError, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu,
+    WriteOdbcError,
+};
 use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
-use crate::conversion::traits::Binding;
-use crate::conversion::traits::SnowflakeType;
-use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
-use crate::conversion::{ReadArrowType, WriteODBCType};
+use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeTime {
     pub(crate) scale: u32,
