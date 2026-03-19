@@ -137,7 +137,7 @@ fn make_converter(
         sql::SqlDataType::EXT_BINARY
         | sql::SqlDataType::EXT_VAR_BINARY
         | sql::SqlDataType::EXT_LONG_VAR_BINARY => Ok(Box::new(JsonParamConverter {
-            snowflake_type: SnowflakeBinary,
+            snowflake_type: SnowflakeBinary { len: 0 },
         })),
 
         sql::SqlDataType::DATE => Ok(Box::new(JsonParamConverter {

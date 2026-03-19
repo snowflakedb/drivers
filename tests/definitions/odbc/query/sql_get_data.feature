@@ -95,7 +95,7 @@ Feature: ODBC SQLGetData function behavior
     Given Snowflake client is logged in
     When SQLGetData is called with a small buffer for binary data
     Then SQLGetData should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
-    And the indicator should show SQL_NO_TOTAL
+    And the indicator should show the full length of the original data
     And the buffer should contain the first 3 bytes
 
   @odbc_e2e

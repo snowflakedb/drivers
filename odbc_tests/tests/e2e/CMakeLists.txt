@@ -27,6 +27,9 @@ add_odbc_test(e2e_query_sql_row_count query/sql_row_count.cpp)
 add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
 
 # types
+add_odbc_test(e2e_types_binary types/binary.cpp)
+add_odbc_test(e2e_types_binary_conversion_to_c_binary types/binary_conversion_to_c_binary.cpp)
+add_odbc_test(e2e_types_binary_conversion_to_c_char types/binary_conversion_to_c_char.cpp)
 add_odbc_test(e2e_types_boolean types/boolean.cpp)
 add_odbc_test(e2e_types_boolean_conversion_to_c_bit types/boolean_conversion_to_c_bit.cpp)
 add_odbc_test(e2e_types_boolean_conversion_to_c_binary types/boolean_conversion_to_c_binary.cpp)
