@@ -188,7 +188,13 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     }
 
     if array_size == 1 && bind_offset_ptr.is_null() {
-        advance_cursor(&mut stmt.state)?;
+        if let Err(e) = advance_cursor(&mut stmt.state) {
+            if matches!(e, crate::api::OdbcError::NoMoreData { .. }) {
+                stmt.current_row = 0;
+            }
+            return Err(e);
+        }
+        stmt.current_row += 1;
         if !rows_fetched_ptr.is_null() {
             unsafe { *rows_fetched_ptr = 1 };
         }
@@ -274,8 +280,11 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     }
 
     if rows_fetched == 0 {
+        stmt.current_row = 0;
         return NoMoreDataSnafu.fail();
     }
+
+    stmt.current_row += 1;
 
     if has_error {
         warnings.push(crate::conversion::warning::Warning::RowError);

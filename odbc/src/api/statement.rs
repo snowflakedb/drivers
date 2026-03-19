@@ -185,6 +185,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             );
             set_state(stmt, execute_state);
             stmt.rows_returned = 0;
+            stmt.current_row = 0;
             stmt.last_query_id = query_id.filter(|s| !s.is_empty());
             if is_zero_dml {
                 return NoMoreDataSnafu.fail();
@@ -475,6 +476,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::info!("execute: Successfully executed statement");
             write_param_array_status(rows_processed_ptr, param_status_ptr, array_size, operation_ptr);
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
+            stmt.current_row = 0;
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
 
@@ -856,6 +858,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
                 stmt.ird.desc_count = desc_count;
                 stmt.get_data_state = None;
                 stmt.used_extended_fetch = false;
+                stmt.current_row = 0;
             }
         }
         FreeStmtOption::Unbind => {
@@ -1300,6 +1303,16 @@ pub fn set_stmt_attr(
             stmt.apd.array_status_ptr = ptr;
             Ok(())
         }
+        StmtAttr::RowNumber => crate::api::error::ReadOnlyAttributeSnafu {
+            attribute: attr as i32,
+        }
+        .fail(),
+        StmtAttr::RowOperationPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: RowOperationPtr = {:?}", ptr);
+            stmt.ard.array_status_ptr = ptr;
+            Ok(())
+        }
         StmtAttr::SnowflakeLastQueryId => {
             // Read-only attribute — cannot be set
             crate::api::error::ReadOnlyAttributeSnafu {
@@ -1591,6 +1604,21 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         StmtAttr::ParamOperationPtr => {
             unsafe {
                 *(value_ptr as *mut *mut u16) = stmt.apd.array_status_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowNumber => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.current_row;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::RowOperationPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut u16) = stmt.ard.array_status_ptr;
             }
             Ok(())
         }

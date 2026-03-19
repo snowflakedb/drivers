@@ -313,6 +313,8 @@ pub enum StmtAttr {
     RetrieveData = 11,
     /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
+    /// `SQL_ATTR_ROW_NUMBER` (14) — read-only 1-based current row number (0 when not positioned).
+    RowNumber = 14,
     /// `SQL_ATTR_ENABLE_AUTO_IPD` (15) — automatic population of the IPD.
     EnableAutoIpd = 15,
     /// `SQL_ATTR_PARAM_BIND_OFFSET_PTR` (17) — pointer to offset applied to parameter binding pointers (APD).
@@ -329,6 +331,8 @@ pub enum StmtAttr {
     ParamsetSize = 22,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
     RowBindOffsetPtr = 23,
+    /// `SQL_ATTR_ROW_OPERATION_PTR` (24) — pointer to per-row operation array (ARD).
+    RowOperationPtr = 24,
     /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
     RowStatusPtr = 25,
     /// `SQL_ATTR_ROWS_FETCHED_PTR` (26) — pointer to count of rows fetched.
@@ -371,6 +375,7 @@ impl TryFrom<i32> for StmtAttr {
             10 => Ok(StmtAttr::SimulateCursor),
             11 => Ok(StmtAttr::RetrieveData),
             12 => Ok(StmtAttr::UseBookmarks),
+            14 => Ok(StmtAttr::RowNumber),
             15 => Ok(StmtAttr::EnableAutoIpd),
             17 => Ok(StmtAttr::ParamBindOffsetPtr),
             18 => Ok(StmtAttr::ParamBindType),
@@ -379,6 +384,7 @@ impl TryFrom<i32> for StmtAttr {
             21 => Ok(StmtAttr::ParamsProcessedPtr),
             22 => Ok(StmtAttr::ParamsetSize),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
+            24 => Ok(StmtAttr::RowOperationPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
             26 => Ok(StmtAttr::RowsFetchedPtr),
             27 => Ok(StmtAttr::RowArraySize),
@@ -1247,6 +1253,8 @@ pub struct Statement {
     /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` — multi-statement execution count.
     /// -1 = auto-detect (default), 0 = single statement, N > 0 = expect exactly N statements.
     pub multi_statement_count: i16,
+    /// `SQL_ATTR_ROW_NUMBER` — 1-based current row number; 0 when not positioned on a row.
+    pub current_row: sql::ULen,
 }
 
 /// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
@@ -1289,6 +1297,7 @@ impl Statement {
             last_query_id: None,
             cancel_token: CancellationToken::new(),
             multi_statement_count: -1,
+            current_row: 0,
         }
     }
 
