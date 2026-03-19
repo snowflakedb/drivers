@@ -433,3 +433,74 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
   CHECK(surrogate_pair == "\x1a");
   // UTF-8 locale: non-ASCII characters preserved as UTF-8
 }
+
+// ============================================================================
+// BASIC STRING QUERY AND PARAMETER BINDING
+// ============================================================================
+
+TEST_CASE("Test string basic query", "[e2e][types][string]") {
+  // Given A Snowflake connection
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When A string value is inserted and selected via SQL_C_CHAR
+  conn.execute("DROP TABLE IF EXISTS test_string_basic");
+  conn.execute("CREATE TABLE test_string_basic (str_col VARCHAR(1000))");
+  conn.execute("INSERT INTO test_string_basic (str_col) VALUES ('Hello World')");
+  auto stmt = conn.createStatement();
+
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  char buffer[1000];
+  SQLLEN indicator;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The retrieved string matches the inserted value
+  REQUIRE(indicator > 0);
+  REQUIRE(std::string(buffer, indicator) == "Hello World");
+}
+
+TEST_CASE("Test basic string binding", "[e2e][types][string]") {
+  // Given A Snowflake connection
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When A string value is inserted via parameter binding and selected
+  conn.execute("DROP TABLE IF EXISTS test_string_basic_binding");
+  conn.execute("CREATE TABLE test_string_basic_binding (str_col VARCHAR(1000))");
+  auto stmt = conn.createStatement();
+
+  SQLRETURN ret =
+      SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_basic_binding (str_col) VALUES (?)", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  const char* test_value = "Hello World";
+  SQLLEN str_len = strlen(test_value);
+
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, str_len, 0,
+                         (SQLPOINTER)test_value, str_len, &str_len);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic_binding", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  char buffer[1000];
+  SQLLEN indicator;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The retrieved string matches the bound parameter value
+  REQUIRE(indicator > 0);
+  REQUIRE(std::string(buffer, indicator) == "Hello World");
+}

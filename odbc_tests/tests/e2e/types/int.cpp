@@ -53,7 +53,8 @@ TEST_CASE("should select integer values for int and synonyms", "[int]") {
   // Given Snowflake client is logged in
   Connection conn;
 
-  SECTION("zero") {
+  {
+    INFO("zero");
     // When Query "SELECT <query_values>" is executed
     auto stmt = conn.execute_fetch("SELECT 0::INT");
 
@@ -61,7 +62,8 @@ TEST_CASE("should select integer values for int and synonyms", "[int]") {
     CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
   }
 
-  SECTION("tinyint") {
+  {
+    INFO("tinyint");
     // When Query "SELECT -128::INT, 127::INT, 255::INT" is executed
     auto stmt = conn.execute_fetch("SELECT -128::INT, 127::INT, 255::INT");
 
@@ -71,7 +73,8 @@ TEST_CASE("should select integer values for int and synonyms", "[int]") {
     CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 255);
   }
 
-  SECTION("smallint") {
+  {
+    INFO("smallint");
     // When Query "SELECT -32768::INT, 32767::INT, 65535::INT" is executed
     auto stmt = conn.execute_fetch("SELECT -32768::INT, 32767::INT, 65535::INT");
 
@@ -81,7 +84,8 @@ TEST_CASE("should select integer values for int and synonyms", "[int]") {
     CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 65535);
   }
 
-  SECTION("int") {
+  {
+    INFO("int");
     // When Query "SELECT -2147483648::INT, 2147483647::INT, 4294967295::BIGINT" is executed
     auto stmt = conn.execute_fetch("SELECT -2147483648::INT, 2147483647::INT, 4294967295::BIGINT");
 
@@ -91,7 +95,8 @@ TEST_CASE("should select integer values for int and synonyms", "[int]") {
     CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 4294967295LL);
   }
 
-  SECTION("bigint") {
+  {
+    INFO("bigint");
     // When Query "SELECT -9223372036854775808::BIGINT, 9223372036854775807::BIGINT" is executed
     auto stmt = conn.execute_fetch("SELECT -9223372036854775808::BIGINT, 9223372036854775807::BIGINT");
 
@@ -139,7 +144,8 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  SECTION("positive") {
+  {
+    INFO("positive");
     // And Table with <type> column exists with values <insert_values>
     conn.execute("CREATE TABLE int_table_positive (col BIGINT)");
     conn.execute(
@@ -162,7 +168,8 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
     }
   }
 
-  SECTION("negative") {
+  // negative
+  {
     // And Table with <type> column exists with values <insert_values>
     conn.execute("CREATE TABLE int_table_negative (col BIGINT)");
     conn.execute("INSERT INTO int_table_negative VALUES (-1), (-128), (-32768), (-2147483648), (-9223372036854775808)");
@@ -183,7 +190,8 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
     }
   }
 
-  SECTION("null") {
+  // null
+  {
     // And Table with <type> column exists with values <insert_values>
     conn.execute("CREATE TABLE int_table_null (col BIGINT)");
     conn.execute("INSERT INTO int_table_null VALUES (0), (NULL), (42)");

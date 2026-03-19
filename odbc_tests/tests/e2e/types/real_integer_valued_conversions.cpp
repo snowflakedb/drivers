@@ -1,7 +1,7 @@
 // Float integer-valued (.0) C type conversion tests
 // Tests that FLOAT values with no fractional part (.0) convert correctly
-// to fixed-width integer C types, and that boundary values at i32/u32/i64
-// limits are handled correctly by both drivers.
+// to fixed-width integer C types, and that boundary values at i32/u32
+// limits and 2^53 (f64 exact-integer limit) are handled correctly.
 
 #include <sql.h>
 #include <sqlext.h>

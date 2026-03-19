@@ -39,7 +39,8 @@ TEST_CASE("should convert string literals to c_type", "[datatype][string][conver
       "'2024-01-15 14:30:45' AS c7, '1999-12-31 23:59:59' AS c8, '  2024-01-15 14:30:45  ' AS c9");
 
   // Then <c_type> conversions should work
-  SECTION("SQL_C_TYPE_DATE") {
+  {
+    INFO("SQL_C_TYPE_DATE");
     auto date1 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 1);
     CHECK(date1.year == 2024);
     CHECK(date1.month == 1);
@@ -56,7 +57,8 @@ TEST_CASE("should convert string literals to c_type", "[datatype][string][conver
     CHECK(y2k.day == 1);
   }
 
-  SECTION("SQL_C_TYPE_TIME") {
+  {
+    INFO("SQL_C_TYPE_TIME");
     auto time1 = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
     CHECK(time1.hour == 14);
     CHECK(time1.minute == 30);
@@ -73,7 +75,8 @@ TEST_CASE("should convert string literals to c_type", "[datatype][string][conver
     CHECK(end_of_day.second == 59);
   }
 
-  SECTION("SQL_C_TYPE_TIMESTAMP") {
+  {
+    INFO("SQL_C_TYPE_TIMESTAMP");
     auto ts1 = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(stmt, 7);
     CHECK(ts1.year == 2024);
     CHECK(ts1.month == 1);

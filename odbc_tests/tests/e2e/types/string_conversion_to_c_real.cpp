@@ -84,7 +84,8 @@ TEST_CASE("should fail converting string literals to floating point types when d
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing floating point numbers is executed
-  SECTION("SQL_C_DOUBLE") {
+  {
+    INFO("SQL_C_DOUBLE");
     auto stmt = conn.execute_fetch(
         "SELECT '1.7976931348623157e308' AS max_double, '1.7976931348623157e309' AS more_than_max_double, "
         "'-1.7976931348623157E+308' AS min_double, '-1.7976931348623158e308' AS less_than_min_double");
@@ -95,7 +96,8 @@ TEST_CASE("should fail converting string literals to floating point types when d
     CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 4) == -1.7976931348623157e308);
   }
   // And values exceeding SQL_C_FLOAT range should fail with numeric out of range
-  SECTION("SQL_C_FLOAT") {
+  {
+    INFO("SQL_C_FLOAT");
     // NOTE: This is the behavior of the old ODBC driver
     // It does not convert max_float and min_float correctly so we have almost max_float and min_float values
     auto stmt = conn.execute_fetch(
@@ -119,17 +121,21 @@ TEST_CASE("should handle special floating point string conversions", "[datatype]
   auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting special float strings is executed
-  auto stmt = conn.execute_fetch("SELECT 'inf' AS pos_inf, '-inf' AS neg_inf, 'NaN' AS nan");
+  const auto query = "SELECT 'inf' AS pos_inf, '-inf' AS neg_inf, 'NaN' AS nan";
 
   // Then inf conversion either succeeds with infinity or fails
-  SECTION("SQL_C_DOUBLE") {
+  {
+    INFO("SQL_C_DOUBLE");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 1) == std::numeric_limits<SQLDOUBLE>::infinity());
     CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 2) == -std::numeric_limits<SQLDOUBLE>::infinity());
     auto val = get_data<SQL_C_DOUBLE>(stmt, 3);
     CHECK(std::isnan(val));
   }
 
-  SECTION("SQL_C_FLOAT") {
+  {
+    INFO("SQL_C_FLOAT");
+    auto stmt = conn.execute_fetch(query);
     CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 1) == std::numeric_limits<SQLFLOAT>::infinity());
     CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 2) == -std::numeric_limits<SQLFLOAT>::infinity());
     auto val = get_data<SQL_C_FLOAT>(stmt, 3);
