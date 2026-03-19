@@ -13,6 +13,7 @@ odbc_tests/cmake-build
 parameters*.json
 **/rsa_key.p8
 .DS_Store
+odbc.log
 /.tmp
 /build
 coverage_report/
