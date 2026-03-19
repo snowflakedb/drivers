@@ -7,8 +7,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    JsonBindingError, ReadArrowError, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu,
-    WriteOdbcError,
+    InvalidArrowValueSnafu, JsonBindingError, ReadArrowError, UnsupportedCDataTypeSnafu,
+    UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -34,19 +34,29 @@ impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTime {
                 location: snafu::location!(),
             });
         }
+        if self.scale > 9 {
+            return InvalidArrowValueSnafu {
+                reason: format!("TIME scale {} exceeds maximum of 9", self.scale),
+            }
+            .fail();
+        }
         let raw = array.value(row_idx);
+        if raw < 0 {
+            return InvalidArrowValueSnafu {
+                reason: format!("negative TIME value: {raw}"),
+            }
+            .fail();
+        }
         let divisor = 10i64.pow(self.scale);
         let secs = (raw / divisor) as u32;
-        // TODO: when scale < 9, the fractional part has fewer digits than nanoseconds;
-        // we multiply up to nano-precision here. When scale > 9 is ever encountered
-        // (shouldn't happen for Snowflake TIME), this would need clamping.
         let frac = (raw % divisor) as u32;
         let nanos = frac * 10u32.pow(9 - self.scale);
-        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or(
-            ReadArrowError::NullValue {
-                location: snafu::location!(),
-            },
-        )
+        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or_else(|| {
+            InvalidArrowValueSnafu {
+                reason: format!("out-of-range TIME: secs={secs}, nanos={nanos}"),
+            }
+            .build()
+        })
     }
 }
 

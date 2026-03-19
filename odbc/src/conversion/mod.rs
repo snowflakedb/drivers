@@ -20,6 +20,8 @@ mod real_tests;
 #[cfg(test)]
 mod test_utils;
 mod time;
+#[cfg(test)]
+mod time_tests;
 mod timestamp;
 mod varchar;
 

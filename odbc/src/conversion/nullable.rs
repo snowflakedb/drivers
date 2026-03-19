@@ -25,6 +25,7 @@ impl<R, T: SnowflakeType + ReadArrowType<R>> ReadArrowType<R> for Nullable<T> {
             .map(Some)
             .or_else(|e| match e {
                 ReadArrowError::NullValue { .. } => Ok(None),
+                other => Err(other),
             })
     }
 }
