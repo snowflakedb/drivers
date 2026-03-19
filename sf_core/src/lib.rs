@@ -11,7 +11,7 @@ mod compression;
 mod compression_types;
 pub mod config;
 pub mod crl;
-mod file_manager;
+pub mod file_manager;
 pub mod handle_manager;
 pub mod http;
 pub mod logging;
