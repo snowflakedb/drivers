@@ -23,10 +23,9 @@ public class LargeResultSetTests extends SnowflakeIntegrationTestBase {
       // Then there are 1000000 numbered sequentially rows returned
       long expectedValue = 0;
       while (resultSet.next()) {
-        assertEquals(
-            expectedValue, resultSet.getLong(1), "Unexpected value at row " + expectedValue);
-        assertFalse(
-            resultSet.wasNull(), "Sequential value should not be NULL at row " + expectedValue);
+        final long row = expectedValue;
+        assertEquals(expectedValue, resultSet.getLong(1), () -> "Unexpected value at row " + row);
+        assertFalse(resultSet.wasNull(), () -> "Sequential value should not be NULL at row " + row);
         expectedValue++;
       }
       assertEquals(1_000_000L, expectedValue, "Unexpected number of sequential rows");
