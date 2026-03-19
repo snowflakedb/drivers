@@ -6,15 +6,31 @@ Feature: Pandas fetch methods (Python-specific)
   # =========================================================================== #
 
   @python_e2e
-  Scenario: should fetch typed rows with nulls as pandas DataFrame
+  Scenario Outline: should fetch <type_name> with null as pandas DataFrame
     Given Snowflake client is logged in
-    And A temporary table with columns (id NUMBER, name VARCHAR, score FLOAT, active BOOLEAN) exists
-    And Rows [1, "Alice", 9.5, TRUE], [2, NULL, NULL, FALSE] are inserted
-    When Query "SELECT * FROM {table} ORDER BY id" is executed
+    And Query "ALTER SESSION SET TIMEZONE = 'UTC'" is executed
+    When Query "SELECT <value_expr> AS val, <null_expr> AS null_val" is executed
     And fetch_pandas_all is called
-    Then The result should be a pandas.DataFrame with 2 rows
-    And Row 1 should contain [1, "Alice", 9.5, True]
-    And Row 2 should contain [2, None/NaN, None/NaN, False]
+    Then The result should be a pandas.DataFrame with 1 row
+    And Column VAL should have the correct value for <type_name>
+    And Column NULL_VAL should be null
+
+    Examples:
+      | type_name     | value_expr                                   | null_expr           |
+      | number        | 1::NUMBER                                    | NULL::NUMBER        |
+      | scaled_number | 3.14::NUMBER(10,2)                           | NULL::NUMBER(10,2)  |
+      | varchar       | 'hello'::VARCHAR                             | NULL::VARCHAR       |
+      | float         | 1.5::FLOAT                                   | NULL::FLOAT         |
+      | boolean       | TRUE::BOOLEAN                                | NULL::BOOLEAN       |
+      | date          | '2026-03-23'::DATE                           | NULL::DATE          |
+      | time          | '12:30:00'::TIME                             | NULL::TIME          |
+      | timestamp_ntz | '2026-03-23 10:30:00'::TIMESTAMP_NTZ         | NULL::TIMESTAMP_NTZ |
+      | timestamp_ltz | '2026-03-23 10:30:00'::TIMESTAMP_LTZ         | NULL::TIMESTAMP_LTZ |
+      | timestamp_tz  | '2026-03-23 10:30:00 +0530'::TIMESTAMP_TZ    | NULL::TIMESTAMP_TZ  |
+      | binary        | TO_BINARY('ABCD','HEX')::BINARY              | NULL::BINARY        |
+      | variant       | TO_VARIANT(42)                               | NULL::VARIANT       |
+      | array         | ARRAY_CONSTRUCT(1,2,3)::ARRAY                | NULL::ARRAY         |
+      | object        | OBJECT_CONSTRUCT('key','value')::OBJECT      | NULL::OBJECT        |
 
   @python_e2e
   Scenario: should return empty pandas DataFrame for empty result set
@@ -22,6 +38,22 @@ Feature: Pandas fetch methods (Python-specific)
     When Query "SELECT 1 AS id WHERE 1=0" is executed
     And fetch_pandas_all is called
     Then The result should be a pandas.DataFrame with 0 rows
+
+  @python_e2e
+  Scenario: should convert scaled fixed number to decimal via fetch_pandas_all
+    Given Snowflake client is logged in
+    And arrow_number_to_decimal is set to True on the connection
+    When Query "SELECT 3.14::NUMBER(10,2) AS pi" is executed
+    And fetch_pandas_all is called
+    Then Column PI should be a Python Decimal
+
+  @python_e2e
+  Scenario: should force microsecond precision for timestamps via fetch_pandas_all
+    Given Snowflake client is logged in
+    When Query "SELECT '2024-01-15 10:30:00.123456789'::TIMESTAMP_NTZ(9) AS ts" is executed
+    And fetch_pandas_all is called with force_microsecond_precision=True
+    Then Column TS should be a pandas Timestamp
+    And Column TS value should have microsecond=123456
 
   # =========================================================================== #
   #                       fetch_pandas_batches                                  #
