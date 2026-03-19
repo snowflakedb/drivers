@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "macros.hpp"
 
 Connection get_connection() { return Connection(); }
 
