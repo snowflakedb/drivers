@@ -104,6 +104,13 @@ class NotSupportedError(DatabaseError):
     pass
 
 
+class MissingDependencyError(Error):
+    """Exception for missing extras dependencies."""
+
+    def __init__(self, dependency: str) -> None:
+        super().__init__(msg=f"Missing optional dependency: {dependency}")
+
+
 # Configuration-related errors (for ConfigManager)
 
 

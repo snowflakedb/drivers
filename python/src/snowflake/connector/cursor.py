@@ -27,6 +27,10 @@ from ._internal.binding_converters import (
     ParamStyle,
 )
 from ._internal.decorators import pep249
+#from ._internal.options
+import pandas as pd
+#from ._internal.options
+import pyarrow as pa
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
@@ -501,6 +505,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._description = [ResultMetadata.from_column(col) for col in columns]
 
     def _get_iterator(self) -> ArrowStreamIterator:
+        # FIXME: asolarski - cannot create iterator if ArrowStream was already consumed by RecordBatchReader
         stream_ptr = self._get_stream_ptr()
         arrow_context = ArrowConverterContext()
         return ArrowStreamIterator(
@@ -510,6 +515,16 @@ class SnowflakeCursorBase(abc.ABC):
             # TODO: SNOW-2997786, temporarily hardcoded
             use_numpy=False,
         )
+
+    def _get_table_iterator(self) -> Any:
+        # FIXME: asolarski - cannot consume ArrowStream twice
+        pass
+        # stream_ptr = self._get_stream_ptr()
+        # arrow_context = ArrowConverterContext()
+        # return ArrowStreamTableIterator(
+        #     stream_ptr,
+        #     arrow_context,
+        # )
 
     # ------------------------------------------------------------------
     # Fetch – shared implementation
@@ -784,21 +799,24 @@ class SnowflakeCursorBase(abc.ABC):
         """Query the result of a previously executed query."""
         raise NotImplementedError("query_result is not yet implemented")
 
-    def fetch_arrow_batches(self, **kwargs: Any) -> Iterator[Any]:
+    def fetch_arrow_batches(self, **kwargs: Any) -> Iterator[pa.Table]:
         """Fetch Arrow Tables in batches."""
-        raise NotImplementedError("fetch_arrow_batches is not yet implemented")
+        self._check_not_closed()
+        yield from self._get_table_iterator()
 
-    def fetch_arrow_all(self, **kwargs: Any) -> Any:
+    def fetch_arrow_all(self, **kwargs: Any) -> pa.Table | None:
         """Fetch all results as a single Arrow Table."""
-        raise NotImplementedError("fetch_arrow_all is not yet implemented")
+        arrow_batch_reader = self._get_table_iterator()
+        return arrow_batch_reader.read_all()
 
-    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[Any]:
+    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[pd.DataFrame]:
         """Fetch Pandas DataFrames in batches."""
-        raise NotImplementedError("fetch_pandas_batches is not yet implemented")
+        for x in self.fetch_arrow_batches(**kwargs):
+            yield x.to_pandas()
 
-    def fetch_pandas_all(self, **kwargs: Any) -> Any:
+    def fetch_pandas_all(self, **kwargs: Any) -> pd.DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
-        raise NotImplementedError("fetch_pandas_all is not yet implemented")
+        return self.fetch_arrow_all(**kwargs).to_pandas()
 
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""

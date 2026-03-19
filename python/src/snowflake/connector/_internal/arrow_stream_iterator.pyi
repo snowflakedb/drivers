@@ -9,6 +9,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from typing import Any
 
+try:
+    import pyarrow as pa
+except ImportError:
+    pass
+
 class ArrowStreamIterator(Iterator[Any]):
     """Python wrapper for C++ Arrow stream iterator.
 
@@ -24,3 +29,18 @@ class ArrowStreamIterator(Iterator[Any]):
     ) -> None: ...
     def __iter__(self) -> ArrowStreamIterator: ...
     def __next__(self) -> Any: ...
+
+class ArrowStreamTableIterator(Iterator[pa.RecordBatch]):
+    """Iterator that yields one pyarrow.RecordBatch per batch with
+    Snowflake type conversions applied.
+    """
+
+    def __init__(
+        self,
+        stream_ptr: int,
+        arrow_context: Any,
+        number_to_decimal: bool = False,
+        force_microsecond_precision: bool = False,
+    ) -> None: ...
+    def __iter__(self) -> ArrowStreamTableIterator: ...
+    def __next__(self) -> pa.RecordBatch: ...
