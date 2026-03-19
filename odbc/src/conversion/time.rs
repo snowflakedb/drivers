@@ -48,7 +48,14 @@ impl ReadArrowType<PrimitiveArray<Int64Type>> for SnowflakeTime {
             .fail();
         }
         let divisor = 10i64.pow(self.scale);
-        let secs = (raw / divisor) as u32;
+        let secs_i64 = raw / divisor;
+        if !(0..86_400).contains(&secs_i64) {
+            return InvalidArrowValueSnafu {
+                reason: format!("TIME seconds {secs_i64} out of range 0..86399"),
+            }
+            .fail();
+        }
+        let secs = secs_i64 as u32;
         let frac = (raw % divisor) as u32;
         let nanos = frac * 10u32.pow(9 - self.scale);
         NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or_else(|| {

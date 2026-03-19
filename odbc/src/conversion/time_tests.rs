@@ -93,6 +93,30 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn read_arrow_overflow_secs_returns_invalid() {
+        let sn = time(0);
+        // 86400 seconds = 24:00:00, out of valid range 0..86399
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(86_400)]);
+        let result = sn.read_arrow_type(&array, 0);
+        assert!(matches!(
+            result,
+            Err(ReadArrowError::InvalidArrowValue { .. })
+        ));
+    }
+
+    #[test]
+    fn read_arrow_huge_value_returns_invalid() {
+        let sn = time(9);
+        // Value exceeding 24 hours in nanos — would wrap u32 without validation
+        let array = PrimitiveArray::<Int64Type>::from(vec![Some(100_000_000_000_000_000)]);
+        let result = sn.read_arrow_type(&array, 0);
+        assert!(matches!(
+            result,
+            Err(ReadArrowError::InvalidArrowValue { .. })
+        ));
+    }
+
     // ========================================================================
     // WriteODBCType — SQL_C_TYPE_TIME struct
     // ========================================================================
@@ -164,6 +188,35 @@ mod tests {
                 .iter()
                 .any(|w| matches!(w, Warning::StringDataTruncated))
         );
+    }
+
+    // TODO: these tests document current behavior where fractional seconds
+    // are dropped in string output. Once fractional-second formatting is
+    // implemented, update these to verify the fractional part is included.
+    #[test]
+    fn write_char_scale_3_drops_fractional() {
+        let sn = time(3);
+        let mut buffer = vec![0u8; 32];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+        let input = NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap();
+        let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(str_len, 8);
+        assert_eq!(&buffer[..8], b"12:34:56");
+    }
+
+    #[test]
+    fn write_wchar_scale_9_drops_fractional() {
+        let sn = time(9);
+        let mut buffer = vec![0u16; 32];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_wchar_buffer(&mut buffer, &mut str_len);
+        let input = NaiveTime::from_hms_nano_opt(12, 34, 56, 123_456_789).unwrap();
+        let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        let expected: Vec<u16> = "12:34:56".encode_utf16().collect();
+        assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 
     // ========================================================================
