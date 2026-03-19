@@ -98,12 +98,11 @@ def _execute_query(cursor, sql):
         dict: Dictionary with timestamp, query_time_s, fetch_time_s, row_count,
               cpu_time_s, and peak_rss_mb
     """
-    cpu_start = time.process_time()
-
     query_start = time.time()
     cursor.execute(sql)
     query_time = time.time() - query_start
     
+    cpu_start = time.process_time()
     fetch_start = time.time()
     row_count = 0
     while True:
