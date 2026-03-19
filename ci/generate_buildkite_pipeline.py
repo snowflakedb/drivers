@@ -51,17 +51,6 @@ COMMON_STEP = {
                 "environment": ["PARAMETERS_SECRET"],
             }
         },
-        {
-            "test-collector#v1.10.0": {
-                "files": "results/*-junit.xml",
-                "format": "junit",
-            }
-        },
-        {
-            "junit-annotate#v2.4.1": {
-                "artifacts": "results/*-junit.xml",
-            }
-        },
     ],
     "retry": {"automatic": [{"exit_status": "*", "limit": 1}]},
 }
@@ -338,13 +327,26 @@ def main():
             style="success", context="{}-run".format(name),
         )
 
-    pipeline = {"steps": [build_step(name) for name in active]}
+    steps = [build_step(name) for name in active]
 
     if not active:
-        pipeline = {"steps": [{"label": ":white_check_mark: All drivers skipped",
-                               "command": "echo 'No relevant changes detected'"}]}
+        steps = [{"label": ":white_check_mark: All drivers skipped",
+                  "command": "echo 'No relevant changes detected'"}]
+    else:
+        step_keys = [DRIVER_STEPS[name]["step_key"] for name in active]
+        steps.append("wait")
+        steps.append({
+            "label": ":junit: Annotate test results",
+            "plugins": [{
+                "junit-annotate#v2.4.1": {
+                    "artifacts": "results/*-junit.xml;jdbc/build/test-results/test/*.xml",
+                    "always-annotate": True,
+                }
+            }],
+            "agents": {"queue": "discovery", "repo": "snowflakedb/universal-driver"},
+        })
 
-    print(yaml.dump(pipeline, default_flow_style=False, sort_keys=False))
+    print(yaml.dump({"steps": steps}, default_flow_style=False, sort_keys=False))
 
 
 if __name__ == "__main__":
