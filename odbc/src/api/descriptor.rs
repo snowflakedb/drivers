@@ -85,6 +85,12 @@ fn get_ard_field(
                 }
                 Ok(())
             }
+            DescField::ArrayStatusPtr => {
+                unsafe {
+                    std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
+                }
+                Ok(())
+            }
             _ => {
                 tracing::warn!("get_desc_field: unsupported ARD header field {:?}", field);
                 crate::api::error::UnknownAttributeSnafu {
@@ -284,6 +290,12 @@ fn set_ard_field(
                 let ptr = value_ptr as *mut sql::Len;
                 tracing::debug!("set_desc_field: ARD BindOffsetPtr = {:?}", ptr);
                 desc.bind_offset_ptr = ptr;
+                Ok(())
+            }
+            DescField::ArrayStatusPtr => {
+                let ptr = value_ptr as *mut u16;
+                tracing::debug!("set_desc_field: APD ArrayStatusPtr = {:?}", ptr);
+                desc.array_status_ptr = ptr;
                 Ok(())
             }
             _ => {

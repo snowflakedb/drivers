@@ -9,11 +9,11 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, SqlType,
-    Statement, StatementState, stmt_from_handle,
+    ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection,
+    ParameterBinding, SqlType, Statement, StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
-use crate::conversion::param_binding::odbc_bindings_to_json;
+use crate::conversion::param_binding::{odbc_bindings_to_json, odbc_bindings_to_json_array};
 use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
@@ -60,6 +60,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             conn_handle,
         } => {
             let conn_h = *conn_handle;
+            let array_size = stmt.apd.array_size;
+            let rows_processed_ptr = stmt.ipd.rows_processed_ptr;
+            let param_status_ptr = stmt.ipd.array_status_ptr;
+            let operation_ptr = stmt.apd.array_status_ptr as *const u16;
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, false)?;
             let stmt_handle = stmt.stmt_handle;
             let query_timeout = stmt.query_timeout;
@@ -169,6 +173,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             let response = response?;
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
+            write_param_array_status(rows_processed_ptr, param_status_ptr, array_size, operation_ptr);
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
             let execute_state = create_execute_state(response, false)?;
             let is_zero_dml = matches!(
@@ -361,6 +366,10 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
     let query_timeout = stmt.query_timeout;
     let multi_statement_count = stmt.multi_statement_count;
+    let array_size = stmt.apd.array_size;
+    let rows_processed_ptr = stmt.ipd.rows_processed_ptr;
+    let param_status_ptr = stmt.ipd.array_status_ptr;
+    let operation_ptr = stmt.apd.array_status_ptr as *const u16;
     let conn = unsafe { &mut *stmt.conn_ptr() };
     match &mut conn.state {
         ConnectionState::Connected {
@@ -464,6 +473,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             })?;
 
             tracing::info!("execute: Successfully executed statement");
+            write_param_array_status(rows_processed_ptr, param_status_ptr, array_size, operation_ptr);
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
@@ -551,12 +561,64 @@ fn create_execute_state(
     })
 }
 
+/// Per-parameter-set status constants written to `SQL_ATTR_PARAM_STATUS_PTR`.
+const SQL_PARAM_SUCCESS: u16 = 0;
+/// Written for rows skipped via `SQL_ATTR_PARAM_OPERATION_PTR`.
+const SQL_PARAM_UNUSED: u16 = 7;
+/// Value in the operation array that marks a row as ignored.
+const SQL_PARAM_IGNORE_OP: u16 = 1;
+
+/// After a successful execution with parameter arrays, write status values to the
+/// IPD pointers set via `SQL_ATTR_PARAMS_PROCESSED_PTR` and `SQL_ATTR_PARAM_STATUS_PTR`.
+///
+/// `rows_processed_ptr` receives the count of parameter sets actually sent (excluding
+/// ignored rows). `array_status_ptr` receives `SQL_PARAM_SUCCESS` for each processed
+/// row and `SQL_PARAM_UNUSED` for rows skipped via `operation_ptr`.
+fn write_param_array_status(
+    rows_processed_ptr: *mut sql::ULen,
+    array_status_ptr: *mut u16,
+    array_size: usize,
+    operation_ptr: *const u16,
+) {
+    let ignored = if operation_ptr.is_null() {
+        0
+    } else {
+        (0..array_size)
+            .filter(|&i| unsafe { *operation_ptr.add(i) } == SQL_PARAM_IGNORE_OP)
+            .count()
+    };
+
+    if !rows_processed_ptr.is_null() {
+        unsafe { *rows_processed_ptr = (array_size - ignored) as sql::ULen };
+    }
+
+    if !array_status_ptr.is_null() {
+        for i in 0..array_size {
+            let status = if !operation_ptr.is_null()
+                && unsafe { *operation_ptr.add(i) } == SQL_PARAM_IGNORE_OP
+            {
+                SQL_PARAM_UNUSED
+            } else {
+                SQL_PARAM_SUCCESS
+            };
+            unsafe { *array_status_ptr.add(i) = status };
+        }
+    }
+}
+
 /// Build JSON query bindings from ODBC parameter bindings.
 ///
 /// When `prepared` is true (SQLPrepare+SQLExecute flow), the IPD has server-
 /// provided parameter count and we validate that the APD covers every marker.
 /// When `prepared` is false (SQLExecDirect), the IPD only has records from
 /// SQLBindParameter — we send whatever the APD has and let the server validate.
+///
+/// When `apd.array_size > 1`, emits an array binding JSON where each parameter's
+/// `"value"` is a JSON array of values (one per row).
+///
+/// Returns `(bindings, json_owner)`. The caller **must** keep `json_owner` alive
+/// until after the bindings have been consumed by `statement_execute_query`,
+/// because `BinaryDataPtr` holds a raw pointer into the owned `String`.
 fn apply_parameter_bindings(
     apd: &crate::api::ApdDescriptor,
     ipd: &crate::api::IpdDescriptor,
@@ -594,12 +656,37 @@ fn apply_parameter_bindings(
             }
         }
     }
+
+    let array_size = apd.array_size;
     tracing::info!(
-        "apply_parameter_bindings: Found {} bound parameters",
-        apd.records.len()
+        "apply_parameter_bindings: Found {} bound parameters, array_size={}",
+        apd.records.len(),
+        array_size,
     );
 
-    let json_string = odbc_bindings_to_json(apd, ipd).context(JsonBindingSnafu {})?;
+    let json_string = if array_size > 1 {
+        // Build ParameterBinding map for array execution.
+        let max_key = apd.desc_count().max(ipd.desc_count());
+        let mut parameter_bindings = std::collections::HashMap::new();
+        for param_num in 1..=max_key {
+            if let (Some(apd_rec), Some(ipd_rec)) =
+                (apd.records.get(&param_num), ipd.records.get(&param_num))
+            {
+                parameter_bindings.insert(param_num, ParameterBinding::from_apd_ipd(apd_rec, ipd_rec));
+            }
+        }
+        let bind_type = apd.bind_type as usize;
+        let bind_offset = if apd.bind_offset_ptr.is_null() {
+            0
+        } else {
+            unsafe { *apd.bind_offset_ptr }
+        };
+        let operation_ptr = apd.array_status_ptr as *const u16;
+        odbc_bindings_to_json_array(&parameter_bindings, array_size, bind_type, bind_offset, operation_ptr)
+            .context(JsonBindingSnafu {})?
+    } else {
+        odbc_bindings_to_json(apd, ipd).context(JsonBindingSnafu {})?
+    };
 
     let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
     let json_data_len = json_string.len();
@@ -1171,6 +1258,55 @@ pub fn set_stmt_attr(
             stmt.retrieve_data = val;
             Ok(())
         }
+        StmtAttr::ParamsetSize => {
+            let size = value_ptr as usize;
+            let effective = if size == 0 {
+                tracing::warn!("set_stmt_attr: ParamsetSize value 0 is invalid; coercing to 1");
+                1
+            } else {
+                size
+            };
+            tracing::debug!("set_stmt_attr: ParamsetSize = {}", effective);
+            stmt.apd.array_size = effective;
+            Ok(())
+        }
+        StmtAttr::ParamBindType => {
+            let val = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: ParamBindType = {}", val);
+            stmt.apd.bind_type = val;
+            Ok(())
+        }
+        StmtAttr::ParamBindOffsetPtr => {
+            let ptr = value_ptr as *mut sql::Len;
+            tracing::debug!("set_stmt_attr: ParamBindOffsetPtr = {:?}", ptr);
+            stmt.apd.bind_offset_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamStatusPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: ParamStatusPtr = {:?}", ptr);
+            stmt.ipd.array_status_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamsProcessedPtr => {
+            let ptr = value_ptr as *mut sql::ULen;
+            tracing::debug!("set_stmt_attr: ParamsProcessedPtr = {:?}", ptr);
+            stmt.ipd.rows_processed_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::ParamOperationPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: ParamOperationPtr = {:?}", ptr);
+            stmt.apd.array_status_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::SnowflakeLastQueryId => {
+            // Read-only attribute — cannot be set
+            crate::api::error::ReadOnlyAttributeSnafu {
+                attribute: attr as i32,
+            }
+            .fail()
+        }
         StmtAttr::SnowflakeMultiStatementCount => {
             let val = value_ptr as i64;
             if val < -1 {
@@ -1414,6 +1550,59 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             if !string_length_ptr.is_null() {
                 unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
             }
+            Ok(())
+        }
+        StmtAttr::ParamsetSize => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.apd.array_size as sql::ULen;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamBindType => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.apd.bind_type;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::ParamBindOffsetPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::Len) = stmt.apd.bind_offset_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamStatusPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut u16) = stmt.ipd.array_status_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamsProcessedPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::ULen) = stmt.ipd.rows_processed_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ParamOperationPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut u16) = stmt.apd.array_status_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::SnowflakeLastQueryId => {
+            let id = stmt.last_query_id.as_deref().unwrap_or("");
+            write_string_bytes_i32::<E>(
+                id,
+                value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                None,
+            );
             Ok(())
         }
         StmtAttr::SnowflakeMultiStatementCount => {

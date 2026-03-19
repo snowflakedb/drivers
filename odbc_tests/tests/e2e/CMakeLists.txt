@@ -28,6 +28,7 @@ add_odbc_test(e2e_query_sql_set_pos query/sql_set_pos.cpp)
 add_odbc_test(e2e_query_sql_bulk_operations query/sql_bulk_operations.cpp)
 add_odbc_test(e2e_query_attr_error_handling query/attr_error_handling.cpp)
 add_odbc_test(e2e_query_sf_stmt_attrs query/sf_stmt_attrs.cpp)
+add_odbc_test(e2e_query_param_array_attrs query/param_array_attrs.cpp)
 
 # tls
 add_odbc_test(e2e_tls_crl_enabled tls/crl_enabled.cpp)
