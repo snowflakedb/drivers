@@ -23,8 +23,8 @@ inline SQLDOUBLE get_data_default_as_double(const StatementHandleWrapper& stmt, 
   SQLDOUBLE value = 0.0;
   SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_DEFAULT, &value, sizeof(value), &indicator);
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(indicator == sizeof(SQLDOUBLE));
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(indicator == sizeof(SQLDOUBLE));
   return value;
 }
 
