@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream>
 
 #include <catch2/catch_test_macros.hpp>
@@ -97,21 +98,31 @@ inline void configure_driver_string(std::stringstream& ss) {
 #endif
 }
 
-inline void read_default_params(std::stringstream& ss, const picojson::object& params) {
+inline void read_default_params(std::stringstream& ss, const picojson::object& params,
+                                const std::set<std::string>& skip_conn_keys = {}) {
+  auto req = [&](const std::string& cfg, const std::string& conn) {
+    if (!skip_conn_keys.count(conn)) add_param_required<std::string>(ss, params, cfg, conn);
+  };
+  auto opt = [&](const std::string& cfg, const std::string& conn) {
+    if (!skip_conn_keys.count(conn)) add_param_optional<std::string>(ss, params, cfg, conn);
+  };
+
   configure_driver_string(ss);
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
-  if (params.count("SNOWFLAKE_TEST_WAREHOUSE_ODBC")) {
-    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE_ODBC", "WAREHOUSE");
-  } else {
-    add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
+  req("SNOWFLAKE_TEST_HOST", "SERVER");
+  req("SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
+  req("SNOWFLAKE_TEST_USER", "UID");
+  if (!skip_conn_keys.count("WAREHOUSE")) {
+    if (params.count("SNOWFLAKE_TEST_WAREHOUSE_ODBC")) {
+      add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE_ODBC", "WAREHOUSE");
+    } else {
+      add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
+    }
   }
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_ROLE", "ROLE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_SCHEMA", "SCHEMA");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_DATABASE", "DATABASE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PORT", "PORT");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
+  opt("SNOWFLAKE_TEST_ROLE", "ROLE");
+  opt("SNOWFLAKE_TEST_SCHEMA", "SCHEMA");
+  opt("SNOWFLAKE_TEST_DATABASE", "DATABASE");
+  opt("SNOWFLAKE_TEST_PORT", "PORT");
+  opt("SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
 }
 
 inline std::string get_connection_string() {
