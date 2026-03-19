@@ -120,8 +120,68 @@ impl BaseDriverHandler for PythonHandler {
         let mut breaking_changes: HashMap<String, BehaviorDifferenceLocation> = HashMap::new();
         let lines: Vec<&str> = content.lines().collect();
         let mut in_method = false;
+        let skip_ref_re = Regex::new(r#"@pytest\.mark\.skip_reference\(.*?(BD#\d+)"#).unwrap();
+        let skip_uni_re = Regex::new(r#"@pytest\.mark\.skip_universal\(.*?(BD#\d+)"#).unwrap();
 
-        // Find the method start
+        // Pre-scan: collect skip decorators that appear immediately before this method
+        for (line_num, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with(&format!("def {}(", method_name)) {
+                let method_start_line = line_num + 1;
+                // Look backwards for skip decorators
+                let mut j = line_num;
+                while j > 0 {
+                    j -= 1;
+                    let prev = lines[j].trim();
+                    if prev.starts_with('@') {
+                        let rel_path = file_path
+                            .strip_prefix(&self.workspace_root)
+                            .unwrap_or(file_path)
+                            .to_string_lossy()
+                            .to_string();
+                        // skip_reference = skip old/reference → new-driver behaviour
+                        if let Some(caps) = skip_ref_re.captures(prev) {
+                            let bd_id = caps[1].to_string();
+                            let loc = breaking_changes.entry(bd_id).or_insert_with(|| {
+                                BehaviorDifferenceLocation {
+                                    new_behaviour_file: None,
+                                    new_behaviour_line: None,
+                                    old_behaviour_file: None,
+                                    old_behaviour_line: None,
+                                    old_driver_skipped: false,
+                                    new_driver_skipped: false,
+                                }
+                            });
+                            loc.new_behaviour_file = Some(rel_path.clone());
+                            loc.new_behaviour_line = Some(method_start_line);
+                            loc.old_driver_skipped = true;
+                        }
+                        // skip_universal = skip new/universal → old-driver behaviour
+                        if let Some(caps) = skip_uni_re.captures(prev) {
+                            let bd_id = caps[1].to_string();
+                            let loc = breaking_changes.entry(bd_id).or_insert_with(|| {
+                                BehaviorDifferenceLocation {
+                                    new_behaviour_file: None,
+                                    new_behaviour_line: None,
+                                    old_behaviour_file: None,
+                                    old_behaviour_line: None,
+                                    old_driver_skipped: false,
+                                    new_driver_skipped: false,
+                                }
+                            });
+                            loc.old_behaviour_file = Some(rel_path.clone());
+                            loc.old_behaviour_line = Some(method_start_line);
+                            loc.new_driver_skipped = true;
+                        }
+                    } else if !prev.is_empty() && !prev.starts_with('#') {
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+
+        // Main scan: find NEW_DRIVER_ONLY / OLD_DRIVER_ONLY inside the method body
         for (line_num, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
             if trimmed.starts_with(&format!("def {}(", method_name)) {
@@ -132,7 +192,6 @@ impl BaseDriverHandler for PythonHandler {
             if in_method {
                 let indent_level = line.len() - line.trim_start().len();
 
-                // If we hit a line with same or less indentation that starts with def/class, we're out of the method
                 if indent_level <= 4
                     && (trimmed.starts_with("def ") || trimmed.starts_with("class "))
                     && !trimmed.starts_with(&format!("def {}(", method_name))
@@ -140,49 +199,43 @@ impl BaseDriverHandler for PythonHandler {
                     break;
                 }
 
-                // Look for Behavior Difference patterns in Python: NEW_DRIVER_ONLY("BD#X") or OLD_DRIVER_ONLY("BD#X")
                 if let Some(breaking_change_id) = self.extract_breaking_change_from_line(trimmed) {
-                    // Determine if this is NEW or OLD driver behavior
                     let is_new_driver = trimmed.contains("NEW_DRIVER_ONLY");
 
-                    let location = if is_new_driver {
-                        BehaviorDifferenceLocation {
-                            new_behaviour_file: Some(
-                                file_path
-                                    .strip_prefix(&self.workspace_root)
-                                    .unwrap_or(file_path)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            ),
-                            new_behaviour_line: Some(line_num + 1),
-                            old_behaviour_file: None,
-                            old_behaviour_line: None,
-                        }
-                    } else {
-                        BehaviorDifferenceLocation {
-                            new_behaviour_file: None,
-                            new_behaviour_line: None,
-                            old_behaviour_file: Some(
-                                file_path
-                                    .strip_prefix(&self.workspace_root)
-                                    .unwrap_or(file_path)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            ),
-                            old_behaviour_line: Some(line_num + 1),
-                        }
-                    };
+                    let rel_path = file_path
+                        .strip_prefix(&self.workspace_root)
+                        .unwrap_or(file_path)
+                        .to_string_lossy()
+                        .to_string();
 
-                    // If we already have this Behavior Difference, merge the locations
                     if let Some(existing) = breaking_changes.get_mut(&breaking_change_id) {
                         if is_new_driver {
-                            existing.new_behaviour_file = location.new_behaviour_file;
-                            existing.new_behaviour_line = location.new_behaviour_line;
+                            existing.new_behaviour_file = Some(rel_path);
+                            existing.new_behaviour_line = Some(line_num + 1);
                         } else {
-                            existing.old_behaviour_file = location.old_behaviour_file;
-                            existing.old_behaviour_line = location.old_behaviour_line;
+                            existing.old_behaviour_file = Some(rel_path);
+                            existing.old_behaviour_line = Some(line_num + 1);
                         }
                     } else {
+                        let location = if is_new_driver {
+                            BehaviorDifferenceLocation {
+                                new_behaviour_file: Some(rel_path),
+                                new_behaviour_line: Some(line_num + 1),
+                                old_behaviour_file: None,
+                                old_behaviour_line: None,
+                                old_driver_skipped: false,
+                                new_driver_skipped: false,
+                            }
+                        } else {
+                            BehaviorDifferenceLocation {
+                                new_behaviour_file: None,
+                                new_behaviour_line: None,
+                                old_behaviour_file: Some(rel_path),
+                                old_behaviour_line: Some(line_num + 1),
+                                old_driver_skipped: false,
+                                new_driver_skipped: false,
+                            }
+                        };
                         breaking_changes.insert(breaking_change_id, location);
                     }
                 }
@@ -265,34 +318,31 @@ impl PythonHandler {
 
                 // Look for Behavior Difference patterns in Python: NEW_DRIVER_ONLY("BD#X") or OLD_DRIVER_ONLY("BD#X")
                 if let Some(breaking_change_id) = self.extract_breaking_change_from_line(trimmed) {
-                    // Determine if this is NEW or OLD driver behavior
                     let is_new_driver = trimmed.contains("NEW_DRIVER_ONLY");
+
+                    let rel_path = file_path
+                        .strip_prefix(&self.workspace_root)
+                        .unwrap_or(file_path)
+                        .to_string_lossy()
+                        .to_string();
 
                     let location = if is_new_driver {
                         BehaviorDifferenceLocation {
-                            new_behaviour_file: Some(
-                                file_path
-                                    .strip_prefix(&self.workspace_root)
-                                    .unwrap_or(file_path)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            ),
+                            new_behaviour_file: Some(rel_path),
                             new_behaviour_line: Some(line_num + 1),
                             old_behaviour_file: None,
                             old_behaviour_line: None,
+                            old_driver_skipped: false,
+                            new_driver_skipped: false,
                         }
                     } else {
                         BehaviorDifferenceLocation {
                             new_behaviour_file: None,
                             new_behaviour_line: None,
-                            old_behaviour_file: Some(
-                                file_path
-                                    .strip_prefix(&self.workspace_root)
-                                    .unwrap_or(file_path)
-                                    .to_string_lossy()
-                                    .to_string(),
-                            ),
+                            old_behaviour_file: Some(rel_path),
                             old_behaviour_line: Some(line_num + 1),
+                            old_driver_skipped: false,
+                            new_driver_skipped: false,
                         }
                     };
 

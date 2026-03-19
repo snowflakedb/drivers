@@ -80,4 +80,6 @@ pub struct BehaviorDifferenceLocation {
     pub new_behaviour_line: Option<usize>,
     pub old_behaviour_file: Option<String>,
     pub old_behaviour_line: Option<usize>,
+    pub old_driver_skipped: bool,
+    pub new_driver_skipped: bool,
 }
