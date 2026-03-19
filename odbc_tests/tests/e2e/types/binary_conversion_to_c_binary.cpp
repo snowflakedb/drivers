@@ -8,8 +8,8 @@
 
 #include "Connection.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 // ============================================================================
 // SQL_C_BINARY — raw bytes
@@ -26,7 +26,7 @@ TEST_CASE("should convert binary to SQL_C_BINARY returning raw bytes", "[datatyp
   SQLCHAR buffer[64] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(indicator == 5);
   REQUIRE(buffer[0] == 0x48);
   REQUIRE(buffer[1] == 0x65);
@@ -50,7 +50,7 @@ TEST_CASE("should convert binary to SQL_C_DEFAULT returning raw bytes", "[dataty
   SQLCHAR buffer[64] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(indicator == 2);
   REQUIRE(buffer[0] == 0xCA);
   REQUIRE(buffer[1] == 0xFE);
@@ -69,12 +69,12 @@ TEST_CASE("should retrieve binary via SQLBindCol with SQL_C_BINARY", "[datatype]
   SQLCHAR buffer[64] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT X'ABCDEF'::BINARY"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Bound buffer should contain raw bytes [0xAB, 0xCD, 0xEF]
   REQUIRE(indicator == 3);
@@ -99,7 +99,7 @@ TEST_CASE("should convert empty binary to SQL_C_BINARY returning zero-length dat
   SQLCHAR buffer[16] = {0xFF};
   SQLLEN indicator = -1;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(indicator == 0);
   REQUIRE(buffer[0] == 0xFF);
 }

@@ -18,7 +18,7 @@
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 static void check_single_interval_conversion(Connection& conn, const char* query, SQLSMALLINT target_type) {
   auto stmt = conn.execute_fetch(query);

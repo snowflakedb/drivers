@@ -20,7 +20,7 @@
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // ============================================================================

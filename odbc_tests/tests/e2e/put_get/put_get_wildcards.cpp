@@ -62,7 +62,7 @@ TEST_CASE("should upload files that match wildcard question mark pattern", "[put
   while (true) {
     SQLRETURN ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     all += get_data<SQL_C_CHAR>(stmt, LS_ROW_NAME_IDX) + "\n";
   }
 
@@ -100,7 +100,7 @@ TEST_CASE("should upload files that match wildcard star pattern", "[put_get]") {
   while (true) {
     SQLRETURN ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     all += get_data<SQL_C_CHAR>(stmt, LS_ROW_NAME_IDX) + "\n";
   }
 

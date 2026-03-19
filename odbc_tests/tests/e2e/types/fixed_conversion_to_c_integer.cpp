@@ -17,7 +17,7 @@
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 template <int SQL_C_TYPE>
 void test_at_limits(Connection& conn) {

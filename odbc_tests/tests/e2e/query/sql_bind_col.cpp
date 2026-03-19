@@ -30,18 +30,18 @@ TEST_CASE("SQLBindCol binds a column and SQLFetch returns data in bound buffer."
 
   // When SQLExecDirect is called to execute a query
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind column 1 to a buffer
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Then SQLFetch should populate the bound buffer with the column data
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -75,27 +75,27 @@ TEST_CASE("SQLBindCol binds multiple columns in a result set.", "[query][bind_co
   // When SQLExecDirect is called to execute a query with multiple columns
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 'hello' AS col2, 3.14 AS col3", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called for each column
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLCHAR col2[100] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLDOUBLE col3 = 0.0;
   SQLLEN col3_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_DOUBLE, &col3, sizeof(col3), &col3_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return data in all bound buffers
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(col1 == 10);
   CHECK(std::string((char*)col2) == "hello");
   CHECK(col3 == 3.14);
@@ -118,22 +118,22 @@ TEST_CASE("SQLBindCol uses 1-based column numbering when bookmarks are not used.
 
   // When SQLExecDirect is called to execute a query with two columns
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'first' AS col1, 'second' AS col2", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with column numbers 1 and 2
   SQLCHAR col1[100] = {0};
   SQLLEN col1_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLCHAR col2[100] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the correct data for each column
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)col1) == "first");
   CHECK(std::string((char*)col2) == "second");
 }
@@ -156,15 +156,15 @@ TEST_CASE("SQLBindCol can be called before SQLExecDirect.", "[query][bind_col]")
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called after binding
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 99 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return data in the pre-bound buffer
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 99);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -180,17 +180,17 @@ TEST_CASE("SQLBindCol can be called after SQLExecDirect.", "[query][bind_col]") 
 
   // When SQLExecDirect is called first
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 77 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called after executing
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should use the binding established after execute
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 77);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -215,17 +215,17 @@ TEST_CASE("SQLBindCol unbinds a column when TargetValuePtr is null pointer.", "[
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with null TargetValuePtr to unbind
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, NULL, 0, NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the previously bound buffer should not be modified (column was unbound)
   CHECK(value == 0);
@@ -265,22 +265,22 @@ TEST_CASE("SQLFreeStmt with SQL_UNBIND unbinds all columns.", "[query][bind_col]
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER col2 = 0;
   SQLLEN col2_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFreeStmt is called with SQL_UNBIND to unbind all columns
   ret = SQLFreeStmt(stmt.getHandle(), SQL_UNBIND);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 20 AS col2", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then bound buffers should not be modified (all columns were unbound)
   CHECK(col1 == 0);
@@ -301,15 +301,15 @@ TEST_CASE("SQLBindCol can unbind data buffer while keeping indicator bound.", "[
   // When SQLBindCol is called with null TargetValuePtr but valid StrLen_or_IndPtr
   SQLLEN indicator = 999;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, NULL, 0, &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the data
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLBindCol should return SQL_SUCCESS
   CHECK(ret == SQL_SUCCESS);
@@ -337,19 +337,19 @@ TEST_CASE("SQLBindCol replaces old binding when called on already bound column."
   SQLINTEGER value1 = 0;
   SQLLEN indicator1 = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value1, sizeof(value1), &indicator1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called again to rebind column 1 to a different buffer
   SQLINTEGER value2 = 0;
   SQLLEN indicator2 = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value2, sizeof(value2), &indicator2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 55 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the new buffer should contain the data (old binding was overwritten)
   CHECK(value2 == 55);
@@ -378,28 +378,28 @@ TEST_CASE("SQLBindCol rebinding takes effect on next fetch, not the current one.
   // When a query returning multiple rows is executed
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 2)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And column 1 is bound to first buffer
   SQLBIGINT value1 = -1;
   SQLLEN indicator1 = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &value1, sizeof(value1), &indicator1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the first row
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value1 == 0);
 
   // And column 1 is rebound to a second buffer
   SQLBIGINT value2 = -1;
   SQLLEN indicator2 = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &value2, sizeof(value2), &indicator2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then fetching the next row should populate the new buffer (not the old one)
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value2 == 1);
   CHECK(indicator2 == sizeof(SQLBIGINT));
 
@@ -419,21 +419,21 @@ TEST_CASE("SQLBindCol can rebind after data has been fetched from result set.", 
   // When a query returning two rows is executed
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 2)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And first row is fetched without any binding (using SQLGetData)
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And column is bound after first fetch
   SQLBIGINT value = -1;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then next fetch should use the new binding
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 1);
   CHECK(indicator == sizeof(SQLBIGINT));
 }
@@ -457,17 +457,17 @@ TEST_CASE("SQLBindCol counts null terminator when returning character data.", "[
 
   // When a query returning a 5-character string is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'ABCDE' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with exactly 6 bytes (5 chars + null terminator)
   SQLCHAR buffer[6] = {0};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the full string with null termination
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)buffer) == "ABCDE");
   CHECK(indicator == 5);
 }
@@ -483,13 +483,13 @@ TEST_CASE("SQLBindCol truncates character data when buffer is too small.", "[que
 
   // When a query returning a long string is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'Hello World' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with a buffer too small to hold the full string
   SQLCHAR buffer[6] = {0};  // Can hold 5 chars + null terminator
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_SUCCESS_WITH_INFO (data truncated)
   ret = SQLFetch(stmt.getHandle());
@@ -515,17 +515,17 @@ TEST_CASE("SQLBindCol ignores BufferLength for fixed-length data types.", "[quer
 
   // When a query returning an integer is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with BufferLength set to 0 for a fixed-length type
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, 0, &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should succeed because driver ignores BufferLength for fixed-length types
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -583,17 +583,17 @@ TEST_CASE("SQLBindCol returns data length in StrLen_or_IndPtr for non-null data.
 
   // When a query returning a string is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'test string' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with an indicator pointer
   SQLCHAR buffer[100] = {0};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should set the indicator to the data length
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == 11);  // Length of "test string"
   CHECK(std::string((char*)buffer) == "test string");
 }
@@ -610,17 +610,17 @@ TEST_CASE("SQLBindCol returns SQL_NULL_DATA in StrLen_or_IndPtr for NULL values.
 
   // When a query returning NULL is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT NULL AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with an indicator pointer
   SQLINTEGER value = 999;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should set the indicator to SQL_NULL_DATA
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == SQL_NULL_DATA);
 }
 
@@ -636,16 +636,16 @@ TEST_CASE("SQLBindCol with null StrLen_or_IndPtr succeeds for non-null data.", "
 
   // When a query returning a non-null integer is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called without an indicator pointer (NULL)
   SQLINTEGER value = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should succeed for non-null data
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
 }
 
@@ -666,17 +666,17 @@ TEST_CASE("SQLBindCol converts data to the specified TargetType.", "[query][bind
 
   // When a query returning an integer is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 12345 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol specifies SQL_C_CHAR as TargetType (convert integer to string)
   SQLCHAR buffer[100] = {0};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should convert the integer to a string representation
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)buffer) == "12345");
   CHECK(indicator == 5);
 }
@@ -712,7 +712,7 @@ TEST_CASE("SQLBindCol supports SQL_C_DEFAULT as TargetType.", "[query][bind_col]
 
   // When a query is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with SQL_C_DEFAULT
   SQLCHAR buffer[100] = {0};
@@ -753,7 +753,7 @@ TEST_CASE("SQLBindCol updates SQL_DESC_COUNT on the ARD.", "[query][bind_col]") 
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQL_DESC_COUNT should be updated to 3
   ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
@@ -774,7 +774,7 @@ TEST_CASE("SQLBindCol sets SQL_DESC_COUNT only when increasing.", "[query][bind_
   SQLINTEGER value3 = 0;
   SQLLEN indicator3 = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &value3, sizeof(value3), &indicator3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -791,7 +791,7 @@ TEST_CASE("SQLBindCol sets SQL_DESC_COUNT only when increasing.", "[query][bind_
   SQLINTEGER value1 = 0;
   SQLLEN indicator1 = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value1, sizeof(value1), &indicator1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQL_DESC_COUNT should still be 3 (not decreased)
   ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
@@ -814,11 +814,11 @@ TEST_CASE("SQLBindCol decreases SQL_DESC_COUNT when unbinding highest bound colu
   SQLINTEGER val1 = 0, val2 = 0, val3 = 0;
   SQLLEN ind1 = 0, ind2 = 0, ind3 = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &val3, sizeof(val3), &ind3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -833,7 +833,7 @@ TEST_CASE("SQLBindCol decreases SQL_DESC_COUNT when unbinding highest bound colu
 
   // And when the highest bound column (3) is unbound
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, NULL, 0, NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQL_DESC_COUNT should decrease to 2 (next highest bound column)
   ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
@@ -859,11 +859,11 @@ TEST_CASE("SQLBindCol decreases SQL_DESC_COUNT when TargetValuePtr is null even 
   SQLINTEGER val1 = 0, val2 = 0, val3 = 0;
   SQLLEN ind1 = 0, ind2 = 0, ind3 = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &val3, sizeof(val3), &ind3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -879,7 +879,7 @@ TEST_CASE("SQLBindCol decreases SQL_DESC_COUNT when TargetValuePtr is null even 
   // And when the highest bound column (3) is unbound with null TargetValuePtr but non-null StrLen_or_IndPtr
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, NULL, 0, &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQL_DESC_COUNT should decrease to 2 (column was unbound because TargetValuePtr is null)
   ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
@@ -908,7 +908,7 @@ TEST_CASE("SQLBindCol sets descriptor fields on the ARD.", "[query][bind_col]") 
   SQLCHAR buffer[100] = {0};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -972,7 +972,7 @@ TEST_CASE("SQLBindCol sets ARD descriptor fields for fixed-length type.", "[quer
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -1029,7 +1029,7 @@ TEST_CASE("SQLBindCol updates ARD descriptor fields on rebind.", "[query][bind_c
   SQLINTEGER int_value = 0;
   SQLLEN int_indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &int_value, sizeof(int_value), &int_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -1046,7 +1046,7 @@ TEST_CASE("SQLBindCol updates ARD descriptor fields on rebind.", "[query][bind_c
   SQLCHAR char_buffer[50] = {0};
   SQLLEN char_indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, char_buffer, sizeof(char_buffer), &char_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQL_DESC_TYPE should be updated to SQL_C_CHAR
   ret = SQLGetDescField(ard, 1, SQL_DESC_TYPE, &desc_type, 0, NULL);
@@ -1085,7 +1085,7 @@ TEST_CASE("SQLBindCol clears ARD descriptor fields on unbind.", "[query][bind_co
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -1100,7 +1100,7 @@ TEST_CASE("SQLBindCol clears ARD descriptor fields on unbind.", "[query][bind_co
 
   // And SQLBindCol unbinds column 1 with NULL TargetValuePtr
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, NULL, 0, NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQL_DESC_DATA_PTR should have been cleared
   data_ptr = (SQLPOINTER)0xDEAD;
@@ -1136,17 +1136,17 @@ TEST_CASE("SQLBindCol sets ARD descriptor fields for multiple columns.", "[query
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLCHAR col2[50] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLDOUBLE col3 = 0.0;
   SQLLEN col3_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_DOUBLE, &col3, sizeof(col3), &col3_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -1216,27 +1216,27 @@ TEST_CASE("SQLBindCol supports column-wise binding with arrays.", "[query][bind_
 
   // When SQL_ATTR_ROW_BIND_TYPE is set to SQL_BIND_BY_COLUMN (default)
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_BIND_TYPE, (SQLPOINTER)SQL_BIND_BY_COLUMN, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set to fetch 3 rows
   constexpr int array_size = 3;
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query returning 3 rows is executed
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with arrays (column-wise binding)
   SQLBIGINT values[array_size] = {0};
   SQLLEN indicators[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, values, sizeof(SQLBIGINT), (SQLLEN*)indicators);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should populate the arrays
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   for (int i = 0; i < array_size; i++) {
     CHECK(values[i] == i);
     CHECK(indicators[i] == sizeof(SQLBIGINT));
@@ -1271,28 +1271,28 @@ TEST_CASE("SQLBindCol supports row-wise binding.", "[query][bind_col]") {
 
   // And SQL_ATTR_ROW_BIND_TYPE is set to the row structure size
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_BIND_TYPE, (SQLPOINTER)sizeof(RowData), 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query with two columns is executed
   ret = SQLExecDirect(
       stmt.getHandle(),
       (SQLCHAR*)"SELECT seq8() as id, 'row' || seq8()::varchar as name FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id",
       SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds columns using the first row as the base address
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &rows[0].id, sizeof(SQLBIGINT), &rows[0].id_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, rows[0].name, sizeof(rows[0].name), &rows[0].name_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should populate rows using the row-wise layout
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   for (int i = 0; i < array_size; i++) {
     CHECK(rows[i].id == i);
     CHECK(rows[i].id_indicator == sizeof(SQLBIGINT));
@@ -1329,27 +1329,27 @@ TEST_CASE("SQLBindCol supports binding offsets via SQL_ATTR_ROW_BIND_OFFSET_PTR.
   SQLLEN bind_offset = 0;
 
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_BIND_OFFSET_PTR, &bind_offset, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query returning 2 rows is executed
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 2)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds to the first row's buffer
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &rows[0].value, sizeof(SQLBIGINT), &rows[0].indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then first fetch with offset=0 should populate rows[0]
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(rows[0].value == 0);
   CHECK(rows[0].indicator == sizeof(SQLBIGINT));
 
   // And second fetch with offset pointing to rows[1] should populate rows[1]
   bind_offset = sizeof(RowData);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(rows[1].value == 1);
   CHECK(rows[1].indicator == sizeof(SQLBIGINT));
 }
@@ -1367,21 +1367,21 @@ TEST_CASE("SQLBindCol binding offset of 0 uses originally bound addresses.", "[q
   // When a binding offset pointer is set with value 0
   SQLLEN bind_offset = 0;
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_BIND_OFFSET_PTR, &bind_offset, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds to a buffer
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch with offset 0 should use the originally bound address
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -1403,22 +1403,22 @@ TEST_CASE("SQLBindCol binds arrays when SQL_ATTR_ROW_ARRAY_SIZE > 1.", "[query][
   // When SQL_ATTR_ROW_ARRAY_SIZE is set to 5
   constexpr int array_size = 5;
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query returning 5 rows is executed
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with an array of buffers
   SQLBIGINT values[array_size] = {0};
   SQLLEN indicators[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, values, sizeof(SQLBIGINT), (SQLLEN*)indicators);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then a single SQLFetch should populate all array elements
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   for (int i = 0; i < array_size; i++) {
     CHECK(values[i] == i);
     CHECK(indicators[i] == sizeof(SQLBIGINT));
@@ -1444,7 +1444,7 @@ TEST_CASE("SQLBindCol returns 07009 when ColumnNumber exceeds max columns.", "[q
 
   // When a query with 1 column is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS col1", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with a column number that exceeds the result set
   SQLINTEGER value = 0;
@@ -1494,23 +1494,23 @@ TEST_CASE("SQLBindCol is not required - columns can be retrieved with SQLGetData
 
   // When a query is executed without binding any columns
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value, 'hello' AS name", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData can retrieve data without prior binding
   SQLINTEGER int_value = 0;
   SQLLEN int_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &int_value, sizeof(int_value), &int_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(int_value == 42);
 
   SQLCHAR str_value[100] = {0};
   SQLLEN str_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, str_value, sizeof(str_value), &str_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)str_value) == "hello");
 }
 
@@ -1525,17 +1525,17 @@ TEST_CASE("SQLBindCol can bind some columns while SQLGetData retrieves others.",
 
   // When a query with two columns is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS col1, 'hello' AS col2", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And only column 1 is bound
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the bound column should have data
   CHECK(col1 == 42);
@@ -1544,7 +1544,7 @@ TEST_CASE("SQLBindCol can bind some columns while SQLGetData retrieves others.",
   SQLCHAR col2[100] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)col2) == "hello");
 }
 
@@ -1563,17 +1563,17 @@ TEST_CASE("SQLBindCol supports SQL_C_CHAR binding.", "[query][bind_col]") {
 
   // When a query returning a string is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'ODBC Test' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_CHAR
   SQLCHAR buffer[100] = {0};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the string data
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)buffer) == "ODBC Test");
   CHECK(indicator == 9);
 }
@@ -1589,17 +1589,17 @@ TEST_CASE("SQLBindCol supports SQL_C_SBIGINT binding.", "[query][bind_col]") {
 
   // When a query returning a large integer is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 9223372036854775807 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_SBIGINT
   SQLBIGINT value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the large integer
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 9223372036854775807LL);
   CHECK(indicator == sizeof(SQLBIGINT));
 }
@@ -1615,17 +1615,17 @@ TEST_CASE("SQLBindCol supports SQL_C_DOUBLE binding.", "[query][bind_col]") {
 
   // When a query returning a double is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 3.14159 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_DOUBLE
   SQLDOUBLE value = 0.0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_DOUBLE, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the double value
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 3.14159);
   CHECK(indicator == sizeof(SQLDOUBLE));
 }
@@ -1641,17 +1641,17 @@ TEST_CASE("SQLBindCol supports SQL_C_TYPE_DATE binding.", "[query][bind_col]") {
 
   // When a query returning a date is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT DATE '2025-01-15' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_TYPE_DATE
   SQL_DATE_STRUCT date_value = {};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_TYPE_DATE, &date_value, sizeof(date_value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the date components
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(date_value.year == 2025);
   CHECK(date_value.month == 1);
   CHECK(date_value.day == 15);
@@ -1668,17 +1668,17 @@ TEST_CASE("SQLBindCol supports SQL_C_TYPE_TIMESTAMP binding.", "[query][bind_col
 
   // When a query returning a timestamp is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT TIMESTAMP '2025-06-15 10:30:45' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_TYPE_TIMESTAMP
   SQL_TIMESTAMP_STRUCT ts_value = {};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_TYPE_TIMESTAMP, &ts_value, sizeof(ts_value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the timestamp components
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(ts_value.year == 2025);
   CHECK(ts_value.month == 6);
   CHECK(ts_value.day == 15);
@@ -1705,13 +1705,13 @@ TEST_CASE("SQLBindCol indicator returns full data length when buffer causes trun
 
   // When a query returning a known-length string is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'ABCDEFGHIJ' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol uses a buffer that causes truncation
   SQLCHAR buffer[5] = {0};  // Only room for 4 chars + null
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_SUCCESS_WITH_INFO
   ret = SQLFetch(stmt.getHandle());
@@ -1739,27 +1739,27 @@ TEST_CASE("SQLBindCol binding persists across SQLFreeStmt SQL_CLOSE and re-execu
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 10);
 
   // And the cursor is closed with SQL_CLOSE (not freeing the statement)
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a new query is executed
   value = 0;
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 20 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the binding should still be in effect
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 20);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -1779,17 +1779,17 @@ TEST_CASE("SQLBindCol binding is removed by SQLFreeStmt SQL_UNBIND.", "[query][b
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_UNBIND is used to remove all bindings
   ret = SQLFreeStmt(stmt.getHandle(), SQL_UNBIND);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the buffer should not be modified (binding was removed)
   CHECK(value == 0);
@@ -1813,9 +1813,9 @@ TEST_CASE("Setting SQL_DESC_COUNT to 0 on the ARD unbinds all columns.", "[query
   SQLINTEGER val1 = 0, val2 = 0;
   SQLLEN ind1 = 0, ind2 = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_DESC_COUNT is set to 0 on the ARD
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -1826,9 +1826,9 @@ TEST_CASE("Setting SQL_DESC_COUNT to 0 on the ARD unbinds all columns.", "[query
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 20 AS col2", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the buffers should not be modified (all columns were unbound)
   CHECK(val1 == 0);
@@ -1852,11 +1852,11 @@ TEST_CASE("Setting SQL_DESC_COUNT to 1 on the ARD unbinds columns above 1.", "[q
   SQLINTEGER val1 = 0, val2 = 0, val3 = 0;
   SQLLEN ind1 = 0, ind2 = 0, ind3 = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &val3, sizeof(val3), &ind3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_DESC_COUNT is set to 1 on the ARD
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -1873,9 +1873,9 @@ TEST_CASE("Setting SQL_DESC_COUNT to 1 on the ARD unbinds columns above 1.", "[q
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 20 AS col2, 30 AS col3", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then column 1 buffer should be populated (still bound)
   CHECK(val1 == 10);
@@ -1900,9 +1900,9 @@ TEST_CASE("Setting SQL_DESC_COUNT greater than number of bound columns does not 
   SQLINTEGER val1 = 0, val2 = 0;
   SQLLEN ind1 = 0, ind2 = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the ARD descriptor is obtained
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -1947,9 +1947,9 @@ TEST_CASE("Setting SQL_DESC_COUNT greater than number of bound columns does not 
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 20 AS col2", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the bound columns should still receive data
   CHECK(val1 == 10);
@@ -1998,17 +1998,17 @@ TEST_CASE("SQLBindCol converts string to integer type.", "[query][bind_col]") {
 
   // When a query returning a numeric string is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '12345' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol specifies SQL_C_LONG to convert from string to integer
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should convert the string to an integer
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 12345);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -2029,22 +2029,22 @@ TEST_CASE("SQLBindCol allows binding non-consecutive columns.", "[query][bind_co
 
   // When a query with 3 columns is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS col1, 2 AS col2, 3 AS col3", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And only columns 1 and 3 are bound (skipping column 2)
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER col3 = 0;
   SQLLEN col3_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &col3, sizeof(col3), &col3_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should populate only the bound columns
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(col1 == 1);
   CHECK(col3 == 3);
 }
@@ -2068,13 +2068,13 @@ TEST_CASE("SQLBindCol supports SQL_C_NUMERIC binding.", "[query][bind_col]") {
 
   // When a query returning a numeric value is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 12345 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_NUMERIC
   SQL_NUMERIC_STRUCT numeric_value = {};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric_value, sizeof(numeric_value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And precision/scale are set on the ARD for proper conversion
   SQLHDESC ard = SQL_NULL_HDESC;
@@ -2129,27 +2129,27 @@ TEST_CASE("SQLBindCol works with SQLFetchScroll.", "[query][bind_col]") {
   // When a query returning multiple rows is executed
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind the column
   SQLBIGINT value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetchScroll with SQL_FETCH_NEXT should populate the bound buffer
   ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 0);
   CHECK(indicator == sizeof(SQLBIGINT));
 
   // And subsequent calls should advance the cursor
   ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 1);
 
   ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 2);
 
   // And fetch after all rows returns SQL_NO_DATA
@@ -2173,17 +2173,17 @@ TEST_CASE("SQLBindCol supports SQL_C_BINARY binding.", "[query][bind_col]") {
 
   // When a query returning binary data (hex-encoded) is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT TO_BINARY('48656C6C6F', 'HEX') AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_BINARY
   SQLCHAR buffer[100] = {0};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the binary data
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == 5);  // "Hello" is 5 bytes
   CHECK(memcmp(buffer, "Hello", 5) == 0);
 }
@@ -2203,17 +2203,17 @@ TEST_CASE("SQLBindCol supports SQL_C_SHORT binding.", "[query][bind_col]") {
 
   // When a query returning a small integer is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 127 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_SHORT
   SQLSMALLINT value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SHORT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the value
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 127);
   CHECK(indicator == sizeof(SQLSMALLINT));
 }
@@ -2233,17 +2233,17 @@ TEST_CASE("SQLBindCol supports SQL_C_FLOAT binding.", "[query][bind_col]") {
 
   // When a query returning a float is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 2.5 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_FLOAT
   SQLREAL value = 0.0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_FLOAT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the float value
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 2.5f);
   CHECK(indicator == sizeof(SQLREAL));
 }
@@ -2263,16 +2263,16 @@ TEST_CASE("SQLBindCol supports SQL_C_BIT binding.", "[query][bind_col]") {
 
   // When a query returning a boolean is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT TRUE AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol binds with SQL_C_BIT
   SQLCHAR value = 0;
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return the boolean value as 1
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 1);
 }

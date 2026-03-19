@@ -18,7 +18,7 @@
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(static_cast<unsigned char>(c)); }
@@ -102,7 +102,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == 5);
     CHECK(buffer[0] == 'h');
     CHECK(buffer[1] == 'e');
@@ -116,7 +116,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == 0);
   }
 
@@ -125,7 +125,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == 9);
     CHECK(buffer[0] == 'A');
     CHECK(buffer[1] == 'B');
@@ -143,7 +143,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 4, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == SQL_NULL_DATA);
   }
 }
@@ -167,7 +167,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 9 UTF-8 bytes → 19 bytes
       // [E6 97 A5 E6 9C AC E8 AA 9E] reinterpreted as Win-1252:
@@ -199,7 +199,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 12 UTF-8 bytes → 26 bytes
       // Each 2-byte Cyrillic sequence reinterpreted as Win-1252 and re-encoded to UTF-8
@@ -220,7 +220,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 6 UTF-8 bytes → 12 bytes
       // [E4 BD A0 E5 A5 BD] reinterpreted as Win-1252 and re-encoded
@@ -255,7 +255,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 4, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 12 UTF-8 bytes → 19 bytes
       // é [C3 A9] → [C3 83 C2 A9], ASCII 'moji: ' kept as-is,
@@ -288,7 +288,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 5, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 5 UTF-8 bytes → 7 bytes
       // ASCII 'caf' kept, é [C3 A9] → [C3 83 C2 A9]
@@ -317,7 +317,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 6, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 6 UTF-8 bytes → 11 bytes
       // Ñ [C3 91] → [C3 83 E2 80 98], ñ [C3 B1] → [C3 83 C2 B1]
@@ -351,7 +351,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 7, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 4 UTF-8 bytes → 9 bytes
       // U+1D11E [F0 9D 84 9E] → [C3 B0 C2 9D E2 80 9E C5 BE]

@@ -23,7 +23,7 @@ TEST_CASE("should cast integer values to appropriate type for int and synonyms",
     SQLSMALLINT dec_digits = 0;
     SQLRETURN ret =
         SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &dec_digits, nullptr);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     INFO("col=" << col);
     CHECK(data_type == SQL_DECIMAL);
     CHECK(column_size == 38);
@@ -37,7 +37,7 @@ TEST_CASE("should cast integer values to appropriate type for int and synonyms",
       SQLSMALLINT dec_digits = 0;
       SQLRETURN ret = SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size,
                                      &dec_digits, nullptr);
-      CHECK_ODBC(ret, stmt_syn);
+      REQUIRE_ODBC(ret, stmt_syn);
       INFO("synonym col=" << col);
       CHECK(data_type == SQL_DECIMAL);
       CHECK(column_size == 38);
@@ -114,7 +114,7 @@ TEST_CASE("should download large result set with multiple chunks for int and syn
   auto stmt = conn.createStatement();
   const auto sql = "SELECT seq8()::BIGINT as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
   int row_count = 0;
@@ -125,11 +125,11 @@ TEST_CASE("should download large result set with multiple chunks for int and syn
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLBIGINT result = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, sizeof(result), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     REQUIRE(result == expected_value);
     expected_value++;
@@ -155,14 +155,14 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM int_table_positive ORDER BY col", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain integers <expected_values>
     std::vector<std::optional<int64_t>> expected = {
         {0}, {1}, {127}, {255}, {32767}, {65535}, {2147483647LL}, {4294967295LL}, {9223372036854775807LL}};
     for (size_t i = 0; i < expected.size(); i++) {
       ret = SQLFetch(stmt.getHandle());
-      CHECK_ODBC(ret, stmt);
+      REQUIRE_ODBC(ret, stmt);
       auto result = get_data_optional<SQL_C_SBIGINT>(stmt, 1);
       REQUIRE(result == expected[i]);
     }
@@ -177,14 +177,14 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM int_table_negative ORDER BY col", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain integers <expected_values>
     std::vector<std::optional<int64_t>> expected = {
         {-9223372036854775807LL - 1}, {-2147483648LL}, {-32768}, {-128}, {-1}};
     for (size_t i = 0; i < expected.size(); i++) {
       ret = SQLFetch(stmt.getHandle());
-      CHECK_ODBC(ret, stmt);
+      REQUIRE_ODBC(ret, stmt);
       auto result = get_data_optional<SQL_C_SBIGINT>(stmt, 1);
       REQUIRE(result == expected[i]);
     }
@@ -199,13 +199,13 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM int_table_null ORDER BY col", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain integers [0, 42, NULL]
     std::vector<std::optional<int64_t>> expected = {{0}, {42}, std::nullopt};
     for (size_t i = 0; i < expected.size(); i++) {
       ret = SQLFetch(stmt.getHandle());
-      CHECK_ODBC(ret, stmt);
+      REQUIRE_ODBC(ret, stmt);
       auto result = get_data_optional<SQL_C_SBIGINT>(stmt, 1);
       REQUIRE(result == expected[i]);
     }
@@ -237,7 +237,7 @@ TEST_CASE("should handle server-side Arrow memory optimization for int columns o
   auto stmt = conn.createStatement();
   const auto sql = "SELECT * FROM int_different_column_sizes";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 50000 rows with all values equal to expected data
   int row_count = 0;
@@ -247,17 +247,17 @@ TEST_CASE("should handle server-side Arrow memory optimization for int columns o
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLBIGINT col1, col2, col3, col4;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &col1, sizeof(col1), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLGetData(stmt.getHandle(), 2, SQL_C_SBIGINT, &col2, sizeof(col2), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLGetData(stmt.getHandle(), 3, SQL_C_SBIGINT, &col3, sizeof(col3), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLGetData(stmt.getHandle(), 4, SQL_C_SBIGINT, &col4, sizeof(col4), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     REQUIRE(col1 == expected_col1);
     REQUIRE(col2 == expected_col2);
@@ -328,7 +328,7 @@ TEST_CASE("should select large integer values from table for int and synonyms", 
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-99999999999999999999999999999999999999");
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "99999999999999999999999999999999999999");
 }
 
@@ -348,15 +348,15 @@ TEST_CASE("should insert integer using parameter binding for int and synonyms", 
   auto insert_value = [&](int64_t val) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO int_bind_insert VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLBIGINT bind_val = val;
     SQLLEN len = 0;
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, &bind_val, 0, &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   };
 
   insert_value(0);
@@ -371,15 +371,15 @@ TEST_CASE("should insert integer using parameter binding for int and synonyms", 
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -2147483648LL);
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 2147483647LL);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 9223372036854775807LL);
 }
 
@@ -401,20 +401,20 @@ TEST_CASE("should insert and select integers from table using batch parameter bi
 
   auto insert_stmt = conn.createStatement();
   SQLRETURN ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
 
   ret = SQLBindParameter(insert_stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, values, 0,
                          indicators);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
 
   ret = SQLExecDirect(insert_stmt.getHandle(), (SQLCHAR*)"INSERT INTO int_batch_bind VALUES (?)", SQL_NTS);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   REQUIRE(params_processed == num_rows);
 
   // And Query "SELECT * FROM <table>" is executed
@@ -424,18 +424,18 @@ TEST_CASE("should insert and select integers from table using batch parameter bi
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == -2147483648LL);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 0);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 42);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 2147483647LL);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 9223372036854775807LL);
 }

@@ -8,7 +8,7 @@
 #include "Schema.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("SQL_C_BIT spec compliance", "[fixed][conversion][c_bit]") {
   // Given A Snowflake connection is established

@@ -30,7 +30,7 @@
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // ============================================================================
@@ -586,7 +586,7 @@ TEST_CASE("should handle NULL string when converting to interval types",
     SQL_INTERVAL_STRUCT interval;
     SQLLEN indicator;
     SQLRETURN ret = get_data_raw(stmt, 1, SQL_C_INTERVAL_YEAR, &interval, &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == SQL_NULL_DATA);
   }
 }
@@ -605,15 +605,15 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '5' AS interval_year", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQL_INTERVAL_STRUCT interval;
     SQLLEN indicator;
     ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_INTERVAL_YEAR, &interval, sizeof(interval), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then the bound interval value should match the string representation
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -625,12 +625,12 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'not_an_interval' AS str_val", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQL_INTERVAL_STRUCT interval;
     SQLLEN indicator;
     ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_INTERVAL_YEAR, &interval, sizeof(interval), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
     CHECK(ret == SQL_ERROR);

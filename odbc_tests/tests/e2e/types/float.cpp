@@ -41,7 +41,7 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
   for (SQLUSMALLINT col = 1; col <= 5; ++col) {
     SQLSMALLINT data_type = 0;
     SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     INFO("col=" << col);
     CHECK(data_type == SQL_DOUBLE);
   }
@@ -54,7 +54,7 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
       SQLSMALLINT data_type = 0;
       SQLRETURN ret =
           SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
-      CHECK_ODBC(ret, stmt_syn);
+      REQUIRE_ODBC(ret, stmt_syn);
       INFO("col=" << col);
       CHECK(data_type == SQL_DOUBLE);
     }
@@ -68,7 +68,7 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
       SQLSMALLINT data_type = 0;
       SQLRETURN ret =
           SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
-      CHECK_ODBC(ret, stmt_syn);
+      REQUIRE_ODBC(ret, stmt_syn);
       INFO("col=" << col);
       CHECK(data_type == SQL_DOUBLE);
     }
@@ -182,7 +182,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
   auto stmt = conn.createStatement();
   const auto sql = "SELECT seq8()::FLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY 1";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 50000 rows with all values returned as appropriate float type
   int row_count = 0;
@@ -191,11 +191,11 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     double val = 0.0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &val, sizeof(val), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     REQUIRE(val == Catch::Approx(expected));
     expected += 1.0;
@@ -225,19 +225,19 @@ TEST_CASE("should select floats from table for float and synonyms", "[float]") {
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123000.0));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-0.00987));
 }
 
@@ -260,19 +260,19 @@ TEST_CASE("should handle special float values from table for float and synonyms"
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "NaN");
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(is_negative_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 42.0);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == -42.0);
 }
 
@@ -297,21 +297,21 @@ TEST_CASE("should handle float boundary values from table for float and synonyms
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(1.7976931348623157e308));
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-1.7976931348623157e308));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(2.2250738585072014e-308));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   double subnormal = get_data<SQL_C_DOUBLE>(stmt, 1);
   CHECK(subnormal > 0.0);
   CHECK(subnormal < 1e-300);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123456789012345.0));
 }
 
@@ -331,15 +331,15 @@ TEST_CASE("should handle NULL values from table for float and synonyms", "[float
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
 }
 
@@ -355,7 +355,7 @@ TEST_CASE("should select large result set from table for float and synonyms", "[
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM float_large ORDER BY col", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 50000 rows with all values returned as appropriate float type
   int row_count = 0;
@@ -364,11 +364,11 @@ TEST_CASE("should select large result set from table for float and synonyms", "[
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     double val = 0.0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &val, sizeof(val), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     REQUIRE(val == Catch::Approx(expected));
     expected += 1.0;
@@ -389,7 +389,7 @@ TEST_CASE("should select float using parameter binding for float and synonyms", 
   // When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values [123.456, -789.012, 42.0]
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::FLOAT, ?::FLOAT, ?::FLOAT", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   double v1 = 123.456;
   double v2 = -789.012;
@@ -399,17 +399,17 @@ TEST_CASE("should select float using parameter binding for float and synonyms", 
   SQLLEN len3 = 0;
 
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v1, 0, &len1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v2, 0, &len2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, &v3, 0, &len3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain floats [123.456, -789.012, 42.0]
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
@@ -419,17 +419,17 @@ TEST_CASE("should select float using parameter binding for float and synonyms", 
   // When Query "SELECT ?::<type>" is executed with bound NULL value
   auto stmt2 = conn.createStatement();
   ret = SQLPrepare(stmt2.getHandle(), (SQLCHAR*)"SELECT ?::FLOAT", SQL_NTS);
-  CHECK_ODBC(ret, stmt2);
+  REQUIRE_ODBC(ret, stmt2);
 
   SQLLEN null_ind = SQL_NULL_DATA;
   ret = SQLBindParameter(stmt2.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, nullptr, 0, &null_ind);
-  CHECK_ODBC(ret, stmt2);
+  REQUIRE_ODBC(ret, stmt2);
 
   ret = SQLExecute(stmt2.getHandle());
-  CHECK_ODBC(ret, stmt2);
+  REQUIRE_ODBC(ret, stmt2);
 
   ret = SQLFetch(stmt2.getHandle());
-  CHECK_ODBC(ret, stmt2);
+  REQUIRE_ODBC(ret, stmt2);
 
   // Then Result should contain NULL
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt2, 1) == std::nullopt);
@@ -453,20 +453,20 @@ TEST_CASE("should insert float using parameter binding for float and synonyms", 
 
   auto insert_stmt = conn.createStatement();
   SQLRETURN ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
 
   ret = SQLBindParameter(insert_stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_DOUBLE, 0, 0, values, 0,
                          indicators);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
 
   ret = SQLExecDirect(insert_stmt.getHandle(), (SQLCHAR*)"INSERT INTO float_bind_insert VALUES (?)", SQL_NTS);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   REQUIRE(params_processed == num_rows);
 
   // Then Result should contain the same values including NULL
@@ -475,14 +475,14 @@ TEST_CASE("should insert float using parameter binding for float and synonyms", 
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.0);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123.456));
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 1) == std::nullopt);
 }

@@ -19,7 +19,7 @@ TEST_CASE("SQLFetch fetches a row from SELECT query", "[query]") {
 
   // Then SQLFetch should return SQL_SUCCESS and retrieve the value
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
   auto result = get_data<SQL_C_LONG>(stmt, 1);
@@ -36,15 +36,15 @@ TEST_CASE("SQLFetch returns data about number of rows affected.") {
   auto stmt = conn.createStatement();
   // When SQLExecDirect is called to execute the query that returns 1 row
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   SQLULEN rows_fetched = 0;
   // And SQLSetStmtAttr is called to set the rows fetched pointer
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // And SQLFetch is called to fetch the row
   ret = SQLFetch(stmt.getHandle());
   // Then SQLFetch should return SQL_SUCCESS and retrieve the value
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // And the number of rows affected should be 1
   REQUIRE(rows_fetched == 1);
 }
@@ -60,7 +60,7 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
 
   // Then default cursor type is SQL_CURSOR_FORWARD_ONLY
   SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, &length);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(cursor_type == SQL_CURSOR_FORWARD_ONLY);
 
   // And SQL_CURSOR_STATIC is not supported
@@ -69,7 +69,7 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
   CHECK(get_sqlstate(stmt) == "01S02");
 
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, &length);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(cursor_type == SQL_CURSOR_FORWARD_ONLY);
 
   // And SQL_CURSOR_KEYSET_DRIVEN is not supported
@@ -78,7 +78,7 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
   CHECK(get_sqlstate(stmt) == "01S02");
 
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, &length);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(cursor_type == SQL_CURSOR_FORWARD_ONLY);
 
   // And SQL_CURSOR_DYNAMIC is not supported
@@ -87,7 +87,7 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
   CHECK(get_sqlstate(stmt) == "01S02");
 
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, &length);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(cursor_type == SQL_CURSOR_FORWARD_ONLY);
 
   // And SQL_CURSOR_FORWARD_ONLY is supported
@@ -96,7 +96,7 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
   CHECK(get_sqlstate(stmt) == "");
 
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, &length);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(cursor_type == SQL_CURSOR_FORWARD_ONLY);
 }
 
@@ -107,21 +107,21 @@ TEST_CASE("SQLFetch can be mixed with SQLFetchScroll.") {
   // When SQLExecDirect is called to execute the query that returns 10 rows
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 10)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // Then calls to SQLFetch and SQLFetchScroll can be mixed
   for (int i = 0; i < 10; i++) {
     if (i % 2 == 0) {
       ret = SQLFetch(stmt.getHandle());
-      CHECK_ODBC(ret, stmt);
+      REQUIRE_ODBC(ret, stmt);
     } else {
       ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
-      CHECK_ODBC(ret, stmt);
+      REQUIRE_ODBC(ret, stmt);
     }
     // And SQLGetData returns correct values for the current row
     SQLBIGINT result = 0;
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, sizeof(result), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(result == i);
     REQUIRE(indicator == sizeof(SQLBIGINT));
   }
@@ -136,35 +136,35 @@ TEST_CASE("SQLFetch returns multiple rows when SQL_ATTR_ROW_ARRAY_SIZE is set.")
   auto stmt = conn.createStatement();
   // When SQLSetStmtAttr is called to set the row array size
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)10, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLLEN row_array_size = 0;
   SQLINTEGER length = 0;
   // And SQL_ATTR_ROW_ARRAY_SIZE is set to the correct value
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, &row_array_size, 0, &length);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(row_array_size == 10);
   REQUIRE(length == sizeof(SQLLEN));
   // And SQLExecDirect is called to execute the query that returns 15 rows
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 15)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // And SQLBindCol is called to bind the column to the value
   constexpr int array_size = 10;
   SQLBIGINT result[array_size] = {0};
   SQLLEN indicator[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, 0, (SQLLEN*)&indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // Then SQLFetch should return SQL_SUCCESS and retrieve the first 10 rows
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   for (int i = 0; i < array_size; i++) {
     REQUIRE(result[i] == i);
     REQUIRE(indicator[i] == sizeof(SQLBIGINT));
   }
   // And SQLFetch should return SQL_SUCCESS and retrieve the next 5 rows
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   for (int i = 0; i < 5; i++) {
     REQUIRE(result[i] == i + 10);
     REQUIRE(indicator[i] == sizeof(SQLBIGINT));
@@ -183,26 +183,26 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS for successfully fetc
   constexpr int array_size = 5;
   SQLUSMALLINT row_status[array_size] = {SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW};
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns 5 rows
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind the column to the value
   SQLBIGINT result[array_size] = {0};
   SQLLEN indicator[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, 0, (SQLLEN*)&indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the rows
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then row status array should be updated with SQL_ROW_SUCCESS for all fetched rows
   for (int i = 0; i < array_size; i++) {
@@ -225,23 +225,23 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS_WITH_INFO when data i
   constexpr int array_size = 1;
   SQLUSMALLINT row_status[array_size] = {SQL_ROW_NOROW};
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns a long string
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'This is a very long string that will be truncated' AS value",
                       SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with a small buffer that will cause truncation
   constexpr int buffer_size = 10;
   SQLCHAR result[array_size][buffer_size] = {0};
   SQLLEN indicator[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, &result, buffer_size, (SQLLEN*)&indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the row
   ret = SQLFetch(stmt.getHandle());
@@ -265,21 +265,21 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_ERROR when conversion error o
   constexpr int array_size = 1;
   SQLUSMALLINT row_status[array_size] = {SQL_ROW_NOROW};
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns a non-numeric string
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'not_a_number' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind to an integer type (will cause conversion error)
   SQLINTEGER result[array_size] = {0};
   SQLLEN indicator[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(SQLINTEGER), (SQLLEN*)&indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the row
   ret = SQLFetch(stmt.getHandle());
@@ -303,26 +303,26 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_NOROW when rowset overlaps en
     row_status[i] = 0xFFFF;  // Initialize to invalid value to detect changes
   }
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_ARRAY_SIZE is set to 10
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute the query that returns only 3 rows
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind the column
   SQLBIGINT result[array_size] = {0};
   SQLLEN indicator[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, 0, (SQLLEN*)&indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the rows
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then first 3 rows should have SQL_ROW_SUCCESS
   for (int i = 0; i < 3; i++) {
@@ -914,24 +914,24 @@ TEST_CASE("SQLFetch ignores SQL_ATTR_MAX_LENGTH on statement handle.", "[query]"
   SQLULEN retrieved_max_length = 0;
   SQLINTEGER length = 0;
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_MAX_LENGTH, &retrieved_max_length, 0, &length);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(retrieved_max_length == max_length);
   REQUIRE(length == sizeof(SQLULEN));
 
   // And SQLExecDirect is called to execute a query returning a string longer than max_length
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'HelloWorld' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called with a buffer large enough to hold the full string
   constexpr int buffer_size = 20;
   SQLCHAR result[buffer_size] = {0};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, &result, buffer_size, &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the row
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the data should be truncated to SQL_ATTR_MAX_LENGTH characters
   CHECK(std::string((char*)result) == "HelloWorld");
@@ -949,12 +949,12 @@ TEST_CASE("SQLFetch returns 22002 when NULL data fetched without indicator point
 
   // When SQLExecDirect is called to execute a query returning NULL
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT NULL AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called without an indicator pointer (NULL for StrLen_or_IndPtr)
   SQLBIGINT value = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_ERROR with SQLSTATE 22002
   ret = SQLFetch(stmt.getHandle());
@@ -969,13 +969,13 @@ TEST_CASE("SQLFetch returns 22018 when invalid date string is bound to SQL_C_TYP
 
   // When SQLExecDirect is called to execute a query returning an invalid date string
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'not-a-valid-date' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind to a DATE structure
   SQL_DATE_STRUCT date_value = {};
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_TYPE_DATE, &date_value, sizeof(date_value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_ERROR with SQLSTATE 22007 (Invalid datetime format)
   ret = SQLFetch(stmt.getHandle());
@@ -990,7 +990,7 @@ TEST_CASE("SQLFetch returns 24000 when no result set exists.", "[query]") {
 
   // When a non-SELECT statement is executed (no result set)
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE test_table (id INT)", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_ERROR with SQLSTATE 24000 (Invalid cursor state)
   ret = SQLFetch(stmt.getHandle());
@@ -1005,7 +1005,7 @@ TEST_CASE("SQLFetch returns SQL_NO_DATA when result set is empty.", "[query]") {
 
   // When a SELECT statement is executed that returns no rows
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 WHERE true=false", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_NO_DATA (no rows to fetch)
   ret = SQLFetch(stmt.getHandle());
@@ -1033,19 +1033,19 @@ TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]")
   // When SQLExecDirect is called to execute a query that returns 3 rows with no columns bound
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_SUCCESS for each row
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
   // And SQLFetch should return SQL_NO_DATA after all rows are consumed
@@ -1054,29 +1054,29 @@ TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]")
 
   // And SQLGetData can still retrieve data after moving cursor without bound columns
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Fetch first row without binding
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Use SQLGetData to retrieve the value
   SQLBIGINT value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 0);  // First row should have value 0
 
   // Fetch second row without binding
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 1);  // Second row should have value 1
 }
 
@@ -1145,13 +1145,13 @@ TEST_CASE("SQLFetch cannot be called after SQLExtendedFetch without SQLFreeStmt.
   // When SQLExecDirect is called to execute a query
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExtendedFetch is called first
   SQLULEN row_count = 0;
   SQLUSMALLINT row_status = 0;
   ret = SQLExtendedFetch(stmt.getHandle(), SQL_FETCH_NEXT, 0, &row_count, &row_status);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Then SQLFetch should return SQL_ERROR with SQLSTATE HY010 (Function sequence error)
@@ -1162,13 +1162,13 @@ TEST_CASE("SQLFetch cannot be called after SQLExtendedFetch without SQLFreeStmt.
 
   // But after SQLFreeStmt with SQL_CLOSE and re-executing, SQLFetch should work
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 }
 
@@ -1180,7 +1180,7 @@ TEST_CASE("SQLGetDiagField returns correct row and column number on fetch error.
   // When SQL_ATTR_ROW_ARRAY_SIZE is set for block cursor
   constexpr int array_size = 3;
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called to execute a query with data that will cause conversion error
   // Using UNION to create specific rows with a bad value in the middle
@@ -1188,18 +1188,18 @@ TEST_CASE("SQLGetDiagField returns correct row and column number on fetch error.
       stmt.getHandle(),
       (SQLCHAR*)"SELECT '123' AS value UNION ALL SELECT 'not_a_number' AS value UNION ALL SELECT '456' AS value",
       SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind to an integer type (will cause conversion error on row 2)
   SQLINTEGER result[array_size] = {0};
   SQLLEN indicator[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(SQLINTEGER), (SQLLEN*)&indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_STATUS_PTR is set
   SQLUSMALLINT row_status[array_size] = {SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW};
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_SUCCESS_WITH_INFO or SQL_ERROR
   ret = SQLFetch(stmt.getHandle());
@@ -1236,17 +1236,17 @@ TEST_CASE("SQLFetch returns SQL_SUCCESS_WITH_INFO when error occurs on subset of
   // When SQL_ATTR_ROW_ARRAY_SIZE is set for block cursor
   constexpr int array_size = 5;
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)array_size, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROW_STATUS_PTR is set
   SQLUSMALLINT row_status[array_size] = {SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW, SQL_ROW_NOROW};
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_STATUS_PTR, row_status, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_ATTR_ROWS_FETCHED_PTR is set
   SQLULEN rows_fetched = 0;
   ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLExecDirect is called with a mix of valid and invalid conversion data
   // Row 1: valid, Row 2: invalid, Row 3: valid, Row 4: invalid, Row 5: valid
@@ -1257,13 +1257,13 @@ TEST_CASE("SQLFetch returns SQL_SUCCESS_WITH_INFO when error occurs on subset of
                 "UNION ALL SELECT 'bad2' AS value "
                 "UNION ALL SELECT '500' AS value",
       SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLBindCol is called to bind to an integer type
   SQLINTEGER result[array_size] = {0};
   SQLLEN indicator[array_size] = {0};
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(SQLINTEGER), (SQLLEN*)&indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_SUCCESS_WITH_INFO (not SQL_ERROR)
   // because errors occurred on some but not all rows

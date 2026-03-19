@@ -21,7 +21,7 @@
 
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 namespace pg_utils {
 

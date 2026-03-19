@@ -3,7 +3,7 @@
 
 #include "HandleWrapper.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 inline std::vector<DiagRec> require_connection_failed(const std::string& connection_string) {
   auto env = EnvironmentHandleWrapper();

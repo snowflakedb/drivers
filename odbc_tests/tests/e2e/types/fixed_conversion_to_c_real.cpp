@@ -12,7 +12,7 @@
 #include "TestTable.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("Test decimal to floating point conversion", "[fixed][conversion][c_real]") {
   // Given A Snowflake connection is established

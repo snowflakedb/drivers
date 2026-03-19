@@ -19,7 +19,7 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 // ============================================================================
 // TYPE CASTING
@@ -44,7 +44,7 @@ TEST_CASE("should cast decfloat values to appropriate type", "[decfloat]") {
     SQLSMALLINT decimal_digits = 0;
     SQLRETURN ret =
         SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &decimal_digits, nullptr);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(data_type == SQL_NUMERIC);
     CHECK(column_size == 38);
     CHECK(decimal_digits == 0);
@@ -168,7 +168,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v ORDER BY 1",
       SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
   int row_count = 0;
@@ -177,7 +177,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == std::to_string(row_count));
 
     row_count++;
@@ -204,27 +204,27 @@ TEST_CASE("should select decfloats from table", "[decfloat]") {
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_table", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain exact decimals [0, 123.456, -789.012, 1.23e20, -9.87e-15]
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "123.456");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-789.012");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "123000000000000000000");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-0.00000000000000987");
 }
 
@@ -247,30 +247,30 @@ TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_precision_table", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should preserve all 38 digits for each value
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678");
 
   NEW_DRIVER_ONLY("BD#21") {
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1.2345678901234567890123456789012345678e100");
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1.2345678901234567890123456789012345678e-100");
   }
 
   OLD_DRIVER_ONLY("BD#21") {
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678e63");
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678e-137");
   }
 }
@@ -291,34 +291,34 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_extreme_table", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e-16383");
 
   NEW_DRIVER_ONLY("BD#21") {
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9.876e-8000");
   }
 
   OLD_DRIVER_ONLY("BD#21") {
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997");
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9876e-8003");
   }
 }
@@ -337,23 +337,23 @@ TEST_CASE("should handle NULL values from table", "[decfloat]") {
   // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_null_table", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain [NULL, 123.456, NULL, -789.012]
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "123.456");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "-789.012");
 }
 
@@ -374,7 +374,7 @@ TEST_CASE("should download large result set with multiple chunks from table", "[
   auto stmt = conn.createStatement();
   const auto sql = "SELECT * FROM decfloat_large_table ORDER BY col";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
   int row_count = 0;
@@ -383,7 +383,7 @@ TEST_CASE("should download large result set with multiple chunks from table", "[
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == std::to_string(row_count));
 
@@ -408,7 +408,7 @@ TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     const char* values[] = {"123.456", "-789.012", "42.0"};
     SQLLEN lens[3];
@@ -416,13 +416,13 @@ TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
       lens[i] = static_cast<SQLLEN>(strlen(values[i]));
       ret = SQLBindParameter(stmt.getHandle(), static_cast<SQLUSMALLINT>(i + 1), SQL_PARAM_INPUT, SQL_C_CHAR,
                              SQL_VARCHAR, lens[i], 0, (SQLPOINTER)values[i], lens[i], &lens[i]);
-      CHECK_ODBC(ret, stmt);
+      REQUIRE_ODBC(ret, stmt);
     }
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain [123.456, -789.012, 42.0]
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "123.456");
@@ -434,17 +434,17 @@ TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN null_indicator = SQL_NULL_DATA;
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 0, 0, nullptr, 0,
                            &null_indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain [NULL]
     CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
@@ -462,18 +462,18 @@ TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
     // When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     const char* value = "1E+16384";
     SQLLEN len = static_cast<SQLLEN>(strlen(value));
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, len, 0, (SQLPOINTER)value,
                            len, &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain [<expected>]
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
@@ -484,18 +484,18 @@ TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
     // When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::DECFLOAT", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     const char* value = "-1.234E+8000";
     SQLLEN len = static_cast<SQLLEN>(strlen(value));
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, len, 0, (SQLPOINTER)value,
                            len, &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain [<expected>]
     NEW_DRIVER_ONLY("BD#21") { CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000"); }
@@ -518,48 +518,48 @@ TEST_CASE("should insert decfloat using parameter binding", "[decfloat]") {
   for (const auto* val : values) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO decfloat_bind_insert VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = static_cast<SQLLEN>(strlen(val));
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, len, 0, (SQLPOINTER)val, len,
                            &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO decfloat_bind_insert VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN null_indicator = SQL_NULL_DATA;
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 0, 0, nullptr, 0,
                            &null_indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // Then SELECT should return the same exact values
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_bind_insert", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "0");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "123.456");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "-789.012");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
 }
 
@@ -578,39 +578,39 @@ TEST_CASE("should insert extreme decfloat values using parameter binding", "[dec
   for (const auto* val : values) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO decfloat_extreme_bind VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = static_cast<SQLLEN>(strlen(val));
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, len, 0, (SQLPOINTER)val, len,
                            &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // And Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT * FROM decfloat_extreme_bind", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SELECT should return the same exact values
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e16384");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1e-16383");
 
   NEW_DRIVER_ONLY("BD#21") {
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1.234e8000");
   }
 
   OLD_DRIVER_ONLY("BD#21") {
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-1234e7997");
   }
 }

@@ -36,7 +36,7 @@ TEST_CASE("SQLDescribeCol returns correct column name.", "[query]") {
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the column name should be MY_COLUMN
   CHECK(std::string((char*)col_name) == "MY_COLUMN");
@@ -62,7 +62,7 @@ TEST_CASE("SQLDescribeCol returns empty string for expression column.", "[query]
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the column name should be empty or driver-defined (Snowflake returns a name)
   CHECK(ret == SQL_SUCCESS);
@@ -127,7 +127,7 @@ TEST_CASE("SQLDescribeCol returns SQL_VARCHAR for VARCHAR column.", "[query]") {
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the data type should be SQL_VARCHAR
   CHECK(std::string((char*)col_name) == "VAL");
@@ -157,7 +157,7 @@ TEST_CASE("SQLDescribeCol returns SQL_DECIMAL for NUMBER column.", "[query]") {
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the data type should be SQL_DECIMAL
   CHECK(std::string((char*)col_name) == "VAL");
@@ -187,7 +187,7 @@ TEST_CASE("SQLDescribeCol returns SQL_BIT for BOOLEAN column.", "[query]") {
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the data type should be SQL_BIT
   CHECK(std::string((char*)col_name) == "VAL");
@@ -217,7 +217,7 @@ TEST_CASE("SQLDescribeCol returns SQL_DOUBLE for FLOAT column.", "[query]") {
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the data type should be SQL_DOUBLE
   CHECK(std::string((char*)col_name) == "VAL");
@@ -244,7 +244,7 @@ TEST_CASE("SQLDescribeCol returns SQL_TYPE_DATE for DATE column.", "[query]") {
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the data type should be SQL_TYPE_DATE
   CHECK(std::string((char*)col_name) == "VAL");
@@ -273,7 +273,7 @@ TEST_CASE("SQLDescribeCol returns SQL_TYPE_TIMESTAMP for TIMESTAMP_NTZ column.",
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the data type should be SQL_TYPE_TIMESTAMP
   CHECK(std::string((char*)col_name) == "VAL");
@@ -306,7 +306,7 @@ TEST_CASE("SQLDescribeCol returns correct column size for VARCHAR.", "[query]") 
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then column size should be 200
   CHECK(std::string((char*)col_name) == "VAL");
@@ -335,7 +335,7 @@ TEST_CASE("SQLDescribeCol returns precision as column size for NUMBER.", "[query
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then column size should be 12 (precision)
   CHECK(std::string((char*)col_name) == "VAL");
@@ -370,7 +370,7 @@ TEST_CASE("SQLDescribeCol returns scale as decimal digits for NUMBER.", "[query]
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then decimal digits should be 4 (scale)
   CHECK(std::string((char*)col_name) == "VAL");
@@ -399,7 +399,7 @@ TEST_CASE("SQLDescribeCol returns 0 decimal digits for non-numeric types.", "[qu
   SQLSMALLINT nullable = 0;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then decimal digits should be 0
   CHECK(std::string((char*)col_name) == "VAL");
@@ -433,7 +433,7 @@ TEST_CASE("SQLDescribeCol returns SQL_NULLABLE for nullable column.", "[query]")
   SQLSMALLINT nullable = -1;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then nullable should be SQL_NULLABLE
   CHECK(std::string((char*)col_name) == "VAL");
@@ -461,7 +461,7 @@ TEST_CASE("SQLDescribeCol returns SQL_NO_NULLS for NOT NULL column.", "[query]")
   SQLSMALLINT nullable = -1;
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then nullable should be SQL_NO_NULLS
   CHECK(std::string((char*)col_name) == "VAL");
@@ -605,7 +605,7 @@ TEST_CASE("SQLDescribeCol with NULL ColumnName still returns NameLengthPtr.", "[
   SQLSMALLINT nullable = 0;
   SQLRETURN ret =
       SQLDescribeCol(stmt.getHandle(), 1, NULL, 0, &name_length, &data_type, &col_size, &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then NameLengthPtr should contain the full column name length
   CHECK(name_length == 6);
@@ -646,7 +646,7 @@ TEST_CASE("SQLDescribeCol returns metadata after SQLPrepare.", "[query]") {
 
   // When a SELECT statement is prepared but not executed
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS PREP_COL", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLDescribeCol should return metadata for the prepared statement
   SQLCHAR col_name[128] = {0};
@@ -657,7 +657,7 @@ TEST_CASE("SQLDescribeCol returns metadata after SQLPrepare.", "[query]") {
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                        &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the column name should match
   CHECK(std::string((char*)col_name) == "PREP_COL");
@@ -688,7 +688,7 @@ TEST_CASE("SQLDescribeCol returns correct metadata for each column in a multi-co
   // When SQLDescribeCol is called for column 1 (VARCHAR)
   SQLRETURN ret = SQLDescribeCol(stmt.getHandle(), 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                                  &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then column 1 should be VARCHAR with size 50
   CHECK(std::string((char*)col_name) == "STRCOL");
@@ -701,7 +701,7 @@ TEST_CASE("SQLDescribeCol returns correct metadata for each column in a multi-co
   // When SQLDescribeCol is called for column 2 (NUMBER)
   ret = SQLDescribeCol(stmt.getHandle(), 2, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                        &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then column 2 should be DECIMAL with precision 8 and scale 2
   CHECK(std::string((char*)col_name) == "NUMCOL");
@@ -714,7 +714,7 @@ TEST_CASE("SQLDescribeCol returns correct metadata for each column in a multi-co
   // When SQLDescribeCol is called for column 3 (BOOLEAN)
   ret = SQLDescribeCol(stmt.getHandle(), 3, col_name, sizeof(col_name), &name_length, &data_type, &col_size,
                        &decimal_digits, &nullable);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then column 3 should be BIT
   CHECK(std::string((char*)col_name) == "BOOLCOL");

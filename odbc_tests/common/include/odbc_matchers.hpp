@@ -129,7 +129,7 @@ class HasDiagMessage : public Catch::Matchers::MatcherBase<OdbcResult> {
 // On failure Catch2 prints the ODBC return code and all diagnostic records.
 // ---------------------------------------------------------------------------
 
-// Requires SQL_SUCCESS or SQL_SUCCESS_WITH_INFO (replaces CHECK_ODBC).
+// Requires SQL_SUCCESS or SQL_SUCCESS_WITH_INFO.
 #define REQUIRE_ODBC(ret, handle) REQUIRE_THAT(OdbcResult(ret, handle), OdbcMatchers::Succeeded())
 
 // Requires exactly SQL_SUCCESS.

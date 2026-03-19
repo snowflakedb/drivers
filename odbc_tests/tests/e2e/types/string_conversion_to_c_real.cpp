@@ -22,7 +22,7 @@
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 static long long numeric_val_to_int(const SQL_NUMERIC_STRUCT& num) {
@@ -225,7 +225,7 @@ TEST_CASE("should handle NULL string when converting to floating point types",
     SQLDOUBLE value = 999.0;
     SQLLEN indicator;
     SQLRETURN ret = get_data_raw(stmt, 1, SQL_C_DOUBLE, &value, &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == SQL_NULL_DATA);
   }
 }
@@ -243,15 +243,15 @@ TEST_CASE("should convert strings to floating point types using SQLBindCol", "[d
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '987.654' AS str_num", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLDOUBLE value;
     SQLLEN indicator;
     ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_DOUBLE, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then the bound double value should match the string representation
     CHECK(value == Catch::Approx(987.654).epsilon(0.001));
@@ -373,7 +373,7 @@ TEST_CASE("should convert string literals to SQL_C_NUMERIC", "[datatype][string]
     SQL_NUMERIC_STRUCT num;
     SQLLEN indicator;
     SQLRETURN ret = get_data_raw(stmt, 10, SQL_C_NUMERIC, &num, &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == SQL_NULL_DATA);
   }
 }

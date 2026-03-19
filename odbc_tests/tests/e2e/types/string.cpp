@@ -24,7 +24,7 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // ============================================================================
@@ -82,21 +82,21 @@ TEST_CASE("should select hardcoded string literals using SQLBindCol", "[datatype
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3",
       SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol
   char buf1[100], buf2[100], buf3[100];
   SQLLEN ind1, ind2, ind3;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buf1, sizeof(buf1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, buf2, sizeof(buf2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_CHAR, buf3, sizeof(buf3), &ind3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain:
   CHECK(std::string(buf1, ind1) == "hello");
@@ -161,7 +161,7 @@ TEST_CASE("should select hardcoded string values from table", "[datatype][string
   // When Query "SELECT * FROM {table}" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM test_string ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain the inserted hardcoded string values
   std::vector<std::string> expected = {"hello", "Hello World", "Snowflake Driver Test"};
@@ -169,7 +169,7 @@ TEST_CASE("should select hardcoded string values from table", "[datatype][string
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     std::string actual = get_data<SQL_C_CHAR>(stmt, 1);
     INFO("Row " << row << " expected: " << expected[row] << " actual: " << actual);
     CHECK(actual == expected[row]);
@@ -204,7 +204,7 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
   // When Query "SELECT * FROM {table}" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM test_string ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain the inserted corner case string values
   std::vector<std::optional<std::u16string>> expected = {
@@ -226,7 +226,7 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     auto value = get_data_optional<SQL_C_WCHAR>(stmt, 1);
     INFO("Row " << row);
@@ -253,16 +253,16 @@ TEST_CASE("should insert and select back hardcoded string values using parameter
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string (id, val) VALUES (1, ?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     std::string value = "Test binding value 日本語";
     SQLLEN value_len = value.size();
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value.size(), 0,
                            (SQLCHAR*)value.c_str(), value.size(), &value_len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // And Query "SELECT * FROM {table}" is executed
@@ -283,7 +283,7 @@ TEST_CASE("should select string literals using parameter binding", "[datatype][s
 
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   std::string value1 = "hello";
   std::string value2 = "Hello World";
@@ -295,20 +295,20 @@ TEST_CASE("should select string literals using parameter binding", "[datatype][s
 
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value1.size(), 0,
                          (SQLCHAR*)value1.c_str(), value1.size(), &len1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value2.size(), 0,
                          (SQLCHAR*)value2.c_str(), value2.size(), &len2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value3.size(), 0,
                          (SQLCHAR*)value3.c_str(), value3.size(), &len3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values ['hello', 'Hello
   // World', '日本語テスト']
   ret = SQLExecute(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain:
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
@@ -325,18 +325,18 @@ TEST_CASE("should select corner case string values using parameter binding", "[d
   auto test_bound_value = [&](const std::string& value, const std::string& expected) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = value.size();
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR,
                            value.size() > 0 ? value.size() : 1, 0, (SQLCHAR*)value.c_str(), value.size(), &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     INFO("Testing value: '" << value << "'");
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected);
@@ -346,18 +346,18 @@ TEST_CASE("should select corner case string values using parameter binding", "[d
   auto test_bound_wvalue = [&](const std::u16string& value, const std::u16string& expected) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = value.size() * sizeof(char16_t);
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_WVARCHAR,
                            value.size() > 0 ? value.size() : 1, 0, (SQLWCHAR*)value.c_str(), len, &len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == expected);
   };
@@ -399,18 +399,18 @@ TEST_CASE("should select corner case string values using parameter binding", "[d
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN null_indicator = SQL_NULL_DATA;
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 1, 0, nullptr, 0,
                            &null_indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == std::nullopt);
   }
@@ -434,14 +434,14 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
   const char* sql =
       "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then there are 10000 rows returned and all string values should match the generated values in order
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Verify we can read the string value
     auto value = get_data<SQL_C_CHAR>(stmt, 1);
@@ -520,7 +520,7 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   const char* sql =
       "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol
   SQLBIGINT id;
@@ -528,16 +528,16 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   char str_buffer[64];
   SQLLEN str_indicator;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_SBIGINT, &id, sizeof(id), &id_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, str_buffer, sizeof(str_buffer), &str_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then there are 10000 rows returned and all string values should match the generated values in order
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Verify id is not null
     REQUIRE(id_indicator != SQL_NULL_DATA);

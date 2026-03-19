@@ -9,7 +9,7 @@
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("SQL_DECIMAL to SQL_C_BINARY", "[fixed][conversion][c_binary]") {
   // Given A Snowflake connection is established

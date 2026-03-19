@@ -11,8 +11,8 @@
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 // ============================================================================
 // SQL_C_CHAR — uppercase hex encoding
@@ -58,12 +58,12 @@ TEST_CASE("should retrieve binary via SQLBindCol with SQL_C_CHAR", "[datatype][b
   char buffer[64] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT X'ABCDEF'::BINARY"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Bound buffer should contain uppercase hex string "ABCDEF"
   REQUIRE(indicator == 6);
@@ -84,12 +84,12 @@ TEST_CASE("should retrieve binary via SQLBindCol with SQL_C_WCHAR", "[datatype][
   SQLWCHAR wbuffer[64] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, sizeof(wbuffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT X'ABCDEF'::BINARY"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Bound wide buffer should contain uppercase hex string "ABCDEF"
   REQUIRE(indicator == 12);
@@ -117,7 +117,7 @@ TEST_CASE("should convert empty binary to SQL_C_CHAR returning empty string", "[
   char buffer[16] = {1};
   SQLLEN indicator = -1;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(indicator == 0);
   REQUIRE(buffer[0] == '\0');
 }
@@ -138,7 +138,7 @@ TEST_CASE("should convert empty binary to SQL_C_WCHAR returning empty wide strin
   SQLWCHAR wbuffer[16] = {1};
   SQLLEN indicator = -1;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, wbuffer, sizeof(wbuffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(indicator == 0);
   REQUIRE(wbuffer[0] == 0);
 }

@@ -10,7 +10,7 @@
 #include "Schema.hpp"
 #include "TestTable.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("TREAT_DECIMAL_AS_INT SQL_C_DEFAULT resolves to SBIGINT for scale=0", "[fixed][treat_decimal_as_int]") {
   // Given A Snowflake connection with ODBC_TREAT_DECIMAL_AS_INT=true

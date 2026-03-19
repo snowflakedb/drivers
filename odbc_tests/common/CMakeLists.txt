@@ -14,7 +14,6 @@ add_library(common STATIC
     src/WindowsConfigInstallation.cpp
     src/UnixConfigInstallation.cpp
     include/test_setup.hpp
-    include/macros.hpp
     include/Connection.hpp
     include/require.hpp
     include/get_data.hpp

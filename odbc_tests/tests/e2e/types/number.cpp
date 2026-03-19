@@ -19,7 +19,7 @@ TEST_CASE("should cast number values to appropriate type for number and synonyms
     SQLSMALLINT dec_digits = 0;
     SQLRETURN ret =
         SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &dec_digits, nullptr);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     INFO("col=" << col);
     CHECK(data_type == SQL_DECIMAL);
     CHECK(column_size == 10);
@@ -33,7 +33,7 @@ TEST_CASE("should cast number values to appropriate type for number and synonyms
       SQLSMALLINT dec_digits = 0;
       SQLRETURN ret = SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size,
                                      &dec_digits, nullptr);
-      CHECK_ODBC(ret, stmt_syn);
+      REQUIRE_ODBC(ret, stmt_syn);
       INFO("synonym col=" << col);
       CHECK(data_type == SQL_DECIMAL);
       CHECK(column_size == 10);
@@ -92,7 +92,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
       "SELECT seq8()::NUMBER(38,0), (seq8() + 0.12345)::NUMBER(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v "
       "ORDER BY 1";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 30000 rows with sequential integers in column 1 and sequential decimals starting from
   // 0.12345 in column 2
@@ -105,16 +105,16 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLBIGINT col1 = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &col1, sizeof(col1), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(col1 == expected_int);
 
     double col2 = 0;
     ret = SQLGetData(stmt.getHandle(), 2, SQL_C_DOUBLE, &col2, sizeof(col2), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(col2 == Catch::Approx(expected_decimal).epsilon(0.00001));
 
     expected_int++;
@@ -155,7 +155,7 @@ TEST_CASE("should select numbers from table with multiple scales for number and 
 
   // Row 2
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == -456);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == -67.89);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == -789.012);
@@ -163,7 +163,7 @@ TEST_CASE("should select numbers from table with multiple scales for number and 
 
   // Row 3
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 0.00);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 0.000);
@@ -171,7 +171,7 @@ TEST_CASE("should select numbers from table with multiple scales for number and 
 
   // Row 4
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 999999);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 999.99);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 1000.500);
@@ -204,17 +204,17 @@ TEST_CASE("should handle scale and precision boundaries from table for number an
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 99999999);
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == -999.99);
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == -99999999);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 123.45);
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 12345678);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == 0.01);
   CHECK(get_data<SQL_C_LONG>(stmt, 2) == 0);
 }
@@ -259,19 +259,19 @@ TEST_CASE("should handle NULL values from table with multiple scales for number 
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 123.45);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == 123.456);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::nullopt);
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 3) == std::nullopt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == -456);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == -67.89);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == -789.012);
@@ -293,7 +293,7 @@ TEST_CASE("should download large result set from table for number and synonyms",
   auto stmt = conn.createStatement();
   const auto sql = "SELECT * FROM number_large_table ORDER BY col1";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 30000 rows with sequential integers in column 1 and sequential decimals starting from
   // 0.12345 in column 2
@@ -306,16 +306,16 @@ TEST_CASE("should download large result set from table for number and synonyms",
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLBIGINT col1 = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &col1, sizeof(col1), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(col1 == expected_int);
 
     double col2 = 0;
     ret = SQLGetData(stmt.getHandle(), 2, SQL_C_DOUBLE, &col2, sizeof(col2), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(col2 == Catch::Approx(expected_decimal).epsilon(0.00001));
 
     expected_int++;
@@ -435,12 +435,12 @@ TEST_CASE("should handle high precision boundaries from table for number and syn
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "1.2345678901234567890123456789012345678");
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-99999999999999999999999999999999999999");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "-1.2345678901234567890123456789012345678");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "0.0000000000000000000000000000000000001");
 }
@@ -460,7 +460,7 @@ TEST_CASE("should select number using parameter binding for number and synonyms"
                              (SQLCHAR*)"SELECT ?::NUMBER(10,0), ?::NUMBER(10,0), ?::NUMBER(10,2), "
                                        "?::NUMBER(10,2), ?::NUMBER(10,0)",
                              SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   std::string v1 = "123";
   std::string v2 = "-456";
@@ -474,24 +474,24 @@ TEST_CASE("should select number using parameter binding for number and synonyms"
 
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 0, (SQLCHAR*)v1.c_str(),
                          v1.size(), &len1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 0, (SQLCHAR*)v2.c_str(),
                          v2.size(), &len2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 2, (SQLCHAR*)v3.c_str(),
                          v3.size(), &len3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 4, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 2, (SQLCHAR*)v4.c_str(),
                          v4.size(), &len4);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 5, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 0, nullptr, 0, &null_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain [123, -456, 12.34, -56.78, NULL]
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
@@ -509,7 +509,7 @@ TEST_CASE("should select high precision number using parameter binding for numbe
   // [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::NUMBER(38,0), ?::NUMBER(38,2)", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   std::string v1 = "12345678901234567890123456789012345678";
   std::string v2 = "123456789012345678901234567890123456.78";
@@ -518,16 +518,16 @@ TEST_CASE("should select high precision number using parameter binding for numbe
 
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 38, 0, (SQLCHAR*)v1.c_str(),
                          v1.size(), &len1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 38, 2, (SQLCHAR*)v2.c_str(),
                          v2.size(), &len2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain [12345678901234567890123456789012345678,
   // 123456789012345678901234567890123456.78]
@@ -551,7 +551,7 @@ TEST_CASE("should insert number using parameter binding for number and synonyms"
   auto insert_row = [&](const char* val1, const char* val2) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO number_bind_insert VALUES (?, ?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     std::string v1 = val1;
     std::string v2 = val2;
@@ -560,28 +560,28 @@ TEST_CASE("should insert number using parameter binding for number and synonyms"
 
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 0, (SQLCHAR*)v1.c_str(),
                            v1.size(), &len1);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 2, (SQLCHAR*)v2.c_str(),
                            v2.size(), &len2);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   };
 
   auto insert_null_row = [&]() {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO number_bind_insert VALUES (?, ?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN null_ind = SQL_NULL_DATA;
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 0, nullptr, 0, &null_ind);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 2, nullptr, 0, &null_ind);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   };
 
   insert_row("0", "0.00");
@@ -597,22 +597,22 @@ TEST_CASE("should insert number using parameter binding for number and synonyms"
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == -67.89);
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 0.00);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 123.45);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 999999);
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == 999.99);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data_optional<SQL_C_LONG>(stmt, 1) == std::nullopt);
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::nullopt);
 }
@@ -631,19 +631,19 @@ TEST_CASE("should insert high precision number using parameter binding for numbe
   auto insert_row = [&](const std::string& val1, const std::string& val2) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO number_bind_high_prec VALUES (?, ?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len1 = val1.size();
     SQLLEN len2 = val2.size();
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 38, 0, (SQLCHAR*)val1.c_str(),
                            val1.size(), &len1);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 38, 2, (SQLCHAR*)val2.c_str(),
                            val2.size(), &len2);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   };
 
   insert_row("12345678901234567890123456789012345678", "123456789012345678901234567890123456.78");
@@ -657,12 +657,12 @@ TEST_CASE("should insert high precision number using parameter binding for numbe
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "-0.01");
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12345678901234567890123456789012345678");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "123456789012345678901234567890123456.78");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "99999999999999999999999999999999999999");
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "0.01");
 }

@@ -12,8 +12,8 @@
 #include "HandleWrapper.hpp"
 #include "Schema.hpp"
 #include "compatibility.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 static std::string expected_padded_hex(int seq) {
   char padded[11];
@@ -31,7 +31,7 @@ static std::string get_binary_hex(const StatementHandleWrapper& stmt, SQLUSMALLI
   SQLCHAR buffer[8192] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(indicator != SQL_NULL_DATA);
   REQUIRE(indicator <= static_cast<SQLLEN>(sizeof(buffer)));
   std::string hex;
@@ -47,7 +47,7 @@ static std::optional<std::string> get_binary_hex_optional(const StatementHandleW
   SQLCHAR buffer[8192] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   if (indicator == SQL_NULL_DATA) {
     return std::nullopt;
   }
@@ -142,11 +142,11 @@ TEST_CASE("should select binary values from table", "[datatype][binary]") {
   REQUIRE(get_binary_hex(stmt, 1) == "0123456789ABCDEF");
 
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(get_binary_hex(stmt, 1) == "48656C6C6F");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(get_binary_hex(stmt, 1) == "576F726C64");
 
   REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
@@ -173,7 +173,7 @@ TEST_CASE("should select corner case binary values from table", "[datatype][bina
   REQUIRE(get_binary_hex(stmt, 1) == expected[0]);
   for (size_t i = 1; i < expected.size(); ++i) {
     SQLRETURN ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(get_binary_hex(stmt, 1) == expected[i]);
   }
   REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
@@ -193,7 +193,7 @@ TEST_CASE("should select NULL binary values from table", "[datatype][binary]") {
   // When Query "SELECT * FROM {table}" is executed
   const auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM binary_null_table"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then there are 3 rows returned
   int null_count = 0;
@@ -204,7 +204,7 @@ TEST_CASE("should select NULL binary values from table", "[datatype][binary]") {
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     if (auto result = get_binary_hex_optional(stmt, 1); !result.has_value()) {
       null_count++;
@@ -242,7 +242,7 @@ TEST_CASE("should select binary with specified length from table", "[datatype][b
     SQLULEN col_size = 0;
     SQLRETURN r = SQLDescribeCol(stmt.getHandle(), col_num, col_name, sizeof(col_name), &name_len, &data_type,
                                  &col_size, &decimal_digits, &nullable);
-    CHECK_ODBC(r, stmt);
+    REQUIRE_ODBC(r, stmt);
     NEW_DRIVER_ONLY("#26") REQUIRE(data_type == SQL_VARBINARY);
     OLD_DRIVER_ONLY("#26") REQUIRE(data_type == SQL_BINARY);
     REQUIRE(decimal_digits == 0);
@@ -257,7 +257,7 @@ TEST_CASE("should select binary with specified length from table", "[datatype][b
   SQLLEN ind = 0;
 
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buf, sizeof(buf), &ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ind == 5);
   {
     const SQLCHAR expected[] = {0x01, 0x02, 0x03, 0x04, 0x05};
@@ -265,7 +265,7 @@ TEST_CASE("should select binary with specified length from table", "[datatype][b
   }
 
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buf, sizeof(buf), &ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ind == 10);
   {
     const SQLCHAR expected[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10};
@@ -273,7 +273,7 @@ TEST_CASE("should select binary with specified length from table", "[datatype][b
   }
 
   ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buf, sizeof(buf), &ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ind == 5);
   {
     const SQLCHAR expected[] = {0x48, 0x65, 0x6C, 0x6C, 0x6F};
@@ -295,18 +295,18 @@ TEST_CASE("should select binary literals using parameter binding", "[datatype][b
 
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARBINARY, sizeof(val1), 0,
                                    val1, sizeof(val1), &ind1);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARBINARY, sizeof(val2), 0, val2,
                          sizeof(val2), &ind2);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARBINARY, sizeof(val3), 0, val3,
                          sizeof(val3), &ind3);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::BINARY, ?::BINARY, ?::BINARY"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should contain:
   REQUIRE(get_binary_hex(stmt, 1) == "48656C6C6F");
@@ -329,15 +329,15 @@ TEST_CASE("should insert binary using parameter binding", "[datatype][binary]") 
     const auto ins = conn.createStatement();
     SQLRETURN ret = SQLBindParameter(ins.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARBINARY,
                                      std::max(lens[i], static_cast<SQLLEN>(1)), 0, vals[i], lens[i], &lens[i]);
-    CHECK_ODBC(ret, ins);
+    REQUIRE_ODBC(ret, ins);
     ret = SQLExecDirect(ins.getHandle(), sqlchar("INSERT INTO binary_insert_table VALUES (?)"), SQL_NTS);
-    CHECK_ODBC(ret, ins);
+    REQUIRE_ODBC(ret, ins);
   }
 
   // And Query "SELECT * FROM {table}" is executed
   const auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM binary_insert_table"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x]
   std::set<std::string> actual;
@@ -347,7 +347,7 @@ TEST_CASE("should insert binary using parameter binding", "[datatype][binary]") 
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     actual.insert(get_binary_hex(stmt, 1));
     row_count++;
   }
@@ -366,16 +366,16 @@ TEST_CASE("should bind corner case binary values", "[datatype][binary]") {
     SQLLEN ind = len;
     SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARBINARY,
                                      std::max(len, static_cast<SQLLEN>(1)), 0, data, len, &ind);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::BINARY"), SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLCHAR buf[64] = {};
     SQLLEN buf_ind = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buf, sizeof(buf), &buf_ind);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(buf_ind == len);
     if (len > 0) {
       REQUIRE(memcmp(buf, data, len) == 0);
@@ -401,11 +401,11 @@ TEST_CASE("should bind corner case binary values", "[datatype][binary]") {
     SQLLEN ind = SQL_NULL_DATA;
     SQLRETURN ret =
         SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARBINARY, 1, 0, &val, 1, &ind);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::BINARY"), SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE(get_binary_hex_optional(stmt, 1) == std::nullopt);
   }
 }
@@ -427,10 +427,10 @@ TEST_CASE("should handle VARBINARY as synonym for BINARY", "[datatype][binary]")
   // Then the result should match the equivalent BINARY behavior
   REQUIRE(get_binary_hex(stmt, 1) == "00FF01");
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(get_binary_hex(stmt, 1) == "48656C6C6F");
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(get_binary_hex(stmt, 1) == "ABCDEF");
   REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
 }
@@ -446,7 +446,7 @@ TEST_CASE("should download binary data in multiple chunks using GENERATOR", "[da
       "SELECT id, TO_BINARY(LPAD(TO_VARCHAR(id), 10, '0'), 'UTF-8') AS bin_val "
       "FROM (SELECT seq8() AS id FROM TABLE(GENERATOR(ROWCOUNT => 30000))) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar(sql), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then there are 30000 rows returned
   int row_count = 0;
@@ -455,7 +455,7 @@ TEST_CASE("should download binary data in multiple chunks using GENERATOR", "[da
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // And all returned binary values should match the generated values in order
     auto hex = get_binary_hex(stmt, 2);
@@ -481,7 +481,7 @@ TEST_CASE("should download binary data in multiple chunks from table", "[datatyp
   const auto stmt = conn.createStatement();
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), sqlchar("SELECT * FROM binary_large_table ORDER BY bin_data"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then there are 30000 rows returned
   int row_count = 0;
@@ -490,7 +490,7 @@ TEST_CASE("should download binary data in multiple chunks from table", "[datatyp
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // And all returned binary values should match the inserted values in order
     auto hex = get_binary_hex(stmt, 1);

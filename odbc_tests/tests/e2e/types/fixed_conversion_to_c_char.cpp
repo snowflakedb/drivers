@@ -14,7 +14,7 @@
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("Test decimal to SQL_C_CHAR and SQL_C_DEFAULT conversion", "[fixed][conversion][c_char]") {
   // Given A Snowflake connection is established
