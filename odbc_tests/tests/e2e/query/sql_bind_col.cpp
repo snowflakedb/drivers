@@ -499,8 +499,8 @@ TEST_CASE("SQLBindCol truncates character data when buffer is too small.", "[que
   // And the buffer should contain truncated data with null termination
   CHECK(std::string((char*)buffer) == "Hello");
 
-  // And the indicator should show the full length of the original data or SQL_NO_TOTAL
-  CHECK((indicator == 11 || indicator == SQL_NO_TOTAL));
+  // And the indicator should show the full length of the original data
+  CHECK(indicator == 11);
 }
 
 TEST_CASE("SQLBindCol ignores BufferLength for fixed-length data types.", "[query][bind_col]") {
@@ -1718,8 +1718,8 @@ TEST_CASE("SQLBindCol indicator returns full data length when buffer causes trun
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   CHECK(get_sqlstate(stmt) == "01004");
 
-  // And indicator should contain the full data length or SQL_NO_TOTAL
-  CHECK((indicator == 10 || indicator == SQL_NO_TOTAL));
+  // And indicator should contain the full data length
+  CHECK(indicator == 10);
 }
 
 // =============================================================================
