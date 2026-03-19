@@ -45,14 +45,31 @@ TEST_CASE("should cast float values to appropriate type for float and synonyms",
     INFO("col=" << col);
     CHECK(data_type == SQL_DOUBLE);
   }
-  {
-    auto stmt_syn = conn.execute_fetch("SELECT 42.5::DOUBLE, 42.5::REAL");
-    for (SQLUSMALLINT col = 1; col <= 2; ++col) {
+  const std::string synonym_types[] = {"DOUBLE", "REAL", "FLOAT4", "FLOAT8"};
+  for (const auto& type : synonym_types) {
+    INFO("type=" << type);
+    auto stmt_syn = conn.execute_fetch("SELECT 0.0::" + type + ", 123.456::" + type + ", 1.23e10::" + type +
+                                       ", 'NaN'::" + type + ", 'inf'::" + type);
+    for (SQLUSMALLINT col = 1; col <= 5; ++col) {
       SQLSMALLINT data_type = 0;
       SQLRETURN ret =
           SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
       CHECK_ODBC(ret, stmt_syn);
-      INFO("synonym col=" << col);
+      INFO("col=" << col);
+      CHECK(data_type == SQL_DOUBLE);
+    }
+  }
+  {
+    INFO("type=DOUBLE PRECISION");
+    auto stmt_syn = conn.execute_fetch(
+        "SELECT CAST(0.0 AS DOUBLE PRECISION), CAST(123.456 AS DOUBLE PRECISION), "
+        "CAST(1.23e10 AS DOUBLE PRECISION), CAST('NaN' AS DOUBLE PRECISION), CAST('inf' AS DOUBLE PRECISION)");
+    for (SQLUSMALLINT col = 1; col <= 5; ++col) {
+      SQLSMALLINT data_type = 0;
+      SQLRETURN ret =
+          SQLDescribeCol(stmt_syn.getHandle(), col, nullptr, 0, nullptr, &data_type, nullptr, nullptr, nullptr);
+      CHECK_ODBC(ret, stmt_syn);
+      INFO("col=" << col);
       CHECK(data_type == SQL_DOUBLE);
     }
   }
@@ -109,7 +126,8 @@ TEST_CASE("should handle float case boundary values from literals for float and 
   // Given Snowflake client is logged in
   Connection conn;
 
-  SECTION("max") {
+  {
+    INFO("max");
     // When Query "SELECT <query_values>" is executed
     auto stmt = conn.execute_fetch("SELECT 1.7976931348623157e308::FLOAT, -1.7976931348623157e308::FLOAT");
 
@@ -118,7 +136,8 @@ TEST_CASE("should handle float case boundary values from literals for float and 
     CHECK(get_data<SQL_C_DOUBLE>(stmt, 2) == Catch::Approx(-1.7976931348623157e308));
   }
 
-  SECTION("min") {
+  {
+    INFO("min");
     // When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
     auto stmt = conn.execute_fetch("SELECT 2.2250738585072014e-308::FLOAT, 5e-324::FLOAT");
 

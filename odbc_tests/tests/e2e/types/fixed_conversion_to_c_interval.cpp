@@ -419,3 +419,15 @@ TEST_CASE("NUMBER to interval - custom precision via SQLSetDescField",
     CHECK(interval.intval.day_second.fraction == 0);
   }
 }
+
+TEST_CASE("NUMBER NULL to SQL_C_INTERVAL types", "[fixed][conversion][c_interval][null]") {
+  // Given A Snowflake connection is established
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When A NULL NUMBER value is queried
+  const auto query = "SELECT NULL::NUMBER(10,0)";
+  // Then Indicator returns SQL_NULL_DATA
+  check_null_via_get_data(conn.execute_fetch(query), 1, SQL_C_INTERVAL_YEAR);
+  check_null_via_get_data(conn.execute_fetch(query), 1, SQL_C_INTERVAL_MONTH);
+}

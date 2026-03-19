@@ -5,6 +5,9 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <string>
+#include <vector>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "HandleWrapper.hpp"
@@ -159,6 +162,48 @@ inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQ
 #else
   CHECK(sqlstate == "07006");
 #endif
+}
+
+inline std::string get_data_default_as_string(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  char buffer[1000];
+  SQLLEN indicator;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_DEFAULT, buffer, sizeof(buffer), &indicator);
+  CHECK(ret == SQL_SUCCESS);
+  return std::string(buffer, indicator);
+}
+
+inline SQL_NUMERIC_STRUCT get_binary_as_numeric(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+}
+
+inline SQL_NUMERIC_STRUCT get_binary_as_numeric_with_truncation(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  auto records = get_diag_rec(stmt);
+  CHECK(records.size() == 1);
+  CHECK(records[0].sqlState == "01S07");
+  return *reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+}
+
+template <int SQL_C_TYPE>
+void check_integer_columns(const StatementHandleWrapper& stmt, const std::vector<int>& exact_cols,
+                           const std::vector<int>& truncated_cols, typename MetaOfSqlCType<SQL_C_TYPE>::type expected) {
+  for (int col : exact_cols) {
+    INFO("Column " << col << " with " << MetaOfSqlCType<SQL_C_TYPE>().name() << " (exact)");
+    CHECK(check_no_truncation<SQL_C_TYPE>(stmt, col) == expected);
+  }
+  for (int col : truncated_cols) {
+    INFO("Column " << col << " with " << MetaOfSqlCType<SQL_C_TYPE>().name() << " (truncated)");
+    CHECK(check_fractional_truncation<SQL_C_TYPE>(stmt, col) == expected);
+  }
 }
 
 // Decodes the first 8 bytes of SQL_NUMERIC_STRUCT.val[] as a little-endian

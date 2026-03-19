@@ -17,14 +17,18 @@ TEST_CASE("should convert boolean to c_type", "[datatype][boolean][conversion][r
   Connection conn;
 
   // When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
-  const auto stmt = conn.execute_fetch("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN");
+  const auto query = "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN";
 
   // Then <c_type> should return 1.0 for TRUE and 0.0 for FALSE
-  SECTION("SQL_C_FLOAT") {
+  {
+    INFO("SQL_C_FLOAT");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_FLOAT>(stmt, 1) == 1.0f);
     REQUIRE(check_no_truncation<SQL_C_FLOAT>(stmt, 2) == 0.0f);
   }
-  SECTION("SQL_C_DOUBLE") {
+  {
+    INFO("SQL_C_DOUBLE");
+    const auto stmt = conn.execute_fetch(query);
     REQUIRE(check_no_truncation<SQL_C_DOUBLE>(stmt, 1) == 1.0);
     REQUIRE(check_no_truncation<SQL_C_DOUBLE>(stmt, 2) == 0.0);
   }
@@ -75,7 +79,16 @@ TEST_CASE("should handle NULL boolean with c_type", "[datatype][boolean][convers
   };
 
   // Then <c_type> should return SQL_NULL_DATA indicator
-  SECTION("SQL_C_FLOAT") { check_null(SQL_C_FLOAT); }
-  SECTION("SQL_C_DOUBLE") { check_null(SQL_C_DOUBLE); }
-  SECTION("SQL_C_NUMERIC") { check_null(SQL_C_NUMERIC); }
+  {
+    INFO("SQL_C_FLOAT");
+    check_null(SQL_C_FLOAT);
+  }
+  {
+    INFO("SQL_C_DOUBLE");
+    check_null(SQL_C_DOUBLE);
+  }
+  {
+    INFO("SQL_C_NUMERIC");
+    check_null(SQL_C_NUMERIC);
+  }
 }
