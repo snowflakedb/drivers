@@ -4,10 +4,12 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include <chrono>
 #include <functional>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include "Connection.hpp"
 #include "odbc_cast.hpp"
@@ -17,13 +19,13 @@ class Schema {
   Schema(Connection& conn, const std::string& schema_name)
       : execute_fn([&conn](const std::string& sql) { conn.execute(sql); }), schema_name(schema_name) {
     execute_fn("CREATE SCHEMA IF NOT EXISTS " + schema_name);
-    execute_fn("USE SCHEMA " + schema_name);
+    use_schema_with_retry(conn.handleWrapper().getHandle());
   }
 
   Schema(const SQLHDBC dbc, const std::string& schema_name)
       : execute_fn(make_dbc_executor(dbc)), schema_name(schema_name) {
     execute_fn("CREATE SCHEMA IF NOT EXISTS " + schema_name);
-    execute_fn("USE SCHEMA " + schema_name);
+    use_schema_with_retry(dbc);
   }
 
   static Schema use_random_schema(Connection& conn) { return Schema(conn, generate_random_name()); }
@@ -64,6 +66,35 @@ class Schema {
     std::random_device rd;
     std::mt19937_64 gen(rd());
     return "SCHEMA_" + std::to_string(gen());
+  }
+
+  // Retry USE SCHEMA with exponential backoff: 250ms, 500ms, 1000ms (~2s total).
+  // On the final attempt, fall through to execute_fn so failures produce
+  // the same diagnostics as the original non-retry code path.
+  void use_schema_with_retry(SQLHANDLE dbc) {
+    static constexpr int delays_ms[] = {250, 500, 1000};
+    const std::string sql = "USE SCHEMA " + schema_name;
+
+    for (int delay_ms : delays_ms) {
+      SQLHSTMT stmt = SQL_NULL_HSTMT;
+      SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
+      if (!SQL_SUCCEEDED(ret)) {
+        break;
+      }
+
+      ret = SQLExecDirect(stmt, sqlchar(sql.c_str()), SQL_NTS);
+      SQLFreeStmt(stmt, SQL_CLOSE);
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+
+      if (SQL_SUCCEEDED(ret)) {
+        return;
+      }
+
+      std::fprintf(stderr, "[Schema] USE SCHEMA %s failed, retrying in %dms\n", schema_name.c_str(), delay_ms);
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    execute_fn(sql);
   }
 
   static std::function<void(const std::string&)> make_dbc_executor(SQLHDBC dbc) {
