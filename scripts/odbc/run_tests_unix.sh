@@ -5,6 +5,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../../odbc_tests"
 
+BUILD_DIR="${1:-cmake-build}"
+shift 2>/dev/null || true
+
 # Detect ODBC paths
 if [[ "$(uname)" == "Darwin" ]]; then
     ODBC_PREFIX=$(brew --prefix unixodbc)
@@ -17,11 +20,11 @@ else
     NPROC=$(nproc)
 fi
 
-mkdir -p cmake-build
-cmake -B cmake-build \
+mkdir -p "$BUILD_DIR"
+cmake -B "$BUILD_DIR" \
     -D ODBC_LIBRARY="${ODBC_LIBRARY}" \
     -D ODBC_INCLUDE_DIR="${ODBC_INCLUDE_DIR}" \
     -D DRIVER_TYPE="${DRIVER_TYPE}" \
     .
-cmake --build cmake-build -- -j $((NPROC * 2))
-ctest -j $((NPROC * 4)) -C Debug --test-dir cmake-build --output-on-failure
+cmake --build "$BUILD_DIR" -- -j $((NPROC * 2))
+ctest -j $((NPROC * 4)) -C Debug --test-dir "$BUILD_DIR" --output-on-failure --output-junit results.xml "$@"
