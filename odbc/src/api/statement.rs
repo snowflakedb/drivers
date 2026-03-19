@@ -1,5 +1,5 @@
 use crate::api::CDataType;
-use crate::api::encoding::{OdbcEncoding, write_string_bytes_i32};
+use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu,
     InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCursorStateSnafu,
@@ -22,7 +22,8 @@ use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConnectionGetParameterRequest, ConnectionHandle,
     QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
-    StatementPrepareRequest, StatementSetSqlQueryRequest, query_bindings,
+    StatementPrepareRequest, StatementSetOptionIntRequest, StatementSetSqlQueryRequest,
+    query_bindings,
 };
 use snafu::ResultExt;
 use tokio_util::sync::CancellationToken;
@@ -61,12 +62,22 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             let max_rows = stmt.max_rows;
             let effective_query =
                 apply_limit(statement_text, max_rows).unwrap_or_else(|| statement_text.to_string());
+            let multi_statement_count = stmt.multi_statement_count;
 
             stmt.cancel_token = CancellationToken::new();
             let _cancel_token = stmt.cancel_token.clone();
             // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
             // _cancel_token.cancelled() to support cross-thread SQLCancel.
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                if multi_statement_count >= 0 {
+                    c.statement_set_option_int(StatementSetOptionIntRequest {
+                        stmt_handle: Some(stmt_handle),
+                        key: "MULTI_STATEMENT_COUNT".to_string(),
+                        value: multi_statement_count as i64,
+                    })
+                    .await?;
+                }
+
                 c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     query: effective_query,
@@ -274,6 +285,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     let max_rows = stmt.max_rows;
     let sql_text = stmt.sql_text.clone();
     let stmt_handle = stmt.stmt_handle;
+    let multi_statement_count = stmt.multi_statement_count;
     let conn = unsafe { &mut *stmt.conn_ptr() };
     match &mut conn.state {
         ConnectionState::Connected {
@@ -287,6 +299,14 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
             // _cancel_token.cancelled() to support cross-thread SQLCancel.
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                if multi_statement_count >= 0 {
+                    c.statement_set_option_int(StatementSetOptionIntRequest {
+                        stmt_handle: Some(stmt_handle),
+                        key: "MULTI_STATEMENT_COUNT".to_string(),
+                        value: multi_statement_count as i64,
+                    })
+                    .await?;
+                }
                 if let Some(limited_sql) =
                     sql_text.as_deref().and_then(|s| apply_limit(s, max_rows))
                 {
@@ -1078,6 +1098,18 @@ pub fn set_stmt_attr(
             stmt.retrieve_data = val;
             Ok(())
         }
+        StmtAttr::SnowflakeMultiStatementCount => {
+            let val = value_ptr as i64;
+            if val < -1 {
+                return InvalidAttributeValueSnafu {
+                    attribute: attr as i32,
+                    value: val,
+                }
+                .fail();
+            }
+            stmt.multi_statement_count = val as i16;
+            Ok(())
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
@@ -1095,6 +1127,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
     warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
+    use crate::api::encoding::write_string_bytes_i32;
 
     tracing::debug!("get_stmt_attr: attribute={}", attribute);
 
@@ -1307,6 +1340,17 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             }
             if !string_length_ptr.is_null() {
                 unsafe { *string_length_ptr = size_of::<sql::ULen>() as sql::Integer };
+            }
+            Ok(())
+        }
+        StmtAttr::SnowflakeMultiStatementCount => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::Integer) = stmt.multi_statement_count as sql::Integer;
+                    if !string_length_ptr.is_null() {
+                        *string_length_ptr = size_of::<sql::Integer>() as sql::Integer;
+                    }
+                }
             }
             Ok(())
         }
