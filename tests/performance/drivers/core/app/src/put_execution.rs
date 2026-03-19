@@ -5,12 +5,13 @@ use regex::Regex;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use std::fs;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::connection::{DriverRuntime, reset_statement_query};
+use crate::resource_monitor::ResourceMonitor;
 use crate::results::{
     current_unix_timestamp, print_statistics_put_get, write_csv_results_put_get,
-    write_metadata_if_not_replay,
+    write_memory_timeline, write_metadata_if_not_replay,
 };
 use crate::types::PutGetResult;
 
@@ -24,30 +25,41 @@ pub fn execute_put_get_test(
     test_name: &str,
 ) -> Result<()> {
     println!("\n=== Executing PUT_GET Test ===");
-    println!("Query: {}", sql_command);
+    println!("Query: {sql_command}");
 
     // Warmup
     run_warmup_put_get(rt, stmt_handle, sql_command, warmup_iterations)
-        .map_err(|e| format!("Warmup phase failed: {:?}", e))?;
+        .map_err(|e| format!("Warmup phase failed: {e:?}"))?;
 
     if warmup_iterations > 0 {
         reset_statement_query(rt, stmt_handle, sql_command)
-            .map_err(|e| format!("Failed to reset statement after warmup: {:?}", e))?;
+            .map_err(|e| format!("Failed to reset statement after warmup: {e:?}"))?;
     }
+
+    let mut monitor = ResourceMonitor::new(Duration::from_millis(100));
+    monitor.start();
 
     // Execute
     let results = run_test_iterations_put_get(rt, stmt_handle, sql_command, iterations)
-        .map_err(|e| format!("Test phase failed: {:?}", e))?;
+        .map_err(|e| format!("Test phase failed: {e:?}"))?;
+
+    let memory_timeline = monitor.stop();
 
     // Write & print
     let results_file = write_csv_results_put_get(&results, test_name)
-        .map_err(|e| format!("Failed to write results: {:?}", e))?;
+        .map_err(|e| format!("Failed to write results: {e:?}"))?;
+
+    write_memory_timeline(&memory_timeline, test_name);
 
     write_metadata_if_not_replay(rt, conn_handle)?;
 
     print_statistics_put_get(&results);
+    println!(
+        "  Memory timeline: {} samples collected",
+        memory_timeline.len()
+    );
 
-    println!("\n✓ Complete → {}", results_file);
+    println!("\n✓ Complete → {results_file}");
 
     Ok(())
 }
@@ -81,11 +93,14 @@ pub fn run_test_iterations_put_get(
     let mut results = Vec::with_capacity(iterations);
 
     for i in 0..iterations {
-        let query_time = execute_put_get_iteration(rt, stmt_handle, sql)?;
+        let (query_time, cpu_time_s, peak_rss_mb) =
+            execute_put_get_iteration(rt, stmt_handle, sql)?;
 
         results.push(PutGetResult {
             timestamp: current_unix_timestamp(),
             query_time_s: query_time,
+            cpu_time_s,
+            peak_rss_mb,
         });
 
         if i < iterations - 1 {
@@ -100,9 +115,12 @@ fn execute_put_get_iteration(
     rt: &DriverRuntime,
     stmt_handle: StatementHandle,
     sql: &str,
-) -> Result<f64> {
+) -> Result<(f64, f64, f64)> {
+    use crate::resource_monitor::{get_peak_rss_mb, process_cpu_seconds};
+
     create_get_target_directory(sql)?;
 
+    let cpu_before = process_cpu_seconds();
     let start_query = Instant::now();
     rt.block_on(async |c| {
         c.statement_execute_query(StatementExecuteQueryRequest {
@@ -111,10 +129,12 @@ fn execute_put_get_iteration(
         })
         .await
     })
-    .map_err(|e| format!("PUT/GET execution failed: {:?}", e))?;
+    .map_err(|e| format!("PUT/GET execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();
+    let cpu_time_s = process_cpu_seconds() - cpu_before;
+    let peak_rss_mb = get_peak_rss_mb();
 
-    Ok(query_time)
+    Ok((query_time, cpu_time_s, peak_rss_mb))
 }
 
 /// For GET commands:

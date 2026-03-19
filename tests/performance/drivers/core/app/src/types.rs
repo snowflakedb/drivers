@@ -46,10 +46,14 @@ pub struct IterationResult {
     pub query_time_s: f64,
     pub fetch_time_s: f64,
     pub row_count: usize,
+    pub cpu_time_s: f64,
+    pub peak_rss_mb: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PutGetResult {
     pub timestamp: i64,
     pub query_time_s: f64,
+    pub cpu_time_s: f64,
+    pub peak_rss_mb: f64,
 }

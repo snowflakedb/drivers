@@ -5,6 +5,7 @@ mod config;
 mod connection;
 mod put_execution;
 mod query_execution;
+mod resource_monitor;
 mod results;
 mod test_types;
 mod types;

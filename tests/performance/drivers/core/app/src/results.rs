@@ -1,6 +1,7 @@
 //! Results output and CSV formatting
 
 use crate::connection::{DriverRuntime, get_server_version as get_server_version_internal};
+use crate::resource_monitor::MemorySample;
 use crate::types::{IterationResult, PutGetResult};
 use sf_core::protobuf::generated::database_driver_v1::ConnectionHandle;
 use std::fs;
@@ -11,15 +12,23 @@ type Result<T> = std::result::Result<T, String>;
 
 pub fn write_csv_results(results: &[IterationResult], test_name: &str) -> Result<String> {
     write_csv_file(test_name, |file| {
-        writeln!(file, "timestamp,query_s,fetch_s,row_count")
-            .map_err(|e| format!("Failed to write: {:?}", e))?;
-        for result in results {
+        writeln!(
+            file,
+            "timestamp,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb"
+        )
+        .map_err(|e| format!("Failed to write: {e:?}"))?;
+        for r in results {
             writeln!(
                 file,
-                "{},{:.6},{:.6},{}",
-                result.timestamp, result.query_time_s, result.fetch_time_s, result.row_count
+                "{},{:.6},{:.6},{},{:.6},{:.1}",
+                r.timestamp,
+                r.query_time_s,
+                r.fetch_time_s,
+                r.row_count,
+                r.cpu_time_s,
+                r.peak_rss_mb
             )
-            .map_err(|e| format!("Failed to write: {:?}", e))?;
+            .map_err(|e| format!("Failed to write: {e:?}"))?;
         }
         Ok(())
     })
@@ -40,13 +49,45 @@ pub fn print_statistics(results: &[IterationResult]) {
 
 pub fn write_csv_results_put_get(results: &[PutGetResult], test_name: &str) -> Result<String> {
     write_csv_file(test_name, |file| {
-        writeln!(file, "timestamp,query_s").map_err(|e| format!("Failed to write: {:?}", e))?;
-        for result in results {
-            writeln!(file, "{},{:.6}", result.timestamp, result.query_time_s)
-                .map_err(|e| format!("Failed to write: {:?}", e))?;
+        writeln!(file, "timestamp,query_s,cpu_time_s,peak_rss_mb")
+            .map_err(|e| format!("Failed to write: {e:?}"))?;
+        for r in results {
+            writeln!(
+                file,
+                "{},{:.6},{:.6},{:.1}",
+                r.timestamp, r.query_time_s, r.cpu_time_s, r.peak_rss_mb
+            )
+            .map_err(|e| format!("Failed to write: {e:?}"))?;
         }
         Ok(())
     })
+}
+
+pub fn write_memory_timeline(samples: &[MemorySample], test_name: &str) {
+    if samples.is_empty() {
+        return;
+    }
+
+    let timestamp = current_unix_timestamp();
+    let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
+    let results_path = PathBuf::from(&results_dir);
+    let filename = results_path.join(format!("memory_timeline_{test_name}_core_{timestamp}.csv"));
+
+    let Ok(mut file) = fs::File::create(&filename) else {
+        eprintln!("⚠️  Warning: Could not create memory timeline file");
+        return;
+    };
+
+    let _ = writeln!(file, "timestamp_ms,rss_bytes,vm_bytes");
+    for s in samples {
+        let _ = writeln!(file, "{},{},{}", s.timestamp_ms, s.rss_bytes, s.vm_bytes);
+    }
+
+    println!(
+        "✓ Memory timeline → {} ({} samples)",
+        filename.display(),
+        samples.len()
+    );
 }
 
 pub fn print_statistics_put_get(results: &[PutGetResult]) {

@@ -2,12 +2,14 @@
 
 type Result<T> = std::result::Result<T, String>;
 use sf_core::protobuf::generated::database_driver_v1::*;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::arrow::fetch_result_rows;
 use crate::connection::{DriverRuntime, reset_statement_query};
+use crate::resource_monitor::ResourceMonitor;
 use crate::results::{
-    current_unix_timestamp, print_statistics, write_csv_results, write_metadata_if_not_replay,
+    current_unix_timestamp, print_statistics, write_csv_results, write_memory_timeline,
+    write_metadata_if_not_replay,
 };
 use crate::types::IterationResult;
 
@@ -21,30 +23,41 @@ pub fn execute_fetch_test(
     test_name: &str,
 ) -> Result<()> {
     println!("\n=== Executing SELECT Test ===");
-    println!("Query: {}", sql_command);
+    println!("Query: {sql_command}");
 
     // Warmup
     run_warmup(rt, stmt_handle, sql_command, warmup_iterations)
-        .map_err(|e| format!("Warmup phase failed: {:?}", e))?;
+        .map_err(|e| format!("Warmup phase failed: {e:?}"))?;
 
     if warmup_iterations > 0 {
         reset_statement_query(rt, stmt_handle, sql_command)
-            .map_err(|e| format!("Failed to reset statement after warmup: {:?}", e))?;
+            .map_err(|e| format!("Failed to reset statement after warmup: {e:?}"))?;
     }
+
+    let mut monitor = ResourceMonitor::new(Duration::from_millis(100));
+    monitor.start();
 
     // Execute
     let results = run_test_iterations(rt, stmt_handle, sql_command, iterations)
-        .map_err(|e| format!("Test phase failed: {:?}", e))?;
+        .map_err(|e| format!("Test phase failed: {e:?}"))?;
+
+    let memory_timeline = monitor.stop();
 
     // Write & print
     let results_file = write_csv_results(&results, test_name)
-        .map_err(|e| format!("Failed to write results: {:?}", e))?;
+        .map_err(|e| format!("Failed to write results: {e:?}"))?;
+
+    write_memory_timeline(&memory_timeline, test_name);
 
     write_metadata_if_not_replay(rt, conn_handle)?;
 
     print_statistics(&results);
+    println!(
+        "  Memory timeline: {} samples collected",
+        memory_timeline.len()
+    );
 
-    println!("\n✓ Complete → {}", results_file);
+    println!("\n✓ Complete → {results_file}");
 
     Ok(())
 }
@@ -60,7 +73,7 @@ pub fn run_warmup(
     }
 
     for i in 0..warmup_iterations {
-        let (_query_time, _fetch_time, _row_count) = execute_iteration(rt, stmt_handle)?;
+        let _ = execute_iteration(rt, stmt_handle)?;
 
         if i < warmup_iterations - 1 {
             reset_statement_query(rt, stmt_handle, sql)?;
@@ -79,7 +92,8 @@ pub fn run_test_iterations(
     let mut expected_row_count = get_expected_row_count();
 
     for i in 0..iterations {
-        let (query_time, fetch_time, row_count) = execute_iteration(rt, stmt_handle)?;
+        let (query_time, fetch_time, row_count, cpu_time_s, peak_rss_mb) =
+            execute_iteration(rt, stmt_handle)?;
 
         expected_row_count = validate_row_count(row_count, expected_row_count, i)?;
 
@@ -88,6 +102,8 @@ pub fn run_test_iterations(
             query_time_s: query_time,
             fetch_time_s: fetch_time,
             row_count,
+            cpu_time_s,
+            peak_rss_mb,
         });
 
         if i < iterations - 1 {
@@ -139,7 +155,9 @@ fn validate_row_count(
 fn execute_iteration(
     rt: &DriverRuntime,
     stmt_handle: StatementHandle,
-) -> Result<(f64, f64, usize)> {
+) -> Result<(f64, f64, usize, f64, f64)> {
+    use crate::resource_monitor::{get_peak_rss_mb, process_cpu_seconds};
+
     let start_query = Instant::now();
     let response = rt
         .block_on(async |c| {
@@ -149,17 +167,19 @@ fn execute_iteration(
             })
             .await
         })
-        .map_err(|e| format!("Query execution failed: {:?}", e))?;
+        .map_err(|e| format!("Query execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();
 
-    // Fetch results outside the runtime so ChunkReader can use its own block_on
+    let cpu_before = process_cpu_seconds();
     let start_fetch = Instant::now();
     let row_count = if let Some(result) = response.result {
-        fetch_result_rows(result).map_err(|e| format!("Failed to fetch results: {:?}", e))?
+        fetch_result_rows(result).map_err(|e| format!("Failed to fetch results: {e:?}"))?
     } else {
         0
     };
     let fetch_time = start_fetch.elapsed().as_secs_f64();
+    let cpu_time_s = process_cpu_seconds() - cpu_before;
+    let peak_rss_mb = get_peak_rss_mb();
 
-    Ok((query_time, fetch_time, row_count))
+    Ok((query_time, fetch_time, row_count, cpu_time_s, peak_rss_mb))
 }
