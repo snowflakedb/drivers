@@ -41,6 +41,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-clippy-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-clippy-target-
+
       - name: Install clippy
         run: rustup component add clippy
 
@@ -54,6 +74,26 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-no-protobuf-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-no-protobuf-target-
 
       - name: Build sf_core without protobuf feature
         run: cargo build --package sf_core --no-default-features --features fips
@@ -73,19 +113,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
         with:
+
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-core-test-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-core-test-target-
 
       - name: Cache tarpaulin
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
           key: tarpaulin-${{ runner.os }}
@@ -144,15 +193,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust registry only
-        uses: actions/cache@v4
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
         with:
+
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: windows-11-arm-registry-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            windows-11-arm-registry-
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-arm64-nonfips-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-arm64-nonfips-target-
 
       - name: Install ARM64 OpenSSL via vcpkg
         shell: cmd

@@ -29,6 +29,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-odbc-unit-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-odbc-unit-target-
+
       - name: Install dependencies
         run: |
           set -euxo pipefail
@@ -119,6 +139,15 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
+      - name: Cache C++ ODBC test build (reference)
+        uses: actions/cache@v5
+        with:
+
+          path: odbc_tests/cmake-build
+          key: ${{ runner.os }}-cpp-odbc-tests-old-${{ hashFiles('odbc_tests/**/*.cpp', 'odbc_tests/**/*.hpp', 'odbc_tests/**/*.h', 'odbc_tests/**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cpp-odbc-tests-old-
+
       - name: Run Old ODBC tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         id: run_odbc_ref_tests_linux
@@ -185,6 +214,26 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-odbc-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-odbc-target-
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -254,6 +303,15 @@ jobs:
         run: cargo build
         env:
           RUSTFLAGS: "-C linker=rust-lld"
+
+      - name: Cache C++ ODBC test build
+        uses: actions/cache@v5
+        with:
+
+          path: odbc_tests/cmake-build
+          key: ${{ runner.os }}-cpp-odbc-tests-${{ hashFiles('odbc_tests/**/*.cpp', 'odbc_tests/**/*.hpp', 'odbc_tests/**/*.h', 'odbc_tests/**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cpp-odbc-tests-
 
       - name: Build and run ODBC tests (Unix)
         if: runner.os != 'Windows'
