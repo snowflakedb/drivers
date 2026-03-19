@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -12,10 +13,11 @@ use snafu::{ResultExt, ensure};
 use tracing::warn;
 
 use super::{
-    CacheDirectoryResolutionSnafu, FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu,
-    IrregularFileTypeSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
+    CacheDirectoryResolutionSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
     TokenRetrievalSnafu, TokenStorageSnafu,
 };
+#[cfg(unix)]
+use super::{FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu, IrregularFileTypeSnafu};
 
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
 const DEFAULT_RETRY_COUNT: u32 = 5;
