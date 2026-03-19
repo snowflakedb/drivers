@@ -333,8 +333,12 @@ pub enum StmtAttr {
     ImpParamDesc = 10013,
     /// `SQL_ATTR_METADATA_ID` (10014) — identifier vs. pattern treatment for catalog functions.
     MetadataId = 10014,
-    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (2000100) — last query ID (read-only string).
-    SnowflakeLastQueryId = 2000100,
+
+    // Custom Snowflake statement attributes (SQL_SF_STMT_ATTR_BASE = 0x4000 + 0x106)
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (0x4107 = 16647) — query ID of last execution (read-only).
+    SnowflakeLastQueryId = 16647,
+    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` (0x4108 = 16648) — multi-statement count.
+    SnowflakeMultiStatementCount = 16648,
 }
 
 impl TryFrom<i32> for StmtAttr {
@@ -365,7 +369,8 @@ impl TryFrom<i32> for StmtAttr {
             10012 => Ok(StmtAttr::ImpRowDesc),
             10013 => Ok(StmtAttr::ImpParamDesc),
             10014 => Ok(StmtAttr::MetadataId),
-            2000100 => Ok(StmtAttr::SnowflakeLastQueryId),
+            16647 => Ok(StmtAttr::SnowflakeLastQueryId),
+            16648 => Ok(StmtAttr::SnowflakeMultiStatementCount),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
                 Err(OdbcError::UnknownAttribute {
@@ -1204,13 +1209,17 @@ pub struct Statement {
     pub simulate_cursor: sql::ULen,
     /// `SQL_ATTR_RETRIEVE_DATA` — whether to retrieve data after positioned update (default SQL_RD_ON = 1).
     pub retrieve_data: sql::ULen,
-    /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` — query ID from the last successful execution (read-only).
+    /// `None` before any execution; `Some("")` if sf_core returned an empty string.
     pub last_query_id: Option<String>,
     /// Cancelled by `SQLCancel` (possibly from another thread) and observed
     /// by execution functions via `tokio::select!` when cross-thread cancel
     /// is wired up. Replaced with a fresh token at the start of each
     /// execution/prepare call so that stale cancels do not affect new ops.
     pub cancel_token: CancellationToken,
+    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` — multi-statement execution count.
+    /// -1 = auto-detect (default), 0 = single statement, N > 0 = expect exactly N statements.
+    pub multi_statement_count: i16,
 }
 
 /// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
@@ -1252,6 +1261,7 @@ impl Statement {
             retrieve_data: SQL_RD_ON,
             last_query_id: None,
             cancel_token: CancellationToken::new(),
+            multi_statement_count: -1,
         }
     }
 

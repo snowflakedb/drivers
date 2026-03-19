@@ -33,11 +33,21 @@
 /* Private key as base64-encoded string */
 #define SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 (SQL_SF_CONN_ATTR_BASE + 5)
 
-/* Statement attribute base for Snowflake-specific statement attributes. */
-#define SQL_SF_STMT_ATTR_BASE 2000100
+/* -------------------------------------------------------------------------
+ * Snowflake-specific statement attributes
+ * Base matches SQL_DRIVER_STMT_ATTR_BASE (0x4000) + 0x106, in sync with the
+ * old snowflake-odbc driver's sf_odbc.h.
+ * -------------------------------------------------------------------------*/
+#ifndef SQL_DRIVER_STMT_ATTR_BASE
+#define SQL_DRIVER_STMT_ATTR_BASE 0x00004000
+#endif
 
-/* Last query ID — the ID of the most recently executed query on the statement.
- * Read-only string attribute. */
-#define SQL_SF_STMT_ATTR_LAST_QUERY_ID SQL_SF_STMT_ATTR_BASE
+#define SQL_SF_STMT_ATTR_BASE (SQL_DRIVER_STMT_ATTR_BASE + 0x106)
+
+/* Query ID of the last executed statement (read-only string) */
+#define SQL_SF_STMT_ATTR_LAST_QUERY_ID (SQL_SF_STMT_ATTR_BASE + 1)
+
+/* Multi-statement execution count: -1 = auto, 0 = single, N = exact count */
+#define SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT (SQL_SF_STMT_ATTR_BASE + 2)
 
 #endif /* SF_ODBC_H */
