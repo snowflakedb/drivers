@@ -5,8 +5,9 @@
 
 use crate::{
     api::{
-        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, api_utils,
-        conn_from_handle, env_from_handle,
+        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
+        encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
+        env_from_handle,
         error::{
             InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
             NoMoreDataSnafu,
@@ -292,22 +293,21 @@ pub fn get_diag_info(
     Ok(t.get_diag_info().clone())
 }
 
-/// Get diagnostic record from handle
+/// Get diagnostic record from handle (SQLGetDiagRec / SQLGetDiagRecW).
 ///
 /// Retrieves diagnostic information associated with a specific handle.
-/// This corresponds to the ODBC SQLGetDiagRec function.
 ///
 /// Per the ODBC spec, `text_length_ptr` always receives the full (untruncated)
 /// message length so the caller can allocate a sufficiently large buffer.
 /// If the message is truncated, a `StringDataTruncated` warning is pushed.
 #[allow(clippy::too_many_arguments)]
-pub unsafe fn get_diag_rec(
+pub unsafe fn get_diag_rec<E: OdbcEncoding>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
-    sql_state: *mut sql::Char,
+    sql_state: *mut E::Char,
     native_error_ptr: *mut sql::Integer,
-    message_text: *mut sql::Char,
+    message_text: *mut E::Char,
     buffer_length: sql::SmallInt,
     text_length_ptr: *mut sql::SmallInt,
     warnings: &mut Warnings,
@@ -325,33 +325,30 @@ pub unsafe fn get_diag_rec(
         .records
         .get((rec_number - 1) as usize)
         .unwrap();
-    let length: sql::Len = 6; // 5 chars + NUL
+
+    let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
+    write_string_chars::<E>(state, sql_state, 6, std::ptr::null_mut(), None);
+    write_string_chars::<E>(
+        &record.message_text,
+        message_text,
+        buffer_length,
+        text_length_ptr,
+        Some(warnings),
+    );
+
     unsafe {
-        let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
-        api_utils::string_to_cstr(state, sql_state, length)?;
-        api_utils::string_to_cstr(
-            &record.message_text,
-            message_text,
-            buffer_length as sql::Len,
-        )?;
         if !native_error_ptr.is_null() {
             std::ptr::write(native_error_ptr, record.native_error);
         }
-        if !text_length_ptr.is_null() {
-            std::ptr::write(text_length_ptr, record.message_text.len() as sql::SmallInt);
-        }
     }
-    if record.message_text.len() >= buffer_length.max(0) as usize {
-        warnings.push(Warning::StringDataTruncated);
-    }
+
     Ok(())
 }
 
-/// Get diagnostic field from handle
+/// Get diagnostic field from handle (SQLGetDiagField / SQLGetDiagFieldW).
 ///
 /// Retrieves a specific diagnostic field from a diagnostic record.
-/// This corresponds to the ODBC SQLGetDiagField function.
-pub fn get_diag_field(
+pub fn get_diag_field<E: OdbcEncoding>(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     rec_number: sql::SmallInt,
@@ -362,20 +359,16 @@ pub fn get_diag_field(
 ) -> OdbcResult<()> {
     let diagnostic_info = get_diag_info(handle_type, handle)?;
     tracing::debug!(
-        "get_diag_field: handle_type={:?}, rec_number={}, diag_identifier={:?}",
+        "get_diag_field: handle_type={:?}, rec_number={rec_number}, diag_identifier={diag_identifier:?}",
         handle_type,
-        rec_number,
-        diag_identifier
     );
     if rec_number < 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
 
-    // Convert the diagnostic identifier
     let diag_id = DiagIdentifier::try_from(diag_identifier)?;
 
     if rec_number == 0 {
-        // Header fields
         match diag_id {
             DiagIdentifier::Number => {
                 unsafe {
@@ -406,19 +399,13 @@ pub fn get_diag_field(
             }
             DiagIdentifier::DynamicFunction => {
                 if let Some(ref dynamic_function) = diagnostic_info.header.dynamic_function_code {
-                    unsafe {
-                        api_utils::string_to_cstr(
-                            dynamic_function,
-                            diag_info_ptr as *mut sql::Char,
-                            buffer_length as sql::Len,
-                        )?;
-                        if !string_length_ptr.is_null() {
-                            std::ptr::write(
-                                string_length_ptr,
-                                dynamic_function.len() as sql::SmallInt,
-                            );
-                        }
-                    }
+                    write_string_bytes::<E>(
+                        dynamic_function,
+                        diag_info_ptr as *mut E::Char,
+                        buffer_length,
+                        string_length_ptr,
+                        None,
+                    );
                     Ok(())
                 } else {
                     NoMoreDataSnafu.fail()
@@ -433,10 +420,9 @@ pub fn get_diag_field(
                 }
                 Ok(())
             }
-            _ => NoMoreDataSnafu.fail(), // Header field not supported
+            _ => NoMoreDataSnafu.fail(),
         }
     } else {
-        // Record fields
         if rec_number > diagnostic_info.records.len() as i16 {
             return NoMoreDataSnafu.fail();
         }
@@ -445,16 +431,13 @@ pub fn get_diag_field(
 
         match diag_id {
             DiagIdentifier::SqlState => {
-                unsafe {
-                    api_utils::string_to_cstr(
-                        record.sql_state.as_str(),
-                        diag_info_ptr as *mut sql::Char,
-                        6,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(string_length_ptr, 5); // SQLSTATE is always 5 characters
-                    }
-                }
+                write_string_bytes::<E>(
+                    record.sql_state.as_str(),
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::Native => {
@@ -464,19 +447,13 @@ pub fn get_diag_field(
                 Ok(())
             }
             DiagIdentifier::MessageText => {
-                unsafe {
-                    api_utils::string_to_cstr(
-                        &record.message_text,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(
-                            string_length_ptr,
-                            record.message_text.len() as sql::SmallInt,
-                        );
-                    }
-                }
+                write_string_bytes::<E>(
+                    &record.message_text,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ClassOrigin | DiagIdentifier::SubclassOrigin => {
@@ -484,47 +461,33 @@ pub fn get_diag_field(
                     ClassOrigin::Odbc3_0 => "ODBC 3.0",
                     ClassOrigin::Iso9075 => "ISO 9075",
                 };
-                unsafe {
-                    api_utils::string_to_cstr(
-                        origin_str,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(string_length_ptr, origin_str.len() as sql::SmallInt);
-                    }
-                }
+                write_string_bytes::<E>(
+                    origin_str,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ConnectionName => {
-                unsafe {
-                    api_utils::string_to_cstr(
-                        &record.connection_name,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(
-                            string_length_ptr,
-                            record.connection_name.len() as sql::SmallInt,
-                        );
-                    }
-                }
+                write_string_bytes::<E>(
+                    &record.connection_name,
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ServerName => {
-                // For now, return empty string as server name - this can be enhanced later
-                let server_name = "";
-                unsafe {
-                    api_utils::string_to_cstr(
-                        server_name,
-                        diag_info_ptr as *mut sql::Char,
-                        buffer_length as sql::Len,
-                    )?;
-                    if !string_length_ptr.is_null() {
-                        std::ptr::write(string_length_ptr, server_name.len() as sql::SmallInt);
-                    }
-                }
+                write_string_bytes::<E>(
+                    "",
+                    diag_info_ptr as *mut E::Char,
+                    buffer_length,
+                    string_length_ptr,
+                    None,
+                );
                 Ok(())
             }
             DiagIdentifier::ColumnNumber => {
@@ -545,7 +508,7 @@ pub fn get_diag_field(
                 }
                 Ok(())
             }
-            _ => NoMoreDataSnafu.fail(), // Record field not supported
+            _ => NoMoreDataSnafu.fail(),
         }
     }
 }

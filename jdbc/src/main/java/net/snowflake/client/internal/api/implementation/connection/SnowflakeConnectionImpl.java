@@ -43,12 +43,6 @@ import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.Datab
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewRequest;
 import net.snowflake.client.internal.util.NotImplementedException;
 
-/**
- * Snowflake JDBC Connection implementation
- *
- * <p>This is a stub implementation that provides the basic JDBC Connection interface and delegates
- * to native Rust implementation via JNI.
- */
 public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
   private static final SFLogger logger = SFLoggerFactory.getLogger(SnowflakeConnectionImpl.class);
   private final String url;

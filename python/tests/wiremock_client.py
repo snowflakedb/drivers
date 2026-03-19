@@ -90,7 +90,9 @@ class WiremockClient:
 
         all_placeholders = {
             **placeholders,
-            "{{REPO_ROOT}}": str(self.workspace_root),
+            # Use POSIX separators so the substituted path is valid JSON on Windows
+            # (backslashes in Windows paths produce invalid \escape sequences).
+            "{{REPO_ROOT}}": self.workspace_root.as_posix(),
         }
 
         for placeholder, value in all_placeholders.items():

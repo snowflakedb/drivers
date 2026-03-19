@@ -18,3 +18,6 @@ resolver = "2"
 strip = true
 opt-level = "z"
 lto = false
+
+[profile.dev]
+opt-level = 1

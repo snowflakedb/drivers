@@ -44,6 +44,7 @@ pub struct CrlCache {
     http_client: reqwest::Client,
     // Scheduler control channel to wake DelayQueue loop on updates
     scheduler_tx: OnceCell<tokio::sync::mpsc::Sender<SchedulerMsg>>,
+    metrics: CrlMetrics,
 }
 
 #[derive(Debug)]
@@ -70,14 +71,6 @@ impl CrlMetrics {
             fetch_error_total: meter.u64_counter("crl_fetch_error_total").build(),
         }
     }
-}
-
-fn metrics() -> &'static CrlMetrics {
-    static METRICS: OnceCell<CrlMetrics> = OnceCell::new();
-    METRICS.get_or_init(|| {
-        let meter = global::meter("sf_core.crl");
-        CrlMetrics::init(&meter)
-    })
 }
 
 impl CrlCache {
@@ -446,6 +439,7 @@ impl CrlCache {
             .build()
             .context(crate::crl::error::HttpClientBuildSnafu)?;
 
+        let meter = global::meter("sf_core.crl");
         Ok(Self {
             config: config.clone(),
             memory_cache,
@@ -458,6 +452,7 @@ impl CrlCache {
             backoff: Arc::new(Mutex::new(HashMap::new())),
             http_client,
             scheduler_tx: OnceCell::new(),
+            metrics: CrlMetrics::init(&meter),
         })
     }
 
@@ -480,6 +475,7 @@ impl CrlCache {
                                 backoff: Arc::new(Mutex::new(HashMap::new())),
                                 http_client: reqwest::Client::new(),
                                 scheduler_tx: OnceCell::new(),
+                                metrics: CrlMetrics::init(&global::meter("sf_core.crl")),
                             }
                         }
                     }
@@ -657,10 +653,10 @@ impl CrlCache {
         let start = std::time::Instant::now();
         if let Some(mem) = self.get_from_memory_cache(url).await? {
             let ms = start.elapsed().as_millis() as u64;
-            metrics()
+            self.metrics
                 .get_ms
                 .record(ms, &[KeyValue::new("source", "memory")]);
-            metrics()
+            self.metrics
                 .get_total
                 .add(1, &[KeyValue::new("source", "memory")]);
             return Ok(mem.crl);
@@ -673,10 +669,10 @@ impl CrlCache {
 
         if let Some(disk) = self.get_from_disk_cache(url).await? {
             let ms = start.elapsed().as_millis() as u64;
-            metrics()
+            self.metrics
                 .get_ms
                 .record(ms, &[KeyValue::new("source", "disk")]);
-            metrics()
+            self.metrics
                 .get_total
                 .add(1, &[KeyValue::new("source", "disk")]);
             return Ok(disk);
@@ -684,10 +680,10 @@ impl CrlCache {
 
         let fetched = self.fetch_from_network_and_cache(url).await?;
         let ms = start.elapsed().as_millis() as u64;
-        metrics()
+        self.metrics
             .get_ms
             .record(ms, &[KeyValue::new("source", "network")]);
-        metrics()
+        self.metrics
             .get_total
             .add(1, &[KeyValue::new("source", "network")]);
         Ok(fetched)
@@ -717,7 +713,7 @@ impl CrlCache {
         {
             Ok(b) => b,
             Err(e) => {
-                metrics().fetch_error_total.add(1, &[]);
+                self.metrics.fetch_error_total.add(1, &[]);
                 self.record_backoff_failure(url);
                 return match e {
                     HttpError::Transport { source, .. } => Err(source).context(CrlDownloadSnafu {
@@ -733,8 +729,8 @@ impl CrlCache {
         };
         self.record_backoff_success(url)?;
         let ms = start.elapsed().as_millis() as u64;
-        metrics().fetch_ms.record(ms, &[]);
-        metrics().fetch_total.add(1, &[]);
+        self.metrics.fetch_ms.record(ms, &[]);
+        self.metrics.fetch_total.add(1, &[]);
         Ok(bytes)
     }
 

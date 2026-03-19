@@ -57,6 +57,9 @@ fn main() {
 
     // On Windows, use a .def file to limit DLL exports to only C API functions.
     // This avoids the PE/COFF 65535 export symbol limit.
+    // NOTE: rustc-link-arg applies to test executables too, but exports.def omits
+    // the LIBRARY directive so MSVC does not set the DLL bit in test binaries.
+    // Without the DLL bit, test executables remain valid Win32 applications.
     #[cfg(target_os = "windows")]
     {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();

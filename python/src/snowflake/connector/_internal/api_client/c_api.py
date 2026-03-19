@@ -1,5 +1,6 @@
 import ctypes
 import logging
+import os
 import sys
 
 from enum import Enum
@@ -9,7 +10,8 @@ from typing import Any
 from ..logging import get_sf_core_logger
 
 
-_CORE_LIB_NAME = "libsf_core"
+_CORE_LIB_STEM = "sf_core"
+_CORE_LIB_NAME = f"lib{_CORE_LIB_STEM}"
 
 
 class CORE_API(Enum):
@@ -21,9 +23,11 @@ class CAPIHandle(ctypes.Structure):
 
 
 def _get_core_path() -> Any:
-    # Define the file name for each platform
+    # Define the file name for each platform.
+    # On Windows, cdylib crates produce "sf_core.dll" (no lib prefix).
+    # On Unix, they produce "libsf_core.so" / "libsf_core.dylib".
     if sys.platform.startswith("win"):
-        lib_name = f"{_CORE_LIB_NAME}.dll"
+        lib_name = f"{_CORE_LIB_STEM}.dll"
     elif sys.platform.startswith("darwin"):
         lib_name = f"{_CORE_LIB_NAME}.dylib"
     else:
@@ -34,14 +38,17 @@ def _get_core_path() -> Any:
 
 
 def _load_core() -> ctypes.CDLL:
-    # This context manager is the safe way to get a
-    # file path from importlib.resources. It handles cases
-    # where the file is inside a zip and needs to be extracted
-    # to a temporary location.
     path = _get_core_path()
     with resources.as_file(path) as lib_path:
-        core = ctypes.CDLL(str(lib_path))
-    return core
+        lib_path_str = str(lib_path)
+        if sys.platform.startswith("win"):
+            # ctypes.CDLL on Python 3.8+ uses restricted DLL search; register
+            # _core/ so the Windows loader finds sf_core.dll's co-located deps.
+            os.add_dll_directory(os.fspath(lib_path.parent))
+        try:
+            return ctypes.CDLL(lib_path_str)
+        except OSError as err:
+            raise OSError(f"Couldn't load core driver (path={lib_path_str})") from err
 
 
 try:

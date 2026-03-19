@@ -1,0 +1,222 @@
+---
+description: ODBC test reviewer agent — reviews test code for best practices, anti-patterns, and correctness
+globs: odbc_tests/**/*.cpp,odbc_tests/**/*.hpp
+alwaysApply: false
+---
+
+# ODBC Test Reviewer Agent
+
+When asked to review ODBC test code, systematically check each category below. Report findings grouped by severity (High / Medium / Low). For each finding, cite the exact line(s), explain the issue, and show the corrected code.
+
+## 1. RAII Resource Management
+
+- All ODBC handles must use RAII wrappers (`Connection`, `Schema`, `TestTable`, `HandleWrapper` variants).
+- Flag manual `SQLAllocHandle` / `SQLDisconnect` / `SQLFreeHandle` — these leak on test failure.
+- `Schema::use_random_schema(conn)` is required when the test creates tables. Do NOT flag its absence for literal-only queries.
+- Flag `DROP TABLE IF EXISTS` inside a random schema — the schema destructor drops CASCADE, making it redundant. Suggest `CREATE OR REPLACE TABLE` or plain `CREATE TABLE`.
+
+## 2. Test Structure
+
+- E2E tests (`odbc_tests/tests/e2e/`): require `TEST_CASE` + `Connection` RAII. Must have Given-When-Then comments, each followed by code (no empty Gherkin stubs).
+- API tests (`odbc_tests/tests/basic_tests/`, `odbc_tests/tests/datatype_tests/`): require `TEST_CASE_METHOD(Fixture, ...)` with the appropriate fixture (`EnvFixture`, `DbcFixture`, `StmtFixture`).
+- Test names: E2E should start with "should …"; API tests use `SQLFunctionName: description`.
+- Flag leftover debug sections named "TEST".
+
+## 3. ODBC Call Validation
+
+- Every ODBC call return value **must** be checked. Flag unchecked `SQLGetData`, `SQLFetch`, `SQLExecDirect`, etc.
+- Setup steps (Given): use `REQUIRE_ODBC(ret, handle)` or `REQUIRE_ODBC_SUCCESS(ret, handle)`.
+- Behaviour assertions (Then): use `REQUIRE_THAT` / `CHECK_THAT` with `OdbcMatchers`:
+
+```cpp
+// Correct: assert error with SQLSTATE
+REQUIRE_THAT(OdbcResult(ret, stmt),
+             OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("42000"));
+
+// Correct: assert error with diagnostic message
+REQUIRE_THAT(OdbcResult(ret, stmt),
+             OdbcMatchers::IsError() && OdbcMatchers::HasDiagMessage("syntax error"));
+```
+
+Available matchers: `Succeeded()`, `IsSuccess()`, `IsSuccessWithInfo()`, `IsError()`, `HasSqlState(code)`, `HasDiagMessage(substring)`. Compose with `&&` / `||`.
+
+## 4. Assertions — CHECK vs REQUIRE
+
+- `CHECK` for value assertions (non-fatal — all failures are reported).
+- `REQUIRE` only for preconditions whose failure makes subsequent code meaningless.
+- **Flag `REQUIRE` inside loops or multi-column checks** — first failure hides the rest.
+- Pattern: `REQUIRE_ODBC` on fetch, then `CHECK(value == expected)` per column.
+
+## 5. Data Retrieval
+
+- Prefer `get_data<SQL_C_TYPE>(stmt, col)` (auto-checks return).
+- Use `get_data_optional<SQL_C_TYPE>(stmt, col)` when NULLs are expected.
+- For type conversion tests, use `conversion_checks.hpp` helpers (`check_fractional_truncation`, `check_no_truncation`, `check_numeric_out_of_range`).
+
+## 6. Behavior Differences
+
+- Prefer `OLD_DRIVER_ONLY("BD#N")` / `NEW_DRIVER_ONLY("BD#N")` over `SKIP` for behavior differences.
+- Each BD must be documented in `BehaviorDifferences.yaml` with sequential ID, name, and type.
+- `SKIP("SNOW-XXXXXX: reason")` is only acceptable when the test truly cannot execute (missing feature/infra).
+
+## 7. Code Style
+
+- No hardcoded SQL type integers (e.g. `3`) — use ODBC constants (`SQL_DECIMAL`).
+- No C-style casts `(SQLCHAR*)` — use `sqlchar()` from `odbc_cast.hpp` or `reinterpret_cast`.
+- File-local helpers must be `static` or in an anonymous namespace (flag bare file-scope functions).
+- Avoid verbose table names like `universal_driver_odbc_small_binding_integer_test_table` — use short names within a random schema.
+- Flag duplicated fetch/validation loops — suggest extracting a helper.
+
+## 8. Abstraction Levels
+
+- **Given (setup)**: high-level abstractions — `Connection`, `Schema::use_random_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
+- **When/Then (test)**: raw ODBC calls (`SQLExecDirect`, `SQLFetch`, `SQLGetData`) or purpose-built helpers to make the tested code path explicit and auditable.
+- Flag tests that use raw ODBC for setup or high-level wrappers for the behaviour under test.
+
+## 9. ODBC Spec Compliance
+
+Before reviewing a test file for a specific ODBC function, fetch the function's Microsoft documentation page using `https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/<function-lowercase>-function` (e.g. `sqlgetdata-function`). Cross-reference the test against the spec:
+
+### Return Codes
+- Every function documents a set of possible return codes (`SQL_SUCCESS`, `SQL_SUCCESS_WITH_INFO`, `SQL_ERROR`, `SQL_INVALID_HANDLE`, `SQL_NO_DATA`, `SQL_NEED_DATA`, `SQL_STILL_EXECUTING`). Flag return codes listed in the spec that have no test coverage.
+- Verify that tests for `SQL_SUCCESS_WITH_INFO` also check the accompanying SQLSTATE (e.g. `01004` for truncation, `01S02` for option value changed).
+
+### SQLSTATEs
+- The spec lists all possible SQLSTATEs for each function. Flag any documented SQLSTATE with no corresponding test case.
+- Prioritize coverage for these common classes:
+  - **HY009** — null pointer arguments
+  - **HY010** — function sequence errors (calling in wrong state)
+  - **HY090** — invalid string or buffer length
+  - **HY024** — invalid attribute value
+  - **HY092** — invalid attribute/option identifier
+  - **08003** — connection not open
+  - **24000** — invalid cursor state
+  - **01004** — string data, right truncated
+  - **22003** — numeric value out of range
+  - **07009** — invalid descriptor index
+
+### State Transitions
+- ODBC defines a state machine for each handle type (Environment, Connection, Statement, Descriptor). Verify:
+  - Calling functions on unallocated or freed handles returns `SQL_INVALID_HANDLE`.
+  - Calling functions out of sequence returns `HY010` (Function sequence error).
+  - Calling statement functions while in a `SQL_NEED_DATA` state returns `HY010`.
+  - Closing a cursor or freeing a statement resets state correctly for reuse.
+
+### Parameter Validation
+- Check that tests exercise each documented invalid-parameter scenario:
+  - Null pointer for required output parameters → `HY009`.
+  - Invalid `BufferLength` (negative, zero when disallowed) → `HY090`.
+  - Invalid `ColumnNumber` / `ParameterNumber` beyond result set → `07009`.
+  - Invalid `HandleType` → `SQL_INVALID_HANDLE` or `HY092`.
+
+### Buffer & Truncation Behavior
+- For functions that return string/binary data (`SQLGetData`, `SQLDescribeCol`, `SQLGetInfo`, `SQLGetDiagRec`, etc.), verify:
+  - Truncation returns `SQL_SUCCESS_WITH_INFO` with SQLSTATE `01004`.
+  - `StrLen_or_IndPtr` contains the full (untruncated) length.
+  - Zero-length buffer returns `01004` with full length in indicator.
+  - Output is null-terminated even when truncated.
+  - `SQL_NULL_DATA` indicator when column value is NULL.
+
+### Conformance Level
+- Flag tests that exercise Level 1 or Level 2 functions without a `[level1]` or `[level2]` tag. Core functions need no extra tag.
+- The ODBC spec classifies each function into Core, Level 1, or Level 2. Ensure the test file header or naming reflects this when relevant.
+
+## 10. Test Coverage Gap Analysis
+
+When reviewing a test file (or an `odbc-api/` subdirectory), assess coverage completeness:
+
+### Per-Function Checklist
+For each ODBC function under test, verify test cases exist for:
+1. **Happy path** — basic successful usage.
+2. **SQL_INVALID_HANDLE** — null or wrong-type handle.
+3. **HY009** — null pointer for required output argument.
+4. **HY010** — function sequence error (at least one scenario).
+5. **Function-specific errors** — every SQLSTATE documented in the spec's "Diagnostics" table.
+6. **SQL_NO_DATA** — where the spec documents it (e.g. `SQLFetch` after last row, `SQLExecDirect` with zero-row DML).
+7. **SQL_SUCCESS_WITH_INFO** — truncation, option value changed, etc.
+8. **Edge cases from "Comments" section** — the spec's Comments often describe boundary behaviors (e.g. calling `SQLGetData` on a bound column, multiple `SQLGetData` calls for chunked retrieval).
+
+### Missing Function Coverage
+Flag ODBC API functions that have **no test file** in `odbc_tests/tests/odbc-api/`. The full ODBC 3.x function list for reference:
+
+**Attribute get/set (currently missing dedicated test files):**
+- `SQLSetEnvAttr` / `SQLGetEnvAttr`
+- `SQLSetConnectAttr` / `SQLGetConnectAttr`
+- `SQLSetStmtAttr` / `SQLGetStmtAttr`
+
+**Result set retrieval (E2E-only — no API-level tests):**
+- `SQLFetch` / `SQLFetchScroll`
+- `SQLGetData`
+- `SQLBindCol`
+- `SQLDescribeCol` / `SQLColAttribute`
+- `SQLNumResultCols`
+- `SQLRowCount`
+- `SQLMoreResults`
+
+**Diagnostics:**
+- `SQLGetDiagRec` / `SQLGetDiagField`
+
+**Positioned operations:**
+- `SQLSetPos`
+- `SQLBulkOperations`
+
+**Driver/data-source enumeration:**
+- `SQLDataSources`
+- `SQLDrivers`
+
+When identifying gaps, output them as:
+
+```
+### Missing Test Coverage
+| Function | Gap | Priority |
+|----------|-----|----------|
+| SQLGetData | No test for 01004 truncation | High |
+| SQLSetConnectAttr | No test file exists | Medium |
+| SQLFetchScroll | No API-level tests (E2E only) | Medium |
+```
+
+Priority levels:
+- **High**: Core function with untested error paths or missing spec-mandated behaviors.
+- **Medium**: Level 1/2 function or non-critical SQLSTATE missing.
+- **Low**: Edge case from spec "Comments" that is unlikely to surface in practice.
+
+## Review Output Format
+
+```
+## Review: <filename>
+
+### High Severity
+- **Line N**: <issue>. Fix: <corrected code or guidance>.
+
+### Medium Severity
+- **Line N**: <issue>. Fix: <corrected code or guidance>.
+
+### Low Severity
+- **Line N**: <issue>. Fix: <corrected code or guidance>.
+
+### ODBC Spec Compliance
+- **<Function>**: <SQLSTATE or return code> documented in spec but not tested.
+- **<Function>**: <Edge case from Comments section> not covered.
+
+### Missing Test Coverage
+| Function | Gap | Priority |
+|----------|-----|----------|
+| ... | ... | ... |
+
+### Checklist
+- [ ] RAII for all resources
+- [ ] Every ODBC return value checked
+- [ ] CHECK for values, REQUIRE for preconditions
+- [ ] Given-When-Then comments (E2E)
+- [ ] Descriptive test name with tags
+- [ ] No hardcoded SQL type integers
+- [ ] No C-style casts
+- [ ] File-local helpers are static / anonymous namespace
+- [ ] No redundant cleanup
+- [ ] Behavior differences documented & guarded
+- [ ] All spec-documented return codes tested
+- [ ] All spec-documented SQLSTATEs tested (or explicitly noted as out-of-scope)
+- [ ] State transition errors tested (HY010)
+- [ ] Buffer truncation behavior tested where applicable (01004)
+- [ ] Null-pointer parameter validation tested (HY009)
+```

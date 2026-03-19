@@ -1,7 +1,25 @@
 use std::os::raw::c_char;
+use std::sync::LazyLock;
 
-use crate::protobuf::apis::call_proto;
-use proto_utils::ProtoError;
+use crate::protobuf::apis::RustTransport;
+use proto_utils::{ProtoError, Transport};
+
+struct CApiState {
+    runtime: tokio::runtime::Runtime,
+    transport: RustTransport,
+}
+
+static STATE: LazyLock<CApiState> = LazyLock::new(|| CApiState {
+    // Single worker thread is intentional: keeps contention minimal and
+    // makes deadlocks easier to detect. Will be increased during
+    // performance optimization.
+    runtime: tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime"),
+    transport: RustTransport::new(),
+});
 
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
     let boxed = vec.into_boxed_slice();
@@ -50,7 +68,11 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
             .to_string_lossy()
             .to_string();
         let message = std::slice::from_raw_parts(request, request_len);
-        call_proto(&api, &method, message)
+        STATE.runtime.block_on(
+            STATE
+                .transport
+                .handle_message(&api, &method, message.to_vec()),
+        )
     });
 
     match result {

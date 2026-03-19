@@ -152,6 +152,10 @@ class TestBooleanBinding:
         assert result == (True, False, True)
         assert_type(result, bool)
 
+    def test_should_select_null_boolean_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
         # When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
         result = execute_query("SELECT ?::BOOLEAN", (None,), single_row=True)
 

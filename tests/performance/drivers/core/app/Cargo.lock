@@ -1059,6 +1059,7 @@ dependencies = [
  "serde_json",
  "sf_core",
  "strum",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

@@ -90,6 +90,32 @@ jacoco {
 }
 
 // ====================
+// Protobuf generation
+// ====================
+def workspaceRoot = project.rootDir.parentFile
+
+tasks.register('generateProtobuf', Exec) {
+    inputs.file("${workspaceRoot}/protobuf/database_driver_v1.proto")
+    inputs.dir("${workspaceRoot}/proto_generator/src")
+    inputs.file("${workspaceRoot}/proto_generator/Cargo.toml")
+    inputs.file("${workspaceRoot}/proto_generator/Cargo.lock")
+    inputs.file("${workspaceRoot}/Cargo.toml")
+    inputs.file("${workspaceRoot}/Cargo.lock")
+    outputs.dir('src/main/java/net/snowflake/client/internal/unicore/protobuf_gen')
+
+    commandLine 'cargo', 'run', '--locked',
+        '--bin', 'proto_generator',
+        '--manifest-path', "${workspaceRoot}/Cargo.toml",
+        '--', '--generator', 'java',
+        '--input', "${workspaceRoot}/protobuf/database_driver_v1.proto",
+        '--output', 'src/main/java/'
+}
+
+tasks.named('compileJava') {
+    dependsOn('generateProtobuf')
+}
+
+// ====================
 // Packaging and publishing
 // ====================
 jar {

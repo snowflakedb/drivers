@@ -8,7 +8,6 @@ import java.util.List;
 import net.snowflake.client.api.resultset.FieldMetadata;
 import net.snowflake.client.api.resultset.SnowflakeResultSetMetaData;
 
-/** Simple ResultSetMetaData implementation */
 public class SnowflakeResultSetMetaDataImpl
     implements ResultSetMetaData, SnowflakeResultSetMetaData {
   private final String[] columnNames;

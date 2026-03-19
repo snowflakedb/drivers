@@ -27,7 +27,7 @@
 // SUCCESSFUL CONVERSIONS - String to Date/Time Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to date and time types", "[datatype][string][conversion][temporal]") {
+TEST_CASE("should convert string literals to c_type", "[datatype][string][conversion][temporal]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -38,62 +38,69 @@ TEST_CASE("should convert string literals to date and time types", "[datatype][s
       "'14:30:45' AS c4, '00:00:00' AS c5, '23:59:59' AS c6, "
       "'2024-01-15 14:30:45' AS c7, '1999-12-31 23:59:59' AS c8, '  2024-01-15 14:30:45  ' AS c9");
 
-  // Then SQL_C_TYPE_DATE conversions should work
-  auto date1 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 1);
-  CHECK(date1.year == 2024);
-  CHECK(date1.month == 1);
-  CHECK(date1.day == 15);
+  // Then <c_type> conversions should work
+  {
+    INFO("SQL_C_TYPE_DATE");
+    auto date1 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 1);
+    CHECK(date1.year == 2024);
+    CHECK(date1.month == 1);
+    CHECK(date1.day == 15);
 
-  auto date2 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 2);
-  CHECK(date2.year == 1999);
-  CHECK(date2.month == 12);
-  CHECK(date2.day == 31);
+    auto date2 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 2);
+    CHECK(date2.year == 1999);
+    CHECK(date2.month == 12);
+    CHECK(date2.day == 31);
 
-  auto y2k = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 3);
-  CHECK(y2k.year == 2000);
-  CHECK(y2k.month == 1);
-  CHECK(y2k.day == 1);
+    auto y2k = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 3);
+    CHECK(y2k.year == 2000);
+    CHECK(y2k.month == 1);
+    CHECK(y2k.day == 1);
+  }
 
-  // And SQL_C_TYPE_TIME conversions should work
-  auto time1 = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
-  CHECK(time1.hour == 14);
-  CHECK(time1.minute == 30);
-  CHECK(time1.second == 45);
+  {
+    INFO("SQL_C_TYPE_TIME");
+    auto time1 = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
+    CHECK(time1.hour == 14);
+    CHECK(time1.minute == 30);
+    CHECK(time1.second == 45);
 
-  auto midnight = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 5);
-  CHECK(midnight.hour == 0);
-  CHECK(midnight.minute == 0);
-  CHECK(midnight.second == 0);
+    auto midnight = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 5);
+    CHECK(midnight.hour == 0);
+    CHECK(midnight.minute == 0);
+    CHECK(midnight.second == 0);
 
-  auto end_of_day = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 6);
-  CHECK(end_of_day.hour == 23);
-  CHECK(end_of_day.minute == 59);
-  CHECK(end_of_day.second == 59);
+    auto end_of_day = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 6);
+    CHECK(end_of_day.hour == 23);
+    CHECK(end_of_day.minute == 59);
+    CHECK(end_of_day.second == 59);
+  }
 
-  // And SQL_C_TYPE_TIMESTAMP conversions should work
-  auto ts1 = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(stmt, 7);
-  CHECK(ts1.year == 2024);
-  CHECK(ts1.month == 1);
-  CHECK(ts1.day == 15);
-  CHECK(ts1.hour == 14);
-  CHECK(ts1.minute == 30);
-  CHECK(ts1.second == 45);
+  {
+    INFO("SQL_C_TYPE_TIMESTAMP");
+    auto ts1 = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(stmt, 7);
+    CHECK(ts1.year == 2024);
+    CHECK(ts1.month == 1);
+    CHECK(ts1.day == 15);
+    CHECK(ts1.hour == 14);
+    CHECK(ts1.minute == 30);
+    CHECK(ts1.second == 45);
 
-  auto millennium = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(stmt, 8);
-  CHECK(millennium.year == 1999);
-  CHECK(millennium.month == 12);
-  CHECK(millennium.day == 31);
-  CHECK(millennium.hour == 23);
-  CHECK(millennium.minute == 59);
-  CHECK(millennium.second == 59);
+    auto millennium = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(stmt, 8);
+    CHECK(millennium.year == 1999);
+    CHECK(millennium.month == 12);
+    CHECK(millennium.day == 31);
+    CHECK(millennium.hour == 23);
+    CHECK(millennium.minute == 59);
+    CHECK(millennium.second == 59);
 
-  auto ts2 = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(stmt, 9);
-  CHECK(ts2.year == 2024);
-  CHECK(ts2.month == 1);
-  CHECK(ts2.day == 15);
-  CHECK(ts2.hour == 14);
-  CHECK(ts2.minute == 30);
-  CHECK(ts2.second == 45);
+    auto ts2 = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(stmt, 9);
+    CHECK(ts2.year == 2024);
+    CHECK(ts2.month == 1);
+    CHECK(ts2.day == 15);
+    CHECK(ts2.hour == 14);
+    CHECK(ts2.minute == 30);
+    CHECK(ts2.second == 45);
+  }
 }
 
 // ============================================================================

@@ -44,3 +44,8 @@ endif()
 if (DRIVER_TYPE STREQUAL "OLD")
     target_compile_definitions(common PUBLIC SNOWFLAKE_OLD_DRIVER)
 endif()
+
+option(FORCE_RUN_NOT_IMPLEMENTED "Disable SKIP_NEW_DRIVER_NOT_IMPLEMENTED to force-run all tests" OFF)
+if (FORCE_RUN_NOT_IMPLEMENTED)
+    target_compile_definitions(common PUBLIC FORCE_RUN_NOT_IMPLEMENTED)
+endif()

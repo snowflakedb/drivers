@@ -1,8 +1,75 @@
 use odbc_sys as sql;
+use serde_json::Value;
 
-use crate::cdata_types::{CDataType, SQL_NO_TOTAL};
-use crate::conversion::error::{IndicatorRequiredSnafu, ReadArrowError, WriteOdbcError};
+use crate::api::CDataType;
+use crate::api::ParameterBinding;
+use crate::conversion::error::{
+    IndicatorRequiredSnafu, JsonBindingError, ReadArrowError, WriteOdbcError,
+};
 use crate::conversion::warning::{Warning, Warnings};
+
+/// Convert a UTF-8 string to the system's ANSI code page (ACP) bytes.
+///
+/// Uses `WideCharToMultiByte(CP_ACP, …)` via UTF-8 → UTF-16 → ACP.
+/// Characters that cannot be represented in the ACP are replaced with the
+/// code page's default substitution character.
+#[cfg(windows)]
+fn utf8_to_acp_bytes(src: &str) -> Vec<u8> {
+    if src.is_empty() {
+        return Vec::new();
+    }
+
+    unsafe extern "system" {
+        fn WideCharToMultiByte(
+            code_page: u32,
+            dw_flags: u32,
+            lp_wide_char_str: *const u16,
+            cch_wide_char: i32,
+            lp_multi_byte_str: *mut u8,
+            cb_multi_byte: i32,
+            lp_default_char: *const u8,
+            lp_used_default_char: *mut i32,
+        ) -> i32;
+    }
+
+    const CP_ACP: u32 = 0;
+
+    let wide: Vec<u16> = src.encode_utf16().collect();
+
+    unsafe {
+        let byte_len = WideCharToMultiByte(
+            CP_ACP,
+            0,
+            wide.as_ptr(),
+            wide.len() as i32,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+        );
+        if byte_len <= 0 {
+            return src.as_bytes().to_vec();
+        }
+
+        let mut buf = vec![0u8; byte_len as usize];
+        let written = WideCharToMultiByte(
+            CP_ACP,
+            0,
+            wide.as_ptr(),
+            wide.len() as i32,
+            buf.as_mut_ptr(),
+            byte_len,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+        );
+        if written <= 0 {
+            return src.as_bytes().to_vec();
+        }
+
+        buf.truncate(written as usize);
+        buf
+    }
+}
 
 pub enum LengthOrNull {
     Null,
@@ -28,6 +95,10 @@ pub struct Binding {
     /// Numeric scale, set via SQLSetDescField(SQL_DESC_SCALE) on the ARD.
     /// Used for SQL_C_NUMERIC conversions.
     pub scale: Option<i16>,
+    /// Interval leading field precision, set via
+    /// SQLSetDescField(SQL_DESC_DATETIME_INTERVAL_PRECISION) on the ARD.
+    /// ODBC default is 2 when not explicitly set.
+    pub datetime_interval_precision: Option<i16>,
 }
 
 impl Binding {
@@ -38,7 +109,7 @@ impl Binding {
                     return IndicatorRequiredSnafu.fail();
                 }
                 unsafe {
-                    std::ptr::write(self.indicator_ptr, crate::cdata_types::SQL_NULL_DATA);
+                    std::ptr::write(self.indicator_ptr, crate::api::SQL_NULL_DATA);
                 }
                 Ok(())
             }
@@ -67,39 +138,54 @@ impl Binding {
     }
 
     pub fn write_char_string(&self, src: &str, get_data_offset: &mut Option<usize>) -> Warnings {
+        #[cfg(windows)]
+        {
+            let acp_bytes = utf8_to_acp_bytes(src);
+            self.write_char_bytes(&acp_bytes, get_data_offset)
+        }
+        #[cfg(not(windows))]
+        {
+            use crate::api::encoding::{is_ascii_locale, mask_non_ascii_characters};
+
+            if is_ascii_locale() {
+                let masked_src = mask_non_ascii_characters(src);
+                self.write_char_bytes(masked_src.as_bytes(), get_data_offset)
+            } else {
+                self.write_char_bytes(src.as_bytes(), get_data_offset)
+            }
+        }
+    }
+
+    fn write_char_bytes(&self, src: &[u8], get_data_offset: &mut Option<usize>) -> Warnings {
+        let offset = get_data_offset.unwrap_or(0);
+        let remaining = &src[offset..];
+
         if self.target_value_ptr.is_null() || self.buffer_length <= 0 {
-            let total_chars = src.chars().count() as sql::Len;
-            let _ = self.write_length_or_null(LengthOrNull::Length(total_chars));
+            let _ = self.write_length_or_null(LengthOrNull::Length(remaining.len() as sql::Len));
             return vec![Warning::StringDataTruncated];
         }
 
-        let offset = get_data_offset.unwrap_or(0);
-        let total_chars = src.chars().count();
         let max_len = self.buffer_length as usize;
-        let mut dst_idx = 0;
-        let value_ptr = self.target_value_ptr as *mut u8;
-        for c in src.chars().skip(offset) {
-            if dst_idx == max_len - 1 {
-                unsafe {
-                    std::ptr::write(value_ptr.add(max_len - 1), 0);
-                }
-                let remaining = (total_chars - offset) as sql::Len;
-                let _ = self.write_length_or_null(LengthOrNull::Length(remaining));
-                *get_data_offset = Some(offset + dst_idx);
-                return vec![Warning::StringDataTruncated];
-            }
-            let byte = if c.is_ascii() { c as u8 } else { 0x1a };
-            unsafe {
-                std::ptr::write(value_ptr.add(dst_idx), byte);
-            }
-            dst_idx += 1;
-        }
+        let copy_len = std::cmp::min(remaining.len(), max_len - 1);
+
         unsafe {
-            std::ptr::write(value_ptr.add(dst_idx), 0);
+            std::ptr::copy_nonoverlapping(
+                remaining.as_ptr(),
+                self.target_value_ptr as *mut u8,
+                copy_len,
+            );
+            std::ptr::write((self.target_value_ptr as *mut u8).add(copy_len), 0);
         }
-        let _ = self.write_length_or_null(LengthOrNull::Length(dst_idx as sql::Len));
-        *get_data_offset = None;
-        vec![]
+
+        let _ = self.write_length_or_null(LengthOrNull::Length(remaining.len() as sql::Len));
+
+        if remaining.len() > max_len - 1 {
+            *get_data_offset = Some(offset + copy_len);
+            vec![Warning::StringDataTruncated]
+        } else {
+            *get_data_offset = None;
+            vec![]
+        }
     }
 
     pub fn write_binary(&self, src: &[u8], get_data_offset: &mut Option<usize>) -> Warnings {
@@ -127,6 +213,117 @@ impl Binding {
         }
     }
 
+    /// Helper for writing data generated by a function to a buffer.
+    unsafe fn write_from_fn_impl<T: Copy>(
+        target: *mut T,
+        offset: usize,
+        max_write_len: usize,
+        converter: impl Fn(usize) -> Option<T>,
+    ) -> usize {
+        let mut written = 0;
+        for pos in offset..offset + max_write_len {
+            if let Some(element) = converter(pos) {
+                unsafe {
+                    std::ptr::write(target.add(written), element);
+                }
+                written += 1;
+            } else {
+                break;
+            }
+        }
+        written
+    }
+
+    /// Write char data to a char buffer, with each byte generated by a function.
+    /// `total_char_count` is the total number of output characters (= bytes for SQL_C_CHAR).
+    pub fn write_char_from_fn<F>(
+        &self,
+        converter: F,
+        total_char_count: sql::Len,
+        get_data_offset: &mut Option<usize>,
+    ) -> Warnings
+    where
+        F: Fn(usize) -> Option<u8>,
+    {
+        let offset = get_data_offset.unwrap_or(0);
+        let remaining = total_char_count.saturating_sub(offset as sql::Len);
+
+        if self.target_value_ptr.is_null() || self.buffer_length <= 0 {
+            if remaining == 0 {
+                *get_data_offset = None;
+                let _ = self.write_length_or_null(LengthOrNull::Length(0));
+                return vec![];
+            }
+            let _ = self.write_length_or_null(LengthOrNull::Length(remaining));
+            return vec![Warning::StringDataTruncated];
+        }
+
+        let max_write_len = (self.buffer_length - 1) as usize;
+        let written = unsafe {
+            let target = self.target_value_ptr as *mut u8;
+            let written = Self::write_from_fn_impl(target, offset, max_write_len, converter);
+            std::ptr::write(target.add(written), 0);
+            written
+        };
+
+        let _ = self.write_length_or_null(LengthOrNull::Length(remaining));
+
+        let new_offset = offset + written;
+        if new_offset < total_char_count as usize {
+            *get_data_offset = Some(new_offset);
+            vec![Warning::StringDataTruncated]
+        } else {
+            *get_data_offset = None;
+            vec![]
+        }
+    }
+
+    /// Write wide-char data to a wide-char buffer, with each code unit generated by a function.
+    /// `total_char_count` is the total number of output wide characters.
+    /// The indicator is set in bytes (chars * 2) per ODBC wide-char convention.
+    pub fn write_wchar_from_fn<F>(
+        &self,
+        converter: F,
+        total_char_count: sql::Len,
+        get_data_offset: &mut Option<usize>,
+    ) -> Warnings
+    where
+        F: Fn(usize) -> Option<u16>,
+    {
+        let offset = get_data_offset.unwrap_or(0);
+        let remaining_chars = total_char_count.saturating_sub(offset as sql::Len);
+        let remaining_bytes = remaining_chars.saturating_mul(2);
+
+        if self.target_value_ptr.is_null() || self.buffer_length < 2 {
+            if remaining_chars == 0 {
+                *get_data_offset = None;
+                let _ = self.write_length_or_null(LengthOrNull::Length(0));
+                return vec![];
+            }
+            let _ = self.write_length_or_null(LengthOrNull::Length(remaining_bytes));
+            return vec![Warning::StringDataTruncated];
+        }
+
+        let max_write_len = ((self.buffer_length / 2) - 1) as usize;
+        let written = unsafe {
+            let target = self.target_value_ptr as *mut u16;
+            let written = Self::write_from_fn_impl(target, offset, max_write_len, converter);
+            std::ptr::write(target.add(written), 0);
+            written
+        };
+
+        let _ = self.write_length_or_null(LengthOrNull::Length(remaining_bytes));
+
+        let new_offset = offset + written;
+        if new_offset < total_char_count as usize {
+            *get_data_offset = Some(new_offset);
+            vec![Warning::StringDataTruncated]
+        } else {
+            *get_data_offset = None;
+            vec![]
+        }
+    }
+
     pub fn write_wchar_string(&self, src: &str, get_data_offset: &mut Option<usize>) -> Warnings {
         if self.target_value_ptr.is_null() || self.buffer_length < 2 {
             let total_bytes = (src.encode_utf16().count() * 2) as sql::Len;
@@ -143,7 +340,11 @@ impl Binding {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
                 }
-                let _ = self.write_length_or_null(LengthOrNull::Length(SQL_NO_TOTAL));
+                // Return remaining byte count instead of SQL_NO_TOTAL (BD#25).
+                // The ODBC spec says the indicator should contain the data length
+                // when determinable, and ours always is.
+                let remaining_bytes = (src.encode_utf16().count() - offset) as sql::Len * 2;
+                let _ = self.write_length_or_null(LengthOrNull::Length(remaining_bytes));
                 *get_data_offset = Some(offset + dst_idx);
                 return vec![Warning::StringDataTruncated];
             }
@@ -190,4 +391,54 @@ pub trait ReadArrowType<ArrowArrayType>: SnowflakeType {
         array: &'a ArrowArrayType,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError>;
+}
+
+/// Snowflake logical type names used in the binding protocol and Arrow metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnowflakeLogicalType {
+    Any,
+    Fixed,
+    Text,
+    Real,
+    Boolean,
+    Binary,
+    Date,
+    Time,
+    TimestampNtz,
+}
+
+impl SnowflakeLogicalType {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Any => "ANY",
+            Self::Fixed => "FIXED",
+            Self::Text => "TEXT",
+            Self::Real => "REAL",
+            Self::Boolean => "BOOLEAN",
+            Self::Binary => "BINARY",
+            Self::Date => "DATE",
+            Self::Time => "TIME",
+            Self::TimestampNtz => "TIMESTAMP_NTZ",
+        }
+    }
+}
+
+impl std::fmt::Display for SnowflakeLogicalType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Reads a typed value from a raw ODBC `ParameterBinding` buffer.
+pub(crate) trait ReadODBC: SnowflakeType {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError>;
+}
+
+/// Converts a typed representation into a JSON value for the Snowflake binding protocol.
+pub(crate) trait WriteJson: SnowflakeType {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError>;
+    fn sf_type(&self) -> SnowflakeLogicalType;
 }

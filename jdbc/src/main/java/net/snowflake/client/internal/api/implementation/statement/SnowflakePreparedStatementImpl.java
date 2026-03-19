@@ -32,11 +32,6 @@ import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.util.HexUtil;
 
-/**
- * Snowflake JDBC PreparedStatement implementation
- *
- * <p>This is a stub implementation that provides the basic JDBC PreparedStatement interface.
- */
 public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     implements PreparedStatement, SnowflakePreparedStatement {
   private static final SFLogger logger =
@@ -57,18 +52,20 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public ResultSet executeQuery() throws SQLException {
     checkClosed();
-    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
-        PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      return executeQueryWithBindings(sql, serializedBindings.bindings());
+    // Native bindings own the off-heap payload until the RPC has consumed the pointer.
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(parameterValues)) {
+      return executeQueryWithBindings(sql, nativeBindings.bindings());
     }
   }
 
   @Override
   public int executeUpdate() throws SQLException {
     checkClosed();
-    execute();
-    // TODO return real number of rows affected
-    return 0;
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(parameterValues)) {
+      return executeUpdateWithBindings(sql, nativeBindings.bindings());
+    }
   }
 
   @Override
@@ -285,13 +282,9 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public boolean execute() throws SQLException {
     checkClosed();
-    try (PreparedStatementBindingSerializer.SerializedBindings serializedBindings =
-        PreparedStatementBindingSerializer.serialize(parameterValues)) {
-      try (ResultSet ignored = executeQueryWithBindings(sql, serializedBindings.bindings())) {
-        // TODO: Align execute() return value and update-count behavior with snowflake-jdbc by using
-        // backend statement-type metadata (true for result sets, false for update counts).
-        return true;
-      }
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serializeToNativeBindings(parameterValues)) {
+      return executeWithBindings(sql, nativeBindings.bindings());
     }
   }
 

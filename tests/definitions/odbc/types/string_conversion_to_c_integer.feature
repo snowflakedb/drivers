@@ -10,29 +10,33 @@ Feature: ODBC string to integer type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario: should convert string literals to signed integer types
+  Scenario Outline: should convert string literals to signed <c_type>
     Given Snowflake client is logged in
     When Query selecting string literals representing integers is executed
-    Then SQL_C_LONG conversions should work
-    And SQL_C_SLONG conversions should work
-    And SQL_C_SHORT conversions should work
-    And SQL_C_TINYINT conversions should work
-    And SQL_C_STINYINT conversions should work
-    And SQL_C_SBIGINT conversions should work
+    Then <c_type> conversions should work
 
-  # ============================================================================
-  # SUCCESSFUL CONVERSIONS - String to Unsigned Integer Types
-  # ============================================================================
+    Examples:
+      | c_type         |
+      | SQL_C_LONG     |
+      | SQL_C_SLONG    |
+      | SQL_C_SHORT    |
+      | SQL_C_TINYINT  |
+      | SQL_C_STINYINT |
+      | SQL_C_SBIGINT  |
 
   @odbc_e2e
-  Scenario: should convert string literals to unsigned integer types
+  Scenario Outline: should convert string literals to unsigned <c_type>
     Given Snowflake client is logged in
     When Query selecting string literals representing unsigned integers is executed
-    Then SQL_C_ULONG conversions should work
-    And SQL_C_USHORT conversions should work
-    And SQL_C_UTINYINT conversions should work
-    And SQL_C_UBIGINT conversions should work
-    And SQL_C_SSHORT conversions should work
+    Then <c_type> conversions should work
+
+    Examples:
+      | c_type         |
+      | SQL_C_ULONG    |
+      | SQL_C_USHORT   |
+      | SQL_C_UTINYINT |
+      | SQL_C_UBIGINT  |
+      | SQL_C_SSHORT   |
 
   # ============================================================================
   # SUCCESSFUL CONVERSIONS - String to BIT Type

@@ -97,6 +97,7 @@ jobs:
               - 'build_common.rs'
               - 'rust-toolchain.toml'
               - 'tests/**'
+              - '!tests/performance/**'
               - '.github/workflows/**'
               - 'scripts/**'
             docs_only:

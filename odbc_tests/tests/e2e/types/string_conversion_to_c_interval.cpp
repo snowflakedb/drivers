@@ -37,8 +37,7 @@
 // SUCCESSFUL CONVERSIONS - Single-component interval types (no truncation)
 // ============================================================================
 
-TEST_CASE("should convert string literals to single-component interval types",
-          "[datatype][string][conversion][interval]") {
+TEST_CASE("should convert string literals to single-component c_type", "[datatype][string][conversion][interval]") {
   // Catch2 needs one test to be present in the suite, so we skip this one.
   SKIP();
   // Given Snowflake client is logged in
@@ -50,56 +49,52 @@ TEST_CASE("should convert string literals to single-component interval types",
       "SELECT '5' AS years, '10' AS months, '15' AS days, "
       "'8' AS hours, '30' AS minutes, '45' AS seconds");
 
-  // Then SQL_C_INTERVAL_YEAR conversions should work
+  // Then <c_type> conversions should work
   {
+    INFO("SQL_C_INTERVAL_YEAR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.year_month.year == 5);
   }
-
-  // And SQL_C_INTERVAL_MONTH conversions should work
   {
+    INFO("SQL_C_INTERVAL_MONTH");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
     CHECK(interval.interval_type == SQL_IS_MONTH);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.year_month.month == 10);
   }
-
-  // And SQL_C_INTERVAL_DAY conversions should work
   {
+    INFO("SQL_C_INTERVAL_DAY");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
     CHECK(interval.interval_type == SQL_IS_DAY);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.day == 15);
   }
-
-  // And SQL_C_INTERVAL_HOUR conversions should work
   {
+    INFO("SQL_C_INTERVAL_HOUR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 4);
     CHECK(interval.interval_type == SQL_IS_HOUR);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.hour == 8);
   }
-
-  // And SQL_C_INTERVAL_MINUTE conversions should work
   {
+    INFO("SQL_C_INTERVAL_MINUTE");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 5);
     CHECK(interval.interval_type == SQL_IS_MINUTE);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.minute == 30);
   }
-
-  // And SQL_C_INTERVAL_SECOND conversions should work
   {
+    INFO("SQL_C_INTERVAL_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 6);
     CHECK(interval.interval_type == SQL_IS_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.second == 45);
   }
 }
 
-TEST_CASE("should convert negative interval string literals", "[datatype][string][conversion][interval][.skip]") {
+TEST_CASE("should convert negative c_type string literals", "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -107,27 +102,26 @@ TEST_CASE("should convert negative interval string literals", "[datatype][string
   // When Query selecting negative interval values is executed
   auto stmt = conn.execute_fetch("SELECT '-5' AS neg_years, '-10' AS neg_months, '-15' AS neg_days");
 
-  // Then negative SQL_C_INTERVAL_YEAR should be correctly parsed
+  // Then negative <c_type> should be correctly parsed
   {
+    INFO("SQL_C_INTERVAL_YEAR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
-    CHECK(interval.interval_sign == SQL_TRUE);  // Negative
+    CHECK(interval.interval_sign == SQL_TRUE);
     CHECK(interval.intval.year_month.year == 5);
   }
-
-  // And negative SQL_C_INTERVAL_MONTH should be correctly parsed
   {
+    INFO("SQL_C_INTERVAL_MONTH");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
     CHECK(interval.interval_type == SQL_IS_MONTH);
-    CHECK(interval.interval_sign == SQL_TRUE);  // Negative
+    CHECK(interval.interval_sign == SQL_TRUE);
     CHECK(interval.intval.year_month.month == 10);
   }
-
-  // And negative SQL_C_INTERVAL_DAY should be correctly parsed
   {
+    INFO("SQL_C_INTERVAL_DAY");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
     CHECK(interval.interval_type == SQL_IS_DAY);
-    CHECK(interval.interval_sign == SQL_TRUE);  // Negative
+    CHECK(interval.interval_sign == SQL_TRUE);
     CHECK(interval.intval.day_second.day == 15);
   }
 }
@@ -173,8 +167,7 @@ TEST_CASE("should convert string literals to year-month interval type",
   }
 }
 
-TEST_CASE("should convert string literals to day-time interval types",
-          "[datatype][string][conversion][interval][.skip]") {
+TEST_CASE("should convert string literals to compound c_type", "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -185,60 +178,56 @@ TEST_CASE("should convert string literals to day-time interval types",
       "'2 08:15:30' AS day_second, '10:45' AS hour_minute, "
       "'12:30:45' AS hour_second, '45:30' AS minute_second");
 
-  // Then SQL_C_INTERVAL_DAY_TO_HOUR conversions should work
+  // Then <c_type> conversions should work
   {
+    INFO("SQL_C_INTERVAL_DAY_TO_HOUR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_DAY_TO_HOUR);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.day == 5);
     CHECK(interval.intval.day_second.hour == 10);
   }
-
-  // And SQL_C_INTERVAL_DAY_TO_MINUTE conversions should work
   {
+    INFO("SQL_C_INTERVAL_DAY_TO_MINUTE");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_MINUTE>(stmt, 2);
     CHECK(interval.interval_type == SQL_IS_DAY_TO_MINUTE);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.day == 3);
     CHECK(interval.intval.day_second.hour == 14);
     CHECK(interval.intval.day_second.minute == 30);
   }
-
-  // And SQL_C_INTERVAL_DAY_TO_SECOND conversions should work
   {
+    INFO("SQL_C_INTERVAL_DAY_TO_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 3);
     CHECK(interval.interval_type == SQL_IS_DAY_TO_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.day == 2);
     CHECK(interval.intval.day_second.hour == 8);
     CHECK(interval.intval.day_second.minute == 15);
     CHECK(interval.intval.day_second.second == 30);
   }
-
-  // And SQL_C_INTERVAL_HOUR_TO_MINUTE conversions should work
   {
+    INFO("SQL_C_INTERVAL_HOUR_TO_MINUTE");
     auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 4);
     CHECK(interval.interval_type == SQL_IS_HOUR_TO_MINUTE);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.hour == 10);
     CHECK(interval.intval.day_second.minute == 45);
   }
-
-  // And SQL_C_INTERVAL_HOUR_TO_SECOND conversions should work
   {
+    INFO("SQL_C_INTERVAL_HOUR_TO_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 5);
     CHECK(interval.interval_type == SQL_IS_HOUR_TO_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.hour == 12);
     CHECK(interval.intval.day_second.minute == 30);
     CHECK(interval.intval.day_second.second == 45);
   }
-
-  // And SQL_C_INTERVAL_MINUTE_TO_SECOND conversions should work
   {
+    INFO("SQL_C_INTERVAL_MINUTE_TO_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 6);
     CHECK(interval.interval_type == SQL_IS_MINUTE_TO_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
+    CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.minute == 45);
     CHECK(interval.intval.day_second.second == 30);
   }

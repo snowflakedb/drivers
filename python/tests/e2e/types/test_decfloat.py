@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from ...conftest import with_paramstyle
 from .utils import assert_connection_is_open, assert_sequential_values, assert_type
 
@@ -103,26 +105,31 @@ class TestDecfloatLiteral:
         assert result == (DECFLOAT_38_DIGITS, DECFLOAT_38_DIGITS_POS_EXP, DECFLOAT_38_DIGITS_NEG_EXP)
         assert_type(result, Decimal)
 
-    def test_should_handle_extreme_exponent_values_from_literals(self, execute_query):
+    EXTREME_EXPONENT_LITERAL_CASES = [
+        (
+            f"SELECT '{DECFLOAT_MAX_EXPONENT}'::DECFLOAT, '{DECFLOAT_MIN_EXPONENT}'::DECFLOAT",
+            (DECFLOAT_MAX_EXPONENT, DECFLOAT_MIN_EXPONENT),
+        ),
+        (
+            f"SELECT '{DECFLOAT_LARGE_POS_EXPONENT}'::DECFLOAT, '{DECFLOAT_LARGE_NEG_EXPONENT}'::DECFLOAT",
+            (DECFLOAT_LARGE_POS_EXPONENT, DECFLOAT_LARGE_NEG_EXPONENT),
+        ),
+    ]
+
+    @pytest.mark.parametrize(
+        "sql, expected",
+        EXTREME_EXPONENT_LITERAL_CASES,
+        ids=["max_positive_and_min_positive", "large_negative_and_small_positive"],
+    )
+    def test_should_handle_case_exponent_values_from_literals(self, execute_query, sql, expected):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
-        result = execute_query(
-            f"SELECT '{DECFLOAT_MAX_EXPONENT}'::DECFLOAT, '{DECFLOAT_MIN_EXPONENT}'::DECFLOAT",
-            single_row=True,
-        )
-        # Then Result should contain [1E+16384, 1E-16383]
-        assert result == (DECFLOAT_MAX_EXPONENT, DECFLOAT_MIN_EXPONENT)
-        assert_type(result, Decimal)
+        # When Query "SELECT <query_values>" is executed
+        result = execute_query(sql, single_row=True)
 
-        # When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
-        result = execute_query(
-            f"SELECT '{DECFLOAT_LARGE_POS_EXPONENT}'::DECFLOAT, '{DECFLOAT_LARGE_NEG_EXPONENT}'::DECFLOAT",
-            single_row=True,
-        )
-        # Then Result should contain [-1.234E+8000, 9.876E-8000]
-        assert result == (DECFLOAT_LARGE_POS_EXPONENT, DECFLOAT_LARGE_NEG_EXPONENT)
+        # Then Result should contain [<expected_values>]
+        assert result == expected
         assert_type(result, Decimal)
 
     def test_should_handle_null_values_from_literals(self, execute_query):
@@ -294,36 +301,39 @@ class TestDecfloatBinding:
         assert result == (Decimal("123.456"), Decimal("-789.012"), Decimal("42.0"))
         assert_type(result, Decimal)
 
+    def test_should_select_null_decfloat_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
         # When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
         result = execute_query("SELECT ?::DECFLOAT", (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result == (None,)
 
-    def test_should_select_extreme_decfloat_values_using_parameter_binding(self, execute_query):
+    EXTREME_EXPONENT_BINDING_CASES = [
+        ("DECFLOAT", DECFLOAT_MAX_EXPONENT),
+        ("DECFLOAT", DECFLOAT_LARGE_POS_EXPONENT),
+    ]
+
+    @pytest.mark.parametrize(
+        "type_name, value",
+        EXTREME_EXPONENT_BINDING_CASES,
+        ids=["max_exponent", "large_negative_exponent"],
+    )
+    def test_should_select_case_decfloat_using_parameter_binding(self, execute_query, type_name, value):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
+        # When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
         result = execute_query(
             "SELECT ?::DECFLOAT",
-            (("DECFLOAT", DECFLOAT_MAX_EXPONENT),),
+            ((type_name, value),),
             single_row=True,
         )
 
-        # Then Result should contain [1E+16384]
-        assert result == (DECFLOAT_MAX_EXPONENT,)
-        assert_type(result, Decimal)
-
-        # When Query "SELECT ?::DECFLOAT" is executed with bound value -1.234E+8000
-        result = execute_query(
-            "SELECT ?::DECFLOAT",
-            (("DECFLOAT", DECFLOAT_LARGE_POS_EXPONENT),),
-            single_row=True,
-        )
-
-        # Then Result should contain [-1.234E+8000]
-        assert result == (DECFLOAT_LARGE_POS_EXPONENT,)
+        # Then Result should contain [<expected>]
+        assert result == (value,)
         assert_type(result, Decimal)
 
     def test_should_insert_decfloat_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):

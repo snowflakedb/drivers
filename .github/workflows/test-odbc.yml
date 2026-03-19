@@ -4,7 +4,10 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    # Allow stacked PRs to trigger this workflow.
+    # detect-changes still decides whether ODBC jobs actually run.
+  merge_group:
+    types: [ checks_requested ]
 
 concurrency:
   # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
@@ -217,8 +220,8 @@ jobs:
 
       - name: Build Rust ODBC driver (Windows)
         if: runner.os == 'Windows'
-        # Use Rust's bundled LLD linker (rust-lld) to avoid MSVC 65535 object limit
-        # exports.def limits DLL exports to ODBC API functions only (avoids 65535 export limit)
+        # Use Rust's bundled LLD linker (rust-lld) to avoid MSVC 65535 object limit.
+        # exports.def limits DLL exports to ODBC API functions only (avoids 65535 export limit).
         run: cargo build
         env:
           RUSTFLAGS: "-C linker=rust-lld"

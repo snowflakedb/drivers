@@ -1,10 +1,11 @@
+use std::str;
+
 use arrow::datatypes::DataType;
 use error_trace::ErrorTrace;
+use odbc_sys as sql;
 use snafu::{Location, Snafu};
 
-use crate::{
-    cdata_types::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError,
-};
+use crate::{api::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError};
 
 #[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
@@ -46,6 +47,13 @@ pub enum WriteOdbcError {
     },
     #[snafu(display("Indicator variable required but not supplied"))]
     IndicatorVariableRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Interval field overflow: {reason}"))]
+    IntervalFieldOverflow {
+        reason: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -137,6 +145,63 @@ pub enum ConversionError {
         field_name: String,
         key: String,
         reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+#[derive(Debug, Snafu, ErrorTrace)]
+#[snafu(visibility(pub(crate)))]
+pub enum JsonBindingError {
+    #[snafu(display("Parameter bindings must be contiguous and start at 1"))]
+    InvalidParameterIndices {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Unsupported SQL parameter type: {sql_type:?}"))]
+    UnsupportedParameterType {
+        sql_type: sql::SqlDataType,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Unsupported C data type for JSON binding: {c_type:?}"))]
+    UnsupportedCDataType {
+        c_type: CDataType,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Null parameter value pointer encountered"))]
+    NullPointer {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Parameter value is not valid UTF-8: {source}"))]
+    InvalidUtf8 {
+        source: str::Utf8Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[cfg(windows)]
+    #[snafu(display("Failed to convert ANSI code page string to UTF-8"))]
+    AcpConversion {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Wide-character (WChar) parameter is not valid UTF-16"))]
+    WCharConversion {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to serialize bindings to JSON: {source}"))]
+    Serialization {
+        source: serde_json::Error,
         #[snafu(implicit)]
         location: Location,
     },
