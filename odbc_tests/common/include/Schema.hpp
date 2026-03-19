@@ -90,7 +90,7 @@ class Schema {
         return;
       }
 
-      std::fprintf(stderr, "[Schema] USE SCHEMA %s failed, retrying in %dms\n", schema_name.c_str(), delay_ms);
+      WARN("[Schema] USE SCHEMA " << schema_name << " failed, retrying in " << delay_ms << "ms");
       std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
     }
 
