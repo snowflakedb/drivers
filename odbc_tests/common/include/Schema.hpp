@@ -4,12 +4,10 @@
 #include <sql.h>
 #include <sqlext.h>
 
-#include <chrono>
 #include <functional>
 #include <random>
 #include <stdexcept>
 #include <string>
-#include <thread>
 
 #include "Connection.hpp"
 #include "get_diag_rec.hpp"
@@ -20,15 +18,14 @@ class Schema {
  public:
   Schema(Connection& conn, const std::string& schema_name)
       : execute_fn([&conn](const std::string& sql) { conn.execute(sql); }), schema_name(schema_name) {
-    SQLHANDLE dbc_handle = conn.handleWrapper().getHandle();
-    create_schema_with_diagnostics(dbc_handle);
-    use_schema_with_retry(dbc_handle);
+    create_schema_with_diagnostics(conn.handleWrapper().getHandle());
+    execute_fn("USE SCHEMA " + schema_name);
   }
 
   Schema(const SQLHDBC dbc, const std::string& schema_name)
       : execute_fn(make_dbc_executor(dbc)), schema_name(schema_name) {
     create_schema_with_diagnostics(dbc);
-    use_schema_with_retry(dbc);
+    execute_fn("USE SCHEMA " + schema_name);
   }
 
   static Schema use_random_schema(Connection& conn) { return Schema(conn, generate_random_name()); }
@@ -84,78 +81,27 @@ class Schema {
 
     ret = SQLExecDirect(stmt, sqlchar(sql.c_str()), SQL_NTS);
 
-    auto diags = get_diag_rec(SQL_HANDLE_STMT, stmt);
-    SQLLEN row_count = -1;
-    SQLRowCount(stmt, &row_count);
+    if (!SQL_SUCCEEDED(ret)) {
+      auto diags = get_diag_rec(SQL_HANDLE_STMT, stmt);
+      SQLLEN row_count = -1;
+      SQLRowCount(stmt, &row_count);
 
-    WARN("[Schema] CREATE " << schema_name << ": ret=" << return_code_to_string(ret) << " row_count=" << row_count
-                            << " diag_count=" << diags.size());
+      WARN("[Schema] CREATE " << schema_name << " FAILED: ret=" << return_code_to_string(ret)
+                              << " row_count=" << row_count << " diag_count=" << diags.size());
 
-    for (size_t i = 0; i < diags.size(); ++i) {
-      WARN("[Schema]   diag[" << i << "] SQLSTATE=" << diags[i].sqlState << " NativeError=" << diags[i].nativeError
-                              << " " << diags[i].messageText);
-    }
-
-    if (SQL_SUCCEEDED(ret) && row_count != 0) {
-      SQLSMALLINT col_count = 0;
-      SQLNumResultCols(stmt, &col_count);
-      while (SQLFetch(stmt) == SQL_SUCCESS) {
-        std::string row;
-        for (SQLSMALLINT col = 1; col <= col_count; ++col) {
-          char buf[1024] = {};
-          SQLLEN indicator = 0;
-          SQLGetData(stmt, col, SQL_C_CHAR, buf, sizeof(buf), &indicator);
-          if (!row.empty()) row += ", ";
-          row += (indicator == SQL_NULL_DATA) ? "NULL" : std::string(buf);
-        }
-        WARN("[Schema]   row: " << row);
+      for (size_t i = 0; i < diags.size(); ++i) {
+        WARN("[Schema]   diag[" << i << "] SQLSTATE=" << diags[i].sqlState << " NativeError=" << diags[i].nativeError
+                                << " " << diags[i].messageText);
       }
+
+      SQLFreeStmt(stmt, SQL_CLOSE);
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+      execute_fn(sql);
+      return;
     }
 
     SQLFreeStmt(stmt, SQL_CLOSE);
     SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-
-    if (!SQL_SUCCEEDED(ret)) {
-      execute_fn(sql);
-    }
-  }
-
-  // Retry USE SCHEMA with exponential backoff: 250ms, 500ms, 1000ms (~2s total),
-  // but only for SQLSTATE 42000 ("Object does not exist") to avoid masking real errors.
-  // On the final attempt, fall through to execute_fn so failures produce
-  // the same diagnostics as the original non-retry code path.
-  void use_schema_with_retry(SQLHANDLE dbc) {
-    static constexpr int delays_ms[] = {250, 500, 1000};
-    const std::string sql = "USE SCHEMA " + schema_name;
-
-    for (int delay_ms : delays_ms) {
-      SQLHSTMT stmt = SQL_NULL_HSTMT;
-      SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
-      if (!SQL_SUCCEEDED(ret)) {
-        break;
-      }
-
-      ret = SQLExecDirect(stmt, sqlchar(sql.c_str()), SQL_NTS);
-
-      if (SQL_SUCCEEDED(ret)) {
-        SQLFreeStmt(stmt, SQL_CLOSE);
-        SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-        return;
-      }
-
-      std::string state = get_sqlstate(SQL_HANDLE_STMT, stmt);
-      SQLFreeStmt(stmt, SQL_CLOSE);
-      SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-
-      if (state != "42000") {
-        break;
-      }
-
-      WARN("[Schema] USE SCHEMA " << schema_name << " failed (SQLSTATE 42000), retrying in " << delay_ms << "ms");
-      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-    }
-
-    execute_fn(sql);
   }
 
   static std::function<void(const std::string&)> make_dbc_executor(SQLHDBC dbc) {
