@@ -436,18 +436,31 @@ fn should_poll_for_completion(resp: &query_response::Response) -> bool {
     resp.data
         .get_result_url
         .as_ref()
-        .is_some_and(|_| !response_has_tabular_data(resp))
+        .is_some_and(|_| !response_has_query_results(resp))
 }
 
-fn response_has_tabular_data(resp: &query_response::Response) -> bool {
-    resp.data.rowset.is_some()
-        || resp.data.rowset_base64.is_some()
+/// Returns true when the response carries enough information to conclude that
+/// the query has completed and produced a result (even if that result has zero
+/// rows).
+///
+/// Completion is indicated by any of:
+/// - Non-empty row data (`rowset`, `rowsetBase64`, or `chunks`)
+/// - Presence of result schema (`rowtype`) — the server only sends column
+///   metadata once the query finishes, so this covers zero-row results and
+///   Arrow SchemaOnly responses.
+///
+/// Empty placeholder fields (`rowset: []`, `rowsetBase64: ""`, `chunks: []`)
+/// that appear in async-submit responses while the query is still running are
+/// NOT treated as completion signals.
+fn response_has_query_results(resp: &query_response::Response) -> bool {
+    resp.data.rowset.as_ref().is_some_and(|r| !r.is_empty())
         || resp
             .data
-            .chunks
+            .rowset_base64
             .as_ref()
-            .map(|c| !c.is_empty())
-            .unwrap_or(false)
+            .is_some_and(|s| !s.is_empty())
+        || resp.data.chunks.as_ref().is_some_and(|c| !c.is_empty())
+        || resp.data.row_type.as_ref().is_some_and(|rt| !rt.is_empty())
 }
 
 async fn inline_poll_for_completion(
@@ -583,9 +596,9 @@ fn next_poll_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
 }
 
 /// Returns true if a successful response still requires more polling.
-/// This occurs when we have a result URL but no tabular data yet.
+/// This occurs when we have a result URL but no query results yet.
 fn should_continue_after_success(resp: &query_response::Response) -> bool {
-    resp.data.get_result_url.is_some() && !response_has_tabular_data(resp)
+    resp.data.get_result_url.is_some() && !response_has_query_results(resp)
 }
 
 /// Returns true if a failed response should continue polling.
@@ -668,6 +681,129 @@ mod tests {
             }
             other => panic!("expected HttpStatus, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn should_poll_when_result_url_present_and_empty_rowset() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": [],
+                "rowsetBase64": null,
+                "chunks": null
+            }
+        }));
+
+        assert!(should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_poll_when_result_url_present_and_empty_rowset_base64() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": null,
+                "rowsetBase64": "",
+                "chunks": null
+            }
+        }));
+
+        assert!(should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_poll_when_result_url_present_and_empty_chunks() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": null,
+                "rowsetBase64": null,
+                "chunks": []
+            }
+        }));
+
+        assert!(should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_not_poll_when_result_url_present_and_non_empty_rowset() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": [["Schema MYSCHEMA successfully created."]],
+                "rowsetBase64": null,
+                "chunks": null,
+                "queryResultFormat": "json",
+                "rowtype": [{"name": "status", "type": "TEXT", "nullable": false, "scale": null, "byteLength": 64, "length": 16, "precision": null}]
+            }
+        }));
+
+        assert!(!should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_not_poll_when_result_url_present_and_empty_rowset_with_rowtype() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": [],
+                "rowsetBase64": null,
+                "chunks": null,
+                "queryResultFormat": "json",
+                "rowtype": [{"name": "c1", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10}]
+            }
+        }));
+
+        assert!(!should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_not_continue_polling_on_success_with_rowtype_present() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": [],
+                "rowsetBase64": null,
+                "queryResultFormat": "json",
+                "rowtype": [{"name": "c1", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10}]
+            }
+        }));
+
+        assert!(!should_continue_after_success(&resp));
+    }
+
+    #[test]
+    fn should_continue_polling_on_success_with_empty_rowset() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": [],
+                "rowsetBase64": null
+            }
+        }));
+
+        assert!(should_continue_after_success(&resp));
+    }
+
+    #[test]
+    fn should_continue_polling_on_success_with_empty_rowset_base64() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": null,
+                "rowsetBase64": ""
+            }
+        }));
+
+        assert!(should_continue_after_success(&resp));
     }
 
     #[test]
