@@ -6,6 +6,7 @@ mod path_expansion;
 pub mod types;
 
 pub use self::types::*;
+pub use gcs_transfer::download_from_gcs;
 
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};

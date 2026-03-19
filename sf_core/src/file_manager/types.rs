@@ -102,6 +102,10 @@ pub struct StageInfo {
     pub end_point: Option<String>,
     /// Presigned URL for GCS operations (when access tokens are not available).
     pub presigned_url: Option<String>,
+    /// Whether to use virtual-hosted-style URLs for GCS.
+    pub use_virtual_url: bool,
+    /// Whether to use regional GCS endpoints.
+    pub use_regional_url: bool,
 }
 
 /// Cloud storage credentials.
@@ -114,7 +118,10 @@ pub enum CloudCredentials {
         aws_token: SensitiveString,
     },
     /// Google Cloud Storage credentials (OAuth2 Bearer token).
-    Gcs { gcs_access_token: SensitiveString },
+    /// Token is `None` when operating in presigned-URL-only mode.
+    Gcs {
+        gcs_access_token: Option<SensitiveString>,
+    },
 }
 
 /// Encryption material for file transfer.

@@ -242,9 +242,9 @@ pub struct StageInfo {
     #[serde(rename = "useS3RegionalUrl")]
     _use_s3_regional_url: Option<bool>,
     #[serde(rename = "useRegionalUrl")]
-    _use_regional_url: Option<bool>,
+    use_regional_url: Option<bool>,
     #[serde(rename = "useVirtualUrl")]
-    _use_virtual_url: Option<bool>,
+    use_virtual_url: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -703,11 +703,8 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
                 gcs_access_token: creds_data
                     .gcs_access_token
                     .as_ref()
-                    .context(MissingParameterSnafu {
-                        parameter: "credentials -> gcs access token",
-                    })?
-                    .clone()
-                    .into(),
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.clone().into()),
             },
             file_manager::LocationType::Azure => unreachable!("Azure rejected above"),
         };
@@ -724,6 +721,11 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .filter(|url| !url.is_empty())
             .cloned();
 
+        // ME-CENTRAL2 always uses regional URLs, regardless of the flag
+        let use_regional_url =
+            value.use_regional_url.unwrap_or(false) || region.eq_ignore_ascii_case("me-central2");
+        let use_virtual_url = value.use_virtual_url.unwrap_or(false);
+
         Ok(file_manager::StageInfo {
             location_type,
             bucket,
@@ -732,6 +734,8 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             creds,
             end_point,
             presigned_url,
+            use_virtual_url,
+            use_regional_url,
         })
     }
 }
