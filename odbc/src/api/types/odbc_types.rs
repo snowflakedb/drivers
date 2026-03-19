@@ -341,8 +341,9 @@ pub enum StmtAttr {
     ImpParamDesc = 10013,
     /// `SQL_ATTR_METADATA_ID` (10014) — identifier vs. pattern treatment for catalog functions.
     MetadataId = 10014,
-    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` — last query ID (read-only string).
-    /// Platform-dependent: 1263 (Windows/MDAC) or 16647 (Unix/iODBC).
+
+    // Custom Snowflake statement attributes (SQL_SF_STMT_ATTR_BASE = 0x4000 + 0x106)
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (0x4107 = 16647) — query ID of last execution (read-only).
     SnowflakeLastQueryId = 16647,
     /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` (0x4108 = 16648) — multi-statement count.
     SnowflakeMultiStatementCount = 16648,
@@ -1444,7 +1445,8 @@ pub struct StatementInner {
     /// `None` = never sent. Used to detect when a LIMIT must be added, removed,
     /// or changed on re-execution of a prepared statement.
     pub last_sent_max_rows: Option<sql::ULen>,
-    /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` — query ID from the last successful execution (read-only).
+    /// `None` before any execution; `Some("")` if sf_core returned an empty string.
     pub last_query_id: Option<String>,
     /// Child query IDs for multi-statement execution (consumed by SQLMoreResults).
     pub multi_query_ids: Vec<String>,

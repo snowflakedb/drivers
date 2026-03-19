@@ -145,6 +145,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
                     .await?;
                 }
 
+
                 c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
                     query: effective_query,
@@ -1742,7 +1743,7 @@ pub fn set_stmt_attr(
             }
         }
         StmtAttr::SnowflakeMultiStatementCount => {
-            let val = value_ptr as i64;
+            let val = value_ptr as isize as i64;
             if val < -1 || val > i16::MAX as i64 {
                 return InvalidAttributeValueSnafu {
                     attribute,
