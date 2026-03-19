@@ -871,6 +871,17 @@ pub fn get_connect_attr<E: OdbcEncoding>(
         Some(a) => a,
         None => {
             tracing::warn!("get_connect_attr: unknown attribute {attribute}");
+            // Valid standard ODBC connection attr IDs (101–115, 1207–1209, 10001, 10014)
+            // and the Snowflake custom range are unsupported but valid (HYC00).
+            // Completely unknown IDs are invalid (HY092).
+            let is_odbc_range = (101..=115).contains(&attribute)
+                || (1207..=1209).contains(&attribute)
+                || attribute == 10001
+                || attribute == 10014
+                || ConnectionAttribute::is_snowflake_custom(attribute);
+            if is_odbc_range {
+                return UnsupportedAttributeSnafu { attribute }.fail();
+            }
             return UnknownAttributeSnafu { attribute }.fail();
         }
     };

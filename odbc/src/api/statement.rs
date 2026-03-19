@@ -1332,6 +1332,12 @@ pub fn set_stmt_attr(
             stmt.multi_statement_count = val as i16;
             Ok(())
         }
+        StmtAttr::ImpRowDesc | StmtAttr::ImpParamDesc => {
+            crate::api::error::ReadOnlyAttributeSnafu {
+                attribute: attr as i32,
+            }
+            .fail()
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
@@ -1623,13 +1629,19 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             Ok(())
         }
         StmtAttr::SnowflakeLastQueryId => {
+            if buffer_length < 0 {
+                return InvalidBufferLengthSnafu {
+                    length: buffer_length as i64,
+                }
+                .fail();
+            }
             let id = stmt.last_query_id.as_deref().unwrap_or("");
             write_string_bytes_i32::<E>(
                 id,
                 value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,
-                None,
+                Some(warnings),
             );
             Ok(())
         }

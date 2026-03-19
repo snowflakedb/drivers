@@ -397,10 +397,20 @@ impl TryFrom<i32> for StmtAttr {
             16648 => Ok(StmtAttr::SnowflakeMultiStatementCount),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
-                Err(OdbcError::UnknownAttribute {
-                    attribute: value,
-                    location: snafu::location!(),
-                })
+                // IDs in the standard ODBC stmt attr range are valid but unsupported (HYC00).
+                // Completely out-of-range IDs are invalid (HY092).
+                let is_odbc_range = (-2..=27).contains(&value) || (10010..=10014).contains(&value);
+                if is_odbc_range {
+                    Err(OdbcError::UnsupportedAttribute {
+                        attribute: value,
+                        location: snafu::location!(),
+                    })
+                } else {
+                    Err(OdbcError::UnknownAttribute {
+                        attribute: value,
+                        location: snafu::location!(),
+                    })
+                }
             }
         }
     }
