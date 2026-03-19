@@ -24,12 +24,20 @@ void execute_put_get_test(SQLHDBC dbc, const std::string& sql_command, int warmu
   std::cout << "Query: " << sql_command << "\n";
 
   run_warmup_put_get(dbc, sql_command, warmup_iterations);
+
+  ResourceMonitor monitor(std::chrono::milliseconds(100));
+  monitor.start();
+
   auto results = run_test_iterations_put_get(dbc, sql_command, iterations);
+
+  auto memory_timeline = monitor.stop();
 
   std::string filename = generate_results_filename(test_name, driver_type_str, now);
   write_csv_results_put_get(results, filename);
+  write_memory_timeline(memory_timeline, test_name, driver_type_str, now);
 
   print_statistics_put_get(results);
+  std::cout << "  Memory timeline: " << memory_timeline.size() << " samples collected\n";
   finalize_test_execution(dbc, filename, driver_type_str, driver_version_str, now);
 }
 
@@ -79,13 +87,20 @@ PutGetResult run_put_get_query(SQLHDBC dbc, const std::string& sql_command, int 
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
   check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLAllocHandle STMT");
 
-  // Execute PUT/GET command
+  struct rusage usage_before;
+  getrusage(RUSAGE_SELF, &usage_before);
+
   auto query_start = std::chrono::high_resolution_clock::now();
   ret = SQLExecDirect(stmt, (SQLCHAR*)sql_command.c_str(), SQL_NTS);
   check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLExecDirect");
   auto query_end = std::chrono::high_resolution_clock::now();
 
+  struct rusage usage_after;
+  getrusage(RUSAGE_SELF, &usage_after);
+
   result.query_time_s = std::chrono::duration<double>(query_end - query_start).count();
+  result.cpu_time_s = cpu_seconds(usage_after) - cpu_seconds(usage_before);
+  result.peak_rss_mb = get_peak_rss_mb();
   result.timestamp = std::time(nullptr);
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
