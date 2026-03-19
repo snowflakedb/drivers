@@ -490,7 +490,7 @@ def _extract_row_count_from_recording(results_dir: Path, test_name: str, driver:
         logger.warning(f"No recording CSV found matching pattern: {pattern}")
         return None
     
-    csv_file = csv_files[0]
+    csv_file = max(csv_files, key=lambda p: p.stat().st_mtime)
     
     try:
         with open(csv_file, 'r') as f:
