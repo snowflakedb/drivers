@@ -78,9 +78,10 @@ class TestIntTypeCasting:
 
     @int_type_parametrize
     def test_should_cast_integer_values_to_appropriate_type_for_int_and_synonyms(self, execute_query, int_type):
+        # Given Snowflake client is logged in
+        sql = f"SELECT 0::{int_type}, 1000000::{int_type}, {INT64_SIGNED_MAX}::{int_type}"
 
         # When Query "SELECT 0::<type>, 1000000::<type>, 9223372036854775807::<type>" is executed
-        sql = f"SELECT 0::{int_type}, 1000000::{int_type}, {INT64_SIGNED_MAX}::{int_type}"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type with no precision loss
@@ -120,9 +121,10 @@ class TestIntLiteral:
     def test_should_select_integer_values_for_int_and_synonyms(
         self, execute_query, int_type, values, query_values, expected_values
     ):
+        # Given Snowflake client is logged in
+        select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
 
         # When Query "SELECT <query_values>" is executed
-        select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
         result = execute_query(f"SELECT {select_cols}", single_row=True)
 
         # Then Result should contain integers <expected_values>
@@ -131,10 +133,12 @@ class TestIntLiteral:
 
     @int_type_parametrize
     def test_should_handle_large_integer_values_for_int_and_synonyms(self, execute_query, int_type):
+        # Given Snowflake client is logged in
+        sql = f"SELECT {INT38_MIN}::{int_type}, {INT38_MAX}::{int_type}"
 
         # When Query "SELECT -99999999999999999999999999999999999999::<type>,
         #   99999999999999999999999999999999999999::<type>" is executed
-        result = execute_query(f"SELECT {INT38_MIN}::{int_type}, {INT38_MAX}::{int_type}", single_row=True)
+        result = execute_query(sql, single_row=True)
 
         # Then Result should contain integers [-99999999999999999999999999999999999999,
         #   99999999999999999999999999999999999999]
@@ -143,10 +147,12 @@ class TestIntLiteral:
 
     @int_type_parametrize
     def test_should_handle_null_values_for_int_and_synonyms(self, execute_query, int_type):
+        # Given Snowflake client is logged in
+        sql = f"SELECT NULL::{int_type}, 42::{int_type}, NULL::{int_type}"
 
         # When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
         result = execute_query(
-            f"SELECT NULL::{int_type}, 42::{int_type}, NULL::{int_type}",
+            sql,
             single_row=True,
         )
 
@@ -156,16 +162,17 @@ class TestIntLiteral:
 
     @int_type_parametrize
     def test_should_download_large_result_set_with_multiple_chunks_for_int_and_synonyms(self, execute_query, int_type):
-
-        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
+        # Given Snowflake client is logged in
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{int_type} as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
+
+        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
         # Then Result should contain 50000 sequentially numbered rows from 0 to 49999
@@ -227,9 +234,10 @@ class TestIntTable:
     def test_should_select_values_from_table_for_int_and_synonyms(
         self, execute_query, tmp_schema, int_type, values, insert_values, expected_values, can_be_none
     ):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
 
         # And Table with <type> column exists with values <insert_values>
-        table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
         execute_query(f"CREATE TABLE {table_name} (col {int_type})")
         batch_insert(execute_query, table_name, insert_values)
 
@@ -245,10 +253,11 @@ class TestIntTable:
     def test_should_select_large_integer_values_from_table_for_int_and_synonyms(
         self, execute_query, tmp_schema, int_type
     ):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.int38_table_{int_type.lower()}"
 
         # And Table with <type> column exists with values
         # [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
-        table_name = f"{tmp_schema}.int38_table_{int_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {int_type})")
         batch_insert(execute_query, table_name, [INT38_MIN, INT38_MAX])
 
@@ -264,9 +273,10 @@ class TestIntTable:
     def test_should_handle_server_side_arrow_memory_optimization_for_int_columns_on_multiple_chunks(
         self, execute_query, tmp_schema
     ):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.different_int_column_sizes"
 
         # And Table with four INT columns exists
-        table_name = f"{tmp_schema}.different_int_column_sizes"
         execute_query(f"CREATE TABLE {table_name} (col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)")
 
         # And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
@@ -294,9 +304,10 @@ class TestIntBinding:
     def test_should_insert_integer_using_parameter_binding_for_int_and_synonyms(
         self, execute_query, tmp_schema, int_type
     ):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
 
         # And Table with <type> column exists
-        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {int_type})")
 
         # When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
@@ -317,9 +328,10 @@ class TestIntBinding:
     def test_should_insert_and_select_integers_from_table_using_batch_parameter_binding_for_int_and_synonyms(
         self, execute_query, executemany_insert, tmp_schema, int_type
     ):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
 
         # And Table with <type> column exists
-        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {int_type})")
 
         # When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding

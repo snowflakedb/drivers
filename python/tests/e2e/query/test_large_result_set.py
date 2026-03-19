@@ -3,13 +3,14 @@ from tests.e2e.types.utils import assert_sequential_values
 
 class TestLargeResultSet:
     def test_should_process_one_million_row_result_set(self, execute_query, cursor):
+        # Given Snowflake client is logged in
+        sql = (
+            "SELECT ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) ORDER BY 1"
+        )
 
         # When Query "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
 
         # Note: We use ROW_NUMBER() for actual query to ensure sequential integers.
-        sql = (
-            "SELECT ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) ORDER BY 1"
-        )
         cursor.execute(sql)
         rows = cursor.fetchall()
 

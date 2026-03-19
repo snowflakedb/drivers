@@ -8,6 +8,7 @@ Feature: INT type support
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should cast integer values to appropriate type for int and synonyms
     # Python: Values should be cast to 'int' type
+    Given Snowflake client is logged in
     When Query "SELECT 0::<type>, 1000000::<type>, 9223372036854775807::<type>" is executed
     Then All values should be returned as appropriate type with no precision loss
 
@@ -17,6 +18,7 @@ Feature: INT type support
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario Outline: should select integer <values> for int and synonyms
+    Given Snowflake client is logged in
     When Query "SELECT <query_values>" is executed
     Then Result should contain integers <expected_values>
 
@@ -30,16 +32,19 @@ Feature: INT type support
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle large integer values for int and synonyms
+    Given Snowflake client is logged in
     When Query "SELECT -99999999999999999999999999999999999999::<type>, 99999999999999999999999999999999999999::<type>" is executed
     Then Result should contain integers [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle NULL values for int and synonyms
+    Given Snowflake client is logged in
     When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
     Then Result should contain [NULL, 42, NULL]
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should download large result set with multiple chunks for int and synonyms
+    Given Snowflake client is logged in
     When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
     Then Result should contain 50000 sequentially numbered rows from 0 to 49999
 
@@ -49,6 +54,7 @@ Feature: INT type support
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario Outline: should select <values> from table for int and synonyms
+    Given Snowflake client is logged in
     And Table with <type> column exists with values <insert_values>
     When Query "SELECT * FROM <table> ORDER BY col" is executed
     Then Result should contain integers <expected_values>
@@ -61,12 +67,14 @@ Feature: INT type support
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select large integer values from table for int and synonyms
+    Given Snowflake client is logged in
     And Table with <type> column exists with values [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
     When Query "SELECT * FROM <table> ORDER BY col" is executed
     Then Result should contain integers [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle server-side Arrow memory optimization for int columns on multiple chunks
+    Given Snowflake client is logged in
     And Table with four INT columns exists
     And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
       | Column    | Values          | Arrow Type |
@@ -83,6 +91,7 @@ Feature: INT type support
 
   @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should insert integer using parameter binding for int and synonyms
+    Given Snowflake client is logged in
     And Table with <type> column exists
     When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
     And Query "SELECT * FROM <table>" is executed
@@ -90,6 +99,7 @@ Feature: INT type support
 
   @python_e2e @odbc_e2e
   Scenario: should insert and select integers from table using batch parameter binding for int and synonyms
+    Given Snowflake client is logged in
     And Table with <type> column exists
     When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
     And Query "SELECT * FROM <table>" is executed

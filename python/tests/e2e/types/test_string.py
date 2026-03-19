@@ -81,9 +81,10 @@ class TestStringTypeCasting:
 
     @string_type_parametrize
     def test_should_cast_string_values_to_appropriate_type_for_string_and_synonyms(self, execute_query, string_type):
+        # Given Snowflake client is logged in
+        sql = f"SELECT 'hello'::{string_type}(32), 'Hello World'::{string_type}(32), '日本語テスト'::{string_type}(32)"
 
         # When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
-        sql = f"SELECT 'hello'::{string_type}(32), 'Hello World'::{string_type}(32), '日本語テスト'::{string_type}(32)"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
@@ -96,13 +97,14 @@ class TestStringLiteral:
 
     @string_type_parametrize
     def test_should_select_hardcoded_string_literals(self, execute_query, string_type):
-
-        # When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3" is executed
+        # Given Snowflake client is logged in
         sql = (
             f"SELECT 'hello'::{string_type}(32) AS str1, "
             f"'Hello World'::{string_type}(32) AS str2, "
             f"'Snowflake Driver Test'::{string_type}(32) AS str3"
         )
+
+        # When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3" is executed
         result = execute_query(sql, single_row=True)
 
         # Then the result should contain:
@@ -111,13 +113,16 @@ class TestStringLiteral:
 
     @string_type_parametrize
     def test_should_select_string_literals_with_corner_case_values(self, execute_query, string_type):
+        # Given Snowflake client is logged in
+        type_cast = f"::{string_type}(32)"
+
         # Corner cases: empty string, single character, whitespace-only, unicode characters, escape sequences
 
         # When Query selecting corner case string literals is executed
-        type_cast = f"::{string_type}(32)"
+        results = [execute_query(f"SELECT {sql_val}{type_cast}", single_row=True) for _, sql_val in CORNER_CASE_VALUES]
+
         # Then the result should contain expected corner case string values
-        for expected_val, sql_val in CORNER_CASE_VALUES:
-            result = execute_query(f"SELECT {sql_val}{type_cast}", single_row=True)
+        for (expected_val, _), result in zip(CORNER_CASE_VALUES, results):
             assert result == (expected_val,), f"Expected {expected_val!r}, got {result[0]!r}"
 
 
@@ -126,9 +131,10 @@ class TestStringTable:
 
     @string_type_parametrize
     def test_should_select_hardcoded_string_values_from_table(self, execute_query, tmp_schema, string_type):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.string_table_test"
 
         # And A temporary table with VARCHAR column is created
-        table_name = f"{tmp_schema}.string_table_test"
         execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
 
         # And The table is populated with string values
@@ -146,9 +152,10 @@ class TestStringTable:
 
     @string_type_parametrize
     def test_should_select_corner_case_string_values_from_table(self, execute_query, tmp_schema, string_type):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.string_corner_case_table_test"
 
         # And A temporary table with VARCHAR column is created
-        table_name = f"{tmp_schema}.string_corner_case_table_test"
         execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
 
         # And The table is populated with corner case string values
@@ -174,9 +181,10 @@ class TestStringBinding:
     def test_should_insert_and_select_back_hardcoded_string_values_using_parameter_binding(
         self, execute_query, executemany_insert, tmp_schema, string_type
     ):
+        # Given Snowflake client is logged in
+        table_name = f"{tmp_schema}.string_bind_table_test"
 
         # And A temporary table with VARCHAR column is created
-        table_name = f"{tmp_schema}.string_bind_table_test"
         execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
 
         # When String value 'Test binding value 日本語' is inserted using parameter binding
@@ -194,12 +202,15 @@ class TestStringBinding:
 
     @string_type_parametrize
     def test_should_select_string_literals_using_parameter_binding(self, execute_query, string_type):
+        # Given Snowflake client is logged in
+        sql = f"SELECT ?::{string_type}(32), ?::{string_type}(32), ?::{string_type}(32)"
+
         # SELECT binding test: Uses SELECT ?::VARCHAR to bind string values
 
         # When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed
         # with bound string values ['hello', 'Hello World', '日本語テスト']
         result = execute_query(
-            f"SELECT ?::{string_type}(32), ?::{string_type}(32), ?::{string_type}(32)",
+            sql,
             ("hello", "Hello World", "日本語テスト"),
             single_row=True,
         )
@@ -210,9 +221,9 @@ class TestStringBinding:
 
     @string_type_parametrize
     def test_should_select_corner_case_string_values_using_parameter_binding(self, execute_query, string_type):
-
-        # When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
+        # Given Snowflake client is logged in
         for corner_case, _ in CORNER_CASE_VALUES:
+            # When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
             result = execute_query(f"SELECT ?::{string_type}(32)", (corner_case,), single_row=True)
             # Then the result should match the bound corner case value
             assert result == (corner_case,)
@@ -222,6 +233,14 @@ class TestStringMultipleChunks:
     """Tests for STRING type with multiple chunks downloading."""
 
     def test_should_download_string_data_in_multiple_chunks(self, execute_query):
+        # Given Snowflake client is logged in
+        sql = (
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
+            f"TO_VARCHAR(ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::VARCHAR AS str_val "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            f"ORDER BY id"
+        )
+
         # This test ensures proper handling of large result sets that span multiple chunks
         # ~10000 values ensures data is downloaded in at least two chunks
 
@@ -230,12 +249,6 @@ class TestStringMultipleChunks:
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
-        sql = (
-            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
-            f"TO_VARCHAR(ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::VARCHAR AS str_val "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
-            f"ORDER BY id"
-        )
         rows = execute_query(sql)
 
         # Then there are 10000 rows returned and all string values should match the generated values in order

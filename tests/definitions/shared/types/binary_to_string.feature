@@ -10,6 +10,7 @@ Feature: String representation of binary data
   Scenario: should encode binary as HEX string when BINARY_OUTPUT_FORMAT is HEX
     # HEX encoding: each byte becomes 2 uppercase hexadecimal characters
     # Example: bytes 0x01 0x23 0x45 0x67 0x89 0xAB 0xCD 0xEF → "0123456789ABCDEF"
+    Given Snowflake client is logged in
     And Session parameter BINARY_OUTPUT_FORMAT is set to 'HEX'
     When Query "SELECT X'0123456789ABCDEF' AS bin" is executed
     And bin is converted to string representation
@@ -18,6 +19,7 @@ Feature: String representation of binary data
   Scenario: should encode binary as BASE64 string when BINARY_OUTPUT_FORMAT is BASE64
     # BASE64 encoding: standard Base64 with padding
     # Example: bytes 0x01 0x23 0x45 0x67 0x89 0xAB 0xCD 0xEF → "ASNFZ4mrze8="
+    Given Snowflake client is logged in
     And Session parameter BINARY_OUTPUT_FORMAT is set to 'BASE64'
     When Query "SELECT X'0123456789ABCDEF' AS bin" is executed
     And bin is converted to string representation
