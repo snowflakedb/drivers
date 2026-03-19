@@ -8,6 +8,9 @@ alwaysApply: false
 ## Validation Workflow (MANDATORY)
 
 1. **Validate against OLD driver first** using `odbc_tests/run_reference.sh -R <test_suite_name>`
+  - If tests doesn't pass on old driver add behavior difference in odbc_tests/BehaviorDifferences.yaml and use OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
+    - Capture old driver behavior in OLD_DRIVER_ONLY
+    - Capture behavior expected by the spec in NEW_DRIVER_ONLY
 2. **Run format validator** with `tests/tests_format_validator/run_validator.sh`
 3. **Run precommit** to ensure linter compliance
 

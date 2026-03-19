@@ -225,6 +225,18 @@ behavior_differences:
       Impact: Applications that call SQLDescribeCol after SQL_CLOSE on a prepared
       statement will now receive valid metadata instead of an error.
 
+  22:
+    name: "SQLColAttribute does not reliably support ODBC 2.x field aliases through the 3.x function"
+    description: |
+      OLD driver: When SQLColAttribute (ODBC 3.x) is called with ODBC 2.x field
+      identifiers (SQL_COLUMN_NAME, SQL_COLUMN_TYPE, etc.), the old driver
+      exhibits inconsistent behavior — returning empty strings, incorrect values,
+      or HY091 errors depending on the identifier.
+      NEW driver: Properly maps ODBC 2.x field identifiers to their SQL_DESC_*
+      equivalents per the ODBC specification backward compatibility rules.
+      Impact: Applications using ODBC 2.x field identifiers with the 3.x function
+      will now receive correct values.
+
   26:
     name: "SQLRowCount with null RowCountPtr returns SQL_SUCCESS instead of SQL_ERROR (HY009)"
     description: |
