@@ -9,7 +9,6 @@ Usage (from test-selection step on Buildkite):
     python3 ci/generate_buildkite_pipeline.py | buildkite-agent pipeline upload
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -52,6 +51,17 @@ COMMON_STEP = {
                 "environment": ["PARAMETERS_SECRET"],
             }
         },
+        {
+            "test-collector#v1.10.0": {
+                "files": "results/*-junit.xml",
+                "format": "junit",
+            }
+        },
+        {
+            "junit-annotate#v2.4.1": {
+                "artifacts": "results/*-junit.xml",
+            }
+        },
     ],
     "retry": {"automatic": [{"exit_status": "*", "limit": 1}]},
 }
@@ -70,6 +80,10 @@ def run_test_selection(driver, group):
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
     )
     sys.stderr.write(result.stderr)
+    if result.returncode != 0:
+        print("ERROR: select_tests.py failed for driver='{}' group='{}' (exit {})".format(
+            driver, group, result.returncode), file=sys.stderr)
+        sys.exit(result.returncode)
     return result.stdout.strip()
 
 
@@ -108,13 +122,23 @@ export PARAMETER_PATH=/workdir/parameters.json
 
 echo "--- :hammer: Building sf_core"
 cargo build --package sf_core
+cargo install cargo2junit 2>/dev/null || true
 
 echo "--- :test_tube: Running E2E Tests"
+mkdir -p results
 if [ "$$TEST_FILTER" = "ALL" ]; then
-  cargo test --package sf_core -- --ignored
+  cargo test --package sf_core -- --ignored -Z unstable-options --format json 2>&1 | cargo2junit > results/rust-junit.xml
 else
-  cargo test --package sf_core -- --ignored "$$TEST_FILTER"
+  # cargo test uses substring matching — run once per filter and merge JSON streams
+  IFS='|' read -ra FILTERS <<< "$$TEST_FILTER"
+  for filter in "$${FILTERS[@]}"; do
+    echo "Running: cargo test -- --ignored $$filter"
+    cargo test --package sf_core -- --ignored "$$filter" -Z unstable-options --format json 2>&1
+  done | cargo2junit > results/rust-junit.xml
 fi
+
+echo "--- :buildkite: Uploading test results"
+buildkite-agent artifact upload "results/*-junit.xml"
 """
 
 PYTHON_COMMAND = """\
@@ -132,11 +156,15 @@ RUSTFLAGS="" hatch build -t wheel
 hatch run test.py3.9:install-wheel
 
 echo "--- :test_tube: Running Integ + E2E Tests"
+mkdir -p results
 if [ "$$TEST_FILTER" = "ALL" ]; then
-  hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900
+  hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=results/python-junit.xml
 else
-  hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900
+  hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=results/python-junit.xml
 fi
+
+echo "--- :buildkite: Uploading test results"
+buildkite-agent artifact upload "results/*-junit.xml"
 """
 
 ODBC_COMMAND = """\
@@ -163,11 +191,15 @@ cmake -B cmake-build \\
 cmake --build cmake-build -- -j $$(nproc)
 
 echo "--- :test_tube: Running Integ + E2E Tests"
+mkdir -p results
 if [ "$$TEST_FILTER" = "ALL" ]; then
-  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration"
+  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit results/odbc-junit.xml
 else
-  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER"
+  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit results/odbc-junit.xml
 fi
+
+echo "--- :buildkite: Uploading test results"
+buildkite-agent artifact upload "results/*-junit.xml"
 """
 
 JDBC_COMMAND = """\
@@ -196,6 +228,12 @@ else
   done
   ./gradlew test $$GRADLE_TESTS --stacktrace
 fi
+
+echo "--- :buildkite: Uploading test results"
+mkdir -p results
+cp build/test-results/test/*.xml results/ 2>/dev/null || true
+cd ..
+buildkite-agent artifact upload "results/*-junit.xml;jdbc/build/test-results/test/*.xml"
 """
 
 DRIVER_STEPS = {

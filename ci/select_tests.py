@@ -51,15 +51,7 @@ except ImportError:
     yaml = None
 
 
-# Which config component sections map to which --driver values
-COMPONENT_TO_DRIVERS = {
-    "core": ["rust"],  # Core tests run under the "rust" driver
-    "odbc": ["odbc"],
-    "python": ["python"],
-    "java": ["java"],
-}
-
-# Reverse: which components can produce tests for a given driver
+# Which components can produce tests for a given driver
 DRIVER_SOURCES = {
     "rust": ["core"],
     "odbc": ["core", "odbc"],
@@ -85,19 +77,11 @@ def detect_base_ref(explicit_base_ref=None):
 
 def load_config(config_path):
     """Load the test-selection YAML config."""
-    if yaml:
-        with open(config_path) as f:
-            return yaml.safe_load(f)
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c",
-             "import yaml,json; print(json.dumps(yaml.safe_load(open('{}'))))".format(config_path)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, check=True
-        )
-        return json.loads(result.stdout)
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    if yaml is None:
         print("ERROR: PyYAML required. Install: pip install pyyaml", file=sys.stderr)
         sys.exit(1)
+    with open(config_path) as f:
+        return yaml.safe_load(f)
 
 
 def _ensure_base_ref_available(base_ref):
@@ -166,9 +150,11 @@ def file_matches_any(filepath, patterns):
 SINGLE_GROUPS = ("unit", "integ", "e2e")
 
 # How to join multiple filters for each driver's test runner:
-#   rust/odbc ctest: "|" (regex OR) — cargo test and ctest both use regex
-#   python:          " " (space) — pytest takes space-separated paths
-#   java:            "|" (pipe) — pipeline splits into multiple --tests args
+#   rust:   "|" (pipe) — cargo test uses substring matching, so the pipeline
+#           splits on "|" and runs cargo test once per filter
+#   odbc:   "|" (regex OR) — ctest uses regex natively
+#   python: " " (space) — pytest takes space-separated paths
+#   java:   "|" (pipe) — pipeline splits into multiple --tests args
 DRIVER_SEPARATOR = {
     "rust": "|",
     "odbc": "|",
