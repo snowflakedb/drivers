@@ -1,9 +1,10 @@
 #include <cstring>
+#include <string>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "ReadOnlyDbFixture.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 
@@ -114,10 +115,8 @@ TEST_CASE("SQLDescribeCol returns SQL_VARCHAR for VARCHAR column.", "[query]") {
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_varchar_test (val VARCHAR(100))");
-  auto stmt = conn.execute("SELECT val FROM desc_varchar_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_VARCHAR_TABLE));
 
   // When SQLDescribeCol is called for the VARCHAR column
   SQLCHAR col_name[128] = {0};
@@ -146,10 +145,8 @@ TEST_CASE("SQLDescribeCol returns SQL_DECIMAL for NUMBER column.", "[query]") {
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_number_test (val NUMBER(10,2))");
-  auto stmt = conn.execute("SELECT val FROM desc_number_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_NUMBER_TABLE));
 
   // When SQLDescribeCol is called for the NUMBER column
   SQLCHAR col_name[128] = {0};
@@ -178,10 +175,8 @@ TEST_CASE("SQLDescribeCol returns SQL_BIT for BOOLEAN column.", "[query]") {
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_bool_test (val BOOLEAN)");
-  auto stmt = conn.execute("SELECT val FROM desc_bool_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_BOOL_TABLE));
 
   // When SQLDescribeCol is called for the BOOLEAN column
   SQLCHAR col_name[128] = {0};
@@ -210,10 +205,8 @@ TEST_CASE("SQLDescribeCol returns SQL_DOUBLE for FLOAT column.", "[query]") {
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_float_test (val FLOAT)");
-  auto stmt = conn.execute("SELECT val FROM desc_float_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_FLOAT_TABLE));
 
   // When SQLDescribeCol is called for the FLOAT column
   SQLCHAR col_name[128] = {0};
@@ -239,10 +232,8 @@ TEST_CASE("SQLDescribeCol returns SQL_TYPE_DATE for DATE column.", "[query]") {
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_date_test (val DATE)");
-  auto stmt = conn.execute("SELECT val FROM desc_date_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_DATE_TABLE));
 
   // When SQLDescribeCol is called for the DATE column
   SQLCHAR col_name[128] = {0};
@@ -270,10 +261,8 @@ TEST_CASE("SQLDescribeCol returns SQL_TYPE_TIMESTAMP for TIMESTAMP_NTZ column.",
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_ts_test (val TIMESTAMP_NTZ)");
-  auto stmt = conn.execute("SELECT val FROM desc_ts_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_TIMESTAMP_TABLE));
 
   // When SQLDescribeCol is called for the TIMESTAMP_NTZ column
   SQLCHAR col_name[128] = {0};
@@ -305,10 +294,8 @@ TEST_CASE("SQLDescribeCol returns correct column size for VARCHAR.", "[query]") 
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_size_varchar_test (val VARCHAR(200))");
-  auto stmt = conn.execute("SELECT val FROM desc_size_varchar_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_SIZE_VARCHAR_TABLE));
 
   // When SQLDescribeCol is called for the VARCHAR(200) column
   SQLCHAR col_name[128] = {0};
@@ -336,10 +323,8 @@ TEST_CASE("SQLDescribeCol returns precision as column size for NUMBER.", "[query
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_size_number_test (val NUMBER(12,3))");
-  auto stmt = conn.execute("SELECT val FROM desc_size_number_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_SIZE_NUMBER_TABLE));
 
   // When SQLDescribeCol is called for the NUMBER(12,3) column
   SQLCHAR col_name[128] = {0};
@@ -373,10 +358,8 @@ TEST_CASE("SQLDescribeCol returns scale as decimal digits for NUMBER.", "[query]
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_digits_test (val NUMBER(10,4))");
-  auto stmt = conn.execute("SELECT val FROM desc_digits_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_DIGITS_TABLE));
 
   // When SQLDescribeCol is called for the NUMBER(10,4) column
   SQLCHAR col_name[128] = {0};
@@ -404,10 +387,8 @@ TEST_CASE("SQLDescribeCol returns 0 decimal digits for non-numeric types.", "[qu
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_digits_varchar_test (val VARCHAR(50))");
-  auto stmt = conn.execute("SELECT val FROM desc_digits_varchar_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_DIGITS_VARCHAR_TABLE));
 
   // When SQLDescribeCol is called for the VARCHAR column
   SQLCHAR col_name[128] = {0};
@@ -440,10 +421,8 @@ TEST_CASE("SQLDescribeCol returns SQL_NULLABLE for nullable column.", "[query]")
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_nullable_test (val VARCHAR(50))");
-  auto stmt = conn.execute("SELECT val FROM desc_nullable_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_NULLABLE_TABLE));
 
   // When SQLDescribeCol is called for a nullable column
   SQLCHAR col_name[128] = {0};
@@ -470,10 +449,8 @@ TEST_CASE("SQLDescribeCol returns SQL_NO_NULLS for NOT NULL column.", "[query]")
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#arguments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE desc_notnull_test (val VARCHAR(50) NOT NULL)");
-  auto stmt = conn.execute("SELECT val FROM desc_notnull_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT val FROM " + std::string(readonly_db::DESC_NOTNULL_TABLE));
 
   // When SQLDescribeCol is called for a NOT NULL column
   SQLCHAR col_name[128] = {0};
@@ -698,15 +675,8 @@ TEST_CASE("SQLDescribeCol returns correct metadata for each column in a multi-co
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute(
-      "CREATE TABLE desc_multi_test ("
-      "  str_col VARCHAR(50),"
-      "  num_col NUMBER(8,2),"
-      "  bool_col BOOLEAN"
-      ")");
-  auto stmt = conn.execute("SELECT str_col, num_col, bool_col FROM desc_multi_test");
+  Connection conn(get_readonly_db_connection_string());
+  auto stmt = conn.execute("SELECT strcol, numcol, boolcol FROM " + std::string(readonly_db::DESC_MULTI_TABLE));
 
   SQLCHAR col_name[128] = {0};
   SQLSMALLINT name_length = 0;
@@ -721,8 +691,8 @@ TEST_CASE("SQLDescribeCol returns correct metadata for each column in a multi-co
   CHECK_ODBC(ret, stmt);
 
   // Then column 1 should be VARCHAR with size 50
-  CHECK(std::string((char*)col_name) == "STR_COL");
-  CHECK(name_length == 7);
+  CHECK(std::string((char*)col_name) == "STRCOL");
+  CHECK(name_length == 6);
   CHECK(data_type == SQL_VARCHAR);
   CHECK(col_size == 50);
   CHECK(decimal_digits == 0);
@@ -734,8 +704,8 @@ TEST_CASE("SQLDescribeCol returns correct metadata for each column in a multi-co
   CHECK_ODBC(ret, stmt);
 
   // Then column 2 should be DECIMAL with precision 8 and scale 2
-  CHECK(std::string((char*)col_name) == "NUM_COL");
-  CHECK(name_length == 7);
+  CHECK(std::string((char*)col_name) == "NUMCOL");
+  CHECK(name_length == 6);
   CHECK(data_type == SQL_DECIMAL);
   CHECK(col_size == 8);
   CHECK(decimal_digits == 2);
@@ -747,8 +717,8 @@ TEST_CASE("SQLDescribeCol returns correct metadata for each column in a multi-co
   CHECK_ODBC(ret, stmt);
 
   // Then column 3 should be BIT
-  CHECK(std::string((char*)col_name) == "BOOL_COL");
-  CHECK(name_length == 8);
+  CHECK(std::string((char*)col_name) == "BOOLCOL");
+  CHECK(name_length == 7);
   CHECK(data_type == SQL_BIT);
   CHECK(col_size == 1);
   CHECK(decimal_digits == 0);
