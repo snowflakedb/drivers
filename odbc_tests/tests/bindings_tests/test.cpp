@@ -2,7 +2,6 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
-#include "macros.hpp"
 
 TEST_CASE("Test integer single column, single row binding", "[bindings_tests]") {
   Connection conn;

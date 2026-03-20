@@ -12,7 +12,6 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
 
 // Old driver returns "INFINITY"/"-INFINITY", new driver returns "inf"/"-inf"
 static bool is_positive_infinity_str(const std::string& s) {

@@ -8,7 +8,6 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
 
 TEST_CASE("should cast integer values to appropriate type for int and synonyms", "[int]") {
   // Given Snowflake client is logged in

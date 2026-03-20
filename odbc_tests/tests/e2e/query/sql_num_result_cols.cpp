@@ -6,7 +6,6 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
 
 // =============================================================================
 // Tests for SQLNumResultCols based on ODBC specification:
