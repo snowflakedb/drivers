@@ -258,7 +258,7 @@ cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --cov=sr
 # Pandas-specific CI test environment
 [tool.hatch.envs.test-pandas]
 template = "test"
-features = ["pandas"]
+features = ["test", "dev", "pandas"]
 
 [[tool.hatch.envs.test-pandas.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
@@ -278,20 +278,25 @@ python = ["3.13"]
 [tool.hatch.envs.packaging.scripts]
 test = "pytest tests/packaging {args}"
 
-# Reference connector environment installs only reference connector
+# Reference connector environments install only the reference connector.
+# UD driver is uninstalled; only the old driver is present.
 [tool.hatch.envs.reference]
 template = "test"
 
 [tool.hatch.envs.reference.scripts]
-# This environment runs with old driver only. UD driver is not installed.
 test = [
     "uv pip uninstall snowflake-connector-python-ud",
     "uv pip install \"snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.2.0}\"",
     "pytest tests/integ tests/e2e --ignore=tests/e2e/pandas {args}",
 ]
-test-pandas = [
+compare = "python ci/reference_tests/compare_reports.py {args}"
+
+[tool.hatch.envs.reference-pandas]
+template = "test"
+
+[tool.hatch.envs.reference-pandas.scripts]
+test = [
     "uv pip uninstall snowflake-connector-python-ud",
     "uv pip install \"snowflake-connector-python[pandas]=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.2.0}\"",
     "pytest tests/e2e/pandas {args}",
 ]
-compare = "python ci/reference_tests/compare_reports.py {args}"

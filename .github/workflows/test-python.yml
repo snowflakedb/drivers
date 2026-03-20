@@ -159,47 +159,39 @@ jobs:
         include:
           - os: ubuntu-latest
             py: "3.9"
-            extras: "no-extras"
             hatch_env: "test"
-          - os: ubuntu-latest
-            py: "3.9"
-            extras: "pandas"
-            hatch_env: "test-pandas"
           - os: ubuntu-latest
             py: "3.12"
-            extras: "no-extras"
             hatch_env: "test"
           - os: ubuntu-latest
             py: "3.14"
-            extras: "no-extras"
             hatch_env: "test"
-          - os: ubuntu-latest
-            py: "3.14"
-            extras: "pandas"
-            hatch_env: "test-pandas"
           - os: windows-11-arm
             py: "3.11"
-            extras: "no-extras"
             hatch_env: "test"
           - os: windows-11-arm
             py: "3.12"
-            extras: "no-extras"
             hatch_env: "test"
           - os: windows-11-arm
             py: "3.13"
-            extras: "no-extras"
             hatch_env: "test"
-          # Reference combination — keep in sync with REFERENCE_* env vars above
-          - os: ubuntu-latest
+          - os: ubuntu-latest # Reference combination — keep in sync with REFERENCE_* env vars above
             py: "3.13"
-            extras: "no-extras"
             hatch_env: "test"
+          # test integration with Pandas
           - os: ubuntu-latest
+            py: "3.9"
+            hatch_env: "test-pandas"
+          - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
             py: "3.13"
-            extras: "pandas"
-            hatch_env: "pandas-test"
+            hatch_env: "test-pandas"
+          - os: ubuntu-latest
+            py: "3.14"
+            hatch_env: "test-pandas"
     runs-on: ${{ matrix.os }}
-    name: python_tests (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.extras }})
+    name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }})
+    env:
+      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
     steps:
       - name: Set UV cache dir
         shell: bash
@@ -222,9 +214,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}-
+            uv-${{ env.MATRIX_KEY }}-
             uv-${{ matrix.os }}-${{ matrix.py }}-
             uv-${{ matrix.os }}-
 
@@ -233,9 +225,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}\.uv-cache
-          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}-
+            uv-${{ env.MATRIX_KEY }}-
             uv-${{ matrix.os }}-${{ matrix.py }}-
             uv-${{ matrix.os }}-
 
@@ -303,10 +295,10 @@ jobs:
         run: |
           mkdir -p reports
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov \
-            --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}.json \
-            --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}.xml \
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}.xml \
-            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}-html
+            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.json \
+            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml \
+            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
+            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -328,10 +320,10 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path reports
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov `
-            --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}.json `
-            --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}.xml `
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}.xml `
-            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}-html
+            --json-report --json-report-file=reports/universal-${{ env.MATRIX_KEY }}.json `
+            --junitxml=reports/universal-${{ env.MATRIX_KEY }}.xml `
+            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml `
+            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -348,8 +340,8 @@ jobs:
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: results-universal-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}
-          path: python/reports/*-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.extras }}.*
+          name: results-universal-${{ env.MATRIX_KEY }}
+          path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
@@ -358,16 +350,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        extras: ["no-extras", "pandas"]
-        include:
-          - extras: "no-extras"
-            hatch_ref_cmd: "test"
-          - extras: "pandas"
-            hatch_ref_cmd: "test-pandas"
+        hatch_env: ["reference", "reference-pandas"]
     runs-on: ubuntu-latest
-    name: python_tests_reference (${{ matrix.extras }})
+    name: python_tests_reference (${{ matrix.hatch_env }})
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     steps:
+      - name: Set matrix key
+        run: echo "MATRIX_KEY=${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.hatch_env }}" >> $GITHUB_ENV
+
       - uses: actions/checkout@v4
 
       - name: Install uv
@@ -381,9 +371,9 @@ jobs:
           path: /tmp/.uv-cache
           # Key uses REFERENCE_OS_VERSION (= "ubuntu-latest") to match the matrix.os-based
           # key written by python_tests, enabling cross-job cache sharing.
-          key: uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}-
+            uv-${{ env.MATRIX_KEY }}-
             uv-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-
             uv-${{ env.REFERENCE_OS_VERSION }}-
         env:
@@ -410,9 +400,9 @@ jobs:
         working-directory: python
         run: |
           mkdir -p reports
-          hatch run reference:${{ matrix.hatch_ref_cmd }} \
-            --json-report --json-report-file=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}.json \
-            --junitxml=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}.xml
+          hatch run ${{ matrix.hatch_env }}:test \
+            --json-report --json-report-file=reports/reference-${{ env.MATRIX_KEY }}.json \
+            --junitxml=reports/reference-${{ env.MATRIX_KEY }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
 
@@ -420,8 +410,8 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()  # Upload even if tests fail (needed for comparison)
         with:
-          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}
-          path: python/reports/*-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}.*
+          name: results-reference-${{ env.MATRIX_KEY }}
+          path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
   # Compare results between connectors
   python_compare_results:
@@ -433,10 +423,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        extras: ["no-extras", "pandas"]
+        include:
+          - hatch_env: "test"
+            ref_hatch_env: "reference"
+          - hatch_env: "test-pandas"
+            ref_hatch_env: "reference-pandas"
     runs-on: ubuntu-latest
-    name: python_compare_results (${{ matrix.extras }})
+    name: python_compare_results (${{ matrix.hatch_env }})
     steps:
+      - name: Set matrix keys
+        run: |
+          echo "MATRIX_KEY=${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.hatch_env }}" >> $GITHUB_ENV
+          echo "REF_MATRIX_KEY=${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.ref_hatch_env }}" >> $GITHUB_ENV
+
       - uses: actions/checkout@v4
 
       - name: Install uv
@@ -447,13 +446,13 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with:
-          name: results-universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}
+          name: results-universal-${{ env.MATRIX_KEY }}
           path: ${{ github.workspace }}/universal-results
 
       - name: Download reference test results
         uses: actions/download-artifact@v4
         with:
-          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}
+          name: results-reference-${{ env.REF_MATRIX_KEY }}
           path: ${{ github.workspace }}/reference-results
 
       - name: Install Hatch
@@ -466,8 +465,8 @@ jobs:
           hatch run reference:compare \
             --py ${{ env.REFERENCE_PYTHON_VERSION }} \
             --os ${{ env.REFERENCE_OS_VERSION }} \
-            --universal ${{ github.workspace }}/universal-results/universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}.json \
-            --reference ${{ github.workspace }}/reference-results/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ matrix.extras }}.json \
+            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}.json \
+            --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
