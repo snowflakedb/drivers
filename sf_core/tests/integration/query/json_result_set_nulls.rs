@@ -1,5 +1,6 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::test_utils::unique_table_name;
 use arrow::array::Array;
 
 /// Forces the session to return JSON result format and executes the given query.
@@ -22,45 +23,46 @@ fn execute_json_query(client: &SnowflakeTestClient, query: &str) -> ArrowResultH
 
 #[test]
 fn should_handle_null_values_in_json_result_set() {
+    let table = unique_table_name("json_null_test");
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
 
-    // Create table with nullable columns of various types
     client.set_sql_query(
         &stmt,
-        "CREATE OR REPLACE TABLE json_null_test (
+        &format!(
+            "CREATE OR REPLACE TABLE {table} (
             str_col STRING,
             int_col INTEGER,
             bool_col BOOLEAN,
             real_col DOUBLE,
             date_col DATE,
             ntz_col TIMESTAMP_NTZ(3)
-        )",
+        )"
+        ),
     );
     client.execute_statement_query(&stmt);
 
-    // Insert rows with null values in different columns
     client.set_sql_query(
         &stmt,
-        "INSERT INTO json_null_test VALUES
+        &format!(
+            "INSERT INTO {table} VALUES
             ('hello', 42, true, 3.14, '2024-01-15', '2024-01-15 10:30:00.123'),
             (null, null, null, null, null, null),
-            ('world', 7, false, 2.71, '2024-06-01', '2024-06-01 12:00:00.456')",
+            ('world', 7, false, 2.71, '2024-06-01', '2024-06-01 12:00:00.456')"
+        ),
     );
     client.execute_statement_query(&stmt);
     client.release_statement(&stmt);
 
-    // Query with JSON format
     let mut helper = execute_json_query(
         &client,
-        "SELECT * FROM json_null_test ORDER BY str_col NULLS FIRST",
+        &format!("SELECT * FROM {table} ORDER BY str_col NULLS FIRST"),
     );
 
     let batch = helper.next_batch().expect("Expected a record batch");
     assert_eq!(batch.num_rows(), 3);
     assert_eq!(batch.num_columns(), 6);
 
-    // First row should be all nulls (NULLS FIRST ordering)
     for col_idx in 0..batch.num_columns() {
         assert!(
             batch.column(col_idx).is_null(0),
@@ -69,7 +71,6 @@ fn should_handle_null_values_in_json_result_set() {
         );
     }
 
-    // Second and third rows should have valid values
     for col_idx in 0..batch.num_columns() {
         assert!(
             batch.column(col_idx).is_valid(1),
@@ -82,6 +83,11 @@ fn should_handle_null_values_in_json_result_set() {
             batch.schema().field(col_idx).name()
         );
     }
+
+    let stmt = client.new_statement();
+    client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {table}"));
+    client.execute_statement_query(&stmt);
+    client.release_statement(&stmt);
 }
 
 #[test]
@@ -101,40 +107,42 @@ fn should_handle_show_schemas_json_result_with_nulls() {
 
 #[test]
 fn should_match_null_positions_between_arrow_and_json_formats() {
+    let table = unique_table_name("json_null_parity");
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
 
-    // Create table with sparse nulls across different types
     client.set_sql_query(
         &stmt,
-        "CREATE OR REPLACE TABLE json_null_parity (
+        &format!(
+            "CREATE OR REPLACE TABLE {table} (
             txt STRING,
             num INTEGER,
             ntz TIMESTAMP_NTZ
-        )",
+        )"
+        ),
     );
     client.execute_statement_query(&stmt);
 
     client.set_sql_query(
         &stmt,
-        "INSERT INTO json_null_parity VALUES
+        &format!(
+            "INSERT INTO {table} VALUES
             ('a', 1, '2024-01-01 00:00:00'),
             (null, 2, '2024-01-02 00:00:00'),
             ('c', null, '2024-01-03 00:00:00'),
-            ('d', 4, null)",
+            ('d', 4, null)"
+        ),
     );
     client.execute_statement_query(&stmt);
 
-    // Get Arrow result
     client.set_sql_query(
         &stmt,
-        "SELECT * FROM json_null_parity ORDER BY txt NULLS FIRST",
+        &format!("SELECT * FROM {table} ORDER BY txt NULLS FIRST"),
     );
     let arrow_result = client.execute_statement_query(&stmt);
     let mut arrow_helper = ArrowResultHelper::from_result(arrow_result);
     let arrow_batch = arrow_helper.next_batch().expect("Expected arrow batch");
 
-    // Get JSON result
     client.set_sql_query(
         &stmt,
         "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = JSON",
@@ -143,17 +151,15 @@ fn should_match_null_positions_between_arrow_and_json_formats() {
 
     client.set_sql_query(
         &stmt,
-        "SELECT * FROM json_null_parity ORDER BY txt NULLS FIRST",
+        &format!("SELECT * FROM {table} ORDER BY txt NULLS FIRST"),
     );
     let json_result = client.execute_statement_query(&stmt);
     let mut json_helper = ArrowResultHelper::from_result(json_result);
     let json_batch = json_helper.next_batch().expect("Expected json batch");
 
-    // Verify both have the same number of rows
     assert_eq!(arrow_batch.num_rows(), json_batch.num_rows());
     assert_eq!(arrow_batch.num_columns(), json_batch.num_columns());
 
-    // Verify null positions match between Arrow and JSON-converted-to-Arrow
     for col_idx in 0..arrow_batch.num_columns() {
         let arrow_col = arrow_batch.column(col_idx);
         let json_col = json_batch.column(col_idx);
@@ -173,6 +179,9 @@ fn should_match_null_positions_between_arrow_and_json_formats() {
             );
         }
     }
+
+    client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {table}"));
+    client.execute_statement_query(&stmt);
 
     client.release_statement(&stmt);
 }
