@@ -244,8 +244,10 @@ class TestArrayBinding:
     """Tests for multirow binding (executemany functionality)."""
 
     def test_should_insert_multiple_rows_using_multirow_binding(self, execute_query, cursor, tmp_schema):
-        # Given Snowflake client is logged in
         """Test multirow binding with basic INSERT."""
+
+        # Given Snowflake client is logged in
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany"
@@ -263,8 +265,10 @@ class TestArrayBinding:
         assert result == rows
 
     def test_should_handle_empty_sequence_in_multirow_binding(self, execute_query, cursor):
-        # Given Snowflake client is logged in
         """Test multirow binding with empty sequence is no-op."""
+
+        # Given Snowflake client is logged in
+        pass
 
         # When Multirow binding is called with empty sequence
         cursor.executemany("INSERT INTO table VALUES (?)", [])
@@ -273,8 +277,10 @@ class TestArrayBinding:
         assert cursor is not None
 
     def test_should_validate_parameter_length_in_multirow_binding(self, execute_query, cursor):
-        # Given Snowflake client is logged in
         """Test multirow binding raises error for inconsistent lengths."""
+
+        # Given Snowflake client is logged in
+        pass
         from snowflake.connector import InterfaceError
 
         # When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b", "extra")]
@@ -285,8 +291,10 @@ class TestArrayBinding:
         assert "Bulk data size don't match" in str(excinfo.value)
 
     def test_should_handle_null_values_in_multirow_binding(self, execute_query, cursor, tmp_schema):
-        # Given Snowflake client is logged in
         """Test multirow binding handles NULL values."""
+
+        # Given Snowflake client is logged in
+        pass
 
         # And A temporary table with columns (id NUMBER, value VARCHAR) exists
         table_name = f"{tmp_schema}.test_nulls"

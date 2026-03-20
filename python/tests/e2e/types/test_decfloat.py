@@ -120,7 +120,7 @@ class TestDecfloatLiteral:
     )
     def test_should_handle_case_exponent_values_from_literals(self, execute_query, sql, expected):
         # Given Snowflake client is logged in
-        assert callable(execute_query)
+        pass
 
         # When Query "SELECT <query_values>" is executed
         result = execute_query(sql, single_row=True)
