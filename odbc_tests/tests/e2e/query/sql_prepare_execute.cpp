@@ -7,6 +7,7 @@
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
+#include "macros.hpp"
 
 // =============================================================================
 // Tests for SQLPrepare / SQLExecute / SQLExecDirect based on ODBC specification:

@@ -7,6 +7,7 @@
 #include "ReadOnlyDbFixture.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "macros.hpp"
 
 // =============================================================================
 // Tests for SQLDescribeCol based on ODBC specification:
