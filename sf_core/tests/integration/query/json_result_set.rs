@@ -2,7 +2,7 @@ use crate::common::arrow_result_helper::{
     ArrowResultHelper, assert_record_batches_match, assert_schemas_match,
 };
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use crate::common::test_utils::unique_table_name;
+use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
 
 #[test]
 fn should_return_arrow_even_if_json_result_set_is_returned_for_all_types() {
@@ -170,6 +170,12 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
     let select_query = select_query.replace(base_name, &table_name);
 
     let client = SnowflakeTestClient::connect_with_default_auth();
+    let _guard = TableCleanupGuard::new(table_name.clone(), |name| {
+        let stmt = client.new_statement();
+        client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
+        client.execute_statement_query(&stmt);
+        client.release_statement(&stmt);
+    });
     let stmt = client.new_statement();
 
     client.set_sql_query(&stmt, &create_table_query);
@@ -208,9 +214,6 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
     let json_columns = json_result_helper.next_batch().unwrap();
 
     assert_record_batches_match(&arrow_columns, &json_columns);
-
-    client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {table_name}"));
-    client.execute_statement_query(&stmt);
 
     client.release_statement(&stmt);
 }

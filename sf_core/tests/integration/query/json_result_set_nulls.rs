@@ -1,6 +1,6 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use crate::common::test_utils::unique_table_name;
+use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
 use arrow::array::Array;
 
 /// Forces the session to return JSON result format and executes the given query.
@@ -25,6 +25,12 @@ fn execute_json_query(client: &SnowflakeTestClient, query: &str) -> ArrowResultH
 fn should_handle_null_values_in_json_result_set() {
     let table = unique_table_name("json_null_test");
     let client = SnowflakeTestClient::connect_with_default_auth();
+    let _guard = TableCleanupGuard::new(table.clone(), |name| {
+        let stmt = client.new_statement();
+        client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
+        client.execute_statement_query(&stmt);
+        client.release_statement(&stmt);
+    });
     let stmt = client.new_statement();
 
     client.set_sql_query(
@@ -83,11 +89,6 @@ fn should_handle_null_values_in_json_result_set() {
             batch.schema().field(col_idx).name()
         );
     }
-
-    let stmt = client.new_statement();
-    client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {table}"));
-    client.execute_statement_query(&stmt);
-    client.release_statement(&stmt);
 }
 
 #[test]
@@ -109,6 +110,12 @@ fn should_handle_show_schemas_json_result_with_nulls() {
 fn should_match_null_positions_between_arrow_and_json_formats() {
     let table = unique_table_name("json_null_parity");
     let client = SnowflakeTestClient::connect_with_default_auth();
+    let _guard = TableCleanupGuard::new(table.clone(), |name| {
+        let stmt = client.new_statement();
+        client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
+        client.execute_statement_query(&stmt);
+        client.release_statement(&stmt);
+    });
     let stmt = client.new_statement();
 
     client.set_sql_query(
@@ -179,9 +186,6 @@ fn should_match_null_positions_between_arrow_and_json_formats() {
             );
         }
     }
-
-    client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {table}"));
-    client.execute_statement_query(&stmt);
 
     client.release_statement(&stmt);
 }
