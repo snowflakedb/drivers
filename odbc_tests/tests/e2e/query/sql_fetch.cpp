@@ -9,6 +9,7 @@
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
+#include "macros.hpp"
 
 TEST_CASE("SQLFetch fetches a row from SELECT query", "[query]") {
   // Given Snowflake client is logged in

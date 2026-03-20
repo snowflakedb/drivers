@@ -6,6 +6,7 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "macros.hpp"
 
 TEST_CASE("SQLRowCount returns HY010 when called without executing statement.", "[query]") {
   // Given Snowflake client is logged in
