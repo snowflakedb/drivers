@@ -133,9 +133,10 @@ class TestFloatLiteral:
         self, execute_query, float_type, select_values, expected
     ):
         # Given Snowflake client is logged in
-        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
+        pass
 
         # When Query "SELECT <query_values>" is executed
+        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
         result = execute_query(f"SELECT {columns}", single_row=True)
 
         # Then Result should contain floats [<expected_values>]
@@ -176,14 +177,14 @@ class TestFloatLiteral:
         pass
 
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
         # Then Result should contain 50000 rows with all values returned as appropriate float type
@@ -297,10 +298,10 @@ class TestFloatTable:
         pass
 
         # And Table with <type> column exists with 50000 sequential values
-        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
+        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {float_type})")
         execute_query(
             f"INSERT INTO {table_name} "

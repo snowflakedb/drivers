@@ -122,10 +122,9 @@ class TestStringLiteral:
 
         # When Query selecting corner case string literals is executed
         type_cast = f"::{string_type}(32)"
-        results = [execute_query(f"SELECT {sql_val}{type_cast}", single_row=True) for _, sql_val in CORNER_CASE_VALUES]
-
         # Then the result should contain expected corner case string values
-        for (expected_val, _), result in zip(CORNER_CASE_VALUES, results):
+        for expected_val, sql_val in CORNER_CASE_VALUES:
+            result = execute_query(f"SELECT {sql_val}{type_cast}", single_row=True)
             assert result == (expected_val,), f"Expected {expected_val!r}, got {result[0]!r}"
 
 
@@ -228,8 +227,10 @@ class TestStringBinding:
     @string_type_parametrize
     def test_should_select_corner_case_string_values_using_parameter_binding(self, execute_query, string_type):
         # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
         for corner_case, _ in CORNER_CASE_VALUES:
-            # When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
             result = execute_query(f"SELECT ?::{string_type}(32)", (corner_case,), single_row=True)
             # Then the result should match the bound corner case value
             assert result == (corner_case,)

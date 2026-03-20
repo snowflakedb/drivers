@@ -105,6 +105,8 @@ class TestBinaryLiteral:
     @binary_type_parametrize
     def test_should_handle_binary_corner_case_values_from_literals(self, execute_query, binary_type):
         # Given Snowflake client is logged in
+        pass
+
         for expected_val, sql_val in CORNER_CASE_VALUES:
             # When Query selecting corner case binary literals is executed
             result = execute_query(f"SELECT {sql_val}::{binary_type}", single_row=True)
@@ -278,6 +280,8 @@ class TestBinaryBinding:
     @binary_type_parametrize
     def test_should_bind_corner_case_binary_values(self, execute_query, binary_type):
         # Given Snowflake client is logged in
+        pass
+
         for corner_case, _ in CORNER_CASE_VALUES:
             # When Query "SELECT ?::BINARY" is executed with each corner case binary value bound
             result = execute_query(f"SELECT ?::{binary_type}", (corner_case,), single_row=True)

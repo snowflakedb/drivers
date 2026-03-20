@@ -123,9 +123,10 @@ class TestIntLiteral:
         self, execute_query, int_type, values, query_values, expected_values
     ):
         # Given Snowflake client is logged in
-        select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
+        pass
 
         # When Query "SELECT <query_values>" is executed
+        select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
         result = execute_query(f"SELECT {select_cols}", single_row=True)
 
         # Then Result should contain integers <expected_values>
@@ -139,8 +140,7 @@ class TestIntLiteral:
 
         # When Query "SELECT -99999999999999999999999999999999999999::<type>,
         #   99999999999999999999999999999999999999::<type>" is executed
-        sql = f"SELECT {INT38_MIN}::{int_type}, {INT38_MAX}::{int_type}"
-        result = execute_query(sql, single_row=True)
+        result = execute_query(f"SELECT {INT38_MIN}::{int_type}, {INT38_MAX}::{int_type}", single_row=True)
 
         # Then Result should contain integers [-99999999999999999999999999999999999999,
         #   99999999999999999999999999999999999999]
@@ -153,9 +153,8 @@ class TestIntLiteral:
         pass
 
         # When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
-        sql = f"SELECT NULL::{int_type}, 42::{int_type}, NULL::{int_type}"
         result = execute_query(
-            sql,
+            f"SELECT NULL::{int_type}, 42::{int_type}, NULL::{int_type}",
             single_row=True,
         )
 
@@ -169,14 +168,14 @@ class TestIntLiteral:
         pass
 
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{int_type} as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
         # Then Result should contain 50000 sequentially numbered rows from 0 to 49999

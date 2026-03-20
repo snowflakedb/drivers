@@ -64,8 +64,7 @@ class TestTimestampLtzTypeCasting:
         pass
 
         # When Query "SELECT '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ" is executed
-        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_LTZ"
-        result = execute_query(sql, single_row=True)
+        result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_LTZ", single_row=True)
 
         # Then All values should be returned as appropriate type
         assert_datetime_type(result)
@@ -95,9 +94,10 @@ class TestTimestampLtzLiteral:
     )
     def test_should_select_timestamp_ltz_values(self, execute_query, values, query_values, expected_values):
         # Given Snowflake client is logged in
-        select_cols = ", ".join(f"'{v}'::TIMESTAMP_LTZ" for v in query_values)
+        pass
 
         # When Query "SELECT <query_values>" is executed
+        select_cols = ", ".join(f"'{v}'::TIMESTAMP_LTZ" for v in query_values)
         result = execute_query(f"SELECT {select_cols}", single_row=True)
 
         # Then Result should contain timestamps <expected_values>
@@ -109,9 +109,8 @@ class TestTimestampLtzLiteral:
         pass
 
         # When Query "SELECT '2024-01-15 10:30:00 +00:00'::TIMESTAMP_LTZ, NULL::TIMESTAMP_LTZ" is executed
-        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_LTZ, NULL::TIMESTAMP_LTZ"
         result = execute_query(
-            sql,
+            f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_LTZ, NULL::TIMESTAMP_LTZ",
             single_row=True,
         )
 
@@ -212,9 +211,8 @@ class TestTimestampLtzBinding:
         pass
 
         # When Query "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ" is executed with bound timestamp values
-        sql = "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ"
         result = execute_query(
-            sql,
+            "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ",
             (TS_2024_JAN, TS_2024_JUN),
             single_row=True,
         )
@@ -228,8 +226,7 @@ class TestTimestampLtzBinding:
         pass
 
         # When Query "SELECT ?::TIMESTAMP_LTZ" is executed with bound NULL value
-        sql = "SELECT ?::TIMESTAMP_LTZ"
-        result = execute_query(sql, (None,), single_row=True)
+        result = execute_query("SELECT ?::TIMESTAMP_LTZ", (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result == (None,)

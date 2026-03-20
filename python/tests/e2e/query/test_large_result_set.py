@@ -7,11 +7,11 @@ class TestLargeResultSet:
         pass
 
         # When Query "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
+
+        # Note: We use ROW_NUMBER() for actual query to ensure sequential integers.
         sql = (
             "SELECT ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) ORDER BY 1"
         )
-
-        # Note: We use ROW_NUMBER() for actual query to ensure sequential integers.
         cursor.execute(sql)
         rows = cursor.fetchall()
 

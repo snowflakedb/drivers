@@ -55,6 +55,7 @@ class TestBinaryLob:
         # And Table with BINARY column exists
         table_name = f"{tmp_schema}.lob_8mb_table"
         execute_query(f"CREATE TABLE {table_name} (val BINARY)")
+
         # When Binary value of 8MB size (8,388,608 bytes) is inserted
 
         # (Note: REPEAT() cannot be used in VALUES clause, must use INSERT ... SELECT)
@@ -82,6 +83,7 @@ class TestBinaryLob:
         # And Table with BINARY(67108864) column exists
         table_name = f"{tmp_schema}.lob_64mb_table"
         execute_query(f"CREATE TABLE {table_name} (val BINARY(67108864))")
+
         # When Binary value of 64MB size (67,108,864 bytes) is inserted
 
         # (Note: REPEAT() cannot be used in VALUES clause, must use INSERT ... SELECT)

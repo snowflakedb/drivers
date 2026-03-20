@@ -55,8 +55,7 @@ class TestTimestampNtzTypeCasting:
         pass
 
         # When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ" is executed
-        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ"
-        result = execute_query(sql, single_row=True)
+        result = execute_query(f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ", single_row=True)
 
         # Then All values should be returned as appropriate type
         assert_datetime_type(result, require_tzinfo=False)
@@ -77,9 +76,10 @@ class TestTimestampNtzLiteral:
     )
     def test_should_select_timestamp_ntz_values(self, execute_query, query_values, expected_values):
         # Given Snowflake client is logged in
-        select_cols = ", ".join(f"'{v}'::TIMESTAMP_NTZ" for v in query_values)
+        pass
 
         # When Query "SELECT <query_values>" is executed
+        select_cols = ", ".join(f"'{v}'::TIMESTAMP_NTZ" for v in query_values)
         result = execute_query(f"SELECT {select_cols}", single_row=True)
 
         # Then Result should contain timestamps <expected_values>
@@ -93,9 +93,8 @@ class TestTimestampNtzLiteral:
         pass
 
         # When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ" is executed
-        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ"
         result = execute_query(
-            sql,
+            f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ",
             single_row=True,
         )
 
@@ -199,9 +198,8 @@ class TestTimestampNtzBinding:
         pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ" is executed with bound timestamp values
-        sql = "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ"
         result = execute_query(
-            sql,
+            "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ",
             (TS_2024_JAN, TS_2024_JUN),
             single_row=True,
         )
@@ -219,8 +217,7 @@ class TestTimestampNtzBinding:
         pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound NULL value
-        sql = "SELECT ?::TIMESTAMP_NTZ"
-        result = execute_query(sql, (None,), single_row=True)
+        result = execute_query("SELECT ?::TIMESTAMP_NTZ", (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result == (None,)
@@ -264,8 +261,7 @@ class TestTimestampNtzBinding:
         pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound aware datetime <input>
-        sql = "SELECT ?::TIMESTAMP_NTZ"
-        result = execute_query(sql, (aware_input,), single_row=True)
+        result = execute_query("SELECT ?::TIMESTAMP_NTZ", (aware_input,), single_row=True)
 
         # Then Result should contain [<expected>]
         assert result == (expected,)
@@ -287,6 +283,8 @@ class TestTimestampNtzAliases:
         self, execute_query, type_name
     ):
         # Given Snowflake client is logged in
+        pass
+
         try:
             # And Session TIMESTAMP_TYPE_MAPPING is set to TIMESTAMP_NTZ
             execute_query("ALTER SESSION SET TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'")
@@ -305,6 +303,8 @@ class TestTimestampNtzAliases:
         self, execute_query
     ):
         # Given Snowflake client is logged in
+        pass
+
         try:
             # And Session TIMESTAMP_TYPE_MAPPING is set to TIMESTAMP_LTZ
             execute_query("ALTER SESSION SET TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_LTZ'")
@@ -343,8 +343,7 @@ class TestTimestampNtzPrecision:
         pass
 
         # When Query "SELECT '<input>'::TIMESTAMP_NTZ" is executed
-        sql = f"SELECT '{input_str}'::TIMESTAMP_NTZ"
-        result = execute_query(sql, single_row=True)
+        result = execute_query(f"SELECT '{input_str}'::TIMESTAMP_NTZ", single_row=True)
 
         # Then Result should contain [<expected>]
         assert result[0] == expected

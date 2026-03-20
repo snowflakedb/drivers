@@ -169,9 +169,10 @@ class TestEdgeCases:
 
     def test_should_handle_null_values_in_parameter_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        cursor.execute("SELECT ?, ?, ?", (None, 42, None))
+        pass
 
         # When Query "SELECT ?, ?, ?" is executed with parameters [None, 42, None]
+        cursor.execute("SELECT ?, ?, ?", (None, 42, None))
         result = cursor.fetchone()
 
         # Then Result should contain [NULL, 42, NULL]
@@ -179,6 +180,9 @@ class TestEdgeCases:
 
     def test_should_handle_special_characters_in_string_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT ?::VARCHAR" is executed with parameter containing special characters
         special_strings = [
             "'; DROP TABLE test; --",  # SQL injection attempt
             "<script>alert('xss')</script>",  # XSS attempt
@@ -188,8 +192,6 @@ class TestEdgeCases:
             "\\n\\t\\r\\\\",  # Escaped sequences as literal
         ]
 
-        # When Query "SELECT ?::VARCHAR" is executed with parameter containing special characters
-
         for special_str in special_strings:
             cursor.execute("SELECT ?::VARCHAR", (special_str,))
             result = cursor.fetchone()
@@ -198,9 +200,10 @@ class TestEdgeCases:
 
     def test_should_handle_unicode_characters_in_parameter_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        cursor.execute("SELECT ?::VARCHAR, ?::VARCHAR", ("日本語", "⛄"))
+        pass
 
         # When Query "SELECT ?::VARCHAR, ?::VARCHAR" is executed with parameters ["日本語", "⛄"]
+        cursor.execute("SELECT ?::VARCHAR, ?::VARCHAR", ("日本語", "⛄"))
         result = cursor.fetchone()
 
         # Then Result should contain Unicode strings ["日本語", "⛄"]
@@ -208,9 +211,10 @@ class TestEdgeCases:
 
     def test_should_bind_zero_values(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        cursor.execute("SELECT ?, ?::FLOAT, ?::VARCHAR", (0, 0.0, ""))
+        pass
 
         # When Query "SELECT ?, ?::FLOAT, ?::VARCHAR" is executed with parameters [0, 0.0, ""]
+        cursor.execute("SELECT ?, ?::FLOAT, ?::VARCHAR", (0, 0.0, ""))
         result = cursor.fetchone()
 
         # Then Result should contain zero and empty values [0, 0.0, ""]
@@ -218,9 +222,10 @@ class TestEdgeCases:
 
     def test_should_handle_mixed_type_casting_with_parameter_binding(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        cursor.execute("SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN", (42, "hello", True))
+        pass
 
         # When Query "SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN" is executed with parameters [42, "hello", True]
+        cursor.execute("SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN", (42, "hello", True))
         result = cursor.fetchone()
 
         # Then Result should match the type-casted parameters [42, "hello", True]
@@ -228,9 +233,10 @@ class TestEdgeCases:
 
     def test_should_raise_error_when_placeholder_count_mismatches_argument_count(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        cursor.execute("SELECT ?, ?", (1, 2, 3))
+        pass
 
         # When Query with 2 placeholders is executed with 3 arguments
+        cursor.execute("SELECT ?, ?", (1, 2, 3))
         result = cursor.fetchone()
 
         # Then Query should successfully execute
@@ -252,7 +258,6 @@ class TestArrayBinding:
 
     def test_should_insert_multiple_rows_using_multirow_binding(self, execute_query, cursor, tmp_schema):
         """Test multirow binding with basic INSERT."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -273,7 +278,6 @@ class TestArrayBinding:
 
     def test_should_handle_empty_sequence_in_multirow_binding(self, execute_query, cursor):
         """Test multirow binding with empty sequence is no-op."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -285,7 +289,6 @@ class TestArrayBinding:
 
     def test_should_validate_parameter_length_in_multirow_binding(self, execute_query, cursor):
         """Test multirow binding raises error for inconsistent lengths."""
-
         # Given Snowflake client is logged in
         pass
         from snowflake.connector import InterfaceError
@@ -299,7 +302,6 @@ class TestArrayBinding:
 
     def test_should_handle_null_values_in_multirow_binding(self, execute_query, cursor, tmp_schema):
         """Test multirow binding handles NULL values."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -345,9 +347,10 @@ class TestComplexScenarios:
 
     def test_should_bind_many_parameters(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        num_params = 20
+        pass
 
         # When Query with 20 positional parameters is executed with values [0..19]
+        num_params = 20
         sql = "SELECT " + ", ".join(["?"] * num_params)
         params = tuple(range(num_params))
         cursor.execute(sql, params)

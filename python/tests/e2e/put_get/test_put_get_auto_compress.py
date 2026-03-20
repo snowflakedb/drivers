@@ -11,14 +11,17 @@ from tests.utils import shared_test_data_dir
 
 
 def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_set_to_true(
+    execute_query,
     connection,
 ):
     uncompressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     compressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv.gz"
     uncompressed_filename = "test_data.csv"
     compressed_filename = "test_data.csv.gz"
-    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        pass
+
         # When File is uploaded to stage with AUTO_COMPRESS set to true
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -54,14 +57,17 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
 
 
 def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compress_set_to_false(
+    execute_query,
     connection,
 ):
     uncompressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     uncompressed_filename = "test_data.csv"
     compressed_filename = "test_data.csv.gz"
 
-    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        pass
+
         # When File is uploaded to stage with AUTO_COMPRESS set to false
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,

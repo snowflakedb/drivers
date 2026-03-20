@@ -201,6 +201,9 @@ class TestNumberLiteral:
         # When Query
         # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v"
         # is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
             f"WITH base AS ("
             f"  SELECT ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as rn "
@@ -209,9 +212,6 @@ class TestNumberLiteral:
             f"SELECT rn::{num_type}(38,0), (rn + 0.12345)::{num_type}(20,5) FROM base "
             f"ORDER BY 1"
         )
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
         # Then Result should contain 30000 rows with sequential integers in column 1
@@ -455,10 +455,10 @@ class TestNumberTable:
 
         # And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows,
         # from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
-        table_name = f"{tmp_schema}.large_table_{num_type.lower()}"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
+        table_name = f"{tmp_schema}.large_table_{num_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col1 {num_type}(38,0), col2 {num_type}(20,5))")
         execute_query(
             f"INSERT INTO {table_name} "

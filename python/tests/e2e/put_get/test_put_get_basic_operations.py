@@ -81,11 +81,13 @@ def test_should_get_file_uploaded_to_stage(connection):
                 assert content == "1,2,3"
 
 
-def test_should_return_correct_rowset_for_put(connection):
+def test_should_return_correct_rowset_for_put(execute_query, connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
-    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        pass
+
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
             cursor,
@@ -137,11 +139,13 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[3] == ""
 
 
-def test_should_return_correct_column_metadata_for_put(connection):
+def test_should_return_correct_column_metadata_for_put(execute_query, connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
-    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        pass
+
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
             cursor,
@@ -254,12 +258,14 @@ def test_should_get_file_from_subdirectory_in_stage(connection):
             assert content == "1,2,3"
 
 
-def test_should_upload_file_to_subdirectory_in_stage(connection):
+def test_should_upload_file_to_subdirectory_in_stage(execute_query, connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 
-    # Given Snowflake client is logged in
     with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        pass
+
         # When File is uploaded to a subdirectory in stage
         stage_name = create_temporary_stage(cursor, "TEST_SUBDIR_UPLOAD")
         subdir_path = f"@{stage_name}/nested/subdir"

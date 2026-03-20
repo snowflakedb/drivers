@@ -137,8 +137,7 @@ class TestDecfloatLiteral:
         pass
 
         # When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
-        sql = "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT"
-        result = execute_query(sql, single_row=True)
+        result = execute_query("SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT", single_row=True)
 
         # Then Result should contain [NULL, 42.5, NULL]
         assert result == (None, Decimal("42.5"), None)
@@ -149,14 +148,14 @@ class TestDecfloatLiteral:
         pass
 
         # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::DECFLOAT as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
         # Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
@@ -262,10 +261,10 @@ class TestDecfloatTable:
         pass
 
         # And Table with DECFLOAT column exists with values from 0 to 19999
-        table_name = f"{tmp_schema}.large_table"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
+        table_name = f"{tmp_schema}.large_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
         execute_query(
             f"INSERT INTO {table_name} "
@@ -292,9 +291,8 @@ class TestDecfloatBinding:
 
         # When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed
         # with bound DECFLOAT values [123.456, -789.012, 42.0]
-        sql = "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT"
         result = execute_query(
-            sql,
+            "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT",
             (("DECFLOAT", Decimal("123.456")), ("DECFLOAT", Decimal("-789.012")), ("DECFLOAT", Decimal("42.0"))),
             single_row=True,
         )
@@ -308,8 +306,7 @@ class TestDecfloatBinding:
         pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
-        sql = "SELECT ?::DECFLOAT"
-        result = execute_query(sql, (None,), single_row=True)
+        result = execute_query("SELECT ?::DECFLOAT", (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result == (None,)
@@ -329,9 +326,8 @@ class TestDecfloatBinding:
         pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
-        sql = "SELECT ?::DECFLOAT"
         result = execute_query(
-            sql,
+            "SELECT ?::DECFLOAT",
             ((type_name, value),),
             single_row=True,
         )

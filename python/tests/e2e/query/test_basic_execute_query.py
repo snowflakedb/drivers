@@ -24,7 +24,6 @@ class TestSelectQueries:
 
     def test_should_execute_simple_select_returning_single_value(self, execute_query, cursor):
         """Test simple SELECT returning single value."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -38,7 +37,6 @@ class TestSelectQueries:
 
     def test_should_execute_select_returning_multiple_columns(self, execute_query, cursor):
         """Test SELECT returning multiple columns."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -57,7 +55,6 @@ class TestSelectQueries:
 
     def test_should_execute_select_returning_multiple_rows(self, execute_query, cursor):
         """Test SELECT returning multiple rows using GENERATOR."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -72,7 +69,6 @@ class TestSelectQueries:
 
     def test_should_execute_select_returning_empty_result_set(self, execute_query, cursor):
         """Test SELECT returning empty result set."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -85,7 +81,6 @@ class TestSelectQueries:
 
     def test_should_execute_select_returning_null_values(self, execute_query, cursor):
         """Test SELECT returning NULL values."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -105,7 +100,6 @@ class TestDDLStatements:
 
     def test_should_execute_create_and_drop_table_statements(self, execute_query, cursor, tmp_schema):
         """Test CREATE and DROP TABLE statements."""
-
         # Given Snowflake client is logged in
         pass
         table_name = f"{tmp_schema}.test_basic_ddl"
@@ -129,7 +123,6 @@ class TestDMLStatements:
 
     def test_should_execute_insert_and_retrieve_inserted_data(self, execute_query, cursor, tmp_schema):
         """Test INSERT and retrieve inserted data."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -158,7 +151,6 @@ class TestErrorHandling:
 
     def test_should_return_error_for_invalid_sql_syntax(self, execute_query, cursor):
         """Test error handling for invalid SQL syntax."""
-
         # Given Snowflake client is logged in
         pass
 
@@ -176,7 +168,6 @@ class TestSequentialExecution:
 
     def test_should_execute_multiple_queries_sequentially_on_same_connection(self, execute_query, cursor):
         """Test multiple queries executed sequentially on same connection."""
-
         # Given Snowflake client is logged in
         pass
 
