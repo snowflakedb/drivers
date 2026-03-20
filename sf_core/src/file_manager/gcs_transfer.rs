@@ -25,12 +25,12 @@ pub async fn upload_to_gcs_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
-) -> Result<String, GcsTransferError> {
+) -> Result<String, GcsUploadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
 
-    if !overwrite && check_file_exists_gcs(&client, &url, token.as_deref()).await? {
+    if !overwrite && check_file_exists_gcs(&client, &url, token.as_deref()).await {
         tracing::info!("File already exists in GCS: {}", key);
         return Ok("SKIPPED".to_string());
     }
@@ -43,7 +43,7 @@ pub async fn upload_to_gcs_or_skip(
 pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, EncryptedFileMetadata), GcsTransferError> {
+) -> Result<(Vec<u8>, EncryptedFileMetadata), GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
@@ -69,25 +69,25 @@ pub async fn download_from_gcs(
     let mat_desc_str = get_header(headers, GCS_META_MATDESC)?;
 
     // Parse encryption data JSON to extract key and IV
-    let enc_data: serde_json::Value =
-        serde_json::from_str(&encryption_data_str).context(DeserializationSnafu)?;
+    let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
+        .context(gcs_download_error::DeserializationSnafu)?;
 
     let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
         .as_str()
-        .context(MissingMetadataSnafu {
+        .context(gcs_download_error::MissingMetadataSnafu {
             field: "WrappedContentKey.EncryptedKey",
         })?
         .to_string();
 
     let iv = enc_data["ContentEncryptionIV"]
         .as_str()
-        .context(MissingMetadataSnafu {
+        .context(gcs_download_error::MissingMetadataSnafu {
             field: "ContentEncryptionIV",
         })?
         .to_string();
 
     let material_desc: MaterialDescription =
-        serde_json::from_str(&mat_desc_str).context(DeserializationSnafu)?;
+        serde_json::from_str(&mat_desc_str).context(gcs_download_error::DeserializationSnafu)?;
 
     let file_metadata = EncryptedFileMetadata {
         encrypted_key,
@@ -96,16 +96,17 @@ pub async fn download_from_gcs(
         digest,
     };
 
-    let encrypted_data = response.bytes().await.context(HttpSnafu)?.to_vec();
+    let encrypted_data = response
+        .bytes()
+        .await
+        .map_err(GcsRequestError::Http)?
+        .to_vec();
     Ok((encrypted_data, file_metadata))
 }
 
 /// Check if a file exists in GCS via HEAD request.
-async fn check_file_exists_gcs(
-    client: &reqwest::Client,
-    url: &str,
-    token: Option<&str>,
-) -> Result<bool, GcsTransferError> {
+/// Returns false on any error or non-200 status so the caller proceeds with upload.
+async fn check_file_exists_gcs(client: &reqwest::Client, url: &str, token: Option<&str>) -> bool {
     let mut request = client.head(url);
     if let Some(t) = token {
         request = request.bearer_auth(t);
@@ -113,20 +114,20 @@ async fn check_file_exists_gcs(
 
     match request.send().await {
         Ok(resp) => match resp.status().as_u16() {
-            200 => Ok(true),
-            404 => Ok(false),
+            200 => true,
+            404 => false,
             403 => {
                 tracing::warn!(
                     "Access denied checking file existence in GCS, proceeding with upload"
                 );
-                Ok(false)
+                false
             }
             status => {
                 tracing::warn!(
                     "Unexpected status {} checking GCS file existence, proceeding with upload",
                     status
                 );
-                Ok(false)
+                false
             }
         },
         Err(e) => {
@@ -134,7 +135,7 @@ async fn check_file_exists_gcs(
                 "Error checking GCS file existence, proceeding with upload: {}",
                 e
             );
-            Ok(false)
+            false
         }
     }
 }
@@ -145,7 +146,7 @@ async fn upload_to_gcs(
     url: &str,
     token: Option<&str>,
     encryption_result: EncryptionResult,
-) -> Result<(), GcsTransferError> {
+) -> Result<(), GcsUploadError> {
     // Build encryption metadata JSON (matching JDBC/Python format)
     let encryption_data = serde_json::json!({
         "EncryptionMode": "FullBlob",
@@ -164,10 +165,10 @@ async fn upload_to_gcs(
         }
     });
     let encryption_data_str =
-        serde_json::to_string(&encryption_data).context(SerializationSnafu)?;
+        serde_json::to_string(&encryption_data).context(gcs_upload_error::SerializationSnafu)?;
 
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)
-        .context(SerializationSnafu)?;
+        .context(gcs_upload_error::SerializationSnafu)?;
 
     // Wrap in Arc for cheap sharing on retries (avoids cloning large Vec on each retry)
     let data: Arc<Vec<u8>> = Arc::new(encryption_result.data);
@@ -205,7 +206,7 @@ async fn execute_with_retry<F>(
     _client: &reqwest::Client,
     build_request: F,
     using_presigned_url: bool,
-) -> Result<reqwest::Response, GcsTransferError>
+) -> Result<reqwest::Response, GcsRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
@@ -225,7 +226,7 @@ where
                     tokio::time::sleep(backoff_delay(attempt)).await;
                     continue;
                 }
-                return Err(e).context(HttpSnafu);
+                return Err(GcsRequestError::Http(e));
             }
         };
 
@@ -237,7 +238,7 @@ where
 
         // 401: token expired — propagate up so the query layer can re-execute
         if status_code == 401 {
-            return TokenExpiredSnafu.fail();
+            return Err(GcsRequestError::TokenExpired);
         }
 
         // 400: retryable only when using presigned URLs (URL may have expired)
@@ -253,13 +254,13 @@ where
                 continue;
             }
             let body = read_error_body(response).await;
-            return GcsHttpSnafu { status_code, body }.fail();
+            return Err(GcsRequestError::GcsHttp { status_code, body });
         }
 
         // 404: hard failure
         if status_code == 404 {
             let body = read_error_body(response).await;
-            return GcsHttpSnafu { status_code, body }.fail();
+            return Err(GcsRequestError::GcsHttp { status_code, body });
         }
 
         // Retryable errors: backoff and retry
@@ -277,17 +278,17 @@ where
 
         // Exhausted retries or non-retryable status
         let body = read_error_body(response).await;
-        return GcsHttpSnafu { status_code, body }.fail();
+        return Err(GcsRequestError::GcsHttp { status_code, body });
     }
 }
 
 // --- Helpers ---
 
-fn create_gcs_client() -> Result<reqwest::Client, GcsTransferError> {
+fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .build()
-        .context(HttpSnafu)
+        .map_err(GcsRequestError::Http)
 }
 
 /// Constructs the GCS URL and extracts the bearer token from stage info.
@@ -301,7 +302,7 @@ fn create_gcs_client() -> Result<reqwest::Client, GcsTransferError> {
 fn resolve_url_and_token(
     stage_info: &StageInfo,
     key: &str,
-) -> Result<(String, Option<String>), GcsTransferError> {
+) -> Result<(String, Option<String>), GcsRequestError> {
     // Strategy 1: presigned URL
     if let Some(presigned) = &stage_info.presigned_url {
         return Ok((presigned.clone(), None));
@@ -312,7 +313,7 @@ fn resolve_url_and_token(
         CloudCredentials::Gcs { gcs_access_token } => {
             gcs_access_token.as_ref().map(|t| t.reveal().to_string())
         }
-        _ => return MissingGcsCredentialsSnafu.fail(),
+        _ => return Err(GcsRequestError::MissingGcsCredentials),
     };
 
     let url = build_gcs_url(stage_info, key);
@@ -360,14 +361,14 @@ fn backoff_delay(attempt: u32) -> Duration {
 fn get_header(
     headers: &reqwest::header::HeaderMap,
     name: &str,
-) -> Result<String, GcsTransferError> {
+) -> Result<String, GcsDownloadError> {
     headers
         .get(name)
-        .context(MissingMetadataSnafu {
+        .context(gcs_download_error::MissingMetadataSnafu {
             field: name.to_string(),
         })?
         .to_str()
-        .context(InvalidHeaderValueSnafu)
+        .context(gcs_download_error::InvalidHeaderValueSnafu)
         .map(|s| s.to_string())
 }
 
@@ -381,10 +382,65 @@ async fn read_error_body(response: reqwest::Response) -> String {
     }
 }
 
-// --- Unified error type ---
+// --- Error types ---
+
+/// Internal error for shared helpers (retry, client creation, URL resolution).
+/// Converted into `GcsUploadError` or `GcsDownloadError` via `From` impls.
+#[derive(Debug)]
+enum GcsRequestError {
+    Http(reqwest::Error),
+    GcsHttp { status_code: u16, body: String },
+    TokenExpired,
+    MissingGcsCredentials,
+}
+
+impl From<GcsRequestError> for GcsUploadError {
+    fn from(e: GcsRequestError) -> Self {
+        match e {
+            GcsRequestError::Http(source) => GcsUploadError::Http {
+                source,
+                location: Location::default(),
+            },
+            GcsRequestError::GcsHttp { status_code, body } => GcsUploadError::GcsHttp {
+                status_code,
+                body,
+                location: Location::default(),
+            },
+            GcsRequestError::TokenExpired => GcsUploadError::TokenExpired {
+                location: Location::default(),
+            },
+            GcsRequestError::MissingGcsCredentials => GcsUploadError::MissingGcsCredentials {
+                location: Location::default(),
+            },
+        }
+    }
+}
+
+impl From<GcsRequestError> for GcsDownloadError {
+    fn from(e: GcsRequestError) -> Self {
+        match e {
+            GcsRequestError::Http(source) => GcsDownloadError::Http {
+                source,
+                location: Location::default(),
+            },
+            GcsRequestError::GcsHttp { status_code, body } => GcsDownloadError::GcsHttp {
+                status_code,
+                body,
+                location: Location::default(),
+            },
+            GcsRequestError::TokenExpired => GcsDownloadError::TokenExpired {
+                location: Location::default(),
+            },
+            GcsRequestError::MissingGcsCredentials => GcsDownloadError::MissingGcsCredentials {
+                location: Location::default(),
+            },
+        }
+    }
+}
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
-pub enum GcsTransferError {
+#[snafu(module)]
+pub enum GcsUploadError {
     #[snafu(display("GCS HTTP error"))]
     Http {
         source: reqwest::Error,
@@ -406,6 +462,34 @@ pub enum GcsTransferError {
     #[snafu(display("Failed to serialize GCS metadata"))]
     Serialization {
         source: serde_json::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Missing GCS credentials"))]
+    MissingGcsCredentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
+#[snafu(module)]
+pub enum GcsDownloadError {
+    #[snafu(display("GCS HTTP error"))]
+    Http {
+        source: reqwest::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS request failed: HTTP {status_code}: {body}"))]
+    GcsHttp {
+        status_code: u16,
+        body: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS access token expired"))]
+    TokenExpired {
         #[snafu(implicit)]
         location: Location,
     },
@@ -626,7 +710,7 @@ mod tests {
         let result = resolve_url_and_token(&stage, "file.csv.gz");
         assert!(matches!(
             result,
-            Err(GcsTransferError::MissingGcsCredentials { .. })
+            Err(GcsRequestError::MissingGcsCredentials)
         ));
     }
 
