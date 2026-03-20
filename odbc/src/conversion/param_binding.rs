@@ -145,7 +145,7 @@ fn make_converter(
         })),
 
         sql::SqlDataType::TIME => Ok(Box::new(JsonParamConverter {
-            snowflake_type: SnowflakeTime,
+            snowflake_type: SnowflakeTime { scale: 9 },
         })),
 
         sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => {

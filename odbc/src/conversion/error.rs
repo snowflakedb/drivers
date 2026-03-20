@@ -15,6 +15,13 @@ pub enum ReadArrowError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Invalid Arrow value: {reason}"))]
+    InvalidArrowValue {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Snafu, Debug, ErrorTrace)]
