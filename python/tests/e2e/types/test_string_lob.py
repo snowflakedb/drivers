@@ -37,12 +37,13 @@ class TestStringLob:
     """Tests for STRING LOB (Large Object) handling."""
 
     def test_should_handle_lob_string_at_historical_16_mb_limit(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.lob_16mb_table"
-
         # Corner case: string at the historical LOB limit (16 MB = 16,777,216 bytes)
 
+        # Given Snowflake client is logged in
+        pass
+
         # And A temporary table with VARCHAR column is created
+        table_name = f"{tmp_schema}.lob_16mb_table"
         execute_query(f"CREATE TABLE {table_name} (val VARCHAR)")
 
         # When A string of 16777216 ASCII characters is generated and inserted
@@ -63,12 +64,13 @@ class TestStringLob:
         assert_strings_equal(result_str, generated_string)
 
     def test_should_handle_lob_string_at_maximum_128_mb_limit_with_increased_lob_size(self, execute_query, tmp_schema):
-        # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.lob_128mb_table"
-
         # Corner case: string at maximum LOB limit (128 MB) - requires Increased LOB Size feature
 
+        # Given Snowflake client is logged in
+        pass
+
         # And A temporary table with VARCHAR column is created
+        table_name = f"{tmp_schema}.lob_128mb_table"
         execute_query(f"CREATE TABLE {table_name} (val VARCHAR(134217728))")
 
         # When A string of 134217728 ASCII characters is generated and inserted

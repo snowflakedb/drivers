@@ -195,12 +195,13 @@ class TestBinaryTable:
 
     @binary_type_parametrize
     def test_should_select_binary_with_specified_length_from_table(self, execute_query, tmp_schema, binary_type):
-        # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.binary_length_test"
-
         # Tests BINARY(n) with specific length constraints
 
+        # Given Snowflake client is logged in
+        pass
+
         # And Table with columns (bin5 BINARY(5), bin10 BINARY(10), bin_default BINARY) exists
+        table_name = f"{tmp_schema}.binary_length_test"
         execute_query(
             f"CREATE TABLE {table_name} (bin5 {binary_type}(5), bin10 {binary_type}(10), bin_default {binary_type})"
         )
@@ -225,15 +226,15 @@ class TestBinaryBinding:
 
     @binary_type_parametrize
     def test_should_select_binary_literals_using_parameter_binding(self, execute_query, binary_type):
-        # Given Snowflake client is logged in
-        sql = f"SELECT ?::{binary_type}, ?::{binary_type}, ?::{binary_type}"
-
         # SELECT binding test: Uses SELECT ?::BINARY to bind binary values
+
+        # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT ?::BINARY, ?::BINARY, ?::BINARY" is executed with bound binary values
         # [0x48656C6C6F, 0x576F726C64, 0x0123456789ABCDEF]
         result = execute_query(
-            sql,
+            f"SELECT ?::{binary_type}, ?::{binary_type}, ?::{binary_type}",
             (b"Hello", b"World", b"\x01\x23\x45\x67\x89\xab\xcd\xef"),
             single_row=True,
         )
