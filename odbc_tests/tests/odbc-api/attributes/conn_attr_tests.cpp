@@ -2,12 +2,15 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <string>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "sf_odbc.h"
 #include "test_macros.hpp"
 
 // ============================================================================
@@ -422,4 +425,168 @@ TEST_CASE("should return HY024 for invalid SQL_ATTR_METADATA_ID value", "[odbc-a
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc.getHandle());
   REQUIRE(!records.empty());
   CHECK(records[0].sqlState == "HY024");
+}
+
+// ============================================================================
+// SQL_ATTR_CURRENT_CATALOG set + verify via SELECT CURRENT_DATABASE()
+// ============================================================================
+
+TEST_CASE("should set SQL_ATTR_CURRENT_CATALOG and verify via SELECT CURRENT_DATABASE()",
+          "[odbc-api][conn_attr][current_catalog][connecting]") {
+  // Given A connected DBC handle
+  Connection conn;
+
+  // Get the current catalog
+  char initial[256] = {};
+  SQLINTEGER len = 0;
+  SQLRETURN ret =
+      SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG, initial, sizeof(initial), &len);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(len > 0);
+
+  // When SQL_ATTR_CURRENT_CATALOG is set to the same database (round-trip)
+  ret = SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG,
+                          reinterpret_cast<SQLPOINTER>(initial), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then SELECT CURRENT_DATABASE() should return that catalog name
+  auto stmt = conn.createStatement();
+  ret = SQLExecDirect(stmt.getHandle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT CURRENT_DATABASE()")),
+                      SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  char result[256] = {};
+  SQLLEN result_len = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, result, sizeof(result), &result_len);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(std::string(result) == std::string(initial));
+}
+
+// ============================================================================
+// SQL_ATTR_LOGIN_TIMEOUT (103) — pre-connect only
+// ============================================================================
+
+TEST_CASE("should set and get SQL_ATTR_LOGIN_TIMEOUT before connection", "[odbc-api][conn_attr][login_timeout]") {
+  // Given An allocated but unconnected DBC handle
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ConnectionHandleWrapper dbc = env.createConnectionHandle();
+
+  // When SQL_ATTR_LOGIN_TIMEOUT is set to 30 seconds before connecting
+  ret = SQLSetConnectAttr(dbc.getHandle(), SQL_ATTR_LOGIN_TIMEOUT, reinterpret_cast<SQLPOINTER>(30), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return 30
+  SQLULEN timeout = 0;
+  ret = SQLGetConnectAttr(dbc.getHandle(), SQL_ATTR_LOGIN_TIMEOUT, &timeout, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(timeout == 30);
+}
+
+TEST_CASE("should return HY011 when setting SQL_ATTR_LOGIN_TIMEOUT after connection",
+          "[odbc-api][conn_attr][login_timeout][error][connecting]") {
+  SKIP_OLD_DRIVER("SNOW-3235557", "HY011 on post-connect LOGIN_TIMEOUT is new driver behavior");
+
+  // Given A connected DBC handle
+  Connection conn;
+
+  // When SQL_ATTR_LOGIN_TIMEOUT is set after connecting
+  SQLRETURN ret =
+      SQLSetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_LOGIN_TIMEOUT, reinterpret_cast<SQLPOINTER>(30), 0);
+
+  // Then It should return SQL_ERROR with SQLSTATE HY011
+  REQUIRE_EXPECTED_ERROR(ret, "HY011", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
+}
+
+// ============================================================================
+// String attribute truncation
+// ============================================================================
+
+TEST_CASE("should return SQL_SUCCESS_WITH_INFO when SQL_ATTR_CURRENT_CATALOG buffer is too small",
+          "[odbc-api][conn_attr][current_catalog][truncation][connecting]") {
+  // Given A connected DBC handle
+  Connection conn;
+
+  // When SQL_ATTR_CURRENT_CATALOG is queried with a 1-byte buffer (too small for any DB name)
+  char catalog[2] = {};
+  SQLINTEGER catalog_len = 0;
+  SQLRETURN ret =
+      SQLGetConnectAttr(conn.handleWrapper().getHandle(), SQL_ATTR_CURRENT_CATALOG, catalog, 1, &catalog_len);
+
+  // Then It should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+  REQUIRE_EXPECTED_WARNING(ret, "01004", conn.handleWrapper().getHandle(), SQL_HANDLE_DBC);
+  CHECK(catalog_len > 0);
+}
+
+// ============================================================================
+// Custom Snowflake connection attributes
+// ============================================================================
+
+TEST_CASE("should set and get SQL_SF_CONN_ATTR_APPLICATION before connection",
+          "[odbc-api][conn_attr][sf_custom][application]") {
+  SKIP_OLD_DRIVER("SNOW-3235556", "Snowflake custom connection attributes are new driver only");
+
+  // Given An allocated but unconnected DBC handle
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ConnectionHandleWrapper dbc = env.createConnectionHandle();
+
+  // When SQL_SF_CONN_ATTR_APPLICATION is set to a custom application name
+  const char* app_name = "TestApp";
+  ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_APPLICATION,
+                          reinterpret_cast<SQLPOINTER>(const_cast<char*>(app_name)), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return the same application name
+  char result[256] = {};
+  SQLINTEGER result_len = 0;
+  ret = SQLGetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_APPLICATION, result, sizeof(result), &result_len);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(std::string(result) == std::string(app_name));
+  CHECK(result_len == static_cast<SQLINTEGER>(strlen(app_name)));
+}
+
+// ============================================================================
+// Unknown connection attribute handling
+// ============================================================================
+
+TEST_CASE("should return error when setting an unknown connection attribute", "[odbc-api][conn_attr][error]") {
+  // Given An allocated DBC handle
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ConnectionHandleWrapper dbc = env.createConnectionHandle();
+
+  // When An unknown attribute ID is set
+  ret = SQLSetConnectAttr(dbc.getHandle(), 99999, reinterpret_cast<SQLPOINTER>(1), 0);
+
+  // Then It should return SQL_ERROR
+  // Note: Driver Manager may intercept with HY092; driver returns HYC00. Either is acceptable.
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(SQL_HANDLE_DBC, dbc.getHandle());
+  REQUIRE(!records.empty());
+  CHECK((records[0].sqlState == "HYC00" || records[0].sqlState == "HY092"));
+}
+
+TEST_CASE("should return error when getting an unknown connection attribute", "[odbc-api][conn_attr][error]") {
+  // Given An allocated DBC handle
+  EnvironmentHandleWrapper env;
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+  ConnectionHandleWrapper dbc = env.createConnectionHandle();
+
+  // When An unknown attribute ID is queried
+  SQLULEN value = 0;
+  ret = SQLGetConnectAttr(dbc.getHandle(), 99999, &value, 0, nullptr);
+
+  // Then It should return SQL_ERROR
+  // Note: Driver Manager may intercept with HY092; driver returns HYC00. Either is acceptable.
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(SQL_HANDLE_DBC, dbc.getHandle());
+  REQUIRE(!records.empty());
+  CHECK((records[0].sqlState == "HYC00" || records[0].sqlState == "HY092"));
 }

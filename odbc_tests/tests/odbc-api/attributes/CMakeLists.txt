@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_env_attr_tests env_attr_tests.cpp)
+add_odbc_test(odbc_api_conn_attr_tests conn_attr_tests.cpp)
+add_odbc_test(odbc_api_stmt_attr_tests stmt_attr_tests.cpp)

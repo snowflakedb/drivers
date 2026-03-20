@@ -2,12 +2,16 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <string>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
+#include "sf_odbc.h"
 #include "test_macros.hpp"
 
 // ============================================================================
@@ -629,4 +633,432 @@ TEST_CASE("should set and get SQL_ATTR_RETRIEVE_DATA SQL_RD_OFF", "[odbc-api][st
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_RETRIEVE_DATA, &retrieve, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
   CHECK(retrieve == SQL_RD_OFF);
+}
+
+// ============================================================================
+// SQL_ATTR_CURSOR_TYPE (6) — cursor type
+// ============================================================================
+
+TEST_CASE("should get SQL_ATTR_CURSOR_TYPE default as SQL_CURSOR_FORWARD_ONLY", "[odbc-api][stmt_attr][cursor_type]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_CURSOR_TYPE is queried without being set
+  SQLULEN cursor_type = 99;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, nullptr);
+
+  // Then It should return SQL_CURSOR_FORWARD_ONLY (0) by default
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(cursor_type == SQL_CURSOR_FORWARD_ONLY);
+}
+
+TEST_CASE("should accept SQL_ATTR_CURSOR_TYPE SQL_CURSOR_FORWARD_ONLY directly", "[odbc-api][stmt_attr][cursor_type]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_CURSOR_TYPE is set to SQL_CURSOR_FORWARD_ONLY
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, reinterpret_cast<SQLPOINTER>(SQL_CURSOR_FORWARD_ONLY), 0);
+
+  // Then It should succeed without warnings
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLULEN cursor_type = 99;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(cursor_type == SQL_CURSOR_FORWARD_ONLY);
+}
+
+TEST_CASE("should substitute SQL_ATTR_CURSOR_TYPE non-forward-only values with 01S02",
+          "[odbc-api][stmt_attr][cursor_type][warning]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_CURSOR_TYPE is set to SQL_CURSOR_STATIC (not supported by Snowflake)
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, reinterpret_cast<SQLPOINTER>(SQL_CURSOR_STATIC), 0);
+
+  // Then It should return SQL_SUCCESS_WITH_INFO with 01S02
+  REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+  REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "01S02");
+
+  // And the stored value should be SQL_CURSOR_FORWARD_ONLY
+  SQLULEN cursor_type = 99;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(cursor_type == SQL_CURSOR_FORWARD_ONLY);
+}
+
+// ============================================================================
+// SQL_ATTR_ROW_NUMBER (14) — current row number (read-only)
+// ============================================================================
+
+TEST_CASE("should get SQL_ATTR_ROW_NUMBER default as 0 before fetch", "[odbc-api][stmt_attr][row_number]") {
+  SKIP_OLD_DRIVER("SNOW-3235555", "SQL_ATTR_ROW_NUMBER is new driver feature");
+
+  // Given A connected statement handle (no execution yet)
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_ROW_NUMBER is queried before any fetch
+  SQLULEN row_num = 99;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_NUMBER, &row_num, 0, nullptr);
+
+  // Then It should return 0
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(row_num == 0);
+}
+
+TEST_CASE("should reject set on SQL_ATTR_ROW_NUMBER with HY092", "[odbc-api][stmt_attr][row_number][error]") {
+  SKIP_OLD_DRIVER("SNOW-3235555", "SQL_ATTR_ROW_NUMBER is new driver feature");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_ROW_NUMBER is set
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_NUMBER, reinterpret_cast<SQLPOINTER>(1), 0);
+
+  // Then It should return SQL_ERROR with SQLSTATE HY092
+  REQUIRE_EXPECTED_ERROR(ret, "HY092", stmt.getHandle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE("should get SQL_ATTR_ROW_NUMBER correct value during fetch", "[odbc-api][stmt_attr][row_number]") {
+  SKIP_OLD_DRIVER("SNOW-3235555", "SQL_ATTR_ROW_NUMBER is new driver feature");
+
+  // Given A statement with an active result set of 3 rows
+  Connection conn;
+  auto stmt = conn.execute("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3");
+
+  // When SQLFetch is called repeatedly
+  SQLULEN row_num = 0;
+
+  SQLRETURN ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_NUMBER, &row_num, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(row_num == 1);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_NUMBER, &row_num, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(row_num == 2);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_NUMBER, &row_num, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(row_num == 3);
+
+  // Then SQL_ATTR_ROW_NUMBER should increment by 1 on each SQLFetch call
+}
+
+// ============================================================================
+// SQL_ATTR_ROW_ARRAY_SIZE (27) — number of rows in a rowset fetch
+// ============================================================================
+
+TEST_CASE("should get SQL_ATTR_ROW_ARRAY_SIZE default as 1", "[odbc-api][stmt_attr][row_array_size]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_ROW_ARRAY_SIZE is queried without being set
+  SQLULEN row_array_size = 0;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, &row_array_size, 0, nullptr);
+
+  // Then It should return 1 by default
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(row_array_size == 1);
+}
+
+TEST_CASE("should set and get SQL_ATTR_ROW_ARRAY_SIZE", "[odbc-api][stmt_attr][row_array_size]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_ROW_ARRAY_SIZE is set to 10
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, reinterpret_cast<SQLPOINTER>(10), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return 10
+  SQLULEN row_array_size = 0;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, &row_array_size, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(row_array_size == 10);
+}
+
+// ============================================================================
+// SQL_ATTR_APP_ROW_DESC / SQL_ATTR_IMP_ROW_DESC — descriptor handles
+// ============================================================================
+
+TEST_CASE("should get non-null SQL_ATTR_APP_ROW_DESC handle", "[odbc-api][stmt_attr][descriptor]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_APP_ROW_DESC is queried
+  SQLHANDLE ard = nullptr;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, nullptr);
+
+  // Then It should return a non-null descriptor handle
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ard != nullptr);
+}
+
+TEST_CASE("should get non-null SQL_ATTR_IMP_ROW_DESC handle", "[odbc-api][stmt_attr][descriptor]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_IMP_ROW_DESC is queried
+  SQLHANDLE ird = nullptr;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_ROW_DESC, &ird, 0, nullptr);
+
+  // Then It should return a non-null descriptor handle
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ird != nullptr);
+}
+
+TEST_CASE("should get non-null SQL_ATTR_APP_PARAM_DESC handle", "[odbc-api][stmt_attr][descriptor]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_APP_PARAM_DESC is queried
+  SQLHANDLE apd = nullptr;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+
+  // Then It should return a non-null descriptor handle
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(apd != nullptr);
+}
+
+TEST_CASE("should get non-null SQL_ATTR_IMP_PARAM_DESC handle", "[odbc-api][stmt_attr][descriptor]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_IMP_PARAM_DESC is queried
+  SQLHANDLE ipd = nullptr;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_PARAM_DESC, &ipd, 0, nullptr);
+
+  // Then It should return a non-null descriptor handle
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ipd != nullptr);
+}
+
+// ============================================================================
+// SQL_ATTR_PARAMSET_SIZE (22) / SQL_ATTR_PARAM_BIND_TYPE (18) — parameter arrays
+// ============================================================================
+
+TEST_CASE("should get SQL_ATTR_PARAMSET_SIZE default as 1", "[odbc-api][stmt_attr][paramset_size]") {
+  SKIP_OLD_DRIVER("SNOW-3235553", "SQL_ATTR_PARAMSET_SIZE is new driver feature");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_PARAMSET_SIZE is queried without being set
+  SQLULEN size = 0;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, &size, 0, nullptr);
+
+  // Then It should return 1 by default
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(size == 1);
+}
+
+TEST_CASE("should set and get SQL_ATTR_PARAMSET_SIZE", "[odbc-api][stmt_attr][paramset_size]") {
+  SKIP_OLD_DRIVER("SNOW-3235553", "SQL_ATTR_PARAMSET_SIZE is new driver feature");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_PARAMSET_SIZE is set to 5
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(5), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return 5
+  SQLULEN size = 0;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, &size, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(size == 5);
+}
+
+TEST_CASE("should get SQL_ATTR_PARAM_BIND_TYPE default as SQL_PARAM_BIND_BY_COLUMN",
+          "[odbc-api][stmt_attr][param_bind_type]") {
+  SKIP_OLD_DRIVER("SNOW-3235553", "SQL_ATTR_PARAM_BIND_TYPE is new driver feature");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_PARAM_BIND_TYPE is queried without being set
+  SQLULEN bind_type = 99;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, &bind_type, 0, nullptr);
+
+  // Then It should return SQL_PARAM_BIND_BY_COLUMN (0) by default
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(bind_type == SQL_PARAM_BIND_BY_COLUMN);
+}
+
+TEST_CASE("should set and get SQL_ATTR_PARAM_BIND_TYPE", "[odbc-api][stmt_attr][param_bind_type]") {
+  SKIP_OLD_DRIVER("SNOW-3235553", "SQL_ATTR_PARAM_BIND_TYPE is new driver feature");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_ATTR_PARAM_BIND_TYPE is set to a row size
+  const SQLULEN row_size = 64;
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, reinterpret_cast<SQLPOINTER>(row_size), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return 64
+  SQLULEN bind_type = 0;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, &bind_type, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(bind_type == row_size);
+}
+
+// ============================================================================
+// Custom Snowflake: SQL_SF_STMT_ATTR_LAST_QUERY_ID
+// ============================================================================
+
+TEST_CASE("should get SQL_SF_STMT_ATTR_LAST_QUERY_ID default as empty string",
+          "[odbc-api][stmt_attr][sf_custom][last_query_id]") {
+  SKIP_OLD_DRIVER("SNOW-3235556", "Snowflake custom statement attributes are new driver only");
+
+  // Given A connected statement handle (no execution yet)
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_SF_STMT_ATTR_LAST_QUERY_ID is queried on a fresh statement
+  char query_id[256] = {};
+  SQLINTEGER len = 0;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, query_id, sizeof(query_id), &len);
+
+  // Then It should return SQL_SUCCESS and an empty string
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(std::string(query_id).empty());
+}
+
+TEST_CASE("should reject set on SQL_SF_STMT_ATTR_LAST_QUERY_ID with HY092",
+          "[odbc-api][stmt_attr][sf_custom][last_query_id][error]") {
+  SKIP_OLD_DRIVER("SNOW-3235556", "Snowflake custom statement attributes are new driver only");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_SF_STMT_ATTR_LAST_QUERY_ID is set (read-only attribute)
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, reinterpret_cast<SQLPOINTER>("id"), SQL_NTS);
+
+  // Then It should return SQL_ERROR with SQLSTATE HY092
+  REQUIRE_EXPECTED_ERROR(ret, "HY092", stmt.getHandle(), SQL_HANDLE_STMT);
+}
+
+TEST_CASE("should get SQL_SF_STMT_ATTR_LAST_QUERY_ID non-empty after execution",
+          "[odbc-api][stmt_attr][sf_custom][last_query_id][connecting]") {
+  SKIP_OLD_DRIVER("SNOW-3235556", "Snowflake custom statement attributes are new driver only");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLExecDirect executes a query
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then SQL_SF_STMT_ATTR_LAST_QUERY_ID should be non-empty
+  char query_id[256] = {};
+  SQLINTEGER len = 0;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_LAST_QUERY_ID, query_id, sizeof(query_id), &len);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(!std::string(query_id).empty());
+  CHECK(len > 0);
+}
+
+// ============================================================================
+// Custom Snowflake: SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT
+// ============================================================================
+
+TEST_CASE("should get SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT default as -1",
+          "[odbc-api][stmt_attr][sf_custom][multi_stmt]") {
+  SKIP_OLD_DRIVER("SNOW-3235556", "Snowflake custom statement attributes are new driver only");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT is queried without being set
+  SQLINTEGER value = 0;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, &value, 0, nullptr);
+
+  // Then It should return -1 by default
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(value == -1);
+}
+
+TEST_CASE("should set and get SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT", "[odbc-api][stmt_attr][sf_custom][multi_stmt]") {
+  SKIP_OLD_DRIVER("SNOW-3235556", "Snowflake custom statement attributes are new driver only");
+
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT is set to 3
+  SQLRETURN ret =
+      SQLSetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, reinterpret_cast<SQLPOINTER>(3), 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then Getting the attribute should return 3
+  SQLINTEGER value = 0;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT, &value, 0, nullptr);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(value == 3);
+}
+
+// ============================================================================
+// Unknown statement attribute handling
+// ============================================================================
+
+TEST_CASE("should return error when setting an unknown statement attribute", "[odbc-api][stmt_attr][error]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When An unknown attribute ID is set
+  SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), 99999, reinterpret_cast<SQLPOINTER>(1), 0);
+
+  // Then It should return SQL_ERROR
+  // Note: Driver Manager may intercept with HY092; driver returns HYC00. Either is acceptable.
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+  REQUIRE(!records.empty());
+  CHECK((records[0].sqlState == "HYC00" || records[0].sqlState == "HY092"));
+}
+
+TEST_CASE("should return error when getting an unknown statement attribute", "[odbc-api][stmt_attr][error]") {
+  // Given A connected statement handle
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When An unknown attribute ID is queried
+  SQLULEN value = 0;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), 99999, &value, 0, nullptr);
+
+  // Then It should return SQL_ERROR
+  // Note: Driver Manager may intercept with HY092; driver returns HYC00. Either is acceptable.
+  REQUIRE(ret == SQL_ERROR);
+  auto records = get_diag_rec(SQL_HANDLE_STMT, stmt.getHandle());
+  REQUIRE(!records.empty());
+  CHECK((records[0].sqlState == "HYC00" || records[0].sqlState == "HY092"));
 }
