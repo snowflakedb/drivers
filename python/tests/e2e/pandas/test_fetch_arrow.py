@@ -62,7 +62,6 @@ ARROW_TYPE_CASES = [
 ]
 
 
-@pytest.mark.skip_universal("SNOW-3243341 - not implemented yet")
 class TestFetchArrowAll:
     """Tests for fetch_arrow_all cursor method."""
 
@@ -174,7 +173,6 @@ class TestFetchArrowAll:
         assert ts_val.microsecond == 123456
 
 
-@pytest.mark.skip_universal("SNOW-3243341 - not implemented yet")
 class TestFetchArrowBatches:
     """Tests for fetch_arrow_batches cursor method."""
 

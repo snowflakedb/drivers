@@ -56,10 +56,12 @@ class BuildHook(BuildHookInterface):
     # C++ source files in ArrowIterator directory
     CPP_SOURCES = [
         "ArrayConverter.cpp",
+        "ArrowTableConverter.cpp",
         "BinaryConverter.cpp",
         "BooleanConverter.cpp",
         "CArrowIterator.cpp",
         "CArrowStreamIterator.cpp",
+        "CArrowStreamTableIterator.cpp",
         "ConverterUtil.cpp",
         "DateConverter.cpp",
         "DecFloatConverter.cpp",

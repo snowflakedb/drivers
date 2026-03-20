@@ -140,6 +140,9 @@ class Connection:
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
+        # other connection properties
+        self._arrow_number_to_decimal: bool = False
+
     @pep249
     def close(self) -> None:
         """Close the connection now."""
@@ -523,11 +526,21 @@ class Connection:
     @property
     def arrow_number_to_decimal(self) -> bool:
         """Whether to convert Arrow numeric types to Python ``Decimal`` instead of ``float``."""
-        raise NotImplementedError("arrow_number_to_decimal is not yet implemented")
+        return self._arrow_number_to_decimal
 
     @arrow_number_to_decimal.setter
     def arrow_number_to_decimal(self, value: bool) -> None:
-        raise NotImplementedError("arrow_number_to_decimal is not yet implemented")
+        self._arrow_number_to_decimal = bool(value)
+
+    @backward_compatibility
+    @arrow_number_to_decimal.setter  # type: ignore[attr-defined, untyped-decorator]
+    def arrow_number_to_decimal_setter(self, value: bool) -> None:
+        """Set arrow_number_to_decimal field. Deprecated.
+
+        Allows setting this field through `cursor.connection.arrow_number_to_decimal_setter = True`.
+        Added only because of backwards compatibility, correct setter should be used.
+        """
+        self.arrow_number_to_decimal = value
 
     @property
     def validate_default_parameters(self) -> bool:
