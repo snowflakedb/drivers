@@ -131,7 +131,11 @@ inline std::string get_connection_string() {
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+#ifdef SNOWFLAKE_OLD_DRIVER
+  ss << "PRIV_KEY_FILE=" << get_private_key_file_path(params) << ";";
+#else
   ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
+#endif
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
   return ss.str();
 }
