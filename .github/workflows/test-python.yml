@@ -358,6 +358,13 @@ jobs:
       # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
       # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
       # the same reason we use static OpenSSL for sf_core in the build_wheel job.
+      - name: Cache vcpkg packages
+        if: matrix.os == 'windows-11-arm'
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-arm64-windows-static-md-openssl
+
       - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
         if: matrix.os == 'windows-11-arm'
         shell: cmd
