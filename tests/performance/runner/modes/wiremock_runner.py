@@ -132,10 +132,14 @@ def run_wiremock_performance_test(
                 logger.info("Step 5: Stopping WireMock (record mode)...")
                 wiremock.stop()
             
-            # Extract expected row count from recording phase for validation during replay
             expected_row_count = _extract_row_count_from_recording(results_dir, test_name, driver, driver_type)
-            if expected_row_count:
-                logger.info(f"Extracted row count from recording: {expected_row_count} rows")
+            if expected_row_count is None or expected_row_count == 0:
+                raise RuntimeError(
+                    f"Recording phase failed for '{test_name}': no valid result CSV was produced. "
+                    f"The driver container likely crashed during query execution through "
+                    f"the WireMock proxy. Check the container logs above for details."
+                )
+            logger.info(f"Extracted row count from recording: {expected_row_count} rows")
         else:
             logger.info("")
             logger.info("Skipping recording phase - reusing existing mappings")
@@ -486,7 +490,7 @@ def _extract_row_count_from_recording(results_dir: Path, test_name: str, driver:
         logger.warning(f"No recording CSV found matching pattern: {pattern}")
         return None
     
-    csv_file = csv_files[0]
+    csv_file = max(csv_files, key=lambda p: p.stat().st_mtime)
     
     try:
         with open(csv_file, 'r') as f:
