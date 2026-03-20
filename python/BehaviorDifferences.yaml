@@ -37,3 +37,9 @@ behavior_differences:
     description: |
       NEW driver: Retrieving an option from a ConfigManager with no file_path returns an empty config and raises MissingConfigOptionError.
       OLD driver: Retrieving an option from a ConfigManager with no file_path raises ConfigManagerError about missing file_path.
+
+  15:
+    name: "Session parameter updates visible across cursors without execute"
+    description: |
+      NEW driver: cursor session parameters (e.g. cursor.timestamp_output_format) read from a shared connection-level cache, so changes made by one cursor are immediately visible to other cursors on the same connection without requiring a query.
+      OLD driver: Each cursor populates its session parameters independently from query responses, so a cursor that has not executed a query will not reflect changes made by another cursor.
