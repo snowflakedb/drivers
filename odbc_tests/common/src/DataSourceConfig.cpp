@@ -6,10 +6,23 @@
 #include <stdexcept>
 
 #include "ODBCConfig.hpp"
+#include "utils.hpp"
 
 // ============================================================================
 // DataSourceConfig
 // ============================================================================
+
+static std::string read_private_key_pem(const picojson::object& params) {
+  const auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS");
+  if (it == params.end() || !it->second.is<picojson::array>()) {
+    throw std::runtime_error("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found or not an array");
+  }
+  std::stringstream ss;
+  for (const auto& line : it->second.get<picojson::array>()) {
+    ss << line.get<std::string>() << "\n";
+  }
+  return ss.str();
+}
 
 DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name) {
   const auto params = load_parameters(connection_name);
@@ -35,8 +48,12 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   config.parameters_["PORT"] = "443";
   config.parameters_["SSL"] = "on";
   config.parameters_["UID"] = get_string(params, "SNOWFLAKE_TEST_USER", "");
-  config.parameters_["PWD"] = get_string(params, "SNOWFLAKE_TEST_PASSWORD", "");
   config.parameters_["ACCOUNT"] = get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "");
+  config.parameters_["AUTHENTICATOR"] = "SNOWFLAKE_JWT";
+  config.parameters_["PRIV_KEY_BASE64"] = test_utils::base64_encode(read_private_key_pem(params));
+  if (auto pwd = get_string(params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", ""); !pwd.empty()) {
+    config.parameters_["PRIV_KEY_FILE_PWD"] = pwd;
+  }
 
   // Optional parameters
   if (auto db = get_string(params, "SNOWFLAKE_TEST_DATABASE", ""); !db.empty()) {

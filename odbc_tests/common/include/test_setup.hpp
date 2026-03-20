@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
+#include "utils.hpp"
 
 inline picojson::object get_test_parameters(const std::string& connection_name) {
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");
@@ -129,7 +130,9 @@ inline std::string get_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
   return ss.str();
 }
 
