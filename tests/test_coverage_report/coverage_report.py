@@ -2212,7 +2212,13 @@ class CoverageReportGenerator:
             # Generate Behavior Difference sections
             behavior_difference_sections = []
             
-            for behavior_difference_id in sorted(all_behavior_differences):
+            def _bd_sort_key(bd_id):
+                """Sort BD#N numerically so BD#2 comes before BD#11."""
+                import re
+                m = re.search(r'(\d+)', bd_id)
+                return int(m.group(1)) if m else 0
+
+            for behavior_difference_id in sorted(all_behavior_differences, key=_bd_sort_key):
                 description = behavior_difference_descriptions.get(behavior_difference_id, 'No description available')
                 
                 # Create title with driver prefix (without full description in title)
@@ -2245,7 +2251,7 @@ class CoverageReportGenerator:
                 # Get test implementations for this Behavior Difference
                 test_implementations = behavior_difference_test_mapping.get(driver, {}).get(behavior_difference_id, [])
                 
-                                # Build test implementation list
+                # Build test implementation list
                 impl_items = []
                 for impl in test_implementations:
                     test_line_info = f"{impl['test_line']}" if impl.get('test_line') else "unknown"
@@ -2253,17 +2259,21 @@ class CoverageReportGenerator:
                     # Build behaviour lines
                     behaviour_lines = []
                     
-                    # New behaviour (NEW_DRIVER_ONLY)
+                    # New behaviour (NEW_DRIVER_ONLY or SKIP_OLD_DRIVER)
                     if impl.get('new_behaviour_file') and impl.get('new_behaviour_line'):
                         new_file = impl['new_behaviour_file']
                         new_line = impl['new_behaviour_line']
                         behaviour_lines.append(f"<strong>New Behavior:</strong> <code>{new_file}:{new_line}</code>")
+                    elif impl.get('new_driver_skipped'):
+                        behaviour_lines.append('<strong>New Behavior:</strong> <span style="color:#e67e22;font-style:italic">Test skipped for new driver</span>')
                     
-                    # Old behaviour (OLD_DRIVER_ONLY)
+                    # Old behaviour (OLD_DRIVER_ONLY or SKIP_NEW_DRIVER)
                     if impl.get('old_behaviour_file') and impl.get('old_behaviour_line'):
                         old_file = impl['old_behaviour_file']
                         old_line = impl['old_behaviour_line']
                         behaviour_lines.append(f"<strong>Old Behavior:</strong> <code>{old_file}:{old_line}</code>")
+                    elif impl.get('old_driver_skipped'):
+                        behaviour_lines.append('<strong>Old Behavior:</strong> <span style="color:#e67e22;font-style:italic">Test skipped for old driver</span>')
                     
                     # If no new/old behaviour found, fall back to legacy assertion field
                     if not behaviour_lines:
