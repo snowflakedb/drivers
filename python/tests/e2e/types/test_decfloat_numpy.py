@@ -28,9 +28,10 @@ class TestDecfloatNumPy:
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_should_cast_decfloat_values_to_numpy_float64(self, execute_query, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
-        sql = "SELECT 1.234::DECFLOAT, 123.456::DECFLOAT, -789.012::DECFLOAT"
+        pass
 
         # When Query "SELECT 1.234::DECFLOAT, 123.456::DECFLOAT, -789.012::DECFLOAT" is executed
+        sql = "SELECT 1.234::DECFLOAT, 123.456::DECFLOAT, -789.012::DECFLOAT"
         cursor_with_numpy.execute(sql)
         result = cursor_with_numpy.fetchone()
 
@@ -43,9 +44,10 @@ class TestDecfloatNumPy:
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_handles_extreme_exponents_within_float64_range(self, execute_query, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
-        sql = "SELECT '1.23e100'::DECFLOAT, '9.87e-100'::DECFLOAT"
+        pass
 
         # When Query with exponents within float64 range is executed
+        sql = "SELECT '1.23e100'::DECFLOAT, '9.87e-100'::DECFLOAT"
         cursor_with_numpy.execute(sql)
         result = cursor_with_numpy.fetchone()
 
@@ -58,9 +60,10 @@ class TestDecfloatNumPy:
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_overflows_extreme_exponents_beyond_float64_range(self, execute_query, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
-        sql = "SELECT '1e16384'::DECFLOAT, '1e-16383'::DECFLOAT"
+        pass
 
         # When Query with exponents exceeding float64 range is executed
+        sql = "SELECT '1e16384'::DECFLOAT, '1e-16383'::DECFLOAT"
         cursor_with_numpy.execute(sql)
         result = cursor_with_numpy.fetchone()
 

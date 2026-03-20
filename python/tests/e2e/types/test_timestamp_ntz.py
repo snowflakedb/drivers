@@ -52,9 +52,10 @@ class TestTimestampNtzTypeCasting:
 
     def test_should_cast_timestamp_ntz_values_to_appropriate_type(self, execute_query):
         # Given Snowflake client is logged in
-        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ"
+        pass
 
         # When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ" is executed
+        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
@@ -89,9 +90,10 @@ class TestTimestampNtzLiteral:
 
     def test_should_handle_null_values_for_timestamp_ntz(self, execute_query):
         # Given Snowflake client is logged in
-        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ"
+        pass
 
         # When Query "SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ" is executed
+        sql = f"SELECT '{TS_2024_JAN_STR}'::TIMESTAMP_NTZ, NULL::TIMESTAMP_NTZ"
         result = execute_query(
             sql,
             single_row=True,
@@ -103,16 +105,17 @@ class TestTimestampNtzLiteral:
 
     def test_should_download_large_result_set_with_multiple_chunks_for_timestamp_ntz(self, execute_query):
         # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1,
+        #   '2024-01-01 00:00:00'::TIMESTAMP_NTZ) as ts
+        #   FROM TABLE(GENERATOR(ROWCOUNT => 50000)) ORDER BY ts" is executed
         sql = (
             f"SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1, "
             f"'2024-01-01 00:00:00'::TIMESTAMP_NTZ) as ts "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
-
-        # When Query "SELECT DATEADD(second, ROW_NUMBER() OVER (ORDER BY seq8()) - 1,
-        #   '2024-01-01 00:00:00'::TIMESTAMP_NTZ) as ts
-        #   FROM TABLE(GENERATOR(ROWCOUNT => 50000)) ORDER BY ts" is executed
         rows = execute_query(sql)
 
         # Then Result should contain 50000 sequentially increasing timestamps from 2024-01-01 00:00:00
@@ -138,9 +141,10 @@ class TestTimestampNtzTable:
         self, execute_query, tmp_schema, values_name, insert_values, expected_values, can_be_none
     ):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.timestamp_ntz_table_{values_name}"
+        pass
 
         # And Table with TIMESTAMP_NTZ column exists with values <insert_values>
+        table_name = f"{tmp_schema}.timestamp_ntz_table_{values_name}"
         execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_NTZ)")
         batch_insert(execute_query, table_name, insert_values, quote_strings=True)
 
@@ -158,9 +162,10 @@ class TestTimestampNtzTable:
         self, execute_query, tmp_schema
     ):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.large_timestamp_ntz_table"
+        pass
 
         # And Table with TIMESTAMP_NTZ column exists with 50000 sequential timestamp values
+        table_name = f"{tmp_schema}.large_timestamp_ntz_table"
         execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_NTZ)")
         execute_query(
             f"INSERT INTO {table_name} "
@@ -191,9 +196,10 @@ class TestTimestampNtzBinding:
 
     def test_should_select_timestamp_ntz_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
-        sql = "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ"
+        pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ" is executed with bound timestamp values
+        sql = "SELECT ?::TIMESTAMP_NTZ, ?::TIMESTAMP_NTZ"
         result = execute_query(
             sql,
             (TS_2024_JAN, TS_2024_JUN),
@@ -210,9 +216,10 @@ class TestTimestampNtzBinding:
         self, execute_query
     ):
         # Given Snowflake client is logged in
-        sql = "SELECT ?::TIMESTAMP_NTZ"
+        pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound NULL value
+        sql = "SELECT ?::TIMESTAMP_NTZ"
         result = execute_query(sql, (None,), single_row=True)
 
         # Then Result should contain [NULL]
@@ -220,9 +227,10 @@ class TestTimestampNtzBinding:
 
     def test_should_insert_timestamp_ntz_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.timestamp_ntz_bind_table"
+        pass
 
         # And Table with TIMESTAMP_NTZ column exists
+        table_name = f"{tmp_schema}.timestamp_ntz_bind_table"
         execute_query(f"CREATE TABLE {table_name} (col TIMESTAMP_NTZ)")
 
         # When Timestamp values are bulk-inserted using multirow binding
@@ -253,9 +261,10 @@ class TestTimestampNtzBinding:
         self, execute_query, aware_input, expected
     ):
         # Given Snowflake client is logged in
-        sql = "SELECT ?::TIMESTAMP_NTZ"
+        pass
 
         # When Query "SELECT ?::TIMESTAMP_NTZ" is executed with bound aware datetime <input>
+        sql = "SELECT ?::TIMESTAMP_NTZ"
         result = execute_query(sql, (aware_input,), single_row=True)
 
         # Then Result should contain [<expected>]
@@ -331,9 +340,10 @@ class TestTimestampNtzPrecision:
         self, execute_query, input_str, expected
     ):
         # Given Snowflake client is logged in
-        sql = f"SELECT '{input_str}'::TIMESTAMP_NTZ"
+        pass
 
         # When Query "SELECT '<input>'::TIMESTAMP_NTZ" is executed
+        sql = f"SELECT '{input_str}'::TIMESTAMP_NTZ"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain [<expected>]

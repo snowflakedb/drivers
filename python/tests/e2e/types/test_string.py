@@ -82,9 +82,10 @@ class TestStringTypeCasting:
     @string_type_parametrize
     def test_should_cast_string_values_to_appropriate_type_for_string_and_synonyms(self, execute_query, string_type):
         # Given Snowflake client is logged in
-        sql = f"SELECT 'hello'::{string_type}(32), 'Hello World'::{string_type}(32), '日本語テスト'::{string_type}(32)"
+        pass
 
         # When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
+        sql = f"SELECT 'hello'::{string_type}(32), 'Hello World'::{string_type}(32), '日本語テスト'::{string_type}(32)"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
@@ -98,13 +99,14 @@ class TestStringLiteral:
     @string_type_parametrize
     def test_should_select_hardcoded_string_literals(self, execute_query, string_type):
         # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3" is executed
         sql = (
             f"SELECT 'hello'::{string_type}(32) AS str1, "
             f"'Hello World'::{string_type}(32) AS str2, "
             f"'Snowflake Driver Test'::{string_type}(32) AS str3"
         )
-
-        # When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3" is executed
         result = execute_query(sql, single_row=True)
 
         # Then the result should contain:
@@ -133,9 +135,10 @@ class TestStringTable:
     @string_type_parametrize
     def test_should_select_hardcoded_string_values_from_table(self, execute_query, tmp_schema, string_type):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.string_table_test"
+        pass
 
         # And A temporary table with VARCHAR column is created
+        table_name = f"{tmp_schema}.string_table_test"
         execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
 
         # And The table is populated with string values
@@ -154,9 +157,10 @@ class TestStringTable:
     @string_type_parametrize
     def test_should_select_corner_case_string_values_from_table(self, execute_query, tmp_schema, string_type):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.string_corner_case_table_test"
+        pass
 
         # And A temporary table with VARCHAR column is created
+        table_name = f"{tmp_schema}.string_corner_case_table_test"
         execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
 
         # And The table is populated with corner case string values
@@ -183,9 +187,10 @@ class TestStringBinding:
         self, execute_query, executemany_insert, tmp_schema, string_type
     ):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.string_bind_table_test"
+        pass
 
         # And A temporary table with VARCHAR column is created
+        table_name = f"{tmp_schema}.string_bind_table_test"
         execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
 
         # When String value 'Test binding value 日本語' is inserted using parameter binding

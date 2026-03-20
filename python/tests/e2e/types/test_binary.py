@@ -68,10 +68,11 @@ class TestBinaryTypeCasting:
     @binary_type_parametrize
     def test_should_cast_binary_values_to_appropriate_type(self, execute_query, binary_type):
         # Given Snowflake client is logged in
-        sql = f"SELECT TO_BINARY('48656C6C6F', 'HEX')::{binary_type}, TO_BINARY('V29ybGQ=', 'BASE64')::{binary_type}"
+        pass
 
         # When Query "SELECT TO_BINARY('48656C6C6F', 'HEX')::BINARY,
         # TO_BINARY('V29ybGQ=', 'BASE64')::BINARY" is executed
+        sql = f"SELECT TO_BINARY('48656C6C6F', 'HEX')::{binary_type}, TO_BINARY('V29ybGQ=', 'BASE64')::{binary_type}"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate binary type
@@ -87,13 +88,14 @@ class TestBinaryLiteral:
     @binary_type_parametrize
     def test_should_select_binary_literals(self, execute_query, binary_type):
         # Given Snowflake client is logged in
+        pass
+
+        # When Queries selecting binary literals are executed:
         sql = (
             f"SELECT X'48656C6C6F' AS bin1, "
             f"TO_BINARY('48656C6C6F', 'HEX')::{binary_type} as bin2, "
             f"TO_BINARY('ASNFZ4mrze8=', 'BASE64')::{binary_type} as bin3"
         )
-
-        # When Queries selecting binary literals are executed:
         result = execute_query(sql, single_row=True)
 
         # Then the results should contain expected binary values:
@@ -113,9 +115,10 @@ class TestBinaryLiteral:
     @binary_type_parametrize
     def test_should_handle_null_binary_values_from_literals(self, execute_query, binary_type):
         # Given Snowflake client is logged in
-        sql = f"SELECT NULL::{binary_type}, X'ABCD', NULL::{binary_type}"
+        pass
 
         # When Query "SELECT NULL::{type}, X'ABCD', NULL::{type}" is executed
+        sql = f"SELECT NULL::{binary_type}, X'ABCD', NULL::{binary_type}"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain [NULL, 0xABCD, NULL]
@@ -128,9 +131,10 @@ class TestBinaryTable:
     @binary_type_parametrize
     def test_should_select_binary_values_from_table(self, execute_query, tmp_schema, binary_type):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.binary_table_test"
+        pass
 
         # And A temporary table with BINARY column is created
+        table_name = f"{tmp_schema}.binary_table_test"
         execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
 
         # And The table is populated with binary values [X'48656C6C6F', X'576F726C64', X'0123456789ABCDEF']
@@ -149,9 +153,10 @@ class TestBinaryTable:
     @binary_type_parametrize
     def test_should_select_corner_case_binary_values_from_table(self, execute_query, tmp_schema, binary_type):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.binary_corner_case_table_test"
+        pass
 
         # And A temporary table with BINARY column is created
+        table_name = f"{tmp_schema}.binary_corner_case_table_test"
         execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
 
         # And The table is populated with corner case binary values
@@ -171,9 +176,10 @@ class TestBinaryTable:
     @binary_type_parametrize
     def test_should_select_null_binary_values_from_table(self, execute_query, tmp_schema, binary_type):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.binary_null_table_test"
+        pass
 
         # And A temporary table with BINARY column is created
+        table_name = f"{tmp_schema}.binary_null_table_test"
         execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
 
         # And The table is populated with NULL and non-NULL binary values [NULL, X'ABCD', NULL]
@@ -248,9 +254,10 @@ class TestBinaryBinding:
         self, execute_query, executemany_insert, tmp_schema, binary_type
     ):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.binary_bind_insert_test"
+        pass
 
         # And Table with BINARY column exists
+        table_name = f"{tmp_schema}.binary_bind_insert_test"
         execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
 
         # When Binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x] are inserted using binding
@@ -307,9 +314,10 @@ class TestBinaryMultipleChunks:
 
     def test_should_download_binary_data_in_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.binary_chunks_table"
+        pass
 
         # And Table with (bin_data BINARY) exists with 30000 sequential binary values
+        table_name = f"{tmp_schema}.binary_chunks_table"
         execute_query(f"CREATE TABLE {table_name} (bin_data BINARY)")
 
         # Insert 30000 sequential binary values using GENERATOR

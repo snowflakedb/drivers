@@ -36,9 +36,10 @@ class TestFloatNumPy:
         self, execute_query, cursor_with_numpy, float_type
     ):
         # Given Snowflake client is logged in with NumPy mode enabled
-        sql = f"SELECT 0.0::{float_type}, 123.456::{float_type}, -789.012::{float_type}, 1.23e10::{float_type}"
+        pass
 
         # When Query "SELECT 0.0::<type>, 123.456::<type>, -789.012::<type>, 1.23e10::<type>" is executed
+        sql = f"SELECT 0.0::{float_type}, 123.456::{float_type}, -789.012::{float_type}, 1.23e10::{float_type}"
         cursor_with_numpy.execute(sql)
         result = cursor_with_numpy.fetchone()
 
@@ -54,9 +55,10 @@ class TestFloatNumPy:
         self, execute_query, cursor_with_numpy, float_type
     ):
         # Given Snowflake client is logged in with NumPy mode enabled
-        sql = f"SELECT 'NaN'::{float_type}, 'inf'::{float_type}, '-inf'::{float_type}"
+        pass
 
         # When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
+        sql = f"SELECT 'NaN'::{float_type}, 'inf'::{float_type}, '-inf'::{float_type}"
         cursor_with_numpy.execute(sql)
         result = cursor_with_numpy.fetchone()
 

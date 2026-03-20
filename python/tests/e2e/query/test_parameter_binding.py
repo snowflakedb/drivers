@@ -21,9 +21,10 @@ class TestBasicTypeBinding:
     @with_paramstyle("qmark")
     def test_should_bind_basic_types_with_positional_parameters(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        sql = "SELECT ?, ?, ?, ?, ?"
+        pass
 
         # When Query "SELECT ?, ?, ?, ?, ?" is executed with positional parameters [42, 3.14, "hello", True, None]
+        sql = "SELECT ?, ?, ?, ?, ?"
         params = (42, 3.14, "hello", True, None)
         cursor.execute(sql, params)
         result = cursor.fetchone()
@@ -39,9 +40,10 @@ class TestBasicTypeBinding:
     @with_paramstyle("numeric")
     def test_should_bind_positional_parameters_with_numeric_placeholders(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        sql = "SELECT :1, :2, :3"
+        pass
 
         # When Query "SELECT :1, :2, :3" is executed with positional parameters [100, "test", True]
+        sql = "SELECT :1, :2, :3"
         params = (100, "test", True)
         cursor.execute(sql, params)
         result = cursor.fetchone()
@@ -56,9 +58,10 @@ class TestTableOperations:
 
     def test_should_insert_single_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.test_binding_insert"
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, active BOOLEAN) exists
+        table_name = f"{tmp_schema}.test_binding_insert"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)")
 
         # When Row with values [1, "Alice", True] is inserted using parameter binding
@@ -74,9 +77,10 @@ class TestTableOperations:
 
     def test_should_insert_multiple_rows_sequentially_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.test_binding_multiple"
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
+        table_name = f"{tmp_schema}.test_binding_multiple"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"] are inserted sequentially using parameter binding
@@ -94,9 +98,10 @@ class TestTableOperations:
 
     def test_should_update_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.test_binding_update"
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
+        table_name = f"{tmp_schema}.test_binding_update"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Row [1, "Alice"] is inserted
@@ -114,9 +119,10 @@ class TestTableOperations:
 
     def test_should_delete_row_with_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.test_binding_delete"
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
+        table_name = f"{tmp_schema}.test_binding_delete"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Rows [1, "Alice"] and [2, "Bob"] are inserted
@@ -136,9 +142,10 @@ class TestTableOperations:
 
     def test_should_select_with_where_clause_parameter_binding(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.test_binding_select_where"
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
+        table_name = f"{tmp_schema}.test_binding_select_where"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
 
         # And Rows [1, "Alice", 30], [2, "Bob", 25], [3, "Charlie", 35] are inserted
@@ -317,9 +324,10 @@ class TestBackwardCompatibility:
 
     def test_should_handle_both_tuple_and_list_parameter_formats(self, execute_query, cursor):
         # Given Snowflake client is logged in
-        sql = "SELECT ?, ?"
+        pass
 
         # When Query "SELECT ?, ?" is executed with tuple parameters (1, "test")
+        sql = "SELECT ?, ?"
         cursor.execute(sql, (1, "test"))
         result_tuple = cursor.fetchone()
 
@@ -350,9 +358,10 @@ class TestComplexScenarios:
 
     def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, execute_query, cursor, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.test_in_clause"
+        pass
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
+        table_name = f"{tmp_schema}.test_in_clause"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"], [4, "David"], [5, "Eve"] are inserted

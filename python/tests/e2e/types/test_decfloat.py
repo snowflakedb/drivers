@@ -50,10 +50,11 @@ class TestDecfloatTypeCasting:
 
     def test_should_cast_decfloat_values_to_appropriate_type(self, execute_query):
         # Given Snowflake client is logged in
-        sql = f"SELECT 0::DECFLOAT, 123.456::DECFLOAT, 1.23e37::DECFLOAT, '{DECFLOAT_38_DIGITS}'::DECFLOAT"
+        pass
 
         # When Query "SELECT 0::DECFLOAT, 123.456::DECFLOAT, 1.23e37::DECFLOAT,
         # '12345678901234567890123456789012345678'::DECFLOAT" is executed
+        sql = f"SELECT 0::DECFLOAT, 123.456::DECFLOAT, 1.23e37::DECFLOAT, '{DECFLOAT_38_DIGITS}'::DECFLOAT"
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
@@ -68,10 +69,11 @@ class TestDecfloatLiteral:
 
     def test_should_select_decfloat_literals(self, execute_query):
         # Given Snowflake client is logged in
-        sql = "SELECT 0::DECFLOAT, 1.5::DECFLOAT, -1.5::DECFLOAT, 123.456789::DECFLOAT, -987.654321::DECFLOAT"
+        pass
 
         # When Query "SELECT 0::DECFLOAT, 1.5::DECFLOAT, -1.5::DECFLOAT,
         # 123.456789::DECFLOAT, -987.654321::DECFLOAT" is executed
+        sql = "SELECT 0::DECFLOAT, 1.5::DECFLOAT, -1.5::DECFLOAT, 123.456789::DECFLOAT, -987.654321::DECFLOAT"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain exact decimals [0, 1.5, -1.5, 123.456789, -987.654321]
@@ -87,15 +89,16 @@ class TestDecfloatLiteral:
 
     def test_should_handle_full_38_digit_precision_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT '12345678901234567890123456789012345678'::DECFLOAT,
+        # '1.2345678901234567890123456789012345678E+100'::DECFLOAT,
+        # '1.2345678901234567890123456789012345678E-100'::DECFLOAT" is executed
         sql = (
             f"SELECT '{DECFLOAT_38_DIGITS}'::DECFLOAT, "
             f"'{DECFLOAT_38_DIGITS_POS_EXP}'::DECFLOAT, "
             f"'{DECFLOAT_38_DIGITS_NEG_EXP}'::DECFLOAT"
         )
-
-        # When Query "SELECT '12345678901234567890123456789012345678'::DECFLOAT,
-        # '1.2345678901234567890123456789012345678E+100'::DECFLOAT,
-        # '1.2345678901234567890123456789012345678E-100'::DECFLOAT" is executed
         result = execute_query(sql, single_row=True)
 
         # Then Result should preserve all 38 digits for each value
@@ -131,9 +134,10 @@ class TestDecfloatLiteral:
 
     def test_should_handle_null_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
-        sql = "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT"
+        pass
 
         # When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
+        sql = "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT"
         result = execute_query(sql, single_row=True)
 
         # Then Result should contain [NULL, 42.5, NULL]
@@ -142,13 +146,14 @@ class TestDecfloatLiteral:
 
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
         # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::DECFLOAT as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
-
-        # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -165,9 +170,10 @@ class TestDecfloatTable:
 
     def test_should_select_decfloats_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.decfloat_table"
+        pass
 
         # And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
+        table_name = f"{tmp_schema}.decfloat_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
         test_values = [
             Decimal("0"),
@@ -189,12 +195,13 @@ class TestDecfloatTable:
 
     def test_should_handle_full_38_digit_precision_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.precision_table"
+        pass
 
         # And Table with DECFLOAT column exists with values
         # [12345678901234567890123456789012345678,
         # 1.2345678901234567890123456789012345678E+100,
         # 1.2345678901234567890123456789012345678E-100]
+        table_name = f"{tmp_schema}.precision_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
         precision_values = [DECFLOAT_38_DIGITS, DECFLOAT_38_DIGITS_POS_EXP, DECFLOAT_38_DIGITS_NEG_EXP]
         for val in precision_values:
@@ -210,10 +217,11 @@ class TestDecfloatTable:
 
     def test_should_handle_extreme_exponent_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.extreme_table"
+        pass
 
         # And Table with DECFLOAT column exists with values
         # [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
+        table_name = f"{tmp_schema}.extreme_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
         extreme_values = [
             DECFLOAT_MAX_EXPONENT,
@@ -234,9 +242,10 @@ class TestDecfloatTable:
 
     def test_should_handle_null_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.null_table"
+        pass
 
         # And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
+        table_name = f"{tmp_schema}.null_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
         execute_query(f"INSERT INTO {table_name} VALUES (NULL), (123.456), (NULL), (-789.012)")
 
@@ -250,9 +259,10 @@ class TestDecfloatTable:
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.large_table"
+        pass
 
         # And Table with DECFLOAT column exists with values from 0 to 19999
+        table_name = f"{tmp_schema}.large_table"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -278,10 +288,11 @@ class TestDecfloatBinding:
 
     def test_should_select_decfloat_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
-        sql = "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT"
+        pass
 
         # When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed
         # with bound DECFLOAT values [123.456, -789.012, 42.0]
+        sql = "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT"
         result = execute_query(
             sql,
             (("DECFLOAT", Decimal("123.456")), ("DECFLOAT", Decimal("-789.012")), ("DECFLOAT", Decimal("42.0"))),
@@ -294,9 +305,10 @@ class TestDecfloatBinding:
 
     def test_should_select_null_decfloat_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
-        sql = "SELECT ?::DECFLOAT"
+        pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
+        sql = "SELECT ?::DECFLOAT"
         result = execute_query(sql, (None,), single_row=True)
 
         # Then Result should contain [NULL]
@@ -314,9 +326,10 @@ class TestDecfloatBinding:
     )
     def test_should_select_case_decfloat_using_parameter_binding(self, execute_query, type_name, value):
         # Given Snowflake client is logged in
-        sql = "SELECT ?::DECFLOAT"
+        pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
+        sql = "SELECT ?::DECFLOAT"
         result = execute_query(
             sql,
             ((type_name, value),),
@@ -329,9 +342,10 @@ class TestDecfloatBinding:
 
     def test_should_insert_decfloat_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.decfloat_bind_table"
+        pass
 
         # And Table with DECFLOAT column exists
+        table_name = f"{tmp_schema}.decfloat_bind_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
 
         # When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
@@ -353,9 +367,10 @@ class TestDecfloatBinding:
         self, execute_query, executemany_insert, tmp_schema
     ):
         # Given Snowflake client is logged in
-        table_name = f"{tmp_schema}.decfloat_extreme_bind_table"
+        pass
 
         # And Table with DECFLOAT column exists
+        table_name = f"{tmp_schema}.decfloat_extreme_bind_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
 
         # When DECFLOAT values [1E+16384, 1E-16383, -1.234E+8000] are inserted using explicit binding
