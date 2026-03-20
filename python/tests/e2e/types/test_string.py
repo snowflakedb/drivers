@@ -239,22 +239,23 @@ class TestStringMultipleChunks:
     """Tests for STRING type with multiple chunks downloading."""
 
     def test_should_download_string_data_in_multiple_chunks(self, execute_query):
-        # Given Snowflake client is logged in
-        sql = (
-            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
-            f"TO_VARCHAR(ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::VARCHAR AS str_val "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
-            f"ORDER BY id"
-        )
-
         # This test ensures proper handling of large result sets that span multiple chunks
         # ~10000 values ensures data is downloaded in at least two chunks
+
+        # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val
         # FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id" is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
+        sql = (
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
+            f"TO_VARCHAR(ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::VARCHAR AS str_val "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            f"ORDER BY id"
+        )
         rows = execute_query(sql)
 
         # Then there are 10000 rows returned and all string values should match the generated values in order

@@ -290,20 +290,21 @@ class TestBinaryMultipleChunks:
     """Tests for BINARY type with multiple chunks downloading."""
 
     def test_should_download_binary_data_in_multiple_chunks_using_generator(self, execute_query):
+        # ~30000 values ensures data is downloaded in at least two chunks
+
         # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT seq8() AS id, TO_BINARY(LPAD(TO_VARCHAR(seq8()), 10, '0'), 'UTF-8')
+        # AS bin_val FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v ORDER BY id" is executed
+
+        # Note: We use ROW_NUMBER() instead of seq8() directly to ensure sequential values
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
             f"TO_BINARY(LPAD(TO_VARCHAR(ROW_NUMBER() OVER (ORDER BY seq8()) - 1), 10, '0'), 'UTF-8') AS bin_val "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY id"
         )
-
-        # ~30000 values ensures data is downloaded in at least two chunks
-
-        # When Query "SELECT seq8() AS id, TO_BINARY(LPAD(TO_VARCHAR(seq8()), 10, '0'), 'UTF-8')
-        # AS bin_val FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v ORDER BY id" is executed
-
-        # Note: We use ROW_NUMBER() instead of seq8() directly to ensure sequential values
         rows = execute_query(sql)
 
         # Then there are 30000 rows returned
