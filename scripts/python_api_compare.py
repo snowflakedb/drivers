@@ -58,6 +58,19 @@ EXCLUDED_FROM_PUPR = {
     "build_location_helper",
     "chunk_helper",
     "make_pd_writer",
+    # helper
+    "ResultMetadataV2",
+    # internal, but missing "_" prefix - should not be exposed
+    "get_query_context",
+    "set_query_context",
+    "authenticate_with_retry",
+    "cmd_query",
+    "initialize_query_context_cache",
+    "is_query_context_cache_disabled",
+    "setup_ocsp_privatelink",
+    # auth_class - not meant to be supported by the wrapper
+    "auth_class",
+
 }
 
 REF_FILES = [
@@ -926,6 +939,10 @@ def main() -> None:
         # Presence overview
         helper_result = ComparisonResult(section="Helper classes — presence")
         for cls_name in helper_classes:
+            if cls_name in EXCLUDED_FROM_PUPR:
+                helper_result.add(SYM_EXCLUDED, cls_name, "excluded from scope")
+                continue
+
             ref_struct = _find_class_structure(cls_name, ref_trees)
             wrap_struct = _find_class_structure(cls_name, wrap_trees)
             in_ref = ref_struct.kind != "not_found"
@@ -946,6 +963,9 @@ def main() -> None:
 
         # Detailed structure comparison for each class present in both
         for cls_name in helper_classes:
+            if cls_name in EXCLUDED_FROM_PUPR:
+                continue
+
             ref_struct = _find_class_structure(cls_name, ref_trees)
             wrap_struct = _find_class_structure(cls_name, wrap_trees)
 
