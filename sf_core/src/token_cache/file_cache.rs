@@ -816,11 +816,30 @@ mod tests {
         #[cfg(target_os = "linux")]
         #[test]
         fn validate_file_fd_rejects_file_not_owned_by_current_user() {
-            let path = Path::new("/etc/hosts");
-            let file = fs::File::open(path).expect("/etc/hosts should be readable");
+            use std::os::unix::fs::MetadataExt;
 
-            let err = validate_file_fd(&file, path)
-                .expect_err("Expected FileNotOwnedByCurrentUser for root-owned file");
+            let current_uid = unsafe { libc::getuid() };
+
+            let (path, _dir) = if current_uid == 0 {
+                let dir = tempfile::tempdir().unwrap();
+                let p = dir.path().join("not_mine");
+                fs::write(&p, "test").unwrap();
+                let c_path = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+                let ret = unsafe { libc::chown(c_path.as_ptr(), 65534, 65534) };
+                assert_eq!(ret, 0, "chown failed");
+                assert_ne!(
+                    fs::metadata(&p).unwrap().uid(),
+                    current_uid,
+                    "File should be owned by a different user after chown"
+                );
+                (p, Some(dir))
+            } else {
+                (Path::new("/etc/hosts").to_path_buf(), None)
+            };
+
+            let file = fs::File::open(&path).expect("Should be able to open file");
+            let err = validate_file_fd(&file, &path)
+                .expect_err("Expected FileNotOwnedByCurrentUser for file owned by another user");
             assert!(
                 matches!(err, TokenCacheError::FileNotOwnedByCurrentUser { .. }),
                 "Expected FileNotOwnedByCurrentUser, got: {err}"
