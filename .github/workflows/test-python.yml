@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -65,7 +65,7 @@ jobs:
             ${{ runner.os }}-cargo-registry-
 
       - name: Cache Rust target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: target
           key: ${{ runner.os }}-rust-sf-core-release-target-${{ hashFiles('**/Cargo.lock') }}
@@ -74,7 +74,7 @@ jobs:
 
       - name: Cache vcpkg packages
         if: matrix.os == 'windows-11-arm'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: C:\vcpkg\installed
           key: vcpkg-arm64-windows-static-md-openssl
@@ -167,7 +167,7 @@ jobs:
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
       - name: Cache proto generator target
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: proto-target
           key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
@@ -185,7 +185,7 @@ jobs:
       # source via maturin. OpenSSL is needed for this dependency build.
       - name: Cache vcpkg packages
         if: matrix.os == 'windows-11-arm'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: C:\vcpkg\installed
           key: vcpkg-arm64-windows-static-md-openssl
