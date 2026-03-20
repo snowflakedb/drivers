@@ -21,7 +21,7 @@ from tests.utils import shared_test_data_dir
     ],
 )
 def test_should_auto_detect_standard_compression_types_when_source_compression_set_to_auto_detect(
-    execute_query, connection, expected_compression, filename
+    connection, expected_compression, filename
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
@@ -78,7 +78,7 @@ def test_should_auto_detect_standard_compression_types_when_source_compression_s
     ],
 )
 def test_should_upload_compressed_files_with_source_compression_set_to_explicit_types(
-    execute_query, connection, compression, filename
+    connection, compression, filename
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
@@ -111,7 +111,6 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
 
 
 def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and_auto_compress_set_to_false(
-    execute_query,
     connection,
 ):
     with connection.cursor() as cursor:
@@ -137,7 +136,6 @@ def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and
 
 
 def test_should_not_compress_file_when_source_compression_set_to_none_and_auto_compress_set_to_false(
-    execute_query,
     connection,
 ):
     with connection.cursor() as cursor:
@@ -162,7 +160,6 @@ def test_should_not_compress_file_when_source_compression_set_to_none_and_auto_c
 
 
 def test_should_compress_uncompressed_file_when_source_compression_set_to_auto_detect_and_auto_compress_set_to_true(
-    execute_query,
     connection,
 ):
     with connection.cursor() as cursor:
@@ -187,7 +184,6 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_auto_d
 
 
 def test_should_compress_uncompressed_file_when_source_compression_set_to_none_and_auto_compress_set_to_true(
-    execute_query,
     connection,
 ):
     with connection.cursor() as cursor:
@@ -212,7 +208,7 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_none_a
         assert_put_compression_result(result, filename, "NONE", expected_target, "GZIP")
 
 
-def test_should_return_error_for_unsupported_compression_type(execute_query, connection):
+def test_should_return_error_for_unsupported_compression_type(connection):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
         pass

@@ -35,7 +35,7 @@ class TestNumberNumPy:
     """Test suite for NUMBER type NumPy conversion (Python-specific)."""
 
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
-    def test_should_cast_number_scale0_to_numpy_int64(self, execute_query, cursor_with_numpy):
+    def test_should_cast_number_scale0_to_numpy_int64(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
 
@@ -52,7 +52,7 @@ class TestNumberNumPy:
         assert result == (0, 123, -456, 999999)
 
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
-    def test_should_cast_number_scale3_to_numpy_float64(self, execute_query, cursor_with_numpy):
+    def test_should_cast_number_scale3_to_numpy_float64(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
 
@@ -69,7 +69,7 @@ class TestNumberNumPy:
         assert_floats_equal(result, (0.0, 123.456, -789.012))
 
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
-    def test_numpy_handles_high_precision_integers_within_int64_range(self, execute_query, cursor_with_numpy):
+    def test_numpy_handles_high_precision_integers_within_int64_range(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
 

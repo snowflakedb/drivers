@@ -2,7 +2,7 @@ from tests.e2e.types.utils import assert_sequential_values
 
 
 class TestLargeResultSet:
-    def test_should_process_one_million_row_result_set(self, execute_query, cursor):
+    def test_should_process_one_million_row_result_set(self, cursor):
         # Given Snowflake client is logged in
         pass
 

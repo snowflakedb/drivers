@@ -81,7 +81,7 @@ def test_should_get_file_uploaded_to_stage(connection):
                 assert content == "1,2,3"
 
 
-def test_should_return_correct_rowset_for_put(execute_query, connection):
+def test_should_return_correct_rowset_for_put(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
@@ -139,7 +139,7 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[3] == ""
 
 
-def test_should_return_correct_column_metadata_for_put(execute_query, connection):
+def test_should_return_correct_column_metadata_for_put(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
@@ -258,7 +258,7 @@ def test_should_get_file_from_subdirectory_in_stage(connection):
             assert content == "1,2,3"
 
 
-def test_should_upload_file_to_subdirectory_in_stage(execute_query, connection):
+def test_should_upload_file_to_subdirectory_in_stage(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 

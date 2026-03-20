@@ -32,9 +32,7 @@ class TestFloatNumPy:
 
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     @float_type_parametrize
-    def test_should_cast_float_values_to_numpy_float64_for_float_and_synonyms(
-        self, execute_query, cursor_with_numpy, float_type
-    ):
+    def test_should_cast_float_values_to_numpy_float64_for_float_and_synonyms(self, cursor_with_numpy, float_type):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
 
@@ -51,9 +49,7 @@ class TestFloatNumPy:
 
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     @float_type_parametrize
-    def test_should_handle_special_float_values_with_numpy_for_float_and_synonyms(
-        self, execute_query, cursor_with_numpy, float_type
-    ):
+    def test_should_handle_special_float_values_with_numpy_for_float_and_synonyms(self, cursor_with_numpy, float_type):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
 

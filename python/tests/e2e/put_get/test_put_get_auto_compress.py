@@ -11,7 +11,6 @@ from tests.utils import shared_test_data_dir
 
 
 def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_set_to_true(
-    execute_query,
     connection,
 ):
     uncompressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -57,7 +56,6 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
 
 
 def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compress_set_to_false(
-    execute_query,
     connection,
 ):
     uncompressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
