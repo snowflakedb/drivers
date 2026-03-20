@@ -8,12 +8,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.errorcode import ER_NO_PYARROW
-from snowflake.connector._internal.extras import MissingOptionalDependency
+from snowflake.connector._internal.extras import (
+    MissingOptionalDependency,
+)
+from snowflake.connector._internal.extras import (
+    check_dependency as _real_check_dependency,
+)
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     StatementHandle,
 )
-from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
+from snowflake.connector.cursor import FetchMode, SnowflakeCursor, SnowflakeCursorBase
 from snowflake.connector.errors import ProgrammingError
 
 
@@ -794,3 +799,313 @@ class TestCheckCanUsePandas:
         with patch("snowflake.connector.cursor.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_pandas()
+
+
+class TestFetchArrowBatches:
+    """Unit tests for fetch_arrow_batches."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @pytest.fixture(autouse=True)
+    def _patch_pyarrow(self):
+        mock_pa = MagicMock()
+        with (
+            patch("snowflake.connector._internal.extras.check_dependency"),
+            patch("snowflake.connector.cursor.pyarrow", new=mock_pa),
+        ):
+            self.pa = mock_pa
+            yield
+
+    def test_yields_tables_from_batches(self, cursor):
+        batch1, batch2 = MagicMock(), MagicMock()
+        table1, table2 = MagicMock(), MagicMock()
+        self.pa.Table.from_batches.side_effect = [table1, table2]
+
+        with patch.object(cursor, "_get_table_iterator", return_value=iter([batch1, batch2])):
+            tables = list(cursor.fetch_arrow_batches())
+
+        assert tables == [table1, table2]
+        self.pa.Table.from_batches.assert_any_call([batch1])
+        self.pa.Table.from_batches.assert_any_call([batch2])
+
+    def test_yields_nothing_for_empty_stream(self, cursor):
+        with patch.object(cursor, "_get_table_iterator", return_value=iter([])):
+            tables = list(cursor.fetch_arrow_batches())
+
+        assert tables == []
+
+    def test_raises_when_pyarrow_not_installed(self, cursor):
+        missing = MissingOptionalDependency(dep="pyarrow")
+        with patch(
+            "snowflake.connector._internal.extras.check_dependency",
+            side_effect=lambda _: _real_check_dependency(missing),
+        ):
+            with pytest.raises(ProgrammingError, match="pyarrow"):
+                list(cursor.fetch_arrow_batches())
+
+    def test_passes_force_microsecond_precision(self, cursor):
+        with patch.object(cursor, "_get_table_iterator", return_value=iter([])) as mock_get:
+            list(cursor.fetch_arrow_batches(force_microsecond_precision=True))
+
+        mock_get.assert_called_once_with(force_microsecond_precision=True)
+
+
+class TestFetchArrowAll:
+    """Unit tests for fetch_arrow_all."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @pytest.fixture(autouse=True)
+    def _patch_pyarrow(self):
+        mock_pa = MagicMock()
+        with (
+            patch("snowflake.connector._internal.extras.check_dependency"),
+            patch("snowflake.connector.cursor.pyarrow", new=mock_pa),
+        ):
+            self.pa = mock_pa
+            yield
+
+    def test_returns_concatenated_table(self, cursor):
+        batch1, batch2 = MagicMock(), MagicMock()
+        mock_table = MagicMock()
+        self.pa.Table.from_batches.return_value = mock_table
+
+        with patch.object(cursor, "_get_table_iterator", return_value=iter([batch1, batch2])):
+            result = cursor.fetch_arrow_all()
+
+        assert result is mock_table
+        self.pa.Table.from_batches.assert_called_once_with([batch1, batch2])
+
+    def test_returns_none_for_empty_stream(self, cursor):
+        mock_iterator = MagicMock()
+        mock_iterator.__iter__ = MagicMock(return_value=iter([]))
+
+        with patch.object(cursor, "_get_table_iterator", return_value=mock_iterator):
+            result = cursor.fetch_arrow_all()
+
+        assert result is None
+
+    def test_returns_empty_table_with_force_return_table(self, cursor):
+        mock_empty_table = MagicMock()
+        mock_schema = MagicMock()
+        mock_schema.empty_table.return_value = mock_empty_table
+
+        mock_iterator = MagicMock()
+        mock_iterator.__iter__ = MagicMock(return_value=iter([]))
+        mock_iterator.get_converted_schema.return_value = mock_schema
+
+        with patch.object(cursor, "_get_table_iterator", return_value=mock_iterator):
+            result = cursor.fetch_arrow_all(force_return_table=True)
+
+        assert result is mock_empty_table
+        mock_iterator.get_converted_schema.assert_called_once()
+        mock_schema.empty_table.assert_called_once()
+
+    def test_returns_none_without_force_return_table(self, cursor):
+        mock_iterator = MagicMock()
+        mock_iterator.__iter__ = MagicMock(return_value=iter([]))
+
+        with patch.object(cursor, "_get_table_iterator", return_value=mock_iterator):
+            result = cursor.fetch_arrow_all(force_return_table=False)
+
+        assert result is None
+
+    def test_passes_force_microsecond_precision(self, cursor):
+        with patch.object(cursor, "_get_table_iterator", return_value=iter([])) as mock_get:
+            cursor.fetch_arrow_all(force_microsecond_precision=True)
+
+        mock_get.assert_called_once_with(force_microsecond_precision=True)
+
+
+class TestFetchPandasBatches:
+    """Unit tests for fetch_pandas_batches."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @pytest.fixture(autouse=True)
+    def _patch_deps(self):
+        with patch("snowflake.connector._internal.extras.check_dependency"):
+            yield
+
+    def test_yields_to_pandas_results(self, cursor):
+        table1, table2 = MagicMock(), MagicMock()
+        df1, df2 = MagicMock(), MagicMock()
+        table1.to_pandas.return_value = df1
+        table2.to_pandas.return_value = df2
+
+        with patch.object(cursor, "fetch_arrow_batches", return_value=iter([table1, table2])):
+            dfs = list(cursor.fetch_pandas_batches())
+
+        assert dfs == [df1, df2]
+        table1.to_pandas.assert_called_once()
+        table2.to_pandas.assert_called_once()
+
+    def test_raises_when_pandas_not_installed(self, cursor):
+        missing = MissingOptionalDependency(dep="pandas")
+        with patch(
+            "snowflake.connector._internal.extras.check_dependency",
+            side_effect=lambda _: _real_check_dependency(missing),
+        ):
+            with pytest.raises(ProgrammingError, match="pandas"):
+                list(cursor.fetch_pandas_batches())
+
+
+class TestFetchPandasAll:
+    """Unit tests for fetch_pandas_all."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @pytest.fixture(autouse=True)
+    def _patch_deps(self):
+        with patch("snowflake.connector._internal.extras.check_dependency"):
+            yield
+
+    def test_returns_to_pandas_result(self, cursor):
+        mock_table = MagicMock()
+        mock_df = MagicMock()
+        mock_table.to_pandas.return_value = mock_df
+
+        with patch.object(cursor, "fetch_arrow_all", return_value=mock_table):
+            result = cursor.fetch_pandas_all()
+
+        assert result is mock_df
+        mock_table.to_pandas.assert_called_once()
+
+    def test_returns_empty_dataframe_for_empty_stream(self, cursor):
+        mock_empty_table = MagicMock()
+        mock_empty_df = MagicMock()
+        mock_empty_table.to_pandas.return_value = mock_empty_df
+
+        with patch.object(cursor, "fetch_arrow_all", return_value=mock_empty_table) as mock_fetch:
+            result = cursor.fetch_pandas_all()
+
+        assert result is mock_empty_df
+        mock_fetch.assert_called_once_with(force_return_table=True)
+        mock_empty_table.to_pandas.assert_called_once()
+
+    def test_raises_when_pandas_not_installed(self, cursor):
+        missing = MissingOptionalDependency(dep="pandas")
+        with patch(
+            "snowflake.connector._internal.extras.check_dependency",
+            side_effect=lambda _: _real_check_dependency(missing),
+        ):
+            with pytest.raises(ProgrammingError, match="pandas"):
+                cursor.fetch_pandas_all()
+
+    def test_forwards_kwargs_to_fetch_arrow_all(self, cursor):
+        mock_table = MagicMock()
+        with patch.object(cursor, "fetch_arrow_all", return_value=mock_table) as mock_fetch:
+            cursor.fetch_pandas_all(force_microsecond_precision=True)
+
+        mock_fetch.assert_called_once_with(force_return_table=True, force_microsecond_precision=True)
+
+
+class TestFetchModeValidation:
+    """Unit tests for fetch mode validation (preventing mixed row/arrow fetching)."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    @pytest.fixture(autouse=True)
+    def _patch_deps(self):
+        with (
+            patch("snowflake.connector._internal.extras.check_dependency"),
+            patch("snowflake.connector.cursor.pyarrow", new=MagicMock()),
+            patch("snowflake.connector.cursor.pandas", new=MagicMock()),
+        ):
+            yield
+
+    def test_row_then_arrow_raises(self, cursor):
+        cursor._iterator = iter([(1,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+
+        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
+            list(cursor.fetch_arrow_batches())
+
+    def test_arrow_then_row_raises(self, cursor):
+        with patch.object(cursor, "_get_table_iterator", return_value=iter([])):
+            cursor.fetch_arrow_all()
+
+        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
+            cursor.fetchone()
+
+    def test_row_then_pandas_raises(self, cursor):
+        cursor._iterator = iter([(1,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+
+        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
+            list(cursor.fetch_pandas_batches())
+
+    def test_pandas_then_row_raises(self, cursor):
+        cursor._fetch_mode = FetchMode.ARROW
+
+        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
+            cursor.fetchall()
+
+    def test_fetchall_then_arrow_raises(self, cursor):
+        cursor._iterator = iter([(1,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchall()
+
+        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
+            cursor.fetch_arrow_all()
+
+    def test_same_mode_is_fine(self, cursor):
+        cursor._iterator = iter([(1,), (2,)])
+
+        with patch.object(cursor, "_get_iterator"):
+            cursor.fetchone()
+            cursor.fetchone()
+
+    def test_execute_resets_fetch_mode(self, cursor, mock_connection):
+        mock_connection.is_closed.return_value = False
+        result = MagicMock()
+        result.columns = []
+        result.HasField.return_value = False
+        result.sql_state = ""
+        mock_connection.db_api.statement_execute_query.return_value.result = result
+
+        cursor._fetch_mode = FetchMode.ARROW
+        with (
+            patch("snowflake.connector.cursor.StatementNewRequest"),
+            patch("snowflake.connector.cursor.StatementSetSqlQueryRequest"),
+            patch("snowflake.connector.cursor.StatementExecuteQueryRequest"),
+            patch("snowflake.connector.cursor.StatementReleaseRequest"),
+        ):
+            cursor.execute("SELECT 1")
+
+        assert cursor._fetch_mode is None

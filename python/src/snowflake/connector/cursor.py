@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import abc
 import ctypes
+import enum
 import functools
 
 from collections.abc import Iterator, Sequence
@@ -21,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, Union, cas
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_CURSOR_IS_CLOSED
 
 from ._internal.arrow_context import ArrowConverterContext
-from ._internal.arrow_stream_iterator import ArrowStreamIterator
+from ._internal.arrow_stream_iterator import ArrowStreamIterator, ArrowStreamTableIterator
 from ._internal.binding_converters import (
     ClientSideBindingConverter,
     JsonBindingConverter,
@@ -38,13 +39,13 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementReleaseRequest,
     StatementSetSqlQueryRequest,
 )
-from ._internal.type_codes import get_type_code
+from ._internal.type_codes import FIXED, get_type_code
 from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
     from pandas import DataFrame
-    from pyarrow import Table
+    from pyarrow import Schema, Table
 
     from .connection import Connection
 
@@ -52,31 +53,6 @@ Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
 F = TypeVar("F", bound=Callable[..., Any])
-
-
-def _requires_not_closed(func: F) -> F:
-
-    @functools.wraps(func)
-    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-        if self._closed:
-            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
-
-        return func(self, *args, **kwargs)
-
-    return cast(F, wrapper)
-
-
-def _requires_open_connection(func: F) -> F:
-    """Raise InterfaceError if the underlying connection is closed."""
-
-    @functools.wraps(func)
-    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-        if self.connection.is_closed():
-            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
-
-        return func(self, *args, **kwargs)
-
-    return cast(F, wrapper)
 
 
 class ResultMetadata(NamedTuple):
@@ -122,6 +98,64 @@ class ResultMetadata(NamedTuple):
 ResultMetadataV2 = ResultMetadata
 
 
+class FetchMode(enum.Enum):
+    """Distinguishes row-by-row fetching from Arrow/Pandas fetching.
+
+    Once a cursor begins consuming results with one mode, switching to
+    the other is disallowed until a new ``execute()`` resets state.
+    """
+
+    ROW = "row"
+    ARROW = "arrow"
+
+
+def _requires_not_closed(func: F) -> F:
+
+    @functools.wraps(func)
+    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+        if self._closed:
+            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
+
+
+def _requires_open_connection(func: F) -> F:
+    """Raise InterfaceError if the underlying connection is closed."""
+
+    @functools.wraps(func)
+    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+        if self.connection.is_closed():
+            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
+
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
+
+
+def _requires_fetch_mode(mode: FetchMode) -> Callable[[F], F]:
+    """Validate and lock the cursor's fetch mode before entering the wrapped method."""
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+            if self._fetch_mode and self._fetch_mode != mode:
+                if mode == FetchMode.ARROW:
+                    raise ProgrammingError("Cannot use arrow/pandas fetch methods after row-by-row fetching")
+                elif mode == FetchMode.ROW:
+                    raise ProgrammingError("Cannot use row-by-row fetch methods after arrow/pandas fetching")
+                else:
+                    raise ProgrammingError(f"Unexpected fetch mode: {mode}")
+            self._fetch_mode = mode
+
+            return func(self, *args, **kwargs)
+
+        return cast(F, wrapper)
+
+    return decorator
+
+
 class SnowflakeCursorBase(abc.ABC):
     """
     Base cursor class for database operations (PEP 249).
@@ -145,11 +179,9 @@ class SnowflakeCursorBase(abc.ABC):
         self._sqlstate: str | None = None
         self._closed = False
         # Streaming state for Arrow results
-        self._reader = None
-        self._current_batch = None
-        self._current_row_in_batch = 0
         self.execute_result: ExecuteResult | None = None
         self._iterator: Iterator[Row] | None = None
+        self._fetch_mode: FetchMode | None = None
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
@@ -394,6 +426,7 @@ class SnowflakeCursorBase(abc.ABC):
         # Reset streaming state for a new result
         self._binding_data = None
         self._iterator = None
+        self._fetch_mode = None
         self._rownumber = -1
 
         # Populate description, rowcount, and sqlstate
@@ -535,11 +568,25 @@ class SnowflakeCursorBase(abc.ABC):
             use_numpy=False,
         )
 
+    def _get_table_iterator(
+        self,
+        force_microsecond_precision: bool = False,
+    ) -> ArrowStreamTableIterator:
+        stream_ptr = self._get_stream_ptr()
+        arrow_context = ArrowConverterContext()
+        return ArrowStreamTableIterator(
+            stream_ptr,
+            arrow_context,
+            number_to_decimal=self._connection.arrow_number_to_decimal,
+            force_microsecond_precision=force_microsecond_precision,
+        )
+
     # ------------------------------------------------------------------
     # Fetch – shared implementation
     # ------------------------------------------------------------------
 
     @_requires_not_closed
+    @_requires_fetch_mode(FetchMode.ROW)
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
 
@@ -592,6 +639,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @pep249
     @_requires_not_closed
+    @_requires_fetch_mode(FetchMode.ROW)
     def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
@@ -808,32 +856,74 @@ class SnowflakeCursorBase(abc.ABC):
         """Query the result of a previously executed query."""
         raise NotImplementedError("query_result is not yet implemented")
 
+    @_requires_not_closed
     @requires_dependency(pyarrow)
+    @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_batches(
         self,
         force_microsecond_precision: bool = False,
     ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
-        raise NotImplementedError("fetch_arrow_batches is not yet implemented")
+        iterator = self._get_table_iterator(
+            force_microsecond_precision=force_microsecond_precision,
+        )
+        for batch in iterator:
+            yield pyarrow.Table.from_batches([batch])
 
+    @_requires_not_closed
     @requires_dependency(pyarrow)
+    @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_all(
         self,
         force_return_table: bool = False,
         force_microsecond_precision: bool = False,
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
-        raise NotImplementedError("fetch_arrow_all is not yet implemented")
+        iterator = self._get_table_iterator(
+            force_microsecond_precision=force_microsecond_precision,
+        )
+        batches = list(iterator)
+        if not batches:
+            if force_return_table:
+                schema = iterator.get_converted_schema()
+                normalized_schema = self._normalize_fixed_column_types(schema)
+                return normalized_schema.empty_table()
+            return None
+        return pyarrow.Table.from_batches(batches)
 
+    def _normalize_fixed_column_types(self, schema: Schema) -> Schema:
+        """Rewrite FIXED columns in an empty-result schema to int64 for backward compatibility.
+        When the result set has zero rows, the core chooses a narrower integer type
+        (i.e. int8) for NUMBER or float64 for SCALED NUMBER.
+        The old driver always exposed int64 in this case.
+        We use cursor.description (which is populated from query metadata) to identify FIXED columns and cast them.
+        """
+        if not self._description:
+            return schema
+
+        new_fields = []
+        changed = False
+        for field, metadata in zip(schema, self._description):
+            if metadata.type_code == FIXED and field.type != pyarrow.int64():
+                new_fields.append(field.with_type(pyarrow.int64()))
+                changed = True
+            else:
+                new_fields.append(field)
+        return pyarrow.schema(new_fields) if changed else schema
+
+    @_requires_not_closed
     @requires_dependency(pandas)
     def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
         """Fetch Pandas DataFrames in batches."""
-        raise NotImplementedError("fetch_pandas_batches is not yet implemented")
+        for table in self.fetch_arrow_batches(**kwargs):
+            yield table.to_pandas()
 
+    @_requires_not_closed
     @requires_dependency(pandas)
     def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
-        raise NotImplementedError("fetch_pandas_all is not yet implemented")
+        table: Table = self.fetch_arrow_all(force_return_table=True, **kwargs)
+        return table.to_pandas()
 
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""

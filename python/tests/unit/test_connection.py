@@ -413,3 +413,30 @@ class TestIsAnError:
         from snowflake.connector.connection import Connection
 
         assert Connection.is_an_error(status) == expected
+
+
+class TestConnectionArrowProperties:
+    """Unit tests for Connection properties (getters/setters)."""
+
+    def test_arrow_number_to_decimal_default_is_false(self, connection):
+        assert connection.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_setter_enables(self, connection):
+        connection.arrow_number_to_decimal = True
+        assert connection.arrow_number_to_decimal is True
+
+    def test_arrow_number_to_decimal_setter_enables_backward_compatible(self, connection):
+        connection.arrow_number_to_decimal_setter = True
+        assert connection.arrow_number_to_decimal is True
+
+    def test_arrow_number_to_decimal_setter_disables(self, connection):
+        connection.arrow_number_to_decimal = True
+        connection.arrow_number_to_decimal = False
+        assert connection.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_setter_coerces_to_bool(self, connection):
+        connection.arrow_number_to_decimal = 1
+        assert connection.arrow_number_to_decimal is True
+
+        connection.arrow_number_to_decimal = 0
+        assert connection.arrow_number_to_decimal is False
