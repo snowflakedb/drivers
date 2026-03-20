@@ -170,12 +170,6 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("Statement execution is done"))]
-    ExecutionDone {
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("No more data available"))]
     NoMoreData {
         #[snafu(implicit)]
@@ -418,7 +412,6 @@ impl OdbcError {
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
-            OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,

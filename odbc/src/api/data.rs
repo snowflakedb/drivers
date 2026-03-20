@@ -1,10 +1,9 @@
 use crate::api::CDataType;
 use crate::api::error::{
-    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
-    FetchTypeOutOfRangeSnafu, InvalidBufferLengthSnafu, InvalidCursorPositionSnafu,
-    InvalidCursorStateSnafu, InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu,
-    NoMoreDataSnafu, NullPointerSnafu, OdbcError, StatementErrorStateSnafu,
-    StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
+    ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
+    InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    OdbcError, StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
@@ -223,8 +222,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                     }
                 }
             }
-            Err(crate::api::error::OdbcError::NoMoreData { .. })
-            | Err(crate::api::error::OdbcError::ExecutionDone { .. }) => {
+            Err(crate::api::OdbcError::NoMoreData { .. }) => {
                 for remaining in row_idx..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }
@@ -269,7 +267,7 @@ pub fn fetch_scroll(
     match orientation {
         FetchOrientation::Next => fetch(statement_handle, warnings),
         other => {
-            tracing::warn!("fetch_scroll: unsupported orientation {:?}", other);
+            tracing::warn!("fetch_scroll: unsupported orientation {other:?}");
             FetchTypeOutOfRangeSnafu.fail()
         }
     }
@@ -293,7 +291,7 @@ pub fn extended_fetch(
     match orientation {
         FetchOrientation::Next => {}
         other => {
-            tracing::warn!("extended_fetch: unsupported orientation {:?}", other);
+            tracing::warn!("extended_fetch: unsupported orientation {other:?}");
             return UnsupportedFeatureSnafu.fail();
         }
     }
@@ -571,7 +569,7 @@ pub fn get_data(
         }
         StatementState::Done { .. } => {
             tracing::debug!("get_data: statement execution is done");
-            ExecutionDoneSnafu.fail()
+            NoMoreDataSnafu.fail()
         }
         StatementState::Created | StatementState::Prepared { .. } => {
             tracing::error!("get_data: data not fetched yet");
