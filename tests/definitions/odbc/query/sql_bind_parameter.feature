@@ -9,46 +9,10 @@ Feature: ODBC SQLBindParameter function behavior
   # ============================================================================
 
   @odbc_e2e
-  Scenario: SQLBindParameter binds SQL_C_SLONG integer and round-trips through SELECT.
+  Scenario: SQLBindParameter binds integer types and round-trips through SELECT.
     Given Snowflake client is logged in
     When a parameterized SELECT is prepared
-    And an SQL_C_SLONG parameter is bound with value 42
-    Then executing and fetching should return 42
-
-  @odbc_e2e
-  Scenario: SQLBindParameter binds SQL_C_SHORT integer and round-trips through SELECT.
-    Given Snowflake client is logged in
-    When a parameterized SELECT is prepared
-    And an SQL_C_SHORT parameter is bound with value 12345
-    Then executing and fetching should return 12345
-
-  @odbc_e2e
-  Scenario: SQLBindParameter binds SQL_C_SBIGINT and round-trips through SELECT.
-    Given Snowflake client is logged in
-    When a parameterized SELECT is prepared
-    And an SQL_C_SBIGINT parameter is bound with a large value
-    Then executing and fetching should return the large value
-
-  @odbc_e2e
-  Scenario: SQLBindParameter binds SQL_C_STINYINT and round-trips through SELECT.
-    Given Snowflake client is logged in
-    When a parameterized SELECT is prepared
-    And an SQL_C_STINYINT parameter is bound with value 127
-    Then executing and fetching should return 127
-
-  @odbc_e2e
-  Scenario: SQLBindParameter binds negative integer and round-trips through SELECT.
-    Given Snowflake client is logged in
-    When a parameterized SELECT is prepared
-    And an SQL_C_SLONG parameter is bound with value -42
-    Then executing and fetching should return -42
-
-  @odbc_e2e
-  Scenario: SQLBindParameter binds SQL_C_UTINYINT and round-trips through SELECT.
-    Given Snowflake client is logged in
-    When a parameterized SELECT is prepared
-    And an SQL_C_UTINYINT parameter is bound with value 255
-    Then executing and fetching should return 255
+    Then each integer C type should round-trip the bound value
 
   # ============================================================================
   # Decimal / Numeric Types

@@ -19,35 +19,27 @@
 // Integer Types
 // =============================================================================
 
-TEST_CASE("SQLBindParameter binds SQL_C_SLONG integer and round-trips through SELECT.", "[query][bind_parameter]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a parameterized SELECT is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-
-  // And an SQL_C_SLONG parameter is bound with value 42
-  SQLINTEGER param = 42;
+template <typename ParamT, typename ResultT>
+void verify_integer_roundtrip(const StatementHandleWrapper& stmt, SQLSMALLINT c_type, SQLSMALLINT sql_type,
+                              ParamT value, SQLSMALLINT result_c_type) {
+  ParamT param = value;
   SQLLEN indicator = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, c_type, sql_type, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC(ret, stmt);
 
-  // Then executing and fetching should return 42
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  SQLINTEGER result = 0;
+  ResultT result = 0;
   SQLLEN result_ind = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
+  ret = SQLGetData(stmt.getHandle(), 1, result_c_type, &result, sizeof(result), &result_ind);
   REQUIRE_ODBC(ret, stmt);
-  REQUIRE(result == 42);
+  REQUIRE(result == static_cast<ResultT>(value));
 }
 
-TEST_CASE("SQLBindParameter binds SQL_C_SHORT integer and round-trips through SELECT.", "[query][bind_parameter]") {
+TEST_CASE("SQLBindParameter binds integer types and round-trips through SELECT.", "[query][bind_parameter]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -56,137 +48,26 @@ TEST_CASE("SQLBindParameter binds SQL_C_SHORT integer and round-trips through SE
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
-  // And an SQL_C_SHORT parameter is bound with value 12345
-  SQLSMALLINT param = 12345;
-  SQLLEN indicator = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SHORT, SQL_SMALLINT, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then executing and fetching should return 12345
-  ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-
-  SQLINTEGER result = 0;
-  SQLLEN result_ind = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
-  REQUIRE_ODBC(ret, stmt);
-  REQUIRE(result == 12345);
-}
-
-TEST_CASE("SQLBindParameter binds SQL_C_SBIGINT and round-trips through SELECT.", "[query][bind_parameter]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a parameterized SELECT is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-
-  // And an SQL_C_SBIGINT parameter is bound with a large value
-  SQLBIGINT param = 9223372036854775807LL;
-  SQLLEN indicator = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIGINT, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then executing and fetching should return the large value
-  ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-
-  SQLBIGINT result = 0;
-  SQLLEN result_ind = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, sizeof(result), &result_ind);
-  REQUIRE_ODBC(ret, stmt);
-  REQUIRE(result == 9223372036854775807LL);
-}
-
-TEST_CASE("SQLBindParameter binds SQL_C_STINYINT and round-trips through SELECT.", "[query][bind_parameter]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a parameterized SELECT is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-
-  // And an SQL_C_STINYINT parameter is bound with value 127
-  SQLSCHAR param = 127;
-  SQLLEN indicator = 0;
-  ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_STINYINT, SQL_TINYINT, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then executing and fetching should return 127
-  ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-
-  SQLINTEGER result = 0;
-  SQLLEN result_ind = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
-  REQUIRE_ODBC(ret, stmt);
-  REQUIRE(result == 127);
-}
-
-TEST_CASE("SQLBindParameter binds negative integer and round-trips through SELECT.", "[query][bind_parameter]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a parameterized SELECT is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-
-  // And an SQL_C_SLONG parameter is bound with value -42
-  SQLINTEGER param = -42;
-  SQLLEN indicator = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then executing and fetching should return -42
-  ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-
-  SQLINTEGER result = 0;
-  SQLLEN result_ind = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
-  REQUIRE_ODBC(ret, stmt);
-  REQUIRE(result == -42);
-}
-
-TEST_CASE("SQLBindParameter binds SQL_C_UTINYINT and round-trips through SELECT.", "[query][bind_parameter]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a parameterized SELECT is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-
-  // And an SQL_C_UTINYINT parameter is bound with value 255
-  SQLCHAR param = 255;
-  SQLLEN indicator = 0;
-  ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_UTINYINT, SQL_TINYINT, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then executing and fetching should return 255
-  ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-
-  SQLINTEGER result = 0;
-  SQLLEN result_ind = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &result, sizeof(result), &result_ind);
-  REQUIRE_ODBC(ret, stmt);
-  REQUIRE(result == 255);
+  // Then each integer C type should round-trip the bound value
+  SECTION("SQL_C_SLONG") {
+    verify_integer_roundtrip<SQLINTEGER, SQLINTEGER>(stmt, SQL_C_SLONG, SQL_INTEGER, 42, SQL_C_SLONG);
+  }
+  SECTION("SQL_C_SHORT") {
+    verify_integer_roundtrip<SQLSMALLINT, SQLINTEGER>(stmt, SQL_C_SHORT, SQL_SMALLINT, 12345, SQL_C_SLONG);
+  }
+  SECTION("SQL_C_SBIGINT") {
+    verify_integer_roundtrip<SQLBIGINT, SQLBIGINT>(stmt, SQL_C_SBIGINT, SQL_BIGINT, 9223372036854775807LL,
+                                                   SQL_C_SBIGINT);
+  }
+  SECTION("SQL_C_STINYINT") {
+    verify_integer_roundtrip<SQLSCHAR, SQLINTEGER>(stmt, SQL_C_STINYINT, SQL_TINYINT, 127, SQL_C_SLONG);
+  }
+  SECTION("negative SQL_C_SLONG") {
+    verify_integer_roundtrip<SQLINTEGER, SQLINTEGER>(stmt, SQL_C_SLONG, SQL_INTEGER, -42, SQL_C_SLONG);
+  }
+  SECTION("SQL_C_UTINYINT") {
+    verify_integer_roundtrip<SQLCHAR, SQLINTEGER>(stmt, SQL_C_UTINYINT, SQL_TINYINT, 255, SQL_C_SLONG);
+  }
 }
 
 // =============================================================================
