@@ -153,12 +153,29 @@ TEST_CASE("should fail MFA authentication when password is not provided", "[mfa_
   auto dbc = get_mfa_connection_handle(env);
   std::string connection_string = get_mfa_connection_string_without_password();
 
+  // #region agent log
+  INFO("connection_string: " << connection_string);
+  // #endregion
+
   // When Trying to Connect
   SQLRETURN ret = attempt_mfa_connection(dbc, connection_string);
+
+  // #region agent log
+  INFO("SQLDriverConnect returned: " << ret);
+  // #endregion
 
   // Then Connection fails with a missing-parameter error
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
+
+  // #region agent log
+  UNSCOPED_INFO("diagnostic record count: " << records.size());
+  for (size_t i = 0; i < records.size(); ++i) {
+    UNSCOPED_INFO("record[" << i << "] sqlState=" << records[i].sqlState << " nativeError=" << records[i].nativeError
+                            << " messageText=[" << records[i].messageText << "]");
+  }
+  // #endregion
+
   REQUIRE(!records.empty());
   bool found_password_error = false;
   for (const auto& record : records) {
@@ -167,6 +184,7 @@ TEST_CASE("should fail MFA authentication when password is not provided", "[mfa_
       found_password_error = true;
     }
   }
+
   CHECK(found_password_error);
 }
 
