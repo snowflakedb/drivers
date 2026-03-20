@@ -96,8 +96,7 @@ jobs:
               - 'Cargo.lock'
               - 'build_common.rs'
               - 'rust-toolchain.toml'
-              - 'tests/**'
-              - '!tests/performance/**'
+              - 'tests/!(performance|tests_format_validator|test_coverage_report)/**'
               - '.github/workflows/**'
               - 'scripts/**'
             docs_only:

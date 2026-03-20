@@ -93,7 +93,12 @@ class WiremockManager:
         # Create and start container
         # For very large datasets (50M rows), use 12GB heap / 16GB container
         java_opts = (
-            "-Xmx12g -Xms4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 "
+            "-Xmx12g -Xms12g "
+            "-XX:+UseG1GC "
+            "-XX:MaxGCPauseMillis=100 "
+            "-XX:+ParallelRefProcEnabled "
+            "-XX:InitiatingHeapOccupancyPercent=45 "
+            "-XX:G1ReservePercent=10 "
             "--add-opens java.base/sun.security.x509=ALL-UNNAMED "
             "--add-opens java.base/sun.security.ssl=ALL-UNNAMED"
         )
