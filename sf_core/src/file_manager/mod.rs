@@ -1,5 +1,5 @@
 mod encryption;
-mod file_transfer;
+mod s3_transfer;
 
 mod path_expansion;
 pub mod types;
@@ -9,8 +9,8 @@ pub use self::types::*;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
-use file_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
 use path_expansion::{PathExpansionError, expand_filenames};
+use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
 use std::io::{Read, Write};
