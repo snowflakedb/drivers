@@ -208,6 +208,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Data source name '{dsn}' not found"))]
+    DsnNotFound {
+        dsn: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to parse port '{port}'"))]
     InvalidPort {
         port: String,
@@ -418,6 +425,9 @@ impl OdbcError {
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
+            OdbcError::DsnNotFound { .. } => {
+                SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
+            }
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
             OdbcError::PrepareStatement { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,

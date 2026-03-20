@@ -702,6 +702,9 @@ pub struct Connection {
     /// Attributes set via SQLSetConnectAttr before the connection is established
     pub pre_connection_attrs: PreConnectionAttributes,
     pub numeric_settings: NumericSettings,
+    /// Accumulated attributes across SQLBrowseConnect calls.
+    /// Cleared when the browse connect loop completes (success or reset).
+    pub browse_connect_attrs: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]

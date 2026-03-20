@@ -3,6 +3,7 @@ pub mod connection;
 pub mod data;
 pub mod descriptor;
 pub mod diagnostic;
+pub mod dsn;
 pub mod encoding;
 pub mod environment;
 pub mod error;

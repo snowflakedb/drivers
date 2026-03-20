@@ -322,8 +322,9 @@ pub unsafe extern "C" fn SQLDriverConnect(
     _window_handle: sql::Handle,
     in_connection_string: *const sql::Char,
     in_string_length: sql::SmallInt,
-    _out_connection_string: *mut sql::Char,
-    _out_string_length: *mut sql::SmallInt,
+    out_connection_string: *mut sql::Char,
+    out_buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
@@ -331,6 +332,9 @@ pub unsafe extern "C" fn SQLDriverConnect(
         connection_handle,
         in_connection_string,
         in_string_length,
+        out_connection_string,
+        out_buffer_length,
+        out_string_length,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
@@ -344,8 +348,9 @@ pub unsafe extern "C" fn SQLDriverConnectW(
     _window_handle: sql::Handle,
     in_connection_string: *const sql::WChar,
     in_string_length: sql::SmallInt,
-    _out_connection_string: *mut sql::WChar,
-    _out_string_length: *mut sql::SmallInt,
+    out_connection_string: *mut sql::WChar,
+    out_buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
     _driver_completion: sql::SmallInt,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
@@ -353,9 +358,82 @@ pub unsafe extern "C" fn SQLDriverConnectW(
         connection_handle,
         in_connection_string,
         in_string_length,
+        out_connection_string,
+        out_buffer_length,
+        out_string_length,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
     result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLBrowseConnect(
+    connection_handle: sql::Handle,
+    in_connection_string: *const sql::Char,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut sql::Char,
+    out_buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::browse_connect::<Narrow>(
+        connection_handle,
+        in_connection_string,
+        in_string_length,
+        out_connection_string,
+        out_buffer_length,
+        out_string_length,
+    );
+    match result {
+        Ok(api::connection::BrowseConnectOutcome::Connected) => sql::SqlReturn::SUCCESS.0,
+        Ok(api::connection::BrowseConnectOutcome::NeedData) => sql::SqlReturn::NEED_DATA.0,
+        Err(e) => {
+            let err_result: api::OdbcResult<()> = Err(e);
+            api::diagnostic::set_diag_info_from_result(
+                sql::HandleType::Dbc,
+                connection_handle,
+                &err_result,
+            );
+            sql::SqlReturn::ERROR.0
+        }
+    }
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLBrowseConnectW(
+    connection_handle: sql::Handle,
+    in_connection_string: *const sql::WChar,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut sql::WChar,
+    out_buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::browse_connect::<Wide>(
+        connection_handle,
+        in_connection_string,
+        in_string_length,
+        out_connection_string,
+        out_buffer_length,
+        out_string_length,
+    );
+    match result {
+        Ok(api::connection::BrowseConnectOutcome::Connected) => sql::SqlReturn::SUCCESS.0,
+        Ok(api::connection::BrowseConnectOutcome::NeedData) => sql::SqlReturn::NEED_DATA.0,
+        Err(e) => {
+            let err_result: api::OdbcResult<()> = Err(e);
+            api::diagnostic::set_diag_info_from_result(
+                sql::HandleType::Dbc,
+                connection_handle,
+                &err_result,
+            );
+            sql::SqlReturn::ERROR.0
+        }
+    }
 }
 
 /// # Safety

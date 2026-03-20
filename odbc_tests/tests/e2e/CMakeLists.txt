@@ -1,5 +1,8 @@
 # E2E tests
 
+# connection
+add_odbc_test(e2e_connection_sql_connect connection/sql_connect.cpp)
+
 # authentication
 add_odbc_test(e2e_authentication_native_okta authentication/native_okta.cpp)
 add_odbc_test(e2e_authentication_pat authentication/pat.cpp)

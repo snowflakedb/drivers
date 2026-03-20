@@ -1,12 +1,13 @@
 use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
+use crate::api::dsn::load_dsn_config;
 use crate::api::encoding::{
     OdbcEncoding, read_string_from_pointer, write_string_bytes, write_string_bytes_i32,
 };
 use crate::api::error::Required;
 use crate::api::error::{
-    AttributeCannotBeSetNowSnafu, InvalidPortSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu,
-    UnsupportedAttributeSnafu,
+    AttributeCannotBeSetNowSnafu, DsnNotFoundSnafu, InvalidPortSnafu, OdbcRuntimeSnafu,
+    UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -26,10 +27,14 @@ const SQL_AUTOCOMMIT_ON: sql::ULen = 1;
 /// SQLSetConnectAttr provides a value.
 const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
 
+/// Browse-connect template returned when required attributes are missing.
+const BROWSE_CONNECT_TEMPLATE: &str = "*SERVER:Server=?;ACCOUNT:Account=?;*UID:UID=?;*PWD:PWD=?;\
+     DATABASE:Database=?;WAREHOUSE:Warehouse=?;ROLE:Role=?;SCHEMA:Schema=?;";
+
 /// Maps ODBC connection string parameter names to their sf_core equivalents.
 /// Parameters listed here are forwarded as-is via `connection_set_option_string`.
 /// Parameters that need special handling (type conversion, conditional skipping,
-/// side-effects) are handled separately in `driver_connect`.
+/// side-effects) are handled separately in `apply_connection_attrs_to_core`.
 const PARAM_MAPPINGS: &[(&str, &str)] = &[
     ("ACCOUNT", "account"),
     ("SERVER", "host"),
@@ -49,30 +54,188 @@ const PARAM_MAPPINGS: &[(&str, &str)] = &[
     ("CRL_ENABLED", "crl_enabled"),
 ];
 
-/// Parse connection string into key-value pairs
+/// Parse a semicolon-separated ODBC connection string into a key/value map.
+/// Keys are normalised to uppercase; empty pairs are ignored.
 fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for pair in connection_string.split(';') {
-        let parts: Vec<&str> = pair.splitn(2, '=').collect();
-        if parts.len() == 2 {
-            map.insert(parts[0].to_string(), parts[1].to_string());
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        if let Some(eq) = pair.find('=') {
+            let key = pair[..eq].trim().to_uppercase();
+            let val = pair[eq + 1..].trim().to_string();
+            if !key.is_empty() {
+                map.insert(key, val);
+            }
         }
     }
     map
 }
 
-/// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
+/// Merge DSN attributes with connection-string attributes.
+/// Connection-string values win on key conflicts (matching ODBC spec and old driver behaviour).
+fn merge_attrs(
+    dsn_attrs: HashMap<String, String>,
+    conn_str_attrs: HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut merged = dsn_attrs;
+    for (k, v) in conn_str_attrs {
+        merged.insert(k, v);
+    }
+    merged
+}
+
+/// Read a string from an ODBC input pointer, returning an empty string if the
+/// pointer is null (rather than an error).  Used for optional arguments such as
+/// the UID / PWD in `SQLConnect`.
+fn read_optional_string<E: OdbcEncoding>(
+    ptr: *const E::Char,
+    length: sql::SmallInt,
+) -> OdbcResult<String> {
+    if ptr.is_null() {
+        return Ok(String::new());
+    }
+    E::read_string(ptr, length as i32)
+}
+
+// ─── Public entry points ──────────────────────────────────────────────────────
+
+/// `SQLDriverConnect` / `SQLDriverConnectW` — connect using an inline connection string.
 pub fn driver_connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     in_connection_string: *const E::Char,
     in_string_length: sql::SmallInt,
+    out_connection_string: *mut E::Char,
+    out_buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
-    driver_connect_impl(connection_handle, &connection_string)
+    let completed = driver_connect_core(connection_handle, &connection_string)?;
+    write_string_bytes::<E>(
+        &completed,
+        out_connection_string,
+        out_buffer_length,
+        out_string_length,
+        None,
+    );
+    Ok(())
 }
 
-fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) -> OdbcResult<()> {
-    let connection_string_map = parse_connection_string(connection_string);
+/// `SQLConnect` / `SQLConnectW` — connect via DSN + explicit user/password.
+pub fn connect<E: OdbcEncoding>(
+    connection_handle: sql::Handle,
+    server_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    user_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    authentication: *const E::Char,
+    name_length3: sql::SmallInt,
+) -> OdbcResult<()> {
+    let dsn = read_optional_string::<E>(server_name, name_length1)?;
+    let uid = read_optional_string::<E>(user_name, name_length2)?;
+    let pwd = read_optional_string::<E>(authentication, name_length3)?;
+
+    tracing::info!("connect: DSN={:?} UID={:?}", dsn, uid);
+
+    // Build a synthetic connection string and delegate to the shared core.
+    let mut conn_str = String::new();
+    if !dsn.is_empty() {
+        conn_str.push_str(&format!("DSN={dsn};"));
+    }
+    if !uid.is_empty() {
+        conn_str.push_str(&format!("UID={uid};"));
+    }
+    if !pwd.is_empty() {
+        conn_str.push_str(&format!("PWD={pwd};"));
+    }
+
+    driver_connect_core(connection_handle, &conn_str)?;
+    Ok(())
+}
+
+/// Outcome of a `SQLBrowseConnect` call.
+pub enum BrowseConnectOutcome {
+    /// Connection established.
+    Connected,
+    /// More attributes needed.
+    NeedData,
+}
+
+/// `SQLBrowseConnect` / `SQLBrowseConnectW`.
+pub fn browse_connect<E: OdbcEncoding>(
+    connection_handle: sql::Handle,
+    in_connection_string: *const E::Char,
+    in_string_length: sql::SmallInt,
+    out_connection_string: *mut E::Char,
+    out_buffer_length: sql::SmallInt,
+    out_string_length: *mut sql::SmallInt,
+) -> OdbcResult<BrowseConnectOutcome> {
+    let input = E::read_string(in_connection_string, in_string_length as i32)?;
+    let new_attrs = parse_connection_string(&input);
+
+    // Accumulate new attributes and snapshot — then release the borrow before
+    // calling driver_connect_core (which also calls conn_from_handle internally).
+    let (has_server, conn_str) = {
+        let connection = conn_from_handle(connection_handle);
+        for (k, v) in new_attrs {
+            connection.browse_connect_attrs.insert(k, v);
+        }
+        let accumulated = &connection.browse_connect_attrs;
+        let has_server = accumulated.contains_key("SERVER")
+            || accumulated.contains_key("ACCOUNT")
+            || accumulated.contains_key("DSN");
+        let cs: String = accumulated
+            .iter()
+            .map(|(k, v)| format!("{k}={v};"))
+            .collect();
+        (has_server, cs)
+    };
+
+    if !has_server {
+        tracing::debug!("browse_connect: insufficient attrs, returning NEED_DATA");
+        write_string_bytes::<E>(
+            BROWSE_CONNECT_TEMPLATE,
+            out_connection_string,
+            out_buffer_length,
+            out_string_length,
+            None,
+        );
+        return Ok(BrowseConnectOutcome::NeedData);
+    }
+
+    // Attempt the connection with the accumulated attributes.
+    match driver_connect_core(connection_handle, &conn_str) {
+        Ok(completed) => {
+            // Reset accumulated state on success.
+            conn_from_handle(connection_handle)
+                .browse_connect_attrs
+                .clear();
+            write_string_bytes::<E>(
+                &completed,
+                out_connection_string,
+                out_buffer_length,
+                out_string_length,
+                None,
+            );
+            Ok(BrowseConnectOutcome::Connected)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+// ─── Internal connection pipeline ────────────────────────────────────────────
+
+/// Shared connection implementation used by all three connection entry points.
+/// Returns the completed connection string (for output buffer writes).
+fn driver_connect_core(
+    connection_handle: sql::Handle,
+    connection_string: &str,
+) -> OdbcResult<String> {
+    let mut conn_str_attrs = parse_connection_string(connection_string);
+
+    // Log connection string with sensitive values redacted.
     {
         const REDACTED_KEYS: &[&str] = &[
             "PWD",
@@ -81,22 +244,41 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
             "PRIV_KEY_PWD",
             "PRIV_KEY_BASE64",
         ];
-        let redacted_map: HashMap<&String, &str> = connection_string_map
+        let redacted: HashMap<&String, &str> = conn_str_attrs
             .iter()
             .map(|(k, v)| {
-                let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
-                let v = if is_sensitive { "****" } else { v.as_str() };
-                (k, v)
+                let sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
+                (k, if sensitive { "****" } else { v.as_str() })
             })
             .collect();
-        tracing::info!("driver_connect: connection_string={:?}", redacted_map);
+        tracing::info!("driver_connect_core: connection_string={:?}", redacted);
     }
+
+    // If a DSN is referenced, load its attributes and merge (conn string wins).
+    let merged_attrs = if let Some(dsn_name) = conn_str_attrs.remove("DSN") {
+        tracing::debug!("driver_connect_core: resolving DSN {:?}", dsn_name);
+        match load_dsn_config(&dsn_name) {
+            Some(dsn_attrs) => {
+                let mut m = merge_attrs(dsn_attrs, conn_str_attrs);
+                // Preserve the DSN name in the merged map for reference.
+                m.insert("DSN".to_string(), dsn_name);
+                m
+            }
+            None => {
+                tracing::warn!("driver_connect_core: DSN {:?} not found", dsn_name);
+                return DsnNotFoundSnafu { dsn: dsn_name }.fail();
+            }
+        }
+    } else {
+        conn_str_attrs
+    };
+
+    // Build a completed connection string from the merged attributes for the
+    // output buffer (sensitive values excluded).
+    let completed_conn_str = build_completed_connection_string(&merged_attrs);
 
     let connection = conn_from_handle(connection_handle);
 
-    // Check whether attribute-based key options supersede file-based connection string params.
-    // Matches old driver (SFConnection.cpp): if PrivKeyContent or PrivKeyBase64 was set via
-    // SQLSetConnectAttr, PRIV_KEY_FILE from the connection string is not used.
     let attr_key_set = connection
         .pre_connection_attrs
         .contains_key(&ConnectionAttribute::PrivKeyContent)
@@ -125,20 +307,20 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
 
             let mut login_timeout_set = false;
 
-            for (key, value) in connection_string_map {
-                if key == "DRIVER" {
+            for (key, value) in &merged_attrs {
+                if key == "DRIVER" || key == "DSN" || key == "DESCRIPTION" || key == "SSL" || key == "LOCALE" || key == "TRACING" {
                     continue;
                 }
 
                 if let Some(core_key) = PARAM_MAPPINGS
                     .iter()
-                    .find(|(k, _)| *k == key)
+                    .find(|(k, _)| k.eq_ignore_ascii_case(key))
                     .map(|(_, v)| *v)
                 {
                     c.connection_set_option_string(ConnectionSetOptionStringRequest {
                         conn_handle: Some(conn_handle),
                         key: core_key.to_owned(),
-                        value,
+                        value: value.clone(),
                     })
                     .await?;
                     continue;
@@ -146,9 +328,8 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
 
                 match key.as_str() {
                     "PORT" => {
-                        let port_int: i64 = value.parse().context(InvalidPortSnafu {
-                            port: value.clone(),
-                        })?;
+                        let port_int: i64 =
+                            value.parse().context(InvalidPortSnafu { port: value.clone() })?;
                         c.connection_set_option_int(ConnectionSetOptionIntRequest {
                             conn_handle: Some(conn_handle),
                             key: "port".to_owned(),
@@ -169,20 +350,20 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                         c.connection_set_option_string(ConnectionSetOptionStringRequest {
                             conn_handle: Some(conn_handle),
                             key: "authentication_timeout".to_owned(),
-                            value,
+                            value: value.clone(),
                         })
                         .await?;
                     }
                     "PRIV_KEY_FILE" => {
                         if attr_key_set {
                             tracing::debug!(
-                                "driver_connect: skipping PRIV_KEY_FILE — attribute-based key takes priority"
+                                "driver_connect_core: skipping PRIV_KEY_FILE — attribute-based key takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
                                 conn_handle: Some(conn_handle),
                                 key: "private_key_file".to_owned(),
-                                value,
+                                value: value.clone(),
                             })
                             .await?;
                         }
@@ -190,13 +371,13 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                     "PRIV_KEY_BASE64" => {
                         if attr_key_set {
                             tracing::debug!(
-                                "driver_connect: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
+                                "driver_connect_core: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
                                 conn_handle: Some(conn_handle),
                                 key: "private_key".to_owned(),
-                                value,
+                                value: value.clone(),
                             })
                             .await?;
                         }
@@ -204,19 +385,21 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                     "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
                         if attr_has_priv_key_password {
                             tracing::debug!(
-                                "driver_connect: skipping {key} — attribute-based password takes priority"
+                                "driver_connect_core: skipping {key} — attribute-based password takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
                                 conn_handle: Some(conn_handle),
                                 key: "private_key_password".to_owned(),
-                                value,
+                                value: value.clone(),
                             })
                             .await?;
                         }
                     }
                     _ => {
-                        tracing::warn!("driver_connect: unknown connection string key: {key:?}");
+                        tracing::warn!(
+                            "driver_connect_core: unknown connection string key: {key:?}"
+                        );
                     }
                 }
             }
@@ -249,14 +432,33 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
             Ok::<_, crate::api::error::OdbcError>((db_handle, conn_handle))
         })?;
 
-    tracing::info!("driver_connect: connection_init completed");
+    tracing::info!("driver_connect_core: connection_init completed");
 
-    connection.state = ConnectionState::Connected {
+    conn_from_handle(connection_handle).state = ConnectionState::Connected {
         db_handle,
         conn_handle,
     };
 
-    Ok(())
+    Ok(completed_conn_str)
+}
+
+/// Build a sanitised completed connection string from the merged attribute map.
+/// Sensitive keys (password, tokens, private keys) are excluded.
+fn build_completed_connection_string(attrs: &HashMap<String, String>) -> String {
+    const EXCLUDE: &[&str] = &[
+        "PWD",
+        "TOKEN",
+        "PRIV_KEY_FILE_PWD",
+        "PRIV_KEY_PWD",
+        "PRIV_KEY_BASE64",
+    ];
+    let mut parts: Vec<String> = attrs
+        .iter()
+        .filter(|(k, _)| !EXCLUDE.iter().any(|e| k.eq_ignore_ascii_case(e)))
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    parts.sort(); // deterministic order
+    parts.join(";")
 }
 
 /// Apply pre-connection attributes to sf_core. SQLSetConnectAttr values override
@@ -319,21 +521,6 @@ async fn apply_pre_connection_attrs_async(
     }
 
     Ok(false)
-}
-
-/// Connect function (SQLConnect / SQLConnectW) - currently a placeholder.
-pub fn connect<E: OdbcEncoding>(
-    _connection_handle: sql::Handle,
-    _server_name: *const E::Char,
-    _name_length1: sql::SmallInt,
-    _user_name: *const E::Char,
-    _name_length2: sql::SmallInt,
-    _authentication: *const E::Char,
-    _name_length3: sql::SmallInt,
-) -> OdbcResult<()> {
-    tracing::debug!("connect: currently a placeholder implementation");
-    // TODO: Implement proper SQLConnect functionality
-    Ok(())
 }
 
 /// Disconnect from the database
