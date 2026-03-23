@@ -193,10 +193,21 @@ def configureCommonTestTask = { t ->
     t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
     t.environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
 
-    def retryCount = System.getenv('GRADLE_TEST_RETRY_COUNT')
+    def rawRetryCount = System.getenv('GRADLE_TEST_RETRY_COUNT')
+    def retryCount = rawRetryCount?.trim()
     if (retryCount) {
+        int parsedRetryCount
+        try {
+            parsedRetryCount = Integer.parseInt(retryCount)
+            if (parsedRetryCount < 0) {
+                throw new NumberFormatException("negative value")
+            }
+        } catch (NumberFormatException e) {
+            throw new GradleException("Environment variable GRADLE_TEST_RETRY_COUNT must be a non-negative integer, but was: '${rawRetryCount}'", e)
+        }
+
         t.retry {
-            maxRetries = Integer.parseInt(retryCount)
+            maxRetries = parsedRetryCount
             maxFailures = 10
         }
     }

@@ -139,6 +139,10 @@ jobs:
       - name: Rerun failed Old ODBC tests (Linux)
         if: steps.run_odbc_ref_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
         run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
 
       - name: Run Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'
@@ -155,6 +159,10 @@ jobs:
         if: steps.run_odbc_ref_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
         shell: pwsh
         run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          DRIVER_TYPE: OLD
 
   odbc_tests:
     needs: detect-changes
@@ -261,6 +269,10 @@ jobs:
       - name: Rerun failed ODBC tests (Unix)
         if: steps.run_odbc_tests_unix.outcome == 'failure' && github.event_name == 'merge_group'
         run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: NEW
 
       - name: Build and run ODBC tests (Windows)
         if: runner.os == 'Windows'
@@ -278,6 +290,10 @@ jobs:
         if: steps.run_odbc_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
         shell: pwsh
         run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          DRIVER_TYPE: NEW
 
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests]
