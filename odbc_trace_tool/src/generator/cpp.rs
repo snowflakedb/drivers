@@ -41,6 +41,10 @@ fn escape_cpp_string_literal(s: &str) -> String {
     out
 }
 
+// SQLGetDiagRec calls are diagnostic-only and not part of the functional replay.
+// We can add them back later if we need to assert on diagnostics.
+// SQLGetFunctions queries driver manager which vary across managers and are
+// not meaningful to assert in replay tests.
 const SKIPPED_FUNCTIONS: &[&str] = &["SQLGetDiagRec", "SQLGetFunctions"];
 
 const DRIVER_SPECIFIC_INFO_TYPES: &[&str] = &[
