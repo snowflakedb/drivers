@@ -1,12 +1,11 @@
 use super::types::{
     CloudCredentials, EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo,
 };
+use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
+use bytes::Bytes;
 use snafu::{Location, OptionExt, ResultExt, Snafu};
-use std::sync::Arc;
 use std::time::Duration;
 
-const MAX_RETRIES: u32 = 5;
-const MAX_BACKOFF_EXPONENT: u32 = 4; // 2^4 = 16 seconds max
 const REQUEST_TIMEOUT_SECS: u64 = 300;
 
 /// Retryable HTTP status codes for GCS operations.
@@ -50,7 +49,6 @@ pub async fn download_from_gcs(
     let using_presigned_url = stage_info.presigned_url.is_some();
 
     let response = execute_with_retry(
-        &client,
         || {
             let mut req = client.get(&url);
             if let Some(ref t) = token {
@@ -59,6 +57,7 @@ pub async fn download_from_gcs(
             req
         },
         using_presigned_url,
+        &gcs_retry_policy(),
     )
     .await?;
 
@@ -99,7 +98,7 @@ pub async fn download_from_gcs(
     let encrypted_data = response
         .bytes()
         .await
-        .map_err(GcsRequestError::Http)?
+        .map_err(|source| GcsRequestError::Http { source })?
         .to_vec();
     Ok((encrypted_data, file_metadata))
 }
@@ -170,21 +169,19 @@ async fn upload_to_gcs(
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)
         .context(gcs_upload_error::SerializationSnafu)?;
 
-    // Wrap in Arc for cheap sharing on retries (avoids cloning large Vec on each retry)
-    let data: Arc<Vec<u8>> = Arc::new(encryption_result.data);
+    // Bytes is reference-counted: cloning in the retry closure is O(1), not a full copy.
+    let data = Bytes::from(encryption_result.data);
     let digest = encryption_result.metadata.digest;
 
     execute_with_retry(
-        client,
         || {
-            let body_bytes = (*data).clone();
             let mut req = client
                 .put(url)
                 .header(GCS_META_SFC_DIGEST, &digest)
                 .header(GCS_META_ENCRYPTIONDATA, &encryption_data_str)
                 .header(GCS_META_MATDESC, &mat_desc)
                 .header("content-encoding", "")
-                .body(body_bytes);
+                .body(data.clone());
 
             if let Some(t) = token {
                 req = req.bearer_auth(t);
@@ -192,6 +189,7 @@ async fn upload_to_gcs(
             req
         },
         false,
+        &gcs_retry_policy(),
     )
     .await?;
 
@@ -201,32 +199,50 @@ async fn upload_to_gcs(
 
 // --- Retry logic (shared between upload and download) ---
 
+/// Returns a retry policy tuned for GCS file-transfer operations.
+fn gcs_retry_policy() -> RetryPolicy {
+    RetryPolicy {
+        max_attempts: 6,
+        backoff: BackoffConfig {
+            base: Duration::from_secs(1),
+            factor: 2.0,
+            cap: Duration::from_secs(16),
+            jitter: Jitter::None,
+        },
+        ..RetryPolicy::default()
+    }
+}
+
 /// Executes an HTTP request with retry logic and exponential backoff.
 async fn execute_with_retry<F>(
-    _client: &reqwest::Client,
     build_request: F,
     using_presigned_url: bool,
+    policy: &RetryPolicy,
 ) -> Result<reqwest::Response, GcsRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
+    let max_retries = policy.max_attempts.saturating_sub(1);
     let mut attempt = 0u32;
+    let mut sleep_ms = policy.backoff.base.as_millis() as f64;
+
     loop {
         let response = match build_request().send().await {
             Ok(resp) => resp,
             Err(e) => {
-                if attempt < MAX_RETRIES {
+                if attempt < max_retries {
                     attempt += 1;
                     tracing::warn!(
                         "GCS network error (attempt {}/{}): {}",
                         attempt,
-                        MAX_RETRIES,
+                        max_retries,
                         e
                     );
-                    tokio::time::sleep(backoff_delay(attempt)).await;
+                    sleep_ms = next_backoff_ms(sleep_ms, &policy.backoff);
+                    tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
                     continue;
                 }
-                return Err(GcsRequestError::Http(e));
+                return Err(GcsRequestError::Http { source: e });
             }
         };
 
@@ -243,14 +259,15 @@ where
 
         // 400: retryable only when using presigned URLs (URL may have expired)
         if status_code == 400 {
-            if using_presigned_url && attempt < MAX_RETRIES {
+            if using_presigned_url && attempt < max_retries {
                 attempt += 1;
                 tracing::warn!(
                     "GCS presigned URL may have expired (HTTP 400, attempt {}/{})",
                     attempt,
-                    MAX_RETRIES
+                    max_retries
                 );
-                tokio::time::sleep(backoff_delay(attempt)).await;
+                sleep_ms = next_backoff_ms(sleep_ms, &policy.backoff);
+                tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
                 continue;
             }
             let body = read_error_body(response).await;
@@ -264,15 +281,16 @@ where
         }
 
         // Retryable errors: backoff and retry
-        if RETRYABLE_STATUS_CODES.contains(&status_code) && attempt < MAX_RETRIES {
+        if RETRYABLE_STATUS_CODES.contains(&status_code) && attempt < max_retries {
             attempt += 1;
             tracing::warn!(
                 "GCS retryable error {} (attempt {}/{})",
                 status_code,
                 attempt,
-                MAX_RETRIES
+                max_retries
             );
-            tokio::time::sleep(backoff_delay(attempt)).await;
+            sleep_ms = next_backoff_ms(sleep_ms, &policy.backoff);
+            tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
             continue;
         }
 
@@ -288,7 +306,7 @@ fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .build()
-        .map_err(GcsRequestError::Http)
+        .map_err(|source| GcsRequestError::Http { source })
 }
 
 /// Constructs the GCS URL and extracts the bearer token from stage info.
@@ -352,10 +370,8 @@ fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
     format!("https://storage.googleapis.com/{}/{key}", stage_info.bucket)
 }
 
-fn backoff_delay(attempt: u32) -> Duration {
-    let exponent = attempt.saturating_sub(1).min(MAX_BACKOFF_EXPONENT);
-    let secs = 1u64.checked_shl(exponent).unwrap_or(16);
-    Duration::from_secs(secs.min(16))
+fn next_backoff_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
+    (prev_ms * backoff.factor).min(backoff.cap.as_millis() as f64)
 }
 
 fn get_header(
@@ -386,18 +402,22 @@ async fn read_error_body(response: reqwest::Response) -> String {
 
 /// Internal error for shared helpers (retry, client creation, URL resolution).
 /// Converted into `GcsUploadError` or `GcsDownloadError` via `From` impls.
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 enum GcsRequestError {
-    Http(reqwest::Error),
+    #[snafu(display("GCS HTTP error"))]
+    Http { source: reqwest::Error },
+    #[snafu(display("GCS request failed: HTTP {status_code}: {body}"))]
     GcsHttp { status_code: u16, body: String },
+    #[snafu(display("GCS access token expired"))]
     TokenExpired,
+    #[snafu(display("Missing GCS credentials"))]
     MissingGcsCredentials,
 }
 
 impl From<GcsRequestError> for GcsUploadError {
     fn from(e: GcsRequestError) -> Self {
         match e {
-            GcsRequestError::Http(source) => GcsUploadError::Http {
+            GcsRequestError::Http { source } => GcsUploadError::Http {
                 source,
                 location: Location::default(),
             },
@@ -419,7 +439,7 @@ impl From<GcsRequestError> for GcsUploadError {
 impl From<GcsRequestError> for GcsDownloadError {
     fn from(e: GcsRequestError) -> Self {
         match e {
-            GcsRequestError::Http(source) => GcsDownloadError::Http {
+            GcsRequestError::Http { source } => GcsDownloadError::Http {
                 source,
                 location: Location::default(),
             },
@@ -767,13 +787,17 @@ mod tests {
 
     #[test]
     fn backoff_delay_values() {
-        assert_eq!(backoff_delay(1), Duration::from_secs(1));
-        assert_eq!(backoff_delay(2), Duration::from_secs(2));
-        assert_eq!(backoff_delay(3), Duration::from_secs(4));
-        assert_eq!(backoff_delay(4), Duration::from_secs(8));
-        assert_eq!(backoff_delay(5), Duration::from_secs(16));
-        // Capped at 16s
-        assert_eq!(backoff_delay(6), Duration::from_secs(16));
-        assert_eq!(backoff_delay(100), Duration::from_secs(16));
+        let backoff = &gcs_retry_policy().backoff;
+        // base=1s, factor=2, cap=16s
+        let d1 = next_backoff_ms(1000.0, backoff);
+        assert_eq!(d1, 2000.0); // 1s * 2
+        let d2 = next_backoff_ms(d1, backoff);
+        assert_eq!(d2, 4000.0); // 2s * 2
+        let d3 = next_backoff_ms(d2, backoff);
+        assert_eq!(d3, 8000.0); // 4s * 2
+        let d4 = next_backoff_ms(d3, backoff);
+        assert_eq!(d4, 16000.0); // 8s * 2 = 16s (cap)
+        let d5 = next_backoff_ms(d4, backoff);
+        assert_eq!(d5, 16000.0); // capped at 16s
     }
 }
