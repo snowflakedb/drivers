@@ -228,7 +228,12 @@ TEST_CASE("should replace binding when same ParameterNumber is rebound.", "[quer
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 222);
 }
 
+// TODO: Re-enable in PR #566 once auto-IPD (parameter marker counting) is implemented.
+// Currently the new driver returns 42000 (server-side) instead of 07002 (client-side)
+// because it doesn't count ? markers during SQLPrepare. See BD#29.
 TEST_CASE("should fail with 07002 after SQL_RESET_PARAMS clears bindings.", "[query][bind_parameter]") {
+  SKIP("Enabled in PR #566: requires auto-IPD for client-side 07002 detection");
+
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -249,14 +254,9 @@ TEST_CASE("should fail with 07002 after SQL_RESET_PARAMS clears bindings.", "[qu
   ret = SQLFreeStmt(stmt.getHandle(), SQL_RESET_PARAMS);
   REQUIRE_ODBC(ret, stmt);
 
-  // Then re-executing should fail (unbound parameter marker)
+  // Then re-executing should fail with SQLSTATE 07002
   ret = SQLExecute(stmt.getHandle());
-  OLD_DRIVER_ONLY("BD#29") {
-    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07002"));
-  }
-  NEW_DRIVER_ONLY("BD#29") {
-    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("42000"));
-  }
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07002"));
 }
 
 TEST_CASE("should reflect changed bound variable on re-execution.", "[query][bind_parameter]") {

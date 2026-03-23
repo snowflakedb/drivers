@@ -54,7 +54,7 @@ Feature: ODBC SQLBindParameter spec compliance
   Scenario: should return HY104 for invalid precision or scale.
     Given Snowflake client is logged in
     When SQLBindParameter is called with negative DecimalDigits
-    Then SQL_ERROR with SQLSTATE HY104 should be returned
+    Then the new driver rejects with HY104, the old driver accepts it
 
   @odbc_e2e
   Scenario: should return HY021 for inconsistent descriptor information.
