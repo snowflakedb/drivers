@@ -22,7 +22,6 @@
 #include "Connection.hpp"
 #include "Schema.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
 
 // ---------------------------------------------------------------------------
