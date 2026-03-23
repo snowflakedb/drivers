@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use regex::Regex;
 use snafu::Location;
 use snafu::prelude::*;
@@ -76,8 +78,11 @@ struct RawBlock {
     param_lines: Vec<String>,
 }
 
+static TIMESTAMP_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[(\d{6}\.\d{6})\]$").unwrap());
+
 fn split_into_blocks(content: &str) -> Vec<RawBlock> {
-    let timestamp_re = Regex::new(r"^\[(\d{6}\.\d{6})\]$").unwrap();
+    let timestamp_re = &*TIMESTAMP_RE;
     let mut blocks = Vec::new();
     let mut lines = content.lines().peekable();
 
@@ -115,11 +120,15 @@ struct HeaderLine {
     return_info: Option<(i32, String)>,
 }
 
-fn parse_header_line(line: &str) -> Option<HeaderLine> {
-    let exit_re =
-        Regex::new(r"^\S+\s+\S+\s+EXIT\s+(\w+)\s+with return code (-?\d+)\s+\((\w+)\)").unwrap();
+static EXIT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\S+\s+\S+\s+EXIT\s+(\w+)\s+with return code (-?\d+)\s+\((\w+)\)").unwrap()
+});
 
-    if let Some(caps) = exit_re.captures(line) {
+static ENTER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\S+\s+\S+\s+ENTER\s+(\w+)").unwrap());
+
+fn parse_header_line(line: &str) -> Option<HeaderLine> {
+    if let Some(caps) = EXIT_RE.captures(line) {
         let func = caps[1].to_string();
         let code: i32 = caps[2].parse().unwrap_or(0);
         let name = caps[3].to_string();
@@ -130,9 +139,7 @@ fn parse_header_line(line: &str) -> Option<HeaderLine> {
         });
     }
 
-    let enter_re = Regex::new(r"^\S+\s+\S+\s+ENTER\s+(\w+)").unwrap();
-
-    if let Some(caps) = enter_re.captures(line) {
+    if let Some(caps) = ENTER_RE.captures(line) {
         let func = caps[1].to_string();
         return Some(HeaderLine {
             direction: Direction::Enter,
@@ -144,6 +151,20 @@ fn parse_header_line(line: &str) -> Option<HeaderLine> {
     None
 }
 
+static ADDR_OUT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(0x[0-9a-fA-F]+)\s+\((0x[0-9a-fA-F]+)\)$").unwrap());
+
+static ADDR_NAMED_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(0x[0-9a-fA-F]+)\s+\(([A-Z_][A-Z_0-9]+)\)$").unwrap());
+
+static ADDR_INT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(0x[0-9a-fA-F]+)\s+\((-?\d+)\)$").unwrap());
+
+static PLAIN_ADDR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^0x[0-9a-fA-F]+$").unwrap());
+
+static INT_NAMED_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(-?\d+)\s+\(([A-Z_][A-Z_0-9]+)\)$").unwrap());
+
 fn parse_param_value(raw_value: &str) -> ParamValue {
     let trimmed = raw_value.trim();
 
@@ -151,42 +172,32 @@ fn parse_param_value(raw_value: &str) -> ParamValue {
         return ParamValue::NullPointer;
     }
 
-    // "0x1048a9010 (0x104956bc0)"
-    let addr_out_re = Regex::new(r"^(0x[0-9a-fA-F]+)\s+\((0x[0-9a-fA-F]+)\)$").unwrap();
-    if let Some(caps) = addr_out_re.captures(trimmed) {
+    if let Some(caps) = ADDR_OUT_RE.captures(trimmed) {
         return ParamValue::OutputAddress {
             address: caps[1].to_string(),
             output_address: caps[2].to_string(),
         };
     }
 
-    // "0x16b5980ea (SQL_DECIMAL)"
-    let addr_named_re = Regex::new(r"^(0x[0-9a-fA-F]+)\s+\(([A-Z_][A-Z_0-9]+)\)$").unwrap();
-    if let Some(caps) = addr_named_re.captures(trimmed) {
+    if let Some(caps) = ADDR_NAMED_RE.captures(trimmed) {
         return ParamValue::OutputNamedConstant {
             address: caps[1].to_string(),
             name: caps[2].to_string(),
         };
     }
 
-    // "0x16b5980ec (1)"
-    let addr_int_re = Regex::new(r"^(0x[0-9a-fA-F]+)\s+\((-?\d+)\)$").unwrap();
-    if let Some(caps) = addr_int_re.captures(trimmed) {
+    if let Some(caps) = ADDR_INT_RE.captures(trimmed) {
         return ParamValue::OutputInteger {
             address: caps[1].to_string(),
             value: caps[2].parse().unwrap_or(0),
         };
     }
 
-    // "0x104ee5c60"
-    let plain_addr_re = Regex::new(r"^0x[0-9a-fA-F]+$").unwrap();
-    if plain_addr_re.is_match(trimmed) {
+    if PLAIN_ADDR_RE.is_match(trimmed) {
         return ParamValue::Address(trimmed.to_string());
     }
 
-    // "3 (SQL_HANDLE_STMT)"
-    let int_named_re = Regex::new(r"^(-?\d+)\s+\(([A-Z_][A-Z_0-9]+)\)$").unwrap();
-    if let Some(caps) = int_named_re.captures(trimmed) {
+    if let Some(caps) = INT_NAMED_RE.captures(trimmed) {
         return ParamValue::NamedConstant {
             value: caps[1].parse().unwrap_or(0),
             name: caps[2].to_string(),
@@ -200,11 +211,20 @@ fn parse_param_value(raw_value: &str) -> ParamValue {
     ParamValue::Address(trimmed.to_string())
 }
 
+static PTR_PARAM_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\t\t(\w+)\s+\*\s+(.+)$").unwrap());
+
+static VAL_PARAM_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\t\t(\w+)\s{2,}(.+)$").unwrap());
+
+static STRING_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\t+\s*\|\s*(.*?)\s*\|$").unwrap());
+
 fn parse_parameters(param_lines: &[String]) -> Vec<Parameter> {
     let mut params = Vec::new();
-    let ptr_param_re = Regex::new(r"^\t\t(\w+)\s+\*\s+(.+)$").unwrap();
-    let val_param_re = Regex::new(r"^\t\t(\w+)\s{2,}(.+)$").unwrap();
-    let string_re = Regex::new(r"^\t+\s*\|\s*(.*?)\s*\|$").unwrap();
+    let ptr_param_re = &*PTR_PARAM_RE;
+    let val_param_re = &*VAL_PARAM_RE;
+    let string_re = &*STRING_RE;
 
     let mut i = 0;
     while i < param_lines.len() {

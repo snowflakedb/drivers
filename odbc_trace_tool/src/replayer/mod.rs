@@ -16,8 +16,9 @@ pub enum ReplayerError {
         location: Location,
     },
 
-    #[snafu(display("Connection string is required for replay"))]
-    MissingConnectionString {
+    #[snafu(display("String contains interior NUL byte: {detail}"))]
+    InvalidString {
+        detail: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -206,7 +207,14 @@ impl<'a> ReplayContext<'a> {
                     location: Location::default(),
                 });
             }
-            SQLSetEnvAttr(h, SQL_ATTR_ODBC_VERSION, SQL_OV_ODBC3 as *const c_void, 0);
+            let ret = SQLSetEnvAttr(h, SQL_ATTR_ODBC_VERSION, SQL_OV_ODBC3 as *const c_void, 0);
+            if ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO {
+                SQLFreeHandle(SQL_HANDLE_ENV, h);
+                return Err(ReplayerError::LibraryLoad {
+                    detail: format!("SQLSetEnvAttr(SQL_ATTR_ODBC_VERSION) failed with code {ret}"),
+                    location: Location::default(),
+                });
+            }
             h
         };
 
@@ -239,7 +247,7 @@ impl<'a> ReplayContext<'a> {
                 self.skipped += 1;
                 continue;
             }
-            self.replay_call(call, env, dbc);
+            self.replay_call(call, env, dbc)?;
         }
 
         unsafe {
@@ -261,13 +269,13 @@ impl<'a> ReplayContext<'a> {
         })
     }
 
-    fn replay_call(&mut self, call: &OdbcCall, _env: SqlHandle, dbc: SqlHandle) {
+    fn replay_call(&mut self, call: &OdbcCall, _env: SqlHandle, dbc: SqlHandle) -> Result<()> {
         match call.function_name.as_str() {
-            "SQLDriverConnect" => self.replay_driver_connect(call, dbc),
+            "SQLDriverConnect" => self.replay_driver_connect(call, dbc)?,
             "SQLAllocHandle" => self.replay_alloc_handle(call, dbc),
-            "SQLPrepare" => self.replay_prepare(call),
+            "SQLPrepare" => self.replay_prepare(call)?,
             "SQLExecute" => self.replay_execute(call),
-            "SQLExecDirect" => self.replay_exec_direct(call),
+            "SQLExecDirect" => self.replay_exec_direct(call)?,
             "SQLNumResultCols" => self.replay_num_result_cols(call),
             "SQLDescribeCol" => self.replay_describe_col(call),
             "SQLFetchScroll" => self.replay_fetch_scroll(call),
@@ -282,10 +290,16 @@ impl<'a> ReplayContext<'a> {
                 self.skipped += 1;
             }
         }
+        Ok(())
     }
 
-    fn replay_driver_connect(&mut self, call: &OdbcCall, dbc: SqlHandle) {
-        let conn_str = CString::new(self.config.connection_string.as_str()).unwrap_or_default();
+    fn replay_driver_connect(&mut self, call: &OdbcCall, dbc: SqlHandle) -> Result<()> {
+        let conn_str = CString::new(self.config.connection_string.as_str()).map_err(|e| {
+            ReplayerError::InvalidString {
+                detail: format!("connection string: {e}"),
+                location: Location::default(),
+            }
+        })?;
         let ret = unsafe {
             SQLDriverConnect(
                 dbc,
@@ -299,6 +313,7 @@ impl<'a> ReplayContext<'a> {
             )
         };
         self.record_result(call, ret, true);
+        Ok(())
     }
 
     fn replay_alloc_handle(&mut self, call: &OdbcCall, dbc: SqlHandle) {
@@ -307,7 +322,8 @@ impl<'a> ReplayContext<'a> {
             self.skipped += 1;
             return;
         };
-        if matches!(ht, HandleType::Env | HandleType::Dbc) {
+        if !matches!(ht, HandleType::Stmt) {
+            self.skipped += 1;
             return;
         }
         let child_addr = extract_output_addr(&call.output_params, 2);
@@ -319,12 +335,16 @@ impl<'a> ReplayContext<'a> {
         self.record_result(call, ret, false);
     }
 
-    fn replay_prepare(&mut self, call: &OdbcCall) {
+    fn replay_prepare(&mut self, call: &OdbcCall) -> Result<()> {
         let stmt = self.resolve_stmt(&call.input_params);
         let sql = extract_string(&call.input_params).unwrap_or_default();
-        let sql_c = CString::new(sql).unwrap_or_default();
+        let sql_c = CString::new(sql).map_err(|e| ReplayerError::InvalidString {
+            detail: format!("SQL statement: {e}"),
+            location: Location::default(),
+        })?;
         let ret = unsafe { SQLPrepare(stmt, sql_c.as_ptr() as *const SqlChar, SQL_NTS) };
         self.record_result(call, ret, false);
+        Ok(())
     }
 
     fn replay_execute(&mut self, call: &OdbcCall) {
@@ -333,12 +353,16 @@ impl<'a> ReplayContext<'a> {
         self.record_result(call, ret, false);
     }
 
-    fn replay_exec_direct(&mut self, call: &OdbcCall) {
+    fn replay_exec_direct(&mut self, call: &OdbcCall) -> Result<()> {
         let stmt = self.resolve_stmt(&call.input_params);
         let sql = extract_string(&call.input_params).unwrap_or_default();
-        let sql_c = CString::new(sql).unwrap_or_default();
+        let sql_c = CString::new(sql).map_err(|e| ReplayerError::InvalidString {
+            detail: format!("SQL statement: {e}"),
+            location: Location::default(),
+        })?;
         let ret = unsafe { SQLExecDirect(stmt, sql_c.as_ptr() as *const SqlChar, SQL_NTS) };
         self.record_result(call, ret, false);
+        Ok(())
     }
 
     fn replay_num_result_cols(&mut self, call: &OdbcCall) {
@@ -624,5 +648,83 @@ fn return_code_name(code: SqlReturn) -> &'static str {
         99 => "SQL_NEED_DATA",
         2 => "SQL_STILL_EXECUTING",
         _ => "UNKNOWN",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_context(relaxed: bool) -> ReplayContext<'static> {
+        static CONFIG_STRICT: ReplayConfig = ReplayConfig {
+            connection_string: String::new(),
+            relaxed_success: false,
+        };
+        static CONFIG_RELAXED: ReplayConfig = ReplayConfig {
+            connection_string: String::new(),
+            relaxed_success: true,
+        };
+        ReplayContext::new(if relaxed {
+            &CONFIG_RELAXED
+        } else {
+            &CONFIG_STRICT
+        })
+    }
+
+    #[test]
+    fn test_return_codes_match_exact() {
+        let ctx = make_context(false);
+        assert!(ctx.return_codes_match(ReturnCode::Success, 0, false));
+        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 1, false));
+        assert!(ctx.return_codes_match(ReturnCode::Error, -1, false));
+        assert!(ctx.return_codes_match(ReturnCode::InvalidHandle, -2, false));
+        assert!(ctx.return_codes_match(ReturnCode::NoData, 100, false));
+        assert!(ctx.return_codes_match(ReturnCode::NeedData, 99, false));
+        assert!(ctx.return_codes_match(ReturnCode::StillExecuting, 2, false));
+    }
+
+    #[test]
+    fn test_return_codes_match_exact_mismatch() {
+        let ctx = make_context(false);
+        assert!(!ctx.return_codes_match(ReturnCode::Success, 1, false));
+        assert!(!ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, false));
+        assert!(!ctx.return_codes_match(ReturnCode::NoData, 0, false));
+    }
+
+    #[test]
+    fn test_return_codes_match_relaxed_success_interchangeable() {
+        let ctx = make_context(false);
+        assert!(ctx.return_codes_match(ReturnCode::Success, 0, true));
+        assert!(ctx.return_codes_match(ReturnCode::Success, 1, true));
+        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, true));
+        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 1, true));
+    }
+
+    #[test]
+    fn test_return_codes_match_relaxed_no_data_strict() {
+        let ctx = make_context(false);
+        assert!(ctx.return_codes_match(ReturnCode::NoData, 100, true));
+        assert!(!ctx.return_codes_match(ReturnCode::NoData, 0, true));
+    }
+
+    #[test]
+    fn test_return_codes_match_config_relaxed() {
+        let ctx = make_context(true);
+        assert!(ctx.return_codes_match(ReturnCode::Success, 1, false));
+        assert!(ctx.return_codes_match(ReturnCode::SuccessWithInfo, 0, false));
+    }
+
+    #[test]
+    fn test_return_codes_match_need_data_exact() {
+        let ctx = make_context(false);
+        assert!(ctx.return_codes_match(ReturnCode::NeedData, 99, true));
+        assert!(!ctx.return_codes_match(ReturnCode::NeedData, 0, true));
+    }
+
+    #[test]
+    fn test_return_codes_match_still_executing_exact() {
+        let ctx = make_context(false);
+        assert!(ctx.return_codes_match(ReturnCode::StillExecuting, 2, true));
+        assert!(!ctx.return_codes_match(ReturnCode::StillExecuting, 0, true));
     }
 }

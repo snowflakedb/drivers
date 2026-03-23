@@ -37,8 +37,8 @@ impl ReturnCode {
             Self::Error => "IsError",
             Self::InvalidHandle => "IsInvalidHandle",
             Self::NoData => "IsNoData",
-            Self::NeedData => "IsSuccess",
-            Self::StillExecuting => "IsSuccess",
+            Self::NeedData => "IsNeedData",
+            Self::StillExecuting => "IsStillExecuting",
         }
     }
 

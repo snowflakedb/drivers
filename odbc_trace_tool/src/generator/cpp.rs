@@ -22,6 +22,25 @@ pub fn generate(trace: &TraceLog, config: &GeneratorConfig) -> String {
     ctx.generate()
 }
 
+fn escape_cpp_string_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c if c.is_ascii_control() => {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 const SKIPPED_FUNCTIONS: &[&str] = &["SQLGetDiagRec", "SQLGetFunctions"];
 
 const DRIVER_SPECIFIC_INFO_TYPES: &[&str] = &[
@@ -99,8 +118,8 @@ impl<'a> GenContext<'a> {
     }
 
     fn emit_test_open(&mut self) {
-        let name = &self.config.test_name;
-        let tag = &self.config.tag;
+        let name = escape_cpp_string_literal(&self.config.test_name);
+        let tag = escape_cpp_string_literal(&self.config.tag);
         let saved = self.indent;
         self.indent = 0;
         self.writeln(&format!(
@@ -190,7 +209,9 @@ impl<'a> GenContext<'a> {
     }
 
     fn emit_prepare(&mut self, call: &OdbcCall) {
-        let sql = extract_string_value(&call.input_params).unwrap_or_default();
+        let sql = escape_cpp_string_literal(
+            &extract_string_value(&call.input_params).unwrap_or_default(),
+        );
         let stmt_var = self.find_stmt_var(&call.input_params);
 
         self.writeln("// SQLPrepare");
@@ -219,7 +240,9 @@ impl<'a> GenContext<'a> {
     }
 
     fn emit_exec_direct(&mut self, call: &OdbcCall) {
-        let sql = extract_string_value(&call.input_params).unwrap_or_default();
+        let sql = escape_cpp_string_literal(
+            &extract_string_value(&call.input_params).unwrap_or_default(),
+        );
         let stmt_var = self.find_stmt_var(&call.input_params);
 
         self.writeln("// SQLExecDirect");
@@ -280,7 +303,8 @@ impl<'a> GenContext<'a> {
         self.emit_return_assertion(call, "SQL_HANDLE_STMT", &stmt_var, false, false);
 
         if let Some(name) = &col_name {
-            self.writeln(&format!("CHECK(std::string(colName) == \"{name}\");"));
+            let escaped = escape_cpp_string_literal(name);
+            self.writeln(&format!("CHECK(std::string(colName) == \"{escaped}\");"));
         }
         if let Some(dt) = &data_type {
             self.writeln(&format!("CHECK(dataType == {dt});"));
@@ -353,7 +377,8 @@ impl<'a> GenContext<'a> {
             self.emit_return_assertion(call, "SQL_HANDLE_STMT", &stmt_var, false, false);
 
             if let Some(val) = &string_val {
-                self.writeln(&format!("CHECK(std::string(buf) == \"{val}\");"));
+                let escaped = escape_cpp_string_literal(val);
+                self.writeln(&format!("CHECK(std::string(buf) == \"{escaped}\");"));
             }
             if let Some(ind_val) = indicator {
                 self.writeln(&format!("CHECK(ind == {ind_val});"));
@@ -422,7 +447,8 @@ impl<'a> GenContext<'a> {
         } else {
             self.emit_return_assertion(call, "SQL_HANDLE_DBC", "dbc_handle()", false, false);
             if let Some(val) = &string_val {
-                self.writeln(&format!("CHECK(std::string(buf) == \"{val}\");"));
+                let escaped = escape_cpp_string_literal(val);
+                self.writeln(&format!("CHECK(std::string(buf) == \"{escaped}\");"));
             }
         }
 
