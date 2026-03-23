@@ -244,7 +244,7 @@ class TestNumberTable:
         # And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3), <type>(20,5)) exists
         table_name = f"{tmp_schema}.number_table_{num_type.lower()}"
         execute_query(
-            f"CREATE TABLE {table_name} ("
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} ("
             f"col_scale0 {num_type}(10,0), "
             f"col_scale2 {num_type}(10,2), "
             f"col_scale3 {num_type}(15,3), "
@@ -302,7 +302,7 @@ class TestNumberTable:
         # And Table with columns (<type>(38,0), <type>(38,2), <type>(38,10), <type>(38,37)) exists
         table_name = f"{tmp_schema}.precision_table_{num_type.lower()}"
         execute_query(
-            f"CREATE TABLE {table_name} ("
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} ("
             f"col_38_0 {num_type}(38,0), "
             f"col_38_2 {num_type}(38,2), "
             f"col_38_10 {num_type}(38,10), "
@@ -344,7 +344,9 @@ class TestNumberTable:
 
         # And Table with columns (<type>(5,2), <type>(8,0)) exists
         table_name = f"{tmp_schema}.boundary_table_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_5_2 {num_type}(5,2), col_8_0 {num_type}(8,0))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_5_2 {num_type}(5,2), col_8_0 {num_type}(8,0))"
+        )
 
         test_data = [
             (NUMBER_5_2_MAX, NUMBER_8_0_MAX),
@@ -380,7 +382,9 @@ class TestNumberTable:
 
         # And Table with columns (<type>(38,0), <type>(38,37)) exists
         table_name = f"{tmp_schema}.high_precision_boundary_table_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_37 {num_type}(38,37))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_37 {num_type}(38,37))"
+        )
 
         test_data = [
             (NUMBER_38_0_MAX, NUMBER_38_DIGITS_SCALE37),
@@ -414,7 +418,7 @@ class TestNumberTable:
         # And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
         table_name = f"{tmp_schema}.null_table_{num_type.lower()}"
         execute_query(
-            f"CREATE TABLE {table_name} ("
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} ("
             f"col_10_0 {num_type}(10,0), "
             f"col_10_2 {num_type}(10,2), "
             f"col_15_3 {num_type}(15,3))"
@@ -455,11 +459,11 @@ class TestNumberTable:
 
         # And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows,
         # from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
+        table_name = f"{tmp_schema}.large_table_{num_type.lower()}"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
-        table_name = f"{tmp_schema}.large_table_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col1 {num_type}(38,0), col2 {num_type}(20,5))")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col1 {num_type}(38,0), col2 {num_type}(20,5))")
         execute_query(
             f"INSERT INTO {table_name} "
             f"WITH base AS ("
@@ -546,7 +550,9 @@ class TestNumberBinding:
 
         # And Table with columns (<type>(10,0), <type>(10,2)) exists
         table_name = f"{tmp_schema}.number_bind_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_int {num_type}(10,0), col_dec {num_type}(10,2))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_int {num_type}(10,0), col_dec {num_type}(10,2))"
+        )
 
         # When Rows (0, 0.00), (123, 123.45), (-456, -67.89), (999999, 999.99), (NULL, NULL) are inserted using binding
         test_data = [
@@ -578,7 +584,9 @@ class TestNumberBinding:
 
         # And Table with columns (<type>(38,0), <type>(38,2)) exists
         table_name = f"{tmp_schema}.high_precision_bind_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_2 {num_type}(38,2))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_2 {num_type}(38,2))"
+        )
 
         # When Rows (12345678901234567890123456789012345678, 123456789012345678901234567890123456.78),
         # (99999999999999999999999999999999999999, 0.01), (-99999999999999999999999999999999999999, -0.01)

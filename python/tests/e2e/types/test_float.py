@@ -133,10 +133,9 @@ class TestFloatLiteral:
         self, execute_query, float_type, select_values, expected
     ):
         # Given Snowflake client is logged in
-        pass
+        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
 
         # When Query "SELECT <query_values>" is executed
-        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
         result = execute_query(f"SELECT {columns}", single_row=True)
 
         # Then Result should contain floats [<expected_values>]
@@ -177,14 +176,14 @@ class TestFloatLiteral:
         pass
 
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
         # Then Result should contain 50000 rows with all values returned as appropriate float type
@@ -203,7 +202,7 @@ class TestFloatTable:
 
         # And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
         table_name = f"{tmp_schema}.float_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         test_values = [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
         for val in test_values:
             execute_query(f"INSERT INTO {table_name} VALUES ({val})")
@@ -225,7 +224,7 @@ class TestFloatTable:
 
         # And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
         table_name = f"{tmp_schema}.special_float_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(
             f"INSERT INTO {table_name} VALUES\n"
             f"('NaN'::{float_type}),\n"
@@ -253,7 +252,7 @@ class TestFloatTable:
         # And Table with <type> column exists with boundary values
         # [1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 123456789012345.0]
         table_name = f"{tmp_schema}.boundary_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         boundary_values = [
             FLOAT_MAX,
             FLOAT_MIN,
@@ -279,7 +278,7 @@ class TestFloatTable:
 
         # And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
         table_name = f"{tmp_schema}.null_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(f"INSERT INTO {table_name} VALUES (NULL), (123.456), (NULL), (-789.012)")
 
         # When Query "SELECT * FROM <table>" is executed
@@ -298,11 +297,11 @@ class TestFloatTable:
         pass
 
         # And Table with <type> column exists with 50000 sequential values
+        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
-        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} "
@@ -357,7 +356,7 @@ class TestFloatBinding:
 
         # And Table with <type> column exists
         table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
 
         # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
 

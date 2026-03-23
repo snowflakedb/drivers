@@ -20,7 +20,8 @@ class TestBooleanTypeCasting:
         pass
 
         # When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN" is executed
-        result = execute_query("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN", single_row=True)
+        sql = "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN, TRUE::BOOLEAN"
+        result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
         assert_type(result, bool)
@@ -37,7 +38,8 @@ class TestBooleanLiteral:
         pass
 
         # When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed
-        result = execute_query("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN", single_row=True)
+        sql = "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN"
+        result = execute_query(sql, single_row=True)
 
         # Then Result should contain [TRUE, FALSE]
         assert result == (True, False)
@@ -48,7 +50,8 @@ class TestBooleanLiteral:
         pass
 
         # When Query "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN" is executed
-        result = execute_query("SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN", single_row=True)
+        sql = "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN"
+        result = execute_query(sql, single_row=True)
 
         # Then Result should contain [FALSE, NULL, TRUE, NULL]
         assert result == (False, None, True, None)
@@ -59,8 +62,8 @@ class TestBooleanLiteral:
         pass
 
         # When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
-
         sql = f"SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
+
         rows = execute_query(sql)
 
         # Then Result should contain 500000 TRUE and 500000 FALSE values
@@ -80,7 +83,7 @@ class TestBooleanTable:
 
         # And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
         table_name = f"{tmp_schema}.boolean_table"
-        execute_query(f"CREATE TABLE {table_name} (col1 BOOLEAN, col2 BOOLEAN, col3 BOOLEAN)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col1 BOOLEAN, col2 BOOLEAN, col3 BOOLEAN)")
 
         # And Row (TRUE, FALSE, TRUE) is inserted
         execute_query(f"INSERT INTO {table_name} VALUES (TRUE, FALSE, TRUE)")
@@ -98,7 +101,7 @@ class TestBooleanTable:
 
         # And Table with BOOLEAN column exists
         table_name = f"{tmp_schema}.null_table"
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col BOOLEAN)")
 
         # And Rows [NULL, TRUE, FALSE] are inserted
         execute_query(f"INSERT INTO {table_name} VALUES (NULL), (TRUE), (FALSE)")
@@ -116,9 +119,9 @@ class TestBooleanTable:
         pass
 
         # And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
-
         table_name = f"{tmp_schema}.large_boolean_table"
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col BOOLEAN)")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT (seq8() % 2 = 0)::BOOLEAN "
@@ -146,7 +149,8 @@ class TestBooleanBinding:
 
         # When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed
         # with bound boolean values [TRUE, FALSE, TRUE]
-        result = execute_query("SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN", (True, False, True), single_row=True)
+        sql = "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN"
+        result = execute_query(sql, (True, False, True), single_row=True)
 
         # Then Result should contain [TRUE, FALSE, TRUE]
         assert result == (True, False, True)
@@ -157,7 +161,8 @@ class TestBooleanBinding:
         pass
 
         # When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
-        result = execute_query("SELECT ?::BOOLEAN", (None,), single_row=True)
+        sql = "SELECT ?::BOOLEAN"
+        result = execute_query(sql, (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result == (None,)
@@ -168,7 +173,7 @@ class TestBooleanBinding:
 
         # And Table with BOOLEAN column exists
         table_name = f"{tmp_schema}.boolean_bind_table"
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col BOOLEAN)")
 
         # When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
         test_values = [(True,), (False,), (None,)]

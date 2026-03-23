@@ -62,7 +62,7 @@ class TestTableOperations:
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, active BOOLEAN) exists
         table_name = f"{tmp_schema}.test_binding_insert"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)")
 
         # When Row with values [1, "Alice", True] is inserted using parameter binding
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "Alice", True))
@@ -81,7 +81,7 @@ class TestTableOperations:
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_multiple"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"] are inserted sequentially using parameter binding
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
@@ -102,7 +102,7 @@ class TestTableOperations:
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_update"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Row [1, "Alice"] is inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (1, "Alice"))
@@ -123,7 +123,7 @@ class TestTableOperations:
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_delete"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Rows [1, "Alice"] and [2, "Bob"] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (1, "Alice"))
@@ -146,7 +146,7 @@ class TestTableOperations:
 
         # And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
         table_name = f"{tmp_schema}.test_binding_select_where"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
 
         # And Rows [1, "Alice", 30], [2, "Bob", 25], [3, "Charlie", 35] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "Alice", 30))
@@ -263,7 +263,7 @@ class TestArrayBinding:
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When Rows [[1, "Alice"], [2, "Bob"], [3, "Charlie"]] are inserted using multirow binding
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
@@ -307,7 +307,7 @@ class TestArrayBinding:
 
         # And A temporary table with columns (id NUMBER, value VARCHAR) exists
         table_name = f"{tmp_schema}.test_nulls"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, value VARCHAR)")
 
         # When Rows [[1, NULL], [2, "value"], [3, NULL]] are inserted using multirow binding
         cursor.executemany(f"INSERT INTO {table_name} VALUES (?, ?)", [(1, None), (2, "value"), (3, None)])
@@ -365,7 +365,7 @@ class TestComplexScenarios:
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_in_clause"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"], [4, "David"], [5, "Eve"] are inserted
         for i, name in enumerate(["Alice", "Bob", "Charlie", "David", "Eve"], 1):

@@ -128,7 +128,7 @@ class TestDMLStatements:
 
         # And A temporary table is created
         table_name = f"{tmp_schema}.test_basic_dml"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, value VARCHAR)")
 
         # When INSERT statement is executed to add rows
         cursor.execute(f"INSERT INTO {table_name} (id, value) VALUES (1, 'first')")

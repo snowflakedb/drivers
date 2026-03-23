@@ -137,7 +137,8 @@ class TestDecfloatLiteral:
         pass
 
         # When Query "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT" is executed
-        result = execute_query("SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT", single_row=True)
+        sql = "SELECT NULL::DECFLOAT, 42.5::DECFLOAT, NULL::DECFLOAT"
+        result = execute_query(sql, single_row=True)
 
         # Then Result should contain [NULL, 42.5, NULL]
         assert result == (None, Decimal("42.5"), None)
@@ -148,14 +149,14 @@ class TestDecfloatLiteral:
         pass
 
         # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::DECFLOAT as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
         # Then Result should contain consecutive numbers from 0 to 19999 returned as appropriate type
@@ -173,7 +174,7 @@ class TestDecfloatTable:
 
         # And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
         table_name = f"{tmp_schema}.decfloat_table"
-        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col DECFLOAT)")
         test_values = [
             Decimal("0"),
             Decimal("123.456"),
@@ -201,7 +202,7 @@ class TestDecfloatTable:
         # 1.2345678901234567890123456789012345678E+100,
         # 1.2345678901234567890123456789012345678E-100]
         table_name = f"{tmp_schema}.precision_table"
-        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col DECFLOAT)")
         precision_values = [DECFLOAT_38_DIGITS, DECFLOAT_38_DIGITS_POS_EXP, DECFLOAT_38_DIGITS_NEG_EXP]
         for val in precision_values:
             execute_query(f"INSERT INTO {table_name} VALUES ('{val}')")
@@ -221,7 +222,7 @@ class TestDecfloatTable:
         # And Table with DECFLOAT column exists with values
         # [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
         table_name = f"{tmp_schema}.extreme_table"
-        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col DECFLOAT)")
         extreme_values = [
             DECFLOAT_MAX_EXPONENT,
             DECFLOAT_MIN_EXPONENT,
@@ -245,7 +246,7 @@ class TestDecfloatTable:
 
         # And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
         table_name = f"{tmp_schema}.null_table"
-        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col DECFLOAT)")
         execute_query(f"INSERT INTO {table_name} VALUES (NULL), (123.456), (NULL), (-789.012)")
 
         # When Query "SELECT * FROM <table>" is executed
@@ -261,11 +262,11 @@ class TestDecfloatTable:
         pass
 
         # And Table with DECFLOAT column exists with values from 0 to 19999
+        table_name = f"{tmp_schema}.large_table"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
-        table_name = f"{tmp_schema}.large_table"
-        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col DECFLOAT)")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::DECFLOAT "
@@ -291,8 +292,9 @@ class TestDecfloatBinding:
 
         # When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed
         # with bound DECFLOAT values [123.456, -789.012, 42.0]
+        sql = "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT"
         result = execute_query(
-            "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT",
+            sql,
             (("DECFLOAT", Decimal("123.456")), ("DECFLOAT", Decimal("-789.012")), ("DECFLOAT", Decimal("42.0"))),
             single_row=True,
         )
@@ -306,7 +308,8 @@ class TestDecfloatBinding:
         pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
-        result = execute_query("SELECT ?::DECFLOAT", (None,), single_row=True)
+        sql = "SELECT ?::DECFLOAT"
+        result = execute_query(sql, (None,), single_row=True)
 
         # Then Result should contain [NULL]
         assert result == (None,)
@@ -326,8 +329,9 @@ class TestDecfloatBinding:
         pass
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound value <value>
+        sql = "SELECT ?::DECFLOAT"
         result = execute_query(
-            "SELECT ?::DECFLOAT",
+            sql,
             ((type_name, value),),
             single_row=True,
         )
@@ -342,7 +346,7 @@ class TestDecfloatBinding:
 
         # And Table with DECFLOAT column exists
         table_name = f"{tmp_schema}.decfloat_bind_table"
-        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col DECFLOAT)")
 
         # When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
         test_rows = [
@@ -367,7 +371,7 @@ class TestDecfloatBinding:
 
         # And Table with DECFLOAT column exists
         table_name = f"{tmp_schema}.decfloat_extreme_bind_table"
-        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col DECFLOAT)")
 
         # When DECFLOAT values [1E+16384, 1E-16383, -1.234E+8000] are inserted using explicit binding
         extreme_values = [

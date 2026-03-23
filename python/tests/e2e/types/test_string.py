@@ -138,7 +138,7 @@ class TestStringTable:
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.string_table_test"
-        execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val {string_type}(32))")
 
         # And The table is populated with string values
         test_values = ["hello", "Hello World", "Snowflake Driver Test"]
@@ -160,7 +160,7 @@ class TestStringTable:
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.string_corner_case_table_test"
-        execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val {string_type}(32))")
 
         # And The table is populated with corner case string values
         for _, sql_val in CORNER_CASE_VALUES:
@@ -190,7 +190,7 @@ class TestStringBinding:
 
         # And A temporary table with VARCHAR column is created
         table_name = f"{tmp_schema}.string_bind_table_test"
-        execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val {string_type}(32))")
 
         # When String value 'Test binding value 日本語' is inserted using parameter binding
         test_value = "Test binding value 日本語"

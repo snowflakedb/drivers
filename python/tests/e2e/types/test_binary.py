@@ -137,7 +137,7 @@ class TestBinaryTable:
 
         # And A temporary table with BINARY column is created
         table_name = f"{tmp_schema}.binary_table_test"
-        execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {binary_type})")
 
         # And The table is populated with binary values [X'48656C6C6F', X'576F726C64', X'0123456789ABCDEF']
         for _, sql_val in HAPPY_PATH_VALUES:
@@ -159,7 +159,7 @@ class TestBinaryTable:
 
         # And A temporary table with BINARY column is created
         table_name = f"{tmp_schema}.binary_corner_case_table_test"
-        execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {binary_type})")
 
         # And The table is populated with corner case binary values
         for _, sql_val in CORNER_CASE_VALUES:
@@ -182,7 +182,7 @@ class TestBinaryTable:
 
         # And A temporary table with BINARY column is created
         table_name = f"{tmp_schema}.binary_null_table_test"
-        execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {binary_type})")
 
         # And The table is populated with NULL and non-NULL binary values [NULL, X'ABCD', NULL]
         execute_query(f"INSERT INTO {table_name} VALUES (NULL)")
@@ -211,7 +211,8 @@ class TestBinaryTable:
         # And Table with columns (bin5 BINARY(5), bin10 BINARY(10), bin_default BINARY) exists
         table_name = f"{tmp_schema}.binary_length_test"
         execute_query(
-            f"CREATE TABLE {table_name} (bin5 {binary_type}(5), bin10 {binary_type}(10), bin_default {binary_type})"
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} "
+            f"(bin5 {binary_type}(5), bin10 {binary_type}(10), bin_default {binary_type})"
         )
 
         # And Row (X'0102030405', X'01020304050607080910', X'48656C6C6F') is inserted
@@ -260,7 +261,7 @@ class TestBinaryBinding:
 
         # And Table with BINARY column exists
         table_name = f"{tmp_schema}.binary_bind_insert_test"
-        execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {binary_type})")
 
         # When Binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x] are inserted using binding
         test_values = [(b"Hello",), (b"World",), (b"\x00",), (b"\xff",), (b"",)]
@@ -323,7 +324,7 @@ class TestBinaryMultipleChunks:
 
         # And Table with (bin_data BINARY) exists with 30000 sequential binary values
         table_name = f"{tmp_schema}.binary_chunks_table"
-        execute_query(f"CREATE TABLE {table_name} (bin_data BINARY)")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (bin_data BINARY)")
 
         # Insert 30000 sequential binary values using GENERATOR
         execute_query(

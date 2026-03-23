@@ -156,7 +156,7 @@ class TestEscapeHandling:
         pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_escape"
-        cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (name VARCHAR)")
 
         # When Strings with special characters
         #   (newlines, backslashes, quotes, tabs) are inserted using %s binding
@@ -190,7 +190,7 @@ class TestEscapeHandling:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_injection"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
         # And Rows are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s)", (1, "test1"))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s)", (2, "test2"))
@@ -211,7 +211,7 @@ class TestEscapeHandling:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_injection_named"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
         # And Rows are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%(id)s, %(name)s)", dict(id=1, name="test1"))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%(id)s, %(name)s)", dict(id=2, name="test2"))
@@ -335,7 +335,7 @@ class TestListBinding:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_list_in"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
         # And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s)", (1, "Alice"))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s)", (2, "Bob"))
@@ -361,7 +361,7 @@ class TestTableOperationsWithPyformat:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_insert_pyformat"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When Row is inserted using "INSERT INTO table VALUES (%s, %s)"
         #   with parameters (1, "Alice")
@@ -378,7 +378,7 @@ class TestTableOperationsWithPyformat:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_insert_named"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When Row is inserted using
         #   "INSERT INTO table VALUES (%(id)s, %(name)s)"
@@ -399,7 +399,7 @@ class TestTableOperationsWithPyformat:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_update_pyformat"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
         # And Row [1, "Alice"] is inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s)", (1, "Alice"))
 
@@ -418,7 +418,7 @@ class TestTableOperationsWithPyformat:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_delete_pyformat"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
         # And Rows [1, "Alice"] and [2, "Bob"] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s)", (1, "Alice"))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s)", (2, "Bob"))
@@ -438,7 +438,7 @@ class TestTableOperationsWithPyformat:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
         table_name = f"{tmp_schema}.test_select_pyformat"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
         # And Rows [1, "Alice", 30], [2, "Bob", 25], [3, "Charlie", 35] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s, %s)", (1, "Alice", 30))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s, %s, %s)", (2, "Bob", 25))
@@ -465,7 +465,7 @@ class TestExecutemanyWithPyformat:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany_dict"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When executemany is called with dict parameters
         #   [(id=1, name="Alice"), (id=2, name="Bob"), (id=3, name="Charlie")]
@@ -483,7 +483,7 @@ class TestExecutemanyWithPyformat:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany_tuple"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When executemany is called with tuple parameters
         #   [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
@@ -629,7 +629,7 @@ class TestLiteralPercentInQuery:
         pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_like_percent"
-        cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (name VARCHAR)")
         # And Rows ["Alice"], ["Bob"], ["Charlie"] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Alice",))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Bob",))
@@ -650,7 +650,7 @@ class TestLiteralPercentInQuery:
         pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_like_mixed"
-        cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (name VARCHAR)")
         # And Rows ["Alice"], ["Bob"] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Alice",))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Bob",))
@@ -676,7 +676,7 @@ class TestListBindingWithSpecialChars:
         pass
         # And A temporary table with columns (name VARCHAR) exists
         table_name = f"{tmp_schema}.test_list_special"
-        cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (name VARCHAR)")
         # And Rows with special characters are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("it's Alice",))
         cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Bob\\n",))
@@ -724,7 +724,7 @@ class TestExecutemanyRowcount:
         pass
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany_rowcount"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # When executemany is called to insert 3 rows using %s binding
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
