@@ -37,7 +37,7 @@ fn should_handle_null_values_in_json_result_set() {
     client.set_sql_query(
         &stmt,
         &format!(
-            "CREATE OR REPLACE TABLE {table} (
+            "CREATE OR REPLACE TEMPORARY TABLE {table} (
             str_col STRING,
             tinyint_col TINYINT,
             smallint_col SMALLINT,
@@ -67,7 +67,8 @@ fn should_handle_null_values_in_json_result_set() {
 
     client.set_sql_query(
         &stmt,
-        "INSERT INTO json_null_test
+        &format!(
+            "INSERT INTO {table}
             SELECT 'hello', 42, 1234, 123456, 1234567890123, 12345678901234567890123456789012345678, 123.45,
                 true, 3.14, '2024-01-15', '2024-01-15 10:30:00.123',
                 '2024-01-15 10:30:00.123456789',
@@ -75,7 +76,7 @@ fn should_handle_null_values_in_json_result_set() {
                 '2024-01-15 10:30:00.123 +01:00', '2024-01-15 10:30:00.123456789 +01:00',
                 '10:30:00.123',
                 TO_BINARY('hello', 'UTF-8'),
-                TO_VARIANT('test'), PARSE_JSON('{\"k\": 1}'), PARSE_JSON('[1, 2]'),
+                TO_VARIANT('test'), PARSE_JSON('{{\"k\": 1}}'), PARSE_JSON('[1, 2]'),
                 123.456::DECFLOAT
             UNION ALL
             SELECT null, null, null, null, null, null, null,
@@ -95,8 +96,9 @@ fn should_handle_null_values_in_json_result_set() {
                 '2024-06-01 12:00:00.456 +02:00', '2024-06-01 12:00:00.456789012 +02:00',
                 '12:00:00.456',
                 TO_BINARY('world', 'UTF-8'),
-                TO_VARIANT(123), PARSE_JSON('{\"k\": 2}'), PARSE_JSON('[3, 4]'),
-                789.012::DECFLOAT",
+                TO_VARIANT(123), PARSE_JSON('{{\"k\": 2}}'), PARSE_JSON('[3, 4]'),
+                789.012::DECFLOAT"
+        ),
     );
     client.execute_statement_query(&stmt);
     client.release_statement(&stmt);
