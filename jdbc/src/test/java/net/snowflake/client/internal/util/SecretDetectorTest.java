@@ -250,6 +250,29 @@ public class SecretDetectorTest {
   }
 
   @Test
+  public void testMaskSnowflakeSessionTokens() {
+    String loginResponse =
+        "{\n"
+            + "  \"data\" : {\n"
+            + "  \"masterToken\" : \"ver:3-hint:22605402125-ETMsDgAAABRBRVMvQ0JDL1BLQ1M1UGFkZG==\",\n"
+            + "  \"additionalAuthnData\" : { },\n"
+            + "  \"token\" : \"ver:3-hint:22605402125-ETMsDgAAABRBRVMvQ0JDL1BLQ1M1UGFkZGluZw==\",\n"
+            + "  \"validityInSeconds\" : 3599\n"
+            + "  }\n"
+            + "}";
+
+    String masked = SecretDetector.maskSecrets(loginResponse);
+
+    assertEquals(-1, masked.indexOf("ETMsDg"), "masterToken value should be masked");
+    assertEquals(-1, masked.indexOf("ver:3-hint"), "token value should be masked");
+    assertEquals(
+        true,
+        masked.contains("masterToken\" : \"****"),
+        "masterToken should be replaced with ****");
+    assertEquals(true, masked.contains("token\" : \"****"), "token should be replaced with ****");
+  }
+
+  @Test
   public void testMaskOAuthSecrets() {
     String tokenResponseJson =
         "{\n"
