@@ -1,7 +1,7 @@
 pub mod iodbc;
 pub mod unixodbc;
 
-use snafu::{Location, prelude::*};
+use snafu::{prelude::*, Location};
 
 use crate::model::{TraceFormat, TraceLog};
 

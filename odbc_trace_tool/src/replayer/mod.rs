@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{c_void, CStr, CString};
 use std::ptr;
 
-use snafu::Location;
 use snafu::prelude::*;
+use snafu::Location;
 
 use crate::model::{HandleType, OdbcCall, ParamValue, ReturnCode, TraceLog};
 

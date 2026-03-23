@@ -1,4 +1,4 @@
-use snafu::{Location, prelude::*};
+use snafu::{prelude::*, Location};
 
 use crate::model::TraceLog;
 

@@ -1,8 +1,8 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
-use snafu::Location;
 use snafu::prelude::*;
+use snafu::Location;
 
 use crate::model::{
     Direction, HandleGraph, HandleType, OdbcCall, ParamValue, Parameter, ReturnCode, TraceEntry,
