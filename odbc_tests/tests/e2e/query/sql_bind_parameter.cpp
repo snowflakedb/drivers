@@ -5,6 +5,7 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -129,8 +130,11 @@ TEST_CASE("should return HY104 for invalid precision or scale.", "[query][bind_p
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 5, -1, param,
                                    sizeof(param), &indicator);
 
-  // Then SQL_ERROR with SQLSTATE HY104 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY104"));
+  // Then the new driver rejects with HY104, the old driver accepts it
+  NEW_DRIVER_ONLY("BD#28") {
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY104"));
+  }
+  OLD_DRIVER_ONLY("BD#28") { REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded()); }
 }
 
 // TODO: Enable when descriptor consistency checks are implemented
@@ -245,9 +249,14 @@ TEST_CASE("should fail with 07002 after SQL_RESET_PARAMS clears bindings.", "[qu
   ret = SQLFreeStmt(stmt.getHandle(), SQL_RESET_PARAMS);
   REQUIRE_ODBC(ret, stmt);
 
-  // Then re-executing should fail with SQLSTATE 07002
+  // Then re-executing should fail (unbound parameter marker)
   ret = SQLExecute(stmt.getHandle());
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07002"));
+  OLD_DRIVER_ONLY("BD#29") {
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07002"));
+  }
+  NEW_DRIVER_ONLY("BD#29") {
+    REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("42000"));
+  }
 }
 
 TEST_CASE("should reflect changed bound variable on re-execution.", "[query][bind_parameter]") {
