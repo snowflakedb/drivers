@@ -711,22 +711,22 @@ class SnowflakeCursorBase(abc.ABC):
     @property
     def date_output_format(self) -> str | None:
         """The session's ``DATE_OUTPUT_FORMAT`` parameter value."""
-        raise NotImplementedError("date_output_format is not yet implemented")
+        return self._connection._get_session_parameter("DATE_OUTPUT_FORMAT")
 
     @property
     def time_output_format(self) -> str | None:
         """The session's ``TIME_OUTPUT_FORMAT`` parameter value."""
-        raise NotImplementedError("time_output_format is not yet implemented")
+        return self._connection._get_session_parameter("TIME_OUTPUT_FORMAT")
 
     @property
     def timezone(self) -> str | None:
         """The session's ``TIMEZONE`` parameter value."""
-        raise NotImplementedError("timezone is not yet implemented")
+        return self._connection._get_session_parameter("TIMEZONE")
 
     @property
     def binary_output_format(self) -> str | None:
         """The session's ``BINARY_OUTPUT_FORMAT`` parameter value (``HEX`` or ``BASE64``)."""
-        raise NotImplementedError("binary_output_format is not yet implemented")
+        return self._connection._get_session_parameter("BINARY_OUTPUT_FORMAT")
 
     @property
     @pep249
