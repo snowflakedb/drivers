@@ -180,6 +180,12 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid cursor state: cursor is already open"))]
+    CursorAlreadyOpen {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Statement is in error state"))]
     StatementErrorState {
         #[snafu(implicit)]
@@ -443,6 +449,7 @@ impl OdbcError {
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::CountFieldIncorrect { .. } => SqlState::CountFieldIncorrect,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
+            OdbcError::CursorAlreadyOpen { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,

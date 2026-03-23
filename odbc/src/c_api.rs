@@ -101,6 +101,19 @@ pub unsafe extern "C" fn SQLFreeStmt(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCode {
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::cancel(statement_handle);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLConnect(
     connection_handle: sql::Handle,
     server_name: *const sql::Char,

@@ -38,6 +38,16 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     let stmt = stmt_from_handle(statement_handle);
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
+    if matches!(
+        stmt.state.as_ref(),
+        StatementState::Executed { .. }
+            | StatementState::Fetching { .. }
+            | StatementState::Done { .. }
+    ) {
+        tracing::error!("exec_direct: cursor is already open");
+        return InvalidCursorStateSnafu.fail();
+    }
+
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -933,4 +943,23 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             crate::api::error::UnknownAttributeSnafu { attribute }.fail()
         }
     }
+}
+
+/// Cancel processing on a statement (SQLCancel).
+///
+/// Per ODBC 3.5, when no asynchronous processing is pending and no
+/// data-at-execution operation is in progress, `SQLCancel` is a no-op.
+pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
+    tracing::debug!("cancel: statement_handle={:?}", statement_handle);
+
+    // TODO(SNOW-3258918): Cancel async execution.
+    // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
+
+    // TODO(SNOW-3258919): Cancel data-at-execution (SQL_NEED_DATA).
+    // Blocked by: SQLParamData and SQLPutData are not implemented/exported.
+
+    // TODO(SNOW-3258922): Cancel execution on another thread.
+    // Blocked by: no server-side cancel RPC and no thread-safe statement access.
+
+    Ok(())
 }

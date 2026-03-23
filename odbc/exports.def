@@ -9,6 +9,7 @@ EXPORTS
     SQLAllocHandle
     SQLBindCol
     SQLBindParameter
+    SQLCancel
     SQLColAttributeW
     SQLConnectW
     SQLDescribeColW

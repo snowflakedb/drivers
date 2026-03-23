@@ -296,7 +296,6 @@ behavior_differences:
       arguments and is consistent with the driver's defensive validation.
       Impact: Applications that accidentally pass nullptr to SQLRowCount will
       now receive an error instead of silent success.
-
   28:
     name: "SQLBindParameter rejects negative DecimalDigits with HY104 instead of accepting silently"
     description: |
@@ -340,3 +339,30 @@ behavior_differences:
       crashes with SIGSEGV.
       NEW driver: Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 and
       the fractional part of the timestamp string truncated, per the ODBC spec.
+  33:
+    name: "SQLExecDirect/SQLExecute return 24000 when cursor is already open"
+    description: |
+      OLD driver: SQLExecDirect and SQLExecute silently overwrite the statement
+      state when called with an open cursor, allowing re-execution without
+      explicitly closing the cursor first.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 24000 (Invalid cursor state)
+      per the ODBC 3.x specification. Applications must call
+      SQLFreeStmt(SQL_CLOSE) or SQLCloseCursor before re-executing on a
+      statement that already has an open cursor from a previous SELECT or catalog function.
+      Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecdirect-function
+      Impact: Applications that chain multiple SQLExecDirect calls without
+      closing the cursor between them will receive 24000 errors. Add
+      SQLFreeStmt(SQL_CLOSE) between successive executions.
+  34:
+    name: "Async cancel does not interrupt in-progress operations"
+    description: |
+      OLD driver: Supports SQL_ATTR_ASYNC_ENABLE (SQLSetStmtAttr succeeds),
+      but SQLCancel during async polling does not actually interrupt the
+      in-progress operation. The query runs to completion instead of
+      returning HY008 (Operation canceled).
+      NEW driver: Not yet implemented. When implemented, SQLCancel during
+      async execution will cancel the CancellationToken, aborting the
+      in-flight RPC and returning HY008.
+      Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function
+      Impact: Applications relying on async cancel to abort long-running
+      queries will not see cancellation take effect on the old driver.
