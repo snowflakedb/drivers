@@ -3120,6 +3120,7 @@ dependencies = [
  "snafu 0.8.9",
  "test-case",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "winreg",

@@ -13,8 +13,29 @@
 #include "cross_thread_cancel.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
-#include "test_macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
+
+// NOTE: Unix ODBC Driver Managers (both unixODBC and iODBC) unconditionally
+// close the cursor in their internal state machine when SQLCancel succeeds,
+// regardless of the SQL_ATTR_ODBC_VERSION setting. This is ODBC 2.x behavior;
+// the ODBC 3.5 spec says SQLCancel on a synchronous idle statement should be
+// a no-op (state transition table shows "--" for S5-S7).
+//
+// Only the Windows ODBC DM correctly implements the 3.5 no-op semantics.
+// Both our driver and the reference driver return SQL_SUCCESS from SQLCancel
+// without touching the cursor, but the Unix DMs mark the cursor as closed
+// before the next call reaches the driver.
+//
+// Source code references:
+//   unixODBC: https://github.com/lurcher/unixODBC/blob/master/DriverManager/SQLCancel.c
+//     (else branch: "Same action as SQLFreeStmt( SQL_CLOSE )")
+//   iODBC: https://github.com/openlink/iODBC/blob/develop/iodbc/hstmt.c
+//     (case en_stmt_cursoropen/en_stmt_fetched/en_stmt_xfetched)
+//   ODBC spec: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function
+//     ("In ODBC 3.5, a call to SQLCancel when no processing is being done
+//      on the statement is not treated as SQLFreeStmt with the SQL_CLOSE
+//      option, but has no effect at all.")
 
 namespace {
 constexpr int kMaxPollIterations = 300;
@@ -27,93 +48,83 @@ constexpr int kMaxPollIterations = 300;
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on idle statement",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 42);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after query execution",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
     ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   }
   UNIX_ONLY {
-    OLD_DRIVER_ONLY("BD#30") {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
-      ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 2"), SQL_NTS);
-      REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
-    }
-    NEW_DRIVER_ONLY("BD#30") {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_SUCCESS);
-    }
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 2"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
   }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after fetch", "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
     ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_NO_DATA);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsNoData());
   }
   UNIX_ONLY {
-    OLD_DRIVER_ONLY("BD#30") {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
-      ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-      REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
-    }
-    NEW_DRIVER_ONLY("BD#30") {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_NO_DATA);
-    }
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
   }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on prepared but not executed statement",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 42);
 }
 
@@ -124,117 +135,122 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on prepared but not e
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: After cancel on executed prepared statement",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
     ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   }
   UNIX_ONLY {
-    OLD_DRIVER_ONLY("BD#30") {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
-      ret = SQLExecute(stmt_handle());
-      REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
-    }
-    NEW_DRIVER_ONLY("BD#30") {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_SUCCESS);
-    }
+    ret = SQLExecute(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
   }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Statement recoverable via SQLFreeStmt SQL_CLOSE after cancel",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  // Unix DMs close the cursor on SQLCancel.
+  WINDOWS_ONLY {
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+    // Re-execution fails because cursor is still open (BD#32).
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  }
+  UNIX_ONLY {
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  }
+
+  // Both paths recover via SQL_CLOSE.
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 42);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: SQLCloseCursor after cancel",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
+  // Unix DMs close the cursor on SQLCancel.
   WINDOWS_ONLY {
     ret = SQLCloseCursor(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   }
   UNIX_ONLY {
-    OLD_DRIVER_ONLY("BD#30") {
-      ret = SQLCloseCursor(stmt_handle());
-      REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
-    }
-    NEW_DRIVER_ONLY("BD#30") {
-      ret = SQLCloseCursor(stmt_handle());
-      REQUIRE(ret == SQL_SUCCESS);
-    }
+    ret = SQLCloseCursor(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
   }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after error recovery and re-execution",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT * FROM nonexistent_table_xyz_999"), SQL_NTS);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsError());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 42);
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 99"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 99);
 }
 
@@ -242,43 +258,43 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on never-executed sta
                  "[odbc-api][cancel][terminating_statement]") {
   SQLHSTMT fresh_stmt = SQL_NULL_HSTMT;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &fresh_stmt);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(fresh_stmt);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, fresh_stmt), OdbcMatchers::Succeeded());
 
   // Verify the handle is still usable after cancel
   ret = SQLExecDirect(fresh_stmt, sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, fresh_stmt), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(fresh_stmt);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, fresh_stmt), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(fresh_stmt, 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, fresh_stmt), OdbcMatchers::Succeeded());
   REQUIRE(val == 42);
 
   ret = SQLFreeHandle(SQL_HANDLE_STMT, fresh_stmt);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, fresh_stmt), OdbcMatchers::Succeeded());
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Multiple cancels on idle statement",
                  "[odbc-api][cancel][terminating_statement]") {
   for (int i = 0; i < 3; i++) {
     const SQLRETURN ret = SQLCancel(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   }
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 99"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 99);
 }
 
@@ -291,96 +307,96 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Preserves bound columns afte
   SQLINTEGER col_val = 0;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLBindCol(stmt_handle(), 1, SQL_C_SLONG, &col_val, 0, &indicator);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 99"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(col_val == 99);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Preserves bound parameters after cancel",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER param = 55;
   SQLLEN ind = 0;
   ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &ind);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   param = 88;
   ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 88);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Parameter bindings preserved after cancel with open cursor",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER param = 55;
   SQLLEN ind = 0;
   ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &ind);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 55);
 
   // Cancel while cursor is open (no-op on new driver, closes cursor on old)
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   // Re-execute with updated parameter value — bindings should be intact
   param = 123;
   ret = SQLExecute(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 123);
 }
 
@@ -393,32 +409,32 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancels data-at-execution op
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLLEN dae_indicator = SQL_DATA_AT_EXEC;
   SQLINTEGER param_id = 1;
   ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0,
                          reinterpret_cast<SQLPOINTER>(static_cast<SQLLEN>(param_id)), 0, &dae_indicator);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 77"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 77);
 }
 
@@ -427,26 +443,26 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Re-execute immediately after
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLLEN dae_indicator = SQL_DATA_AT_EXEC;
   SQLINTEGER param_id = 1;
   ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0,
                          reinterpret_cast<SQLPOINTER>(static_cast<SQLLEN>(param_id)), 0, &dae_indicator);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   // Verify re-execution works directly without an intervening SQLFreeStmt
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_NEED_DATA);
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 }
 
 // ============================================================================
@@ -466,29 +482,29 @@ TEST_CASE("SQLCancel: SQL_INVALID_HANDLE for null statement handle",
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after all rows fetched",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_NO_DATA);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsNoData());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 42);
 }
 
@@ -497,23 +513,23 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after DDL execution",
   auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE OR REPLACE TABLE cancel_test_tmp (id INT)"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 1);
 }
 
@@ -522,77 +538,55 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel on statement in Error
   auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT * FROM nonexistent_table"), SQL_NTS);
-  REQUIRE(ret == SQL_ERROR);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsError());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 }
 
 // ============================================================================
-// SQLCancel - Cursor Preservation (ODBC 3.5 spec-compliant no-op)
+// SQLCancel - Cursor Preservation (Windows only; Unix DMs close the cursor)
 // ============================================================================
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cursor remains usable after cancel on multi-row result",
                  "[odbc-api][cancel][terminating_statement]") {
-  NEW_DRIVER_ONLY("BD#30") {
-    SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT column1 FROM VALUES (1),(2),(3) ORDER BY 1"), SQL_NTS);
-    REQUIRE(ret == SQL_SUCCESS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT column1 FROM VALUES (1),(2),(3) ORDER BY 1"), SQL_NTS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-    SQLINTEGER val = 0;
+  SQLINTEGER val = 0;
 
+  ret = SQLFetch(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+  REQUIRE(val == 1);
+
+  ret = SQLCancel(stmt_handle());
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
+
+  // Unix DMs close the cursor on SQLCancel.
+  WINDOWS_ONLY {
     ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
     ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-    REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(val == 1);
-
-    ret = SQLCancel(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
-
-    ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
-    ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
     REQUIRE(val == 2);
 
     ret = SQLCancel(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
     ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
     ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
     REQUIRE(val == 3);
 
     ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_NO_DATA);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsNoData());
   }
-  OLD_DRIVER_ONLY("BD#30") {
-    SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT column1 FROM VALUES (1),(2),(3) ORDER BY 1"), SQL_NTS);
-    REQUIRE(ret == SQL_SUCCESS);
-
-    SQLINTEGER val = 0;
-
+  UNIX_ONLY {
     ret = SQLFetch(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
-    ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-    REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(val == 1);
-
-    ret = SQLCancel(stmt_handle());
-    REQUIRE(ret == SQL_SUCCESS);
-
-    WINDOWS_ONLY {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE(ret == SQL_SUCCESS);
-      ret = SQLGetData(stmt_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-      REQUIRE(ret == SQL_SUCCESS);
-      REQUIRE(val == 2);
-    }
-    UNIX_ONLY {
-      ret = SQLFetch(stmt_handle());
-      REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
-    }
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
   }
 }
 
@@ -603,20 +597,20 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cursor remains usable after 
 TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "SQLCancel: Does not affect other statements on same connection",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt2_handle(), sqlchar("SELECT 2"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt2_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2_handle()), OdbcMatchers::Succeeded());
 
   SQLINTEGER val = 0;
   ret = SQLGetData(stmt2_handle(), 1, SQL_C_SLONG, &val, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt2_handle()), OdbcMatchers::Succeeded());
   REQUIRE(val == 2);
 }
 
@@ -628,22 +622,22 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Preserves statement attribut
                  "[odbc-api][cancel][terminating_statement]") {
   SQLULEN max_length = 1024;
   SQLRETURN ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_MAX_LENGTH, reinterpret_cast<SQLPOINTER>(max_length), 0);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLULEN retrieved_max_length = 0;
   ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_MAX_LENGTH, &retrieved_max_length, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(retrieved_max_length == max_length);
 
   SQLULEN cursor_type = 0;
   ret = SQLGetStmtAttr(stmt_handle(), SQL_ATTR_CURSOR_TYPE, &cursor_type, 0, nullptr);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
   REQUIRE(cursor_type == SQL_CURSOR_FORWARD_ONLY);
 }
 
@@ -654,17 +648,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Preserves statement attribut
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Does not post diagnostic records on no-op cancel",
                  "[odbc-api][cancel][terminating_statement]") {
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   SQLCHAR sql_state[6] = {};
   SQLINTEGER native_error = 0;
   SQLCHAR message[256] = {};
   SQLSMALLINT msg_len = 0;
   ret = SQLGetDiagRec(SQL_HANDLE_STMT, stmt_handle(), 1, sql_state, &native_error, message, sizeof(message), &msg_len);
-  REQUIRE(ret == SQL_NO_DATA);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::IsNoData());
 }
 
 // ============================================================================
@@ -674,11 +668,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Does not post diagnostic rec
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel interrupts execution with HY008",
                  "[odbc-api][cancel][terminating_statement][async]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  SKIP_OLD_DRIVER("BD#30", "Reference driver async cancel does not interrupt in-progress operations");
+  SKIP_OLD_DRIVER("BD#33", "Async cancel does not interrupt in-progress operations on reference driver");
 
   SQLRETURN ret =
       SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   // Use a long TIMELIMIT so the query cannot complete before the cancel.
   // If the poll returns before 30s, it must be because the cancel worked.
@@ -686,7 +680,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel interrupts exec
   REQUIRE(ret == SQL_STILL_EXECUTING);
 
   SQLRETURN cancel_ret = SQLCancel(stmt_handle());
-  REQUIRE(cancel_ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(cancel_ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   int polls = 0;
   SQLRETURN poll_ret = SQL_STILL_EXECUTING;
@@ -699,23 +693,23 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel interrupts exec
   REQUIRE_EXPECTED_ERROR(poll_ret, "HY008", stmt_handle(), SQL_HANDLE_STMT);
 
   ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, SQL_ASYNC_ENABLE_OFF, 0);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel clears diagnostics and posts its own",
                  "[odbc-api][cancel][terminating_statement][async]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  SKIP_OLD_DRIVER("BD#30", "Reference driver async cancel does not interrupt in-progress operations");
+  SKIP_OLD_DRIVER("BD#33", "Async cancel does not interrupt in-progress operations on reference driver");
 
   SQLRETURN ret =
       SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIMIT => 30))"), SQL_NTS);
   REQUIRE(ret == SQL_STILL_EXECUTING);
 
   SQLRETURN cancel_ret = SQLCancel(stmt_handle());
-  REQUIRE(cancel_ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(cancel_ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   int polls = 0;
   SQLRETURN poll_ret = SQL_STILL_EXECUTING;
@@ -733,7 +727,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel clears diagnost
   REQUIRE(records[0].sqlState == "HY008");
 
   ret = SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, SQL_ASYNC_ENABLE_OFF, 0);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 }
 
 // The ODBC spec allows function completion despite the cancel instruction.
@@ -749,13 +743,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cross-thread cancel interrup
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLHSTMT stmt = stmt_handle();
-  CrossThreadCancel ctx;
+  odbc_test::CrossThreadCancel ctx;
   // 5-second delay lets the query reach the server before cancel fires.
   // Without it, SQLCancel can arrive before SQLExecDirect has sent the query,
   // leaving nothing to cancel and causing the query to run to completion.
   ctx.run(stmt, "SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIMIT => 60))", std::chrono::seconds(5));
 
-  REQUIRE(ctx.cancel_result == SQL_SUCCESS);
+  REQUIRE_THAT(OdbcResult(ctx.cancel_result, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   SQLRETURN exec_ret = ctx.exec_result.load();
   REQUIRE_EXPECTED_ERROR(exec_ret, "HY008", stmt, SQL_HANDLE_STMT);
@@ -768,17 +762,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cross-thread cancel interrup
   REQUIRE(records[0].sqlState == "HY008");
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: HY018 when server declines cancel request",
-                 "[odbc-api][cancel][terminating_statement][cross_thread]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  SKIP_OLD_DRIVER("BD#30", "Snowflake server does not decline cancel requests");
-
-  const SQLHSTMT stmt = stmt_handle();
-  CrossThreadCancel ctx;
-  ctx.run(stmt, "SELECT COUNT(*) FROM TABLE(GENERATOR(TIMELIMIT => 10))", std::chrono::seconds(0));
-
-  REQUIRE_EXPECTED_ERROR(ctx.cancel_result, "HY018", stmt, SQL_HANDLE_STMT);
-}
+// HY018 (server declines cancel) is not tested: Backend always accepts
+// cancel requests
 
 // The ODBC spec describes a race where both SQLCancel and the original
 // function return SQL_SUCCESS. In that case the Driver Manager assumes the
@@ -787,19 +772,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: HY018 when server declines c
 // before the query reaches the server. This is non-deterministic and untestable.
 
 // ============================================================================
-// SQLCancel - Connection-Level Async Conflict (HY010)
+// SQLCancel - Connection-Level Async
 // ============================================================================
 //
 // Per ODBC spec, SQLCancel returns HY010 if a connection-level async function
 // is still executing on the parent connection. Testing this requires enabling
 // SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE on the connection handle.
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: HY010 on connection-level async conflict",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Driver rejects enabling connection-level async with HY092",
                  "[odbc-api][cancel][terminating_statement]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  // NOTE: The reference driver reports SQL_ASYNC_DBC_CAPABLE via SQLGetInfo
-  // but rejects enabling it with SQL_ERROR.
   const SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_ASYNC_DBC_FUNCTIONS_ENABLE,
                                           reinterpret_cast<SQLPOINTER>(SQL_ASYNC_DBC_ENABLE_ON), 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY092", dbc_handle(), SQL_HANDLE_DBC);

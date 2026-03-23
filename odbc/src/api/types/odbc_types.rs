@@ -10,6 +10,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
 };
 use std::collections::HashMap;
+use tokio_util::sync::CancellationToken;
 
 use super::CDataType;
 
@@ -879,15 +880,24 @@ pub enum StatementState {
     Prepared {
         schema: SchemaRef,
     },
-    Executed {
+    /// ODBC state S5: SELECT/catalog function executed, cursor is open.
+    QueryExecuted {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
-        /// `true` when originating from `SQLPrepare`+`SQLExecute`, `false`
-        /// from `SQLExecDirect`. Used by `SQLFreeStmt(SQL_CLOSE)` to decide
-        /// whether to transition back to `Prepared` or `Created`.
+        /// `true` when reached via `SQLExecute` (prepared path). On
+        /// `SQLFreeStmt(SQL_CLOSE)` the state returns to `Prepared`;
+        /// when `false` (exec-direct path) it returns to `Created`.
         prepared: bool,
     },
-    NoResultSet {
+    /// ODBC state S4 for DDL. No cursor opened; SQLRowCount returns -1.
+    DdlExecuted {
+        schema: SchemaRef,
+        prepared: bool,
+    },
+    /// ODBC state S4 for DML (INSERT/UPDATE/DELETE/MERGE).
+    /// No cursor opened; SQLRowCount returns rows_affected.
+    DmlExecuted {
+        rows_affected: i64,
         schema: SchemaRef,
         prepared: bool,
     },
@@ -1005,6 +1015,11 @@ pub struct Statement<'a> {
     pub used_extended_fetch: bool,
     /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
     pub last_query_id: Option<String>,
+    /// Cancelled by `SQLCancel` (possibly from another thread) and observed
+    /// by execution functions via `tokio::select!` when cross-thread cancel
+    /// is wired up. Replaced with a fresh token at the start of each
+    /// execution/prepare call so that stale cancels do not affect new ops.
+    pub cancel_token: CancellationToken,
 }
 
 // Helper functions for handle conversion

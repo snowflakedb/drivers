@@ -22,6 +22,7 @@ libc = "0.2"
 proto_utils = { path = "../proto_utils" }
 error_trace = { path = "../error_trace" }
 tokio = { version = "1.50.0", features = ["rt"] }
+tokio-util = "0.7"
 
 [dev-dependencies]
 test-case = "3.3.1"

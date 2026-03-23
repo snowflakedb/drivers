@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sql.h>
+#include <sqlext.h>
 
 #include <atomic>
 #include <chrono>
@@ -54,5 +55,3 @@ struct CrossThreadCancel {
 };
 
 }  // namespace odbc_test
-
-using odbc_test::CrossThreadCancel;

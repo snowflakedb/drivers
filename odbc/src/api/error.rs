@@ -368,6 +368,12 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Operation canceled"))]
+    OperationCanceled {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -540,6 +546,7 @@ impl OdbcError {
             OdbcError::DataSourceNotFound { .. } => {
                 SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
             }
+            OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
         }
     }
 
