@@ -11,6 +11,7 @@ members = [
     "sf_core/tests/common/arrow_deserialize_macro",
     "error_trace",
     "error_trace_derive",
+    "odbc_trace_tool",
 ]
 resolver = "2"
 
