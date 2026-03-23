@@ -4,10 +4,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "HandleWrapper.hpp"
 #include "Schema.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
