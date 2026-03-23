@@ -245,6 +245,38 @@ jobs:
           $env:DRIVER_TYPE = "NEW"
           .\scripts\odbc\run_tests_windows.ps1
 
+  build_rpm:
+    needs: [detect-changes, odbc_unit_tests, odbc_tests]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    runs-on: ubuntu-latest
+    name: build_rpm (Linux x64)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev ruby ruby-dev rpm
+          sudo gem install fpm
+
+      - name: Build ODBC driver
+        run: cargo build --release --package odbc --target x86_64-unknown-linux-gnu
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Package RPM
+        run: ./scripts/odbc/rpm/package.sh
+        env:
+          PLATFORM: linux-x86_64-glibc
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-rpm-x86_64
+          path: build/snowflake-odbc-*.rpm
+
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests]
     if: always()
