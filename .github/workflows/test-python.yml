@@ -251,6 +251,8 @@ jobs:
 
       - name: Run all tests with coverage (Linux)
         if: runner.os == 'Linux'
+        id: run_python_tests_linux
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         working-directory: python
         run: |
           mkdir -p reports
@@ -263,8 +265,18 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
 
+      - name: Rerun failed Python tests (Linux)
+        if: steps.run_python_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
+        working-directory: python
+        run: hatch run test.py${{ matrix.py }}:all-cov --last-failed
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
       - name: Run all tests with coverage (Windows)
         if: runner.os == 'Windows'
+        id: run_python_tests_windows
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         working-directory: python
         shell: pwsh
         run: |
@@ -274,6 +286,15 @@ jobs:
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml `
             --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml `
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+
+      - name: Rerun failed Python tests (Windows)
+        if: steps.run_python_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
+        working-directory: python
+        shell: pwsh
+        run: hatch run test.py${{ matrix.py }}:all-cov --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
