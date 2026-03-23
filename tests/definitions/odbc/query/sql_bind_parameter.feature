@@ -56,17 +56,11 @@ Feature: ODBC SQLBindParameter spec compliance
     When SQLBindParameter is called with negative DecimalDigits
     Then the new driver rejects with HY104, the old driver accepts it
 
-  @odbc_e2e
-  Scenario: should return HY021 for inconsistent descriptor information.
-    Given Snowflake client is logged in
-    When SQLBindParameter is called with DecimalDigits outside the supported range for SQL_TYPE_TIMESTAMP
-    Then SQL_ERROR with SQLSTATE HY021 should be returned
+  # TODO: Uncomment when descriptor consistency checks are implemented
+  # Scenario: should return HY021 for inconsistent descriptor information.
 
-  @odbc_e2e
-  Scenario: should return HYC00 for unsupported type conversion.
-    Given Snowflake client is logged in
-    When SQLBindParameter is called with an unsupported C-to-SQL type combination
-    Then SQL_ERROR with SQLSTATE HYC00 should be returned
+  # TODO: Uncomment when unsupported type conversion detection is implemented
+  # Scenario: should return HYC00 for unsupported type conversion.
 
   # ============================================================================
   # API Behavior
@@ -87,12 +81,8 @@ Feature: ODBC SQLBindParameter spec compliance
     And parameter 1 is rebound to value 222
     Then executing should return the latest bound value
 
-  @odbc_e2e
-  Scenario: should fail with 07002 after SQL_RESET_PARAMS clears bindings.
-    Given Snowflake client is logged in
-    When a parameterized SELECT is prepared and executed successfully
-    And all parameter bindings are reset
-    Then re-executing should fail with SQLSTATE 07002
+  # TODO: Uncomment in PR #566 once auto-IPD is implemented (BD#29)
+  # Scenario: should fail with 07002 after SQL_RESET_PARAMS clears bindings.
 
   @odbc_e2e
   Scenario: should reflect changed bound variable on re-execution.
@@ -139,29 +129,10 @@ Feature: ODBC SQLBindParameter spec compliance
     Then re-executing should return the new string value
 
   # ============================================================================
-  # APD/IPD Descriptor Integration (enabled in PR #566)
+  # APD/IPD Descriptor Integration — uncomment in PR #566
   # ============================================================================
 
-  @odbc_e2e
-  Scenario: should populate APD descriptor fields after SQLBindParameter.
-    Given Snowflake client is logged in
-    When an integer parameter is bound
-    Then the APD should reflect the bound C type and data pointer
-
-  @odbc_e2e
-  Scenario: should populate IPD descriptor fields after SQLBindParameter.
-    Given Snowflake client is logged in
-    When an integer parameter is bound as SQL_PARAM_INPUT
-    Then the IPD should reflect the SQL type and parameter direction
-
-  @odbc_e2e
-  Scenario: should report parameter count via SQLNumParams after binding.
-    Given Snowflake client is logged in
-    When a statement with two parameter markers is prepared and both are bound
-    Then SQLNumParams should return 2
-
-  @odbc_e2e
-  Scenario: should describe bound parameter via SQLDescribeParam.
-    Given Snowflake client is logged in
-    When a parameterized SELECT is prepared and an integer parameter is bound
-    Then SQLDescribeParam should return the SQL type information
+  # Scenario: should populate APD descriptor fields after SQLBindParameter.
+  # Scenario: should populate IPD descriptor fields after SQLBindParameter.
+  # Scenario: should report parameter count via SQLNumParams after binding.
+  # Scenario: should describe bound parameter via SQLDescribeParam.

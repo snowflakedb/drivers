@@ -136,41 +136,8 @@ TEST_CASE("should return HY104 for invalid precision or scale.", "[query][bind_p
   OLD_DRIVER_ONLY("BD#28") { REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded()); }
 }
 
-// TODO: Enable when descriptor consistency checks are implemented
-TEST_CASE("should return HY021 for inconsistent descriptor information.", "[query][bind_parameter][error]") {
-  SKIP("Not yet implemented: descriptor consistency checks");
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When SQLBindParameter is called with DecimalDigits outside the supported range for SQL_TYPE_TIMESTAMP
-  SQLINTEGER param = 0;
-  SQLLEN indicator = 0;
-  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_TYPE_TIMESTAMP, 0, 99, &param,
-                                   0, &indicator);
-
-  // Then SQL_ERROR with SQLSTATE HY021 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY021"));
-}
-
-// TODO: Enable when unsupported type conversion detection is implemented at bind time
-TEST_CASE("should return HYC00 for unsupported type conversion.", "[query][bind_parameter][error]") {
-  SKIP("Not yet implemented: unsupported conversion detection at bind time");
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When SQLBindParameter is called with an unsupported C-to-SQL type combination
-  SQL_INTERVAL_STRUCT param = {};
-  SQLLEN indicator = sizeof(param);
-  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_INTERVAL_YEAR, SQL_INTEGER, 0, 0, &param,
-                                   sizeof(param), &indicator);
-
-  // Then SQL_ERROR with SQLSTATE HYC00 should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HYC00"));
-}
+// TODO: Add HY021 (inconsistent descriptor) and HYC00 (unsupported conversion)
+// tests when those validations are implemented.
 
 // =============================================================================
 // API Behavior — Binding lifecycle
@@ -227,36 +194,7 @@ TEST_CASE("should replace binding when same ParameterNumber is rebound.", "[quer
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 222);
 }
 
-// TODO: Re-enable in PR #566 once auto-IPD (parameter marker counting) is implemented.
-// Currently the new driver returns 42000 (server-side) instead of 07002 (client-side)
-// because it doesn't count ? markers during SQLPrepare. See BD#29.
-TEST_CASE("should fail with 07002 after SQL_RESET_PARAMS clears bindings.", "[query][bind_parameter]") {
-  SKIP("Enabled in PR #566: requires auto-IPD for client-side 07002 detection");
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a parameterized SELECT is prepared and executed successfully
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLCloseCursor(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-
-  // And all parameter bindings are reset
-  ret = SQLFreeStmt(stmt.getHandle(), SQL_RESET_PARAMS);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then re-executing should fail with SQLSTATE 07002
-  ret = SQLExecute(stmt.getHandle());
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("07002"));
-}
+// TODO: Add 07002 (SQL_RESET_PARAMS) test in PR #566 once auto-IPD is implemented (BD#29).
 
 TEST_CASE("should reflect changed bound variable on re-execution.", "[query][bind_parameter]") {
   // Given Snowflake client is logged in
@@ -467,115 +405,8 @@ TEST_CASE("should allow rebinding after SQL_RESET_PARAMS.", "[query][bind_parame
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "rebound");
 }
 
-// =============================================================================
-// APD/IPD Descriptor Integration (enabled in PR #566)
-// =============================================================================
-
-TEST_CASE("should populate APD descriptor fields after SQLBindParameter.", "[query][bind_parameter][descriptor]") {
-  SKIP("Enabled in PR #566: APD/IPD descriptors");
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When an integer parameter is bound
-  SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
-  SQLRETURN ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then the APD should reflect the bound C type and data pointer
-  SQLHDESC apd = SQL_NULL_HDESC;
-  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
-
-  SQLSMALLINT concise_type = 0;
-  ret = SQLGetDescField(apd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
-  CHECK(concise_type == SQL_C_SLONG);
-
-  SQLPOINTER data_ptr = nullptr;
-  ret = SQLGetDescField(apd, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
-  CHECK(data_ptr == &param);
-}
-
-TEST_CASE("should populate IPD descriptor fields after SQLBindParameter.", "[query][bind_parameter][descriptor]") {
-  SKIP("Enabled in PR #566: APD/IPD descriptors");
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When an integer parameter is bound as SQL_PARAM_INPUT
-  SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
-  SQLRETURN ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then the IPD should reflect the SQL type and parameter direction
-  SQLHDESC ipd = SQL_NULL_HDESC;
-  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_PARAM_DESC, &ipd, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
-
-  SQLSMALLINT param_type = 0;
-  ret = SQLGetDescField(ipd, 1, SQL_DESC_PARAMETER_TYPE, &param_type, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
-  CHECK(param_type == SQL_PARAM_INPUT);
-
-  SQLSMALLINT concise_type = 0;
-  ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
-  CHECK(concise_type == SQL_INTEGER);
-}
-
-TEST_CASE("should report parameter count via SQLNumParams after binding.", "[query][bind_parameter][descriptor]") {
-  SKIP("Enabled in PR #566: APD/IPD descriptors");
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a statement with two parameter markers is prepared and both are bound
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?, ?"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQLINTEGER p1 = 1, p2 = 2;
-  SQLLEN i1 = 0, i2 = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p1, 0, &i1);
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p2, 0, &i2);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then SQLNumParams should return 2
-  SQLSMALLINT num_params = 0;
-  ret = SQLNumParams(stmt.getHandle(), &num_params);
-  REQUIRE_ODBC(ret, stmt);
-  CHECK(num_params == 2);
-}
-
-TEST_CASE("should describe bound parameter via SQLDescribeParam.", "[query][bind_parameter][descriptor]") {
-  SKIP("Enabled in PR #566: APD/IPD descriptors");
-
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto stmt = conn.createStatement();
-
-  // When a parameterized SELECT is prepared and an integer parameter is bound
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
-
-  // Then SQLDescribeParam should return the SQL type information
-  SQLSMALLINT data_type = 0;
-  SQLULEN param_size = 0;
-  SQLSMALLINT decimal_digits = 0;
-  SQLSMALLINT nullable = 0;
-  ret = SQLDescribeParam(stmt.getHandle(), 1, &data_type, &param_size, &decimal_digits, &nullable);
-  REQUIRE_ODBC(ret, stmt);
-  CHECK(data_type == SQL_INTEGER);
-}
+// TODO: Add APD/IPD descriptor integration tests in PR #566:
+// - APD fields populated after bind
+// - IPD fields populated after bind
+// - SQLNumParams after binding
+// - SQLDescribeParam after binding
