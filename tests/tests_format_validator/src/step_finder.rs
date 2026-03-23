@@ -13,6 +13,8 @@ struct LanguageConfig {
     method_pattern: fn(&str) -> String,
     /// Patterns that indicate end of method (next test, top-level constructs)
     method_end_patterns: &'static [&'static str],
+    /// Whether the language uses braces to delimit method bodies (false for Python)
+    uses_braces: bool,
 }
 
 impl LanguageConfig {
@@ -23,6 +25,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for Java
             ],
+            uses_braces: true,
         }
     }
 
@@ -36,6 +39,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for Rust
             ],
+            uses_braces: true,
         }
     }
 
@@ -54,6 +58,7 @@ impl LanguageConfig {
                 "global ",     // Global variable declaration
                 "nonlocal ",   // Nonlocal variable declaration
             ],
+            uses_braces: false,
         }
     }
 
@@ -64,6 +69,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C#
             ],
+            uses_braces: true,
         }
     }
 
@@ -76,6 +82,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C++
             ],
+            uses_braces: true,
         }
     }
 
@@ -88,6 +95,7 @@ impl LanguageConfig {
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for JavaScript
             ],
+            uses_braces: true,
         }
     }
 }
@@ -325,45 +333,49 @@ impl MethodBoundaryFinder {
         let mut found_opening_brace = false;
         let search_limit = start_idx + 500; // Allow larger bodies (async runtimes, long setups)
 
-        // First, check if the method start line itself contains the opening brace
-        let start_line = lines[start_idx].trim();
-        let mut in_string = false;
-        let mut string_delimiter = '\0';
-        let mut escaped = false;
+        // For brace-delimited languages, scan for matching braces to find method end.
+        // Skipped for Python which uses indentation-based boundaries instead, since
+        // dict/set literals (e.g. {"key": "value"}) would falsely terminate the method.
+        if self.config.uses_braces {
+            let start_line = lines[start_idx].trim();
+            let mut in_string = false;
+            let mut string_delimiter = '\0';
+            let mut escaped = false;
 
-        for ch in start_line.chars() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-
-            match ch {
-                '\\' if in_string => {
-                    escaped = true;
+            for ch in start_line.chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
                 }
-                '"' | '\'' => {
-                    if !in_string {
-                        in_string = true;
-                        string_delimiter = ch;
-                    } else if ch == string_delimiter {
-                        in_string = false;
-                        string_delimiter = '\0';
+
+                match ch {
+                    '\\' if in_string => {
+                        escaped = true;
                     }
-                }
-                '{' if !in_string => {
-                    brace_depth += 1;
-                    found_opening_brace = true;
-                }
-                '}' if !in_string => {
-                    if found_opening_brace {
-                        brace_depth -= 1;
-                        if brace_depth == 0 {
-                            method_end_line = Some(start_idx);
-                            break;
+                    '"' | '\'' => {
+                        if !in_string {
+                            in_string = true;
+                            string_delimiter = ch;
+                        } else if ch == string_delimiter {
+                            in_string = false;
+                            string_delimiter = '\0';
                         }
                     }
+                    '{' if !in_string => {
+                        brace_depth += 1;
+                        found_opening_brace = true;
+                    }
+                    '}' if !in_string => {
+                        if found_opening_brace {
+                            brace_depth -= 1;
+                            if brace_depth == 0 {
+                                method_end_line = Some(start_idx);
+                                break;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
 
@@ -378,55 +390,55 @@ impl MethodBoundaryFinder {
                     break;
                 }
 
-                // Track brace depth for proper nesting (ignoring braces in strings)
-                let mut in_string = false;
-                let mut string_delimiter = '\0';
-                let mut escaped = false;
+                if self.config.uses_braces {
+                    // Track brace depth for proper nesting (ignoring braces in strings)
+                    let mut in_string = false;
+                    let mut string_delimiter = '\0';
+                    let mut escaped = false;
 
-                for ch in line.chars() {
-                    if escaped {
-                        escaped = false;
-                        continue;
-                    }
-
-                    match ch {
-                        '\\' if in_string => {
-                            escaped = true;
+                    for ch in line.chars() {
+                        if escaped {
+                            escaped = false;
+                            continue;
                         }
-                        '"' | '\'' => {
-                            if !in_string {
-                                in_string = true;
-                                string_delimiter = ch;
-                            } else if ch == string_delimiter {
-                                in_string = false;
-                                string_delimiter = '\0';
+
+                        match ch {
+                            '\\' if in_string => {
+                                escaped = true;
                             }
-                        }
-                        '{' if !in_string => {
-                            brace_depth += 1;
-                            found_opening_brace = true;
-                        }
-                        '}' if !in_string => {
-                            if found_opening_brace {
-                                brace_depth -= 1;
-                                // If we've closed all braces, this is the method end
-                                if brace_depth == 0 {
-                                    method_end_line = Some(i);
-                                    break;
+                            '"' | '\'' => {
+                                if !in_string {
+                                    in_string = true;
+                                    string_delimiter = ch;
+                                } else if ch == string_delimiter {
+                                    in_string = false;
+                                    string_delimiter = '\0';
                                 }
                             }
+                            '{' if !in_string => {
+                                brace_depth += 1;
+                                found_opening_brace = true;
+                            }
+                            '}' if !in_string => {
+                                if found_opening_brace {
+                                    brace_depth -= 1;
+                                    if brace_depth == 0 {
+                                        method_end_line = Some(i);
+                                        break;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+
+                    // If we found the method end by brace counting, stop
+                    if method_end_line.is_some() {
+                        break;
                     }
                 }
 
-                // If we found the method end by brace counting, stop
-                if method_end_line.is_some() {
-                    break;
-                }
-
-                // Fallback: Check if any end pattern matches (mainly for Python)
-                // Only match if the line is at the same or lower indentation level as the method start
+                // Check if any end pattern matches (for indentation-based languages like Python)
                 if !self.config.method_end_patterns.is_empty() {
                     // Note: `line` is shadowed to trimmed above, use lines[i] for indent
                     let original_line = lines[i];
@@ -1000,6 +1012,58 @@ def test_second():
         // Should NOT include the second test
         assert!(!method_content.contains("def test_second"));
         assert!(!method_content.contains("y = 2"));
+    }
+
+    /// Regression test: dict literals like {"key": "value"} in Python should NOT
+    /// cause the method boundary to end prematurely due to brace counting.
+    #[test]
+    fn test_python_method_boundary_not_truncated_by_dict_literals() {
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::python());
+
+        let content = r#"
+class TestFetchAll:
+    def test_fetch_with_nulls(self, cursor):
+        # Given Snowflake client is logged in
+        cursor.execute("SELECT 1")
+
+        # And Row 1 should have correct typed values for all columns
+        row1 = result.iloc[0]
+        assert row1["OBJ_COL"] == {"key": "value"}
+
+        # And Row 2 should have nulls for all nullable columns
+        row2 = result.iloc[1]
+        assert row2["TEXT_COL"] is None
+
+    def test_next_method(self):
+        pass
+"#;
+
+        let boundaries = boundary_finder
+            .find_method_boundaries(content, "test_fetch_with_nulls")
+            .expect("Should find method boundaries");
+
+        assert!(boundaries.is_some(), "Should find the method");
+        let (start, end) = boundaries.unwrap();
+
+        let lines: Vec<&str> = content.lines().collect();
+        let method_content: String = lines[start..end].join("\n");
+
+        assert!(
+            method_content.contains(r#"{"key": "value"}"#),
+            "Method should include dict literal line"
+        );
+        assert!(
+            method_content.contains("Row 2 should have nulls"),
+            "Method should include steps after dict literal"
+        );
+        assert!(
+            method_content.contains("row2[\"TEXT_COL\"] is None"),
+            "Method should include assertions after dict literal"
+        );
+        assert!(
+            !method_content.contains("def test_next_method"),
+            "Method should NOT include the next test method"
+        );
     }
 
     #[test]
