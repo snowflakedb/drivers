@@ -357,7 +357,7 @@ pub fn bind_parameter(
     raw_input_output_type: sql::SmallInt,
     raw_value_type: sql::SmallInt,
     raw_parameter_type: sql::SmallInt,
-    column_size: sql::ULen,
+    _column_size: sql::ULen,
     decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
@@ -414,7 +414,6 @@ pub fn bind_parameter(
     // TODO: validate that (value_type, sql_type) is a supported conversion,
     // returning UnsupportedFeatureSnafu (HYC00) if not.
 
-    let _ = column_size;
     let stmt = stmt_from_handle(statement_handle);
 
     let binding = ParameterBinding {
