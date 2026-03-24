@@ -110,6 +110,7 @@ pub unsafe extern "C" fn SQLConnect(
     authentication: *const sql::Char,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Narrow>(
         connection_handle,
         server_name,
@@ -135,6 +136,7 @@ pub unsafe extern "C" fn SQLConnectW(
     authentication: *const sql::WChar,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Wide>(
         connection_handle,
         server_name,

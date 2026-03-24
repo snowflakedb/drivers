@@ -333,6 +333,13 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Data source name not found: {dsn}"))]
+    DataSourceNotFound {
+        dsn: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -498,6 +505,9 @@ impl OdbcError {
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
             OdbcError::InvalidFreeStmtOption { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::OdbcRuntime { .. } => SqlState::FunctionSequenceError,
+            OdbcError::DataSourceNotFound { .. } => {
+                SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
+            }
         }
     }
 
