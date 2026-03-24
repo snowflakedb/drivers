@@ -1,8 +1,11 @@
 package net.snowflake.client;
 
-import java.io.FileInputStream;
+import static java.nio.file.Files.newInputStream;
+import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS;
+
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -17,7 +20,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
 
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@TestInstance(PER_CLASS)
 public abstract class SnowflakeIntegrationTestBase {
   private Connection defaultConnection;
 
@@ -52,7 +55,7 @@ public abstract class SnowflakeIntegrationTestBase {
       paramPath = "/parameters.json";
     }
     JSONObject params;
-    try (InputStream input = new FileInputStream(paramPath)) {
+    try (InputStream input = newInputStream(Paths.get(paramPath))) {
       params = new JSONObject(new JSONTokener(new InputStreamReader(input)));
     }
     params = params.getJSONObject("testconnection");

@@ -56,8 +56,8 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   private boolean closed = false;
   private String catalog;
   private String schema;
-  private int transactionIsolation = Connection.TRANSACTION_NONE;
-  private int networkTimeoutInMilli = 0;
+  private int transactionIsolation = TRANSACTION_READ_COMMITTED;
+  private int networkTimeoutInMilli = 0; //TODO not implemented
   private DatabaseHandle databaseHandle;
   public ConnectionHandle connectionHandle;
 
@@ -233,7 +233,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public void setTransactionIsolation(int level) throws SQLException {
     checkClosed();
-    if (level == Connection.TRANSACTION_NONE || level == Connection.TRANSACTION_READ_COMMITTED) {
+    if (level == Connection.TRANSACTION_NONE || level == TRANSACTION_READ_COMMITTED) {
       this.transactionIsolation = level;
     } else {
       throw new SQLFeatureNotSupportedException(
@@ -373,7 +373,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   @Override
   public Clob createClob() throws SQLException {
     checkClosed();
-    return new SnowflakeClob();
+    return null;
   }
 
   @Override

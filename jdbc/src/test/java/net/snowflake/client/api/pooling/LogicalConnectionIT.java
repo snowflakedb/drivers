@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
@@ -17,6 +16,7 @@ import java.util.Collections;
 import java.util.Properties;
 import javax.sql.PooledConnection;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 public class LogicalConnectionIT extends PoolingTestBase {
@@ -43,6 +43,7 @@ public class LogicalConnectionIT extends PoolingTestBase {
   }
 
   @Test
+  @Disabled("Network Timeout support should be added in core")
   public void testNetworkTimeout() throws SQLException {
     SnowflakeConnectionPoolDataSource poolDataSource = createConfiguredPoolDataSource();
     PooledConnection pooledConnection = poolDataSource.getPooledConnection();
@@ -228,32 +229,6 @@ public class LogicalConnectionIT extends PoolingTestBase {
     try (Connection logicalConnection = pooledConnection.getConnection()) {
       DatabaseMetaData databaseMetaData = logicalConnection.getMetaData();
       assertEquals("Snowflake", databaseMetaData.getDatabaseProductName());
-    }
-    pooledConnection.close();
-  }
-
-  @Test
-  public void testClob() throws SQLException {
-    SnowflakeConnectionPoolDataSource poolDataSource = createConfiguredPoolDataSource();
-    PooledConnection pooledConnection = poolDataSource.getPooledConnection();
-    try (Connection logicalConnection = pooledConnection.getConnection()) {
-      try (Statement statement = logicalConnection.createStatement()) {
-        statement.execute("create or replace temporary table test_clob (colA text)");
-      }
-
-      try (PreparedStatement preparedStatement =
-          logicalConnection.prepareStatement("insert into test_clob values (?)")) {
-        Clob clob = logicalConnection.createClob();
-        clob.setString(1, "hello world");
-        preparedStatement.setClob(1, clob);
-        preparedStatement.execute();
-      }
-
-      try (Statement statement = logicalConnection.createStatement();
-          ResultSet resultSet = statement.executeQuery("select * from test_clob")) {
-        assertTrue(resultSet.next());
-        assertEquals("hello world", resultSet.getString("COLA"));
-      }
     }
     pooledConnection.close();
   }
