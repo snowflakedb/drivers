@@ -14,7 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_REFERENCE_DRIVER_VERSION: "4.2.0"
+  PYTHON_REFERENCE_DRIVER_VERSION: "4.3.0"
   # Python version to run reference tests and comparison
   REFERENCE_PYTHON_VERSION: "3.13"
   # OS version for consistent naming across jobs
