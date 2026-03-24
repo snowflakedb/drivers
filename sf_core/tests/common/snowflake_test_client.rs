@@ -248,6 +248,31 @@ impl SnowflakeTestClient {
         serde_json::to_string(&bindings).unwrap()
     }
 
+    pub fn result_chunks(&self, stmt: &StatementHandle) -> ResultChunksResult {
+        rt().block_on(async {
+            self.client
+                .statement_result_chunks(StatementResultChunksRequest {
+                    stmt_handle: Some(*stmt),
+                })
+                .await
+                .unwrap()
+                .result
+                .unwrap()
+        })
+    }
+
+    pub fn fetch_chunk(&self, chunk: ResultChunk) -> DatabaseFetchChunkResponse {
+        rt().block_on(async {
+            self.client
+                .database_fetch_chunk(DatabaseFetchChunkRequest {
+                    db_handle: Some(self.db_handle),
+                    chunk: Some(chunk),
+                })
+                .await
+                .unwrap()
+        })
+    }
+
     pub fn release_statement(&self, stmt: &StatementHandle) {
         rt().block_on(async {
             self.client

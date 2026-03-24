@@ -3,7 +3,7 @@ use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{
     boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
 };
-use crate::chunks::{ChunkError, ChunkReader};
+use crate::chunks::{ChunkError, ChunkReader, DEFAULT_PREFETCH_THREADS};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::query_types::RowType;
@@ -106,6 +106,7 @@ async fn read_batches<'a>(
                 initial_base64_opt,
                 chunk_download_data.into(),
                 http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
             )
             .await
             .context(ChunkReadingSnafu)?;
