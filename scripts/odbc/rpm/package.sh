@@ -47,6 +47,7 @@ fi
 BUILD_DIR=build
 ODBC_DIR=/usr/lib64/snowflake/odbc
 STAGE_DIR=$(mktemp -d)
+trap 'rm -rf "$STAGE_DIR"' EXIT
 RPM_SCRIPTS_DIR=scripts/odbc/rpm
 
 echo "=== Staging files in $STAGE_DIR ==="
