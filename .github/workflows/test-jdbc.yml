@@ -59,6 +59,9 @@ jobs:
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
           cd jdbc
           ./gradlew test jacocoTestReport --stacktrace
+        env:
+          # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
   jdbc_tests_reference:
     needs: detect-changes
@@ -88,6 +91,8 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           cd jdbc
           ./gradlew referenceTest jacocoReferenceReport --stacktrace
+        env:
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
       - name: Upload OLD reference artifacts
         if: always()

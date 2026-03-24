@@ -1,28 +1,24 @@
 use jni::JavaVM;
+use jni::objects::JValue;
 use std::fmt::Debug;
 use tracing::{Event, Level, Subscriber, field::Field};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 
-pub(crate) struct SLF4JLayer {
+pub(crate) struct SFLoggerLayer {
     jvm: *mut jni::sys::JavaVM,
 }
 
-impl SLF4JLayer {
+impl SFLoggerLayer {
     pub fn new(jvm: *mut jni::sys::JavaVM) -> Self {
         Self { jvm }
     }
 }
 
-impl<S> Layer<S> for SLF4JLayer
+impl<S> Layer<S> for SFLoggerLayer
 where
     S: Subscriber,
 {
-    /*
-        This layer is used to log events to SLF4J.
-        TODO:
-          - Pass more information to SLF4J: file, line, etc.
-    */
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let mut message = String::new();
         event.record(&mut |field: &Field, value: &dyn Debug| {
@@ -43,10 +39,8 @@ where
             Level::DEBUG => "debug",
             Level::TRACE => "trace",
         };
-        // Format the log message
         let log_msg = format!("[{filename}:{line}] {message}");
 
-        // Call SLF4J logger through JNI
         let jvm = match unsafe { JavaVM::from_raw(self.jvm) } {
             Ok(jvm) => jvm,
             Err(e) => {
@@ -62,15 +56,15 @@ where
             }
         };
 
-        // Get org.slf4j.LoggerFactory class
-        let logger_factory = env.find_class("org/slf4j/LoggerFactory").unwrap();
+        let logger_factory = env
+            .find_class("net/snowflake/client/internal/log/SFLoggerFactory")
+            .unwrap();
         let logger_name = env.new_string("com.snowflake.jdbc.CoreLogger").unwrap();
-        // Get logger for our class
         let logger = env
             .call_static_method(
                 logger_factory,
                 "getLogger",
-                "(Ljava/lang/String;)Lorg/slf4j/Logger;",
+                "(Ljava/lang/String;)Lnet/snowflake/client/internal/log/SFLogger;",
                 &[(&logger_name).into()],
             )
             .unwrap()
@@ -79,22 +73,15 @@ where
 
         let java_log_msg = env.new_string(log_msg).unwrap();
 
-        // Call appropriate log level method
         env.call_method(
             logger,
-            level_str.to_lowercase().as_str(),
-            "(Ljava/lang/String;)V",
-            &[(&java_log_msg).into()],
+            level_str,
+            "(Ljava/lang/String;Z)V",
+            &[(&java_log_msg).into(), JValue::Bool(1)],
         )
         .unwrap();
     }
 }
 
-/*
-TODO: Not sure if this will work,
-  - jvm needs to be thread-safe
-  - *mut jni::sys::JavaVM is not Send or Sync
-*/
-
-unsafe impl Send for SLF4JLayer {}
-unsafe impl Sync for SLF4JLayer {}
+unsafe impl Send for SFLoggerLayer {}
+unsafe impl Sync for SFLoggerLayer {}

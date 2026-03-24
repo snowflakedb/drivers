@@ -2782,6 +2782,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ecdb20f7c165083ad1bc9f55122f677725e257716a5bc83e5413d5654b7d6f1"
 
 [[package]]
+name = "odbc_trace_tool"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "regex",
+ "snafu 0.8.9",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

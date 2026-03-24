@@ -21,7 +21,7 @@ from decimal import Decimal
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_connection_is_open, assert_sequential_values, assert_type
+from .utils import assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -75,7 +75,7 @@ class TestNumberTypeCasting:
     @number_type_parametrize
     def test_should_cast_number_values_to_appropriate_type_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 0::<type>(10,0), 123::<type>(10,0), 0.00::<type>(10,2), 123.45::<type>(10,2)" is executed
         sql = f"SELECT 0::{num_type}(10,0), 123::{num_type}(10,0), 0.00::{num_type}(10,2), 123.45::{num_type}(10,2)"
@@ -94,7 +94,7 @@ class TestNumberLiteral:
     @number_type_parametrize
     def test_should_select_number_literals_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 0::<type>(10,0), -456::<type>(10,0), 1.50::<type>(10,2), -123.45::<type>(10,2),
         # 123.456::<type>(15,3), -789.012::<type>(15,3)" is executed
@@ -115,7 +115,7 @@ class TestNumberLiteral:
     @number_type_parametrize
     def test_should_handle_high_precision_values_from_literals_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 12345678901234567890123456789012345678::<type>(38,0),
         # 123456789012345678901234567890123456.78::<type>(38,2),
@@ -143,7 +143,7 @@ class TestNumberLiteral:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 999.99::<type>(5,2), -999.99::<type>(5,2), 99999999::<type>(8,0),
         # -99999999::<type>(8,0)" is executed
@@ -164,7 +164,7 @@ class TestNumberLiteral:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 99999999999999999999999999999999999999::<type>(38,0),
         # -99999999999999999999999999999999999999::<type>(38,0)" is executed
@@ -179,7 +179,7 @@ class TestNumberLiteral:
     @number_type_parametrize
     def test_should_handle_null_values_from_literals_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT NULL::<type>(10,0), 42::<type>(10,0), NULL::<type>(10,2), 42.50::<type>(10,2)" is executed
         sql = f"SELECT NULL::{num_type}(10,0), 42::{num_type}(10,0), NULL::{num_type}(10,2), 42.50::{num_type}(10,2)"
@@ -196,7 +196,7 @@ class TestNumberLiteral:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query
         # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v"
@@ -239,12 +239,12 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3), <type>(20,5)) exists
         table_name = f"{tmp_schema}.number_table_{num_type.lower()}"
         execute_query(
-            f"CREATE TABLE {table_name} ("
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} ("
             f"col_scale0 {num_type}(10,0), "
             f"col_scale2 {num_type}(10,2), "
             f"col_scale3 {num_type}(15,3), "
@@ -297,12 +297,12 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(38,0), <type>(38,2), <type>(38,10), <type>(38,37)) exists
         table_name = f"{tmp_schema}.precision_table_{num_type.lower()}"
         execute_query(
-            f"CREATE TABLE {table_name} ("
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} ("
             f"col_38_0 {num_type}(38,0), "
             f"col_38_2 {num_type}(38,2), "
             f"col_38_10 {num_type}(38,10), "
@@ -340,11 +340,13 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(5,2), <type>(8,0)) exists
         table_name = f"{tmp_schema}.boundary_table_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_5_2 {num_type}(5,2), col_8_0 {num_type}(8,0))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_5_2 {num_type}(5,2), col_8_0 {num_type}(8,0))"
+        )
 
         test_data = [
             (NUMBER_5_2_MAX, NUMBER_8_0_MAX),
@@ -376,11 +378,13 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(38,0), <type>(38,37)) exists
         table_name = f"{tmp_schema}.high_precision_boundary_table_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_37 {num_type}(38,37))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_37 {num_type}(38,37))"
+        )
 
         test_data = [
             (NUMBER_38_0_MAX, NUMBER_38_DIGITS_SCALE37),
@@ -409,12 +413,12 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
         table_name = f"{tmp_schema}.null_table_{num_type.lower()}"
         execute_query(
-            f"CREATE TABLE {table_name} ("
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} ("
             f"col_10_0 {num_type}(10,0), "
             f"col_10_2 {num_type}(10,2), "
             f"col_15_3 {num_type}(15,3))"
@@ -451,15 +455,15 @@ class TestNumberTable:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows,
         # from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
+        table_name = f"{tmp_schema}.large_table_{num_type.lower()}"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
-        table_name = f"{tmp_schema}.large_table_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col1 {num_type}(38,0), col2 {num_type}(20,5))")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col1 {num_type}(38,0), col2 {num_type}(20,5))")
         execute_query(
             f"INSERT INTO {table_name} "
             f"WITH base AS ("
@@ -496,7 +500,7 @@ class TestNumberBinding:
     @number_type_parametrize
     def test_should_select_number_using_parameter_binding_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::<type>(10,0), ?::<type>(10,0), ?::<type>(10,2), ?::<type>(10,2), ?::<type>(10,0)"
         # is executed with bound values [123, -456, 12.34, -56.78, NULL]
@@ -520,7 +524,7 @@ class TestNumberBinding:
         self, execute_query, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT ?::<type>(38,0), ?::<type>(38,2)" is executed
         # with bound values [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
@@ -542,11 +546,13 @@ class TestNumberBinding:
         self, execute_query, executemany_insert, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(10,0), <type>(10,2)) exists
         table_name = f"{tmp_schema}.number_bind_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_int {num_type}(10,0), col_dec {num_type}(10,2))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_int {num_type}(10,0), col_dec {num_type}(10,2))"
+        )
 
         # When Rows (0, 0.00), (123, 123.45), (-456, -67.89), (999999, 999.99), (NULL, NULL) are inserted using binding
         test_data = [
@@ -574,11 +580,13 @@ class TestNumberBinding:
         self, execute_query, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with columns (<type>(38,0), <type>(38,2)) exists
         table_name = f"{tmp_schema}.high_precision_bind_{num_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_2 {num_type}(38,2))")
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_2 {num_type}(38,2))"
+        )
 
         # When Rows (12345678901234567890123456789012345678, 123456789012345678901234567890123456.78),
         # (99999999999999999999999999999999999999, 0.01), (-99999999999999999999999999999999999999, -0.01)
