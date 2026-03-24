@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import functools
 import importlib
 
 from logging import getLogger
 from types import ModuleType
-from typing import Any
+from typing import Any, Callable, TypeVar, cast
 
 from snowflake.connector import errors
 from snowflake.connector._internal.errorcode import ER_NO_PYARROW
 
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 logger = getLogger(__name__)
 
@@ -63,6 +66,20 @@ def check_dependency(module: ModuleType | MissingOptionalDependency) -> None:
             raise errors.ProgrammingError(msg=msg, errno=ER_NO_PYARROW)
         else:
             raise errors.MissingDependencyError(module.dep_name)
+
+
+def requires_dependency(module: ModuleType | MissingOptionalDependency) -> Callable[[F], F]:
+    """Raise ProgrammingError if dependency is not installed."""
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+            check_dependency(module)
+            return func(self, *args, **kwargs)
+
+        return cast(F, wrapper)
+
+    return decorator
 
 
 pyarrow = _import_or_missing("pyarrow")

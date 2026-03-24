@@ -747,12 +747,12 @@ class TestCheckCanUseArrowResultset:
 
     def test_no_error_when_pyarrow_installed(self, cursor):
         """check_can_use_arrow_resultset does not raise when pyarrow is available."""
-        with patch("snowflake.connector.cursor.pa", MagicMock()):
+        with patch("snowflake.connector.cursor.pyarrow", MagicMock()):
             cursor.check_can_use_arrow_resultset()
 
     def test_raises_programming_error_when_pyarrow_missing(self, cursor):
         """check_can_use_arrow_resultset raises ProgrammingError when pyarrow is not installed."""
-        with patch("snowflake.connector.cursor.pa", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_arrow_resultset()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -760,7 +760,7 @@ class TestCheckCanUseArrowResultset:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor.pa", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_arrow_resultset()
 
@@ -778,12 +778,12 @@ class TestCheckCanUsePandas:
 
     def test_no_error_when_pandas_installed(self, cursor):
         """check_can_use_pandas does not raise when pandas is available."""
-        with patch("snowflake.connector.cursor.pd", MagicMock()):
+        with patch("snowflake.connector.cursor.pandas", MagicMock()):
             cursor.check_can_use_pandas()
 
     def test_raises_programming_error_when_pandas_missing(self, cursor):
         """check_can_use_pandas raises ProgrammingError when pandas is not installed."""
-        with patch("snowflake.connector.cursor.pd", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_pandas()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -791,6 +791,6 @@ class TestCheckCanUsePandas:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor.pd", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_pandas()
