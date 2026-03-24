@@ -164,10 +164,19 @@ pub async fn download_from_s3(
 }
 
 async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -> S3Client {
+    let super::types::CloudCredentials::S3 {
+        ref aws_key_id,
+        ref aws_secret_key,
+        ref aws_token,
+    } = stage_info.creds
+    else {
+        panic!("S3 client requires S3 credentials");
+    };
+
     let credentials = Credentials::new(
-        &stage_info.creds.aws_key_id,
-        stage_info.creds.aws_secret_key.reveal(),
-        Some(stage_info.creds.aws_token.reveal().to_string()),
+        aws_key_id,
+        aws_secret_key.reveal(),
+        Some(aws_token.reveal().to_string()),
         None,
         provider_name,
     );
