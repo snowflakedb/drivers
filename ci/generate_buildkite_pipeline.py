@@ -52,6 +52,7 @@ COMMON_STEP = {
                 "image": DOCKER_IMAGE,
                 "propagate-environment": True,
                 "mount-buildkite-agent": True,
+                "run-as-current-user": True,
                 "environment": ["PARAMETERS_SECRET", "BUILDKITE_ANALYTICS_TOKEN"],
             }
         },
@@ -340,20 +341,9 @@ def main():
         steps = [{"label": ":white_check_mark: All drivers skipped",
                   "command": "echo 'No relevant changes detected'"}]
     else:
-        step_keys = [DRIVER_STEPS[name]["step_key"] for name in active]
         steps.append("wait")
         steps.append({
-            "label": ":junit: Annotate test results",
-            "plugins": [{
-                "junit-annotate#v2.4.1": {
-                    "artifacts": "junit-results/*.xml",
-                    "always-annotate": True,
-                }
-            }],
-            "agents": {"queue": "discovery", "repo": "snowflakedb/universal-driver"},
-        })
-        steps.append({
-            "label": ":bar_chart: Upload to Test Engine",
+            "label": ":junit: Process test results",
             "plugins": [
                 {
                     VAULT_PLUGIN: {
@@ -361,6 +351,12 @@ def main():
                             "path": "secret/jenkins/rt-tests/universal_driver_test_suite_api_token",
                             "env_name": "BUILDKITE_ANALYTICS_TOKEN",
                         }]
+                    }
+                },
+                {
+                    "junit-annotate#v2.4.1": {
+                        "artifacts": "junit-results/*.xml",
+                        "always-annotate": True,
                     }
                 },
                 {
