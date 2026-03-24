@@ -129,10 +129,29 @@ Feature: ODBC SQLBindParameter spec compliance
     Then re-executing should return the new string value
 
   # ============================================================================
-  # APD/IPD Descriptor Integration — uncomment in PR #566
+  # APD/IPD Descriptor Integration
   # ============================================================================
 
-  # Scenario: should populate APD descriptor fields after SQLBindParameter.
-  # Scenario: should populate IPD descriptor fields after SQLBindParameter.
-  # Scenario: should report parameter count via SQLNumParams after binding.
-  # Scenario: should describe bound parameter via SQLDescribeParam.
+  @odbc_e2e
+  Scenario: should populate APD descriptor fields after SQLBindParameter.
+    Given Snowflake client is logged in
+    When an integer parameter is bound
+    Then the APD should reflect the bound C type and data pointer
+
+  @odbc_e2e
+  Scenario: should populate IPD descriptor fields after SQLBindParameter.
+    Given Snowflake client is logged in
+    When an integer parameter is bound as SQL_PARAM_INPUT
+    Then the IPD should reflect the SQL type and parameter direction
+
+  @odbc_e2e
+  Scenario: should report parameter count via SQLNumParams after binding.
+    Given Snowflake client is logged in
+    When a statement with two parameter markers is prepared and both are bound
+    Then SQLNumParams should return 2
+
+  @odbc_e2e
+  Scenario: should describe bound parameter via SQLDescribeParam.
+    Given Snowflake client is logged in
+    When a parameterized SELECT is prepared and an integer parameter is bound
+    Then SQLDescribeParam should return the SQL type information

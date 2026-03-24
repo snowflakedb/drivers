@@ -405,8 +405,107 @@ TEST_CASE("should allow rebinding after SQL_RESET_PARAMS.", "[query][bind_parame
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "rebound");
 }
 
-// TODO: Add APD/IPD descriptor integration tests in PR #566:
-// - APD fields populated after bind
-// - IPD fields populated after bind
-// - SQLNumParams after binding
-// - SQLDescribeParam after binding
+// =============================================================================
+// APD/IPD Descriptor Integration
+// =============================================================================
+
+TEST_CASE("should populate APD descriptor fields after SQLBindParameter.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When an integer parameter is bound
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then the APD should reflect the bound C type and data pointer
+  SQLHDESC apd = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLSMALLINT concise_type = 0;
+  ret = SQLGetDescField(apd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(concise_type == SQL_C_SLONG);
+
+  SQLPOINTER data_ptr = nullptr;
+  ret = SQLGetDescField(apd, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(data_ptr == &param);
+}
+
+TEST_CASE("should populate IPD descriptor fields after SQLBindParameter.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When an integer parameter is bound as SQL_PARAM_INPUT
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then the IPD should reflect the SQL type and parameter direction
+  SQLHDESC ipd = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_PARAM_DESC, &ipd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLSMALLINT param_type = 0;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_PARAMETER_TYPE, &param_type, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(param_type == SQL_PARAM_INPUT);
+
+  SQLSMALLINT concise_type = 0;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(concise_type == SQL_INTEGER);
+}
+
+TEST_CASE("should report parameter count via SQLNumParams after binding.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a statement with two parameter markers is prepared and both are bound
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?, ?"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER p1 = 1, p2 = 2;
+  SQLLEN i1 = 0, i2 = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p1, 0, &i1);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p2, 0, &i2);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then SQLNumParams should return 2
+  SQLSMALLINT num_params = 0;
+  ret = SQLNumParams(stmt.getHandle(), &num_params);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(num_params == 2);
+}
+
+TEST_CASE("should describe bound parameter via SQLDescribeParam.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameterized SELECT is prepared and an integer parameter is bound
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then SQLDescribeParam should return the SQL type information
+  SQLSMALLINT data_type = 0;
+  SQLULEN param_size = 0;
+  SQLSMALLINT decimal_digits = 0;
+  SQLSMALLINT nullable = 0;
+  ret = SQLDescribeParam(stmt.getHandle(), 1, &data_type, &param_size, &decimal_digits, &nullable);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(data_type == SQL_INTEGER);
+}
