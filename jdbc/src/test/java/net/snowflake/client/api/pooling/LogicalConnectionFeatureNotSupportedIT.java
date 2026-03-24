@@ -64,7 +64,9 @@ public class LogicalConnectionFeatureNotSupportedIT extends PoolingTestBase {
 
   private void expectFeatureNotSupported(SQLErrorThrowingRunnable f) {
     SQLException ex = assertThrows(SQLException.class, f::run);
-    assertInstanceOf(SQLFeatureNotSupportedException.class, ex,
+    assertInstanceOf(
+        SQLFeatureNotSupportedException.class,
+        ex,
         "Expected SQLFeatureNotSupportedException but got " + ex.getClass().getName());
   }
 

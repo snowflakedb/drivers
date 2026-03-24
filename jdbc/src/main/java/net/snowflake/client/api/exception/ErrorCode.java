@@ -1,6 +1,5 @@
 package net.snowflake.client.api.exception;
 
-
 import lombok.Getter;
 
 @Getter
