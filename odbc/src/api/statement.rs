@@ -2,8 +2,9 @@ use crate::api::CDataType;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
-    NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
+    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
+    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    OdbcRuntimeSnafu, Required,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -357,7 +358,7 @@ pub fn bind_parameter(
     raw_value_type: sql::SmallInt,
     raw_parameter_type: sql::SmallInt,
     _column_size: sql::ULen,
-    _decimal_digits: sql::SmallInt,
+    decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
@@ -395,6 +396,23 @@ pub fn bind_parameter(
         );
         return NullPointerSnafu.fail();
     }
+
+    if buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
+    if decimal_digits < 0 {
+        return InvalidPrecisionOrScaleSnafu {
+            reason: format!("decimal_digits ({decimal_digits}) must not be negative"),
+        }
+        .fail();
+    }
+
+    // TODO: validate that (value_type, sql_type) is a supported conversion,
+    // returning UnsupportedFeatureSnafu (HYC00) if not.
 
     let stmt = stmt_from_handle(statement_handle);
 
