@@ -304,9 +304,20 @@ class SnowflakeCursorBase(abc.ABC):
         raise NotSupportedError("callproc is not implemented")
 
     @pep249
-    def close(self) -> None:
-        """Close the cursor now (rather than whenever __del__ is called)."""
-        self._closed = True
+    def close(self) -> bool | None:
+        """Close the cursor now (rather than whenever __del__ is called).
+
+        Returns whether the cursor was closed during this call.
+        """
+        try:
+            if self._closed:
+                return False
+            self.reset(closing=True)
+            self._closed = True
+            del self._messages[:]
+            return True
+        except Exception:
+            return None
 
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
@@ -393,6 +404,7 @@ class SnowflakeCursorBase(abc.ABC):
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        _do_reset: bool = True,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -404,7 +416,12 @@ class SnowflakeCursorBase(abc.ABC):
                 For qmark/numeric paramstyle: sequence of values
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
+            _do_reset: Whether or not the result set needs to be reset before executing query.
+                Defaults to True. Set to False in executemany() to avoid resetting state between individual executions.
         """
+        if _do_reset:
+            self.reset()
+
         query, bindings = self._prepare_query(operation, parameters)
         stmt_handle = self._connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self._connection.conn_handle)
@@ -422,12 +439,6 @@ class SnowflakeCursorBase(abc.ABC):
             raise
         finally:
             self._connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=stmt_handle))
-
-        # Reset streaming state for a new result
-        self._binding_data = None
-        self._iterator = None
-        self._fetch_mode = None
-        self._rownumber = -1
 
         # Populate description, rowcount, and sqlstate
         self._populate_description()
@@ -476,10 +487,11 @@ class SnowflakeCursorBase(abc.ABC):
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
         if paramstyle.is_client_side() or isinstance(first_params, dict):
+            self.reset()
             total_rowcount = 0
             unknown_rowcount = False
             for params in seq_of_parameters:
-                self.execute(operation, params)
+                self.execute(operation, params, _do_reset=False)
                 rc = self._rowcount
                 if rc is None or rc == -1:
                     unknown_rowcount = True
@@ -849,8 +861,27 @@ class SnowflakeCursorBase(abc.ABC):
         raise NotSupportedError("scroll is not supported")
 
     def reset(self, closing: bool = False) -> None:
-        """Reset the result set."""
-        raise NotImplementedError("reset is not yet implemented")
+        """Reset the result set.
+
+        Clears all result-related state, preparing the cursor for a new execution.
+        This is called automatically by execute() before each query, and by close().
+
+        Args:
+            closing: If True, do not reset rowcount,
+                     see: SNOW-647539: Do not erase the rowcount information when closing the cursor.
+                     If False, reset rowcount to None.
+        """
+        self._description = None
+        if not closing:
+            self._rowcount = None
+        self._sqlstate = None
+
+        self.execute_result = None
+        self._iterator = None
+        self._fetch_mode = None
+
+        self._binding_data = None
+        self._rownumber = -1
 
     def query_result(self, qid: str) -> SnowflakeCursorBase:
         """Query the result of a previously executed query."""
