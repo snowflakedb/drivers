@@ -21,6 +21,7 @@
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Result set has correct number of columns",
                  "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -34,6 +35,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Result set has correct numbe
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -61,6 +63,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Result set column names matc
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Returns known table with correct metadata",
                  "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -88,6 +91,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Returns known table with cor
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Returns view with TABLE_TYPE VIEW", "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_VIEW), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -105,6 +109,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Returns view with TABLE_TYPE
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Non-existent table returns empty result set",
                  "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar("NONEXISTENTTABLEXYZ99999"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -115,6 +120,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Non-existent table returns e
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: TABLE_TYPE filter restricts results",
                  "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // No filter - wildcard BASIC% matches both BASIC_TABLE and BASIC_VIEW
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar("BASIC%"), SQL_NTS, nullptr, 0);
@@ -160,6 +166,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: TABLE_TYPE filter restricts 
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Wildcard search finds table", "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar("BASICTAB%"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -178,6 +185,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Wildcard search finds table"
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Various parameter combinations are accepted",
                  "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   const char* db = database_name();
   const char* schema = schema_name();
   const char* tbl = readonly_db::BASIC_TABLE;
@@ -209,6 +217,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Various parameter combinatio
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Can call multiple times after close cursor",
                  "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -228,6 +237,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: Can call multiple times afte
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: SQLRowCount returns -1", "[odbc-api][catalog][tables]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
@@ -267,6 +277,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative TableName l
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTables: 24000 - Cursor already open",
                  "[odbc-api][catalog][tables][error]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                             sqlchar(readonly_db::BASIC_TABLE), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
