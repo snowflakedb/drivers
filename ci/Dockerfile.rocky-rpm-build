@@ -1,0 +1,24 @@
+FROM rockylinux:8
+
+RUN dnf install -y \
+        gcc \
+        gcc-c++ \
+        cmake \
+        curl \
+        lld \
+        perl \
+        openssl-devel \
+        unixODBC-devel \
+        ruby \
+        ruby-devel \
+        rpm-build && \
+    dnf clean all
+
+# Rocky 8 ships Ruby 2.5; fpm 1.15.1 is the last version compatible with it
+RUN gem install fpm -v 1.15.1
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

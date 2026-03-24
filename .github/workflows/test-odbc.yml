@@ -307,7 +307,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             platform: linux-x86_64-glibc
             arch: x86_64
-          - os: ubuntu-22.04-arm
+          - os: ubuntu-24.04-arm
             name: Linux ARM64
             target: aarch64-unknown-linux-gnu
             platform: linux-aarch64-glibc
@@ -318,22 +318,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Build Docker image
+        run: docker build -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
+
+      - name: Build ODBC driver and package RPM
         run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y unixodbc-dev ruby ruby-dev rpm
-          sudo gem install fpm
-
-      - name: Build ODBC driver
-        run: cargo build --release --package odbc --target ${{ matrix.target }}
-        env:
-          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
-
-      - name: Package RPM
-        run: ./scripts/odbc/rpm/package.sh
-        env:
-          PLATFORM: ${{ matrix.platform }}
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e PLATFORM=${{ matrix.platform }} \
+            -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
+            rpm-build \
+            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./scripts/odbc/rpm/package.sh"
 
       - name: Upload RPM
         uses: actions/upload-artifact@v4
