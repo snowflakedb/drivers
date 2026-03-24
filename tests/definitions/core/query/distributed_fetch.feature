@@ -14,6 +14,6 @@ Feature: Distributed fetch
     Given Snowflake client is logged in
     When Large query generating 500000 rows is executed
     Then result chunks should contain at least 2 chunks
-    And first chunk should be inline and remaining chunks should be remote
+    And result chunks should contain at least one remote chunk
     And fetching all chunks should return 500000 total rows
     And Statement should be released

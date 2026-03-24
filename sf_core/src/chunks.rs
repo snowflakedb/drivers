@@ -12,7 +12,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 
 const MAX_CHUNK_DECOMPRESSION_RETRIES: u32 = 2;
 pub const DEFAULT_PREFETCH_THREADS: usize = 8;
@@ -66,7 +66,8 @@ impl ChunkReader {
         let initial_bytes = if let Some(initial) = initial_base64_opt {
             BASE64.decode(initial).context(Base64DecodingSnafu)?
         } else {
-            get_chunk_data(&client, &rest.pop_front().unwrap()).await?
+            let first = rest.pop_front().context(InitialChunkMissingSnafu)?;
+            get_chunk_data(&client, &first).await?
         };
         let cursor = io::Cursor::new(initial_bytes.clone());
         let schema_reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
@@ -132,14 +133,14 @@ async fn prefetch_batches(
             Ok(data) => {
                 let cursor = io::Cursor::new(data);
                 match StreamReader::try_new(cursor, None) {
-                    Ok(reader) => stream::iter(reader.collect::<Vec<_>>()).left_stream(),
+                    Ok(reader) => stream::iter(reader).left_stream(),
                     Err(e) => stream::iter(vec![Err(e)]).right_stream(),
                 }
             }
             Err(e) => stream::iter(vec![Err(ArrowError::IpcError(e.to_string()))]).right_stream(),
         })
         .flatten()
-        .for_each_concurrent(None, |batch| {
+        .for_each(|batch| {
             let tx = tx.clone();
             async move {
                 let _ = tx.send(batch).await;
@@ -330,6 +331,11 @@ pub enum ChunkError {
     #[snafu(display("Failed to decode base64 data"))]
     Base64Decoding {
         source: base64::DecodeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("No initial inline data and no remote chunks available to derive schema"))]
+    InitialChunkMissing {
         #[snafu(implicit)]
         location: Location,
     },

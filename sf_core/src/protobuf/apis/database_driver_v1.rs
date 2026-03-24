@@ -1281,7 +1281,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         if let Some(base64_data) = chunk_info.initial_chunk_base64 {
             chunks.push(ResultChunk {
                 format: ChunkFormat::ArrowIpc as i32,
-                data: Some(result_chunk::Data::Inline(base64_data.into_bytes())),
+                data: Some(result_chunk::Data::Inline(base64_data)),
             });
         }
 

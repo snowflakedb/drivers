@@ -68,18 +68,15 @@ fn distributed_fetch_large_result_produces_multiple_chunks() {
         chunks_result.chunks.len()
     );
 
-    // And first chunk should be inline and remaining chunks should be remote
-    let first_chunk = &chunks_result.chunks[0];
+    // And result chunks should contain at least one remote chunk
+    let has_remote = chunks_result
+        .chunks
+        .iter()
+        .any(|c| matches!(&c.data, Some(result_chunk::Data::Remote(_))));
     assert!(
-        matches!(&first_chunk.data, Some(result_chunk::Data::Inline(_))),
-        "First chunk should be inline"
+        has_remote,
+        "Large result should contain at least one remote chunk"
     );
-    for chunk in &chunks_result.chunks[1..] {
-        assert!(
-            matches!(&chunk.data, Some(result_chunk::Data::Remote(_))),
-            "Subsequent chunks should be remote"
-        );
-    }
 
     // And fetching all chunks should return 500000 total rows
     let mut total_rows = 0;

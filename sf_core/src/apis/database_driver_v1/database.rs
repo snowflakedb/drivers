@@ -124,6 +124,6 @@ impl Database {
 }
 
 pub enum FetchChunkInput {
-    Inline(Vec<u8>),
+    Inline(String),
     Remote(ChunkDownloadData),
 }

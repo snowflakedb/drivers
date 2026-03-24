@@ -566,9 +566,13 @@ message RemoteChunk {
 }
 
 message ResultChunk {
+  // Format of the decoded payload (after base64 decoding when using `inline`).
   ChunkFormat format = 1;
   oneof data {
-    bytes inline = 2;
+    // Inline payload: the UTF-8 bytes of a base64-encoded string.
+    // Clients must base64-decode this field, then interpret the resulting
+    // bytes according to `format` (e.g. Arrow IPC or JSON).
+    string inline = 2;
     RemoteChunk remote = 3;
   }
 }
