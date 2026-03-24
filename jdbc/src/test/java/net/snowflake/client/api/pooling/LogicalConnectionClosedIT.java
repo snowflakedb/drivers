@@ -43,6 +43,7 @@ public class LogicalConnectionClosedIT extends PoolingTestBase {
 
   private void expectConnectionClosed(SQLErrorThrowingRunnable f) {
     SQLException ex = assertThrows(SQLException.class, f::run);
-    assertEquals(CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
+    assertEquals(200052, ex.getErrorCode());
+    assertEquals(CONNECTION_CLOSED.getSqlState(), ex.getSQLState());
   }
 }
