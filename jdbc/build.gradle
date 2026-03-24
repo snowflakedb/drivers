@@ -197,7 +197,8 @@ def configureCommonTestTask = { t ->
         corePath = file("${libPath}/${libName}").absolutePath
     }
     t.environment 'CORE_PATH', corePath
-    t.environment 'PARAMETER_PATH', System.getenv('PARAMETER_PATH') ?: file('../parameters.json').absolutePath
+    def parameterPath = System.getenv('PARAMETER_PATH')?.trim() ?: null
+    t.environment 'PARAMETER_PATH', (parameterPath && !parameterPath.isEmpty()) ? parameterPath : file('../parameters.json').absolutePath
 
     def rawRetryCount = System.getenv('GRADLE_TEST_RETRY_COUNT')
     def retryCount = rawRetryCount?.trim()

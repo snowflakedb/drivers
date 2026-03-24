@@ -331,6 +331,7 @@ jobs:
         if: matrix.os == 'windows-11-arm'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           # ARM64 build uses --target, output is in target\aarch64-pc-windows-msvc\debug\
           $targetDir = Join-Path ${{ github.workspace }} "target\aarch64-pc-windows-msvc\debug"
           dir $targetDir
@@ -340,7 +341,8 @@ jobs:
           $env:DRIVER_PATH = Join-Path $targetDir "${{ matrix.driver_lib }}"
           $env:PARAMETER_PATH = Join-Path ${{ github.workspace }} "parameters.json"
           $env:DRIVER_TYPE = "NEW"
-          # TODO: Broaden to full test suite once ARM64 ODBC is stable.
+          # ARM64 ODBC: smoke test only (1 of ~103 tests). The full suite has
+          # not been validated on ARM64. Expand coverage incrementally.
           $env:CTEST_FILTER = "e2e_query_basic_execute_query"
           .\scripts\odbc\run_tests_windows.ps1
 

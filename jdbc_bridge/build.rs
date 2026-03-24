@@ -10,7 +10,8 @@ fn main() {
     // native methods reliably across MSVC targets, including ARM64.
     #[cfg(target_os = "windows")]
     {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let manifest_dir =
+            std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by Cargo");
         let def_path = std::path::Path::new(&manifest_dir).join("exports.def");
         // Rebuild when the export list changes so the DLL export table stays in sync.
         println!("cargo:rerun-if-changed={}", def_path.display());
