@@ -1,12 +1,13 @@
 package net.snowflake.client.api.pooling;
 
+import static java.sql.Connection.TRANSACTION_READ_COMMITTED;
+import static net.snowflake.client.api.exception.ErrorCode.CONNECTION_CLOSED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import javax.sql.PooledConnection;
-import net.snowflake.client.api.exception.ErrorCode;
 import org.junit.jupiter.api.Test;
 
 public class LogicalConnectionClosedIT extends PoolingTestBase {
@@ -34,19 +35,14 @@ public class LogicalConnectionClosedIT extends PoolingTestBase {
     expectConnectionClosed(() -> logicalConnection.setCatalog("fakedb"));
     expectConnectionClosed(() -> logicalConnection.setSchema("fakedb"));
     expectConnectionClosed(
-        () -> logicalConnection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED));
+        () -> logicalConnection.setTransactionIsolation(TRANSACTION_READ_COMMITTED));
     expectConnectionClosed(() -> logicalConnection.createArrayOf("faketype", null));
 
     pooledConnection.close();
   }
 
-  private void expectConnectionClosed(Runnable0 f) {
+  private void expectConnectionClosed(SQLErrorThrowingRunnable f) {
     SQLException ex = assertThrows(SQLException.class, f::run);
-    assertEquals(ErrorCode.CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
-  }
-
-  @FunctionalInterface
-  interface Runnable0 {
-    void run() throws SQLException;
+    assertEquals(CONNECTION_CLOSED.getMessageCode(), ex.getErrorCode());
   }
 }
