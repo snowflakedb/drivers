@@ -3,8 +3,6 @@
 View creation and CTAS operations.
 Used by Snowpark for create_or_replace_view() and save_as_table(),
 SQLAlchemy for views.
-
-Journey 24 - P2
 """
 
 from __future__ import annotations
@@ -23,14 +21,14 @@ class TestCreateViewCtas:
         assert_connection_is_open(execute_query)
 
         # And A source table with 3 rows of test data exists
-        source_table = f"{tmp_schema}.ctas_source"
-        view_name = f"{tmp_schema}.ctas_view"
+        source_table = f"{tmp_schema}.view_source"
+        view_name = f"{tmp_schema}.view_filtered"
 
-        cursor.execute(f"CREATE TABLE {source_table} (id INT, name VARCHAR, val FLOAT)")
+        cursor.execute(f"CREATE OR REPLACE TABLE {source_table} (id INT, name VARCHAR, val FLOAT)")
         cursor.execute(f"INSERT INTO {source_table} VALUES (1, 'first', 1.0), (2, 'second', 2.0), (3, 'third', 3.0)")
 
         # When A view is created that filters rows where id > 1
-        cursor.execute(f"CREATE VIEW {view_name} AS SELECT * FROM {source_table} WHERE id > 1")
+        cursor.execute(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM {source_table} WHERE id > 1")
 
         # Then SELECT from the view should return 2 rows
         cursor.execute(f"SELECT * FROM {view_name} ORDER BY id")
@@ -49,7 +47,7 @@ class TestCreateViewCtas:
         source_table = f"{tmp_schema}.ctas_source"
         new_table = f"{tmp_schema}.ctas_result"
 
-        cursor.execute(f"CREATE TABLE {source_table} (id INT, name VARCHAR, val FLOAT)")
+        cursor.execute(f"CREATE OR REPLACE TABLE {source_table} (id INT, name VARCHAR, val FLOAT)")
         cursor.execute(f"INSERT INTO {source_table} VALUES (1, 'first', 1.5), (2, 'second', 2.5), (3, 'third', 3.5)")
 
         # When CREATE TABLE AS SELECT is executed filtering val > 2.0

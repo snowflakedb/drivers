@@ -2,8 +2,6 @@
 
 Bulk data loading via PUT + COPY INTO.
 Used by SQLAlchemy, snowflake-cli, Snowpark, and Snowfort.
-
-Journey 15 - P1
 """
 
 from __future__ import annotations

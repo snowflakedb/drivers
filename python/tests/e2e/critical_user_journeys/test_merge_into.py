@@ -2,8 +2,6 @@
 
 MERGE INTO for upsert operations combining UPDATE and INSERT.
 Used by SQLAlchemy's MergeInto construct, Snowfort for replication and OLTP.
-
-Journey 21 - P1
 """
 
 from __future__ import annotations

@@ -3,8 +3,6 @@
 Object management via SHOW, DESCRIBE, and DROP commands.
 Used by snowflake-cli for all object management, SQLAlchemy for metadata
 reflection, Snowfort extensively.
-
-Journey 18 - P1
 """
 
 from __future__ import annotations
@@ -20,13 +18,13 @@ class TestObjectDiscovery:
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # And A table "e2e_discovery_test" with columns (id INT NOT NULL, name VARCHAR(100), val NUMBER(10,2)) exists
-        table_name = f"{tmp_schema}.e2e_discovery_test"
+        # And A table with columns (id INT NOT NULL, name VARCHAR(100), val NUMBER(10,2)) exists
+        table_name = f"{tmp_schema}.disc_show_describe"
 
-        cursor.execute(f"CREATE TABLE {table_name} (id INT NOT NULL, name VARCHAR(100), val NUMBER(10,2))")
+        cursor.execute(f"CREATE OR REPLACE TABLE {table_name} (id INT NOT NULL, name VARCHAR(100), val NUMBER(10,2))")
 
-        # When SHOW TABLES LIKE 'e2e_discovery_test' is executed
-        cursor.execute(f"SHOW TABLES LIKE 'e2e_discovery_test' IN SCHEMA {tmp_schema}")
+        # When SHOW TABLES LIKE 'disc_show_describe' is executed
+        cursor.execute(f"SHOW TABLES LIKE 'disc_show_describe' IN SCHEMA {tmp_schema}")
         show_results = cursor.fetchall()
 
         # Then 1 row should be returned
@@ -50,17 +48,17 @@ class TestObjectDiscovery:
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # And A table "e2e_discovery_test" exists
-        table_name = f"{tmp_schema}.e2e_discovery_test"
-        view_name = f"{tmp_schema}.e2e_discovery_view"
+        # And A table exists
+        table_name = f"{tmp_schema}.disc_view_base"
+        view_name = f"{tmp_schema}.disc_view_show"
 
-        cursor.execute(f"CREATE TABLE {table_name} (id INT, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE TABLE {table_name} (id INT, name VARCHAR)")
 
-        # And A view "e2e_discovery_view" is created on the table
-        cursor.execute(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
+        # And A view is created on the table
+        cursor.execute(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM {table_name}")
 
-        # When SHOW VIEWS LIKE 'e2e_discovery_view' is executed
-        cursor.execute(f"SHOW VIEWS LIKE 'e2e_discovery_view' IN SCHEMA {tmp_schema}")
+        # When SHOW VIEWS LIKE 'disc_view_show' is executed
+        cursor.execute(f"SHOW VIEWS LIKE 'disc_view_show' IN SCHEMA {tmp_schema}")
         show_results = cursor.fetchall()
 
         # Then 1 row should be returned
@@ -71,23 +69,23 @@ class TestObjectDiscovery:
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # And A table "e2e_discovery_test" and view "e2e_discovery_view" exist
-        table_name = f"{tmp_schema}.e2e_discovery_test"
-        view_name = f"{tmp_schema}.e2e_discovery_view"
+        # And A table and view exist
+        table_name = f"{tmp_schema}.disc_drop_table"
+        view_name = f"{tmp_schema}.disc_drop_view"
 
-        cursor.execute(f"CREATE TABLE {table_name} (id INT, name VARCHAR)")
-        cursor.execute(f"CREATE VIEW {view_name} AS SELECT * FROM {table_name}")
+        cursor.execute(f"CREATE OR REPLACE TABLE {table_name} (id INT, name VARCHAR)")
+        cursor.execute(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM {table_name}")
 
         # When Both objects are dropped
         cursor.execute(f"DROP VIEW {view_name}")
         cursor.execute(f"DROP TABLE {table_name}")
 
-        # Then SHOW TABLES LIKE 'e2e_discovery_test' should return 0 rows
-        cursor.execute(f"SHOW TABLES LIKE 'e2e_discovery_test' IN SCHEMA {tmp_schema}")
+        # Then SHOW TABLES should return 0 rows
+        cursor.execute(f"SHOW TABLES LIKE 'disc_drop_table' IN SCHEMA {tmp_schema}")
         table_results = cursor.fetchall()
         assert len(table_results) == 0, f"Expected 0 tables after drop, got {len(table_results)}"
 
-        # And SHOW VIEWS LIKE 'e2e_discovery_view' should return 0 rows
-        cursor.execute(f"SHOW VIEWS LIKE 'e2e_discovery_view' IN SCHEMA {tmp_schema}")
+        # And SHOW VIEWS should return 0 rows
+        cursor.execute(f"SHOW VIEWS LIKE 'disc_drop_view' IN SCHEMA {tmp_schema}")
         view_results = cursor.fetchall()
         assert len(view_results) == 0, f"Expected 0 views after drop, got {len(view_results)}"
