@@ -3,6 +3,7 @@
 
 #include <picojson.h>
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -63,7 +64,7 @@ inline void add_param_optional(std::stringstream& ss, const picojson::object& pa
 
 inline std::string get_private_key_file_path(const picojson::object& params) {
   auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_FILE");
-  if (it != params.end() && it->second.is<std::string>()) {
+  if (it != params.end() && it->second.is<std::string>() && !it->second.get<std::string>().empty()) {
     return it->second.get<std::string>();
   }
   return "";
@@ -87,6 +88,19 @@ inline std::string read_private_key(const picojson::object& params) {
     private_key_stream << line.get<std::string>() << "\n";
   }
   return private_key_stream.str();
+}
+
+inline std::string get_or_create_private_key_file(const picojson::object& params) {
+  auto path = get_private_key_file_path(params);
+  if (!path.empty()) {
+    return path;
+  }
+  static const std::string tmp_path = (std::filesystem::temp_directory_path() / "odbc_test_rsa_key.p8").string();
+  std::string pem = read_private_key(params);
+  std::ofstream f(tmp_path, std::ios::out | std::ios::trunc);
+  REQUIRE(f.is_open());
+  f << pem;
+  return tmp_path;
 }
 
 inline void configure_driver_string(std::stringstream& ss) {
@@ -131,8 +145,13 @@ inline std::string get_connection_string() {
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+#ifdef SNOWFLAKE_OLD_DRIVER
+  ss << "PRIV_KEY_FILE=" << get_or_create_private_key_file(params) << ";";
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
+#else
   ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
+#endif
   return ss.str();
 }
 
