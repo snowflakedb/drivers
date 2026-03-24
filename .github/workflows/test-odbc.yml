@@ -248,8 +248,22 @@ jobs:
   build_rpm:
     needs: [detect-changes, odbc_unit_tests, odbc_tests]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
-    runs-on: ubuntu-latest
-    name: build_rpm (Linux x64)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64-glibc
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64-glibc
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    name: build_rpm (${{ matrix.name }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -262,19 +276,19 @@ jobs:
           sudo gem install fpm
 
       - name: Build ODBC driver
-        run: cargo build --release --package odbc --target x86_64-unknown-linux-gnu
+        run: cargo build --release --package odbc --target ${{ matrix.target }}
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
       - name: Package RPM
         run: ./scripts/odbc/rpm/package.sh
         env:
-          PLATFORM: linux-x86_64-glibc
+          PLATFORM: ${{ matrix.platform }}
 
       - name: Upload RPM
         uses: actions/upload-artifact@v4
         with:
-          name: snowflake-odbc-rpm-x86_64
+          name: snowflake-odbc-rpm-${{ matrix.arch }}
           path: build/snowflake-odbc-*.rpm
 
   odbc-status:
