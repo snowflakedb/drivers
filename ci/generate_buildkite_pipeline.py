@@ -39,7 +39,11 @@ COMMON_STEP = {
                     {
                         "path": "secret/jenkins/rt-tests/driver_validation_parameters_secret",
                         "env_name": "PARAMETERS_SECRET",
-                    }
+                    },
+                    {
+                        "path": "secret/jenkins/rt-tests/universal_driver_test_suite_api_token",
+                        "env_name": "BUILDKITE_ANALYTICS_TOKEN",
+                    },
                 ]
             }
         },
@@ -48,7 +52,7 @@ COMMON_STEP = {
                 "image": DOCKER_IMAGE,
                 "propagate-environment": True,
                 "mount-buildkite-agent": True,
-                "environment": ["PARAMETERS_SECRET"],
+                "environment": ["PARAMETERS_SECRET", "BUILDKITE_ANALYTICS_TOKEN"],
             }
         },
     ],
@@ -346,6 +350,26 @@ def main():
                     "always-annotate": True,
                 }
             }],
+            "agents": {"queue": "discovery", "repo": "snowflakedb/universal-driver"},
+        })
+        steps.append({
+            "label": ":bar_chart: Upload to Test Engine",
+            "plugins": [
+                {
+                    VAULT_PLUGIN: {
+                        "secrets": [{
+                            "path": "secret/jenkins/rt-tests/universal_driver_test_suite_api_token",
+                            "env_name": "BUILDKITE_ANALYTICS_TOKEN",
+                        }]
+                    }
+                },
+                {
+                    "test-collector#v1.10.0": {
+                        "files": "junit-results/*.xml",
+                        "format": "junit",
+                    }
+                },
+            ],
             "agents": {"queue": "discovery", "repo": "snowflakedb/universal-driver"},
         })
 
