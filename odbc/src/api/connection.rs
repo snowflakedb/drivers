@@ -55,7 +55,7 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     for pair in connection_string.split(';') {
         let parts: Vec<&str> = pair.splitn(2, '=').collect();
         if parts.len() == 2 {
-            map.insert(parts[0].to_string(), parts[1].to_string());
+            map.insert(parts[0].trim().to_string(), parts[1].trim().to_string());
         }
     }
     map
@@ -585,6 +585,27 @@ pub fn get_info<E: OdbcEncoding>(
                 }
             }
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case("UID=admin;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "basic")]
+    #[test_case("UID=admin; AUTHENTICATOR=SNOWFLAKE_JWT", &[("UID", "admin"), ("AUTHENTICATOR", "SNOWFLAKE_JWT")] ; "trims keys")]
+    #[test_case("UID= admin ", &[("UID", "admin")] ; "trims values")]
+    #[test_case(" UID = admin ; SERVER = foo ", &[("UID", "admin"), ("SERVER", "foo")] ; "trims both")]
+    #[test_case("PRIV_KEY_FILE=abc=def", &[("PRIV_KEY_FILE", "abc=def")] ; "preserves equals in value")]
+    #[test_case("UID=admin;  ;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "skips blank segments")]
+    #[test_case("UID=admin;", &[("UID", "admin")] ; "trailing semicolon")]
+    fn parse_connection_string_cases(input: &str, expected: &[(&str, &str)]) {
+        let map = parse_connection_string(input);
+        assert_eq!(map.len(), expected.len());
+        for (key, value) in expected {
+            assert_eq!(map.get(*key).unwrap(), value);
         }
     }
 }
