@@ -57,7 +57,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   private String catalog;
   private String schema;
   private int transactionIsolation = TRANSACTION_READ_COMMITTED;
-  private int networkTimeoutInMilli = 0; //TODO not implemented
+  private int networkTimeoutInMilli = 0; // TODO not implemented
   private DatabaseHandle databaseHandle;
   public ConnectionHandle connectionHandle;
 
