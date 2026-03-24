@@ -265,8 +265,8 @@ pub enum DescField {
     DataPtr = 1010,
     /// `SQL_DESC_OCTET_LENGTH` (1013) — length in bytes of the data buffer.
     OctetLength = 1013,
-    /// `SQL_DESC_PARAMETER_TYPE` (1015) — parameter direction (IPD only).
-    ParameterType = 1015,
+    /// `SQL_DESC_PARAMETER_TYPE` (33) — parameter direction (IPD only).
+    ParameterType = 33,
     /// `SQL_DESC_NULLABLE` (1008) — whether the parameter is nullable (IPD only).
     Nullable = 1008,
 }
@@ -292,7 +292,7 @@ impl TryFrom<i16> for DescField {
             1009 => Ok(DescField::IndicatorPtr),
             1010 => Ok(DescField::DataPtr),
             1013 => Ok(DescField::OctetLength),
-            1015 => Ok(DescField::ParameterType),
+            33 => Ok(DescField::ParameterType),
             _ => {
                 tracing::warn!("Unknown descriptor field identifier: {}", value);
                 Err(OdbcError::UnknownAttribute {
