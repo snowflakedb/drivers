@@ -359,7 +359,7 @@ pub fn connect<E: OdbcEncoding>(
         if s.is_empty() { None } else { Some(s) }
     };
 
-    tracing::info!("connect: dsn={:?}, uid={:?}", dsn, uid.as_deref());
+    tracing::debug!("connect: dsn={:?}", dsn);
 
     let mut params = read_dsn_config(&dsn)?;
 
@@ -380,7 +380,7 @@ pub fn connect<E: OdbcEncoding>(
 
 /// Look up DSN parameters.
 ///
-/// On Unix: searches odbc.ini files (ODBCINI env var, ~/.odbc.ini, /etc/odbc.ini).
+/// On Unix: searches odbc.ini files (ODBCINI env var, ~/.odbc.ini, ODBCSYSINI/odbc.ini, /etc/odbc.ini).
 /// On Windows: reads from the registry under HKCU then HKLM SOFTWARE\ODBC\ODBC.INI\<DSN>.
 #[cfg(not(windows))]
 fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
@@ -390,6 +390,9 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
     }
     if let Ok(home) = std::env::var("HOME") {
         paths.push(format!("{}/.odbc.ini", home));
+    }
+    if let Ok(p) = std::env::var("ODBCSYSINI") {
+        paths.push(format!("{}/odbc.ini", p));
     }
     paths.push("/etc/odbc.ini".to_string());
 
