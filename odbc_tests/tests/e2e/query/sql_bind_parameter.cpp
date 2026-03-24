@@ -428,12 +428,12 @@ TEST_CASE("should populate APD descriptor fields after SQLBindParameter.", "[que
 
   SQLSMALLINT concise_type = 0;
   ret = SQLGetDescField(apd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
   CHECK(concise_type == SQL_C_SLONG);
 
   SQLPOINTER data_ptr = nullptr;
   ret = SQLGetDescField(apd, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
   CHECK(data_ptr == &param);
 }
 
@@ -456,12 +456,12 @@ TEST_CASE("should populate IPD descriptor fields after SQLBindParameter.", "[que
 
   SQLSMALLINT param_type = 0;
   ret = SQLGetDescField(ipd, 1, SQL_DESC_PARAMETER_TYPE, &param_type, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
   CHECK(param_type == SQL_PARAM_INPUT);
 
   SQLSMALLINT concise_type = 0;
   ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
   CHECK(concise_type == SQL_INTEGER);
 }
 
