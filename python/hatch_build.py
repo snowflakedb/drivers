@@ -387,7 +387,10 @@ class BuildHook(BuildHookInterface):
             found_core = False
             for file in release_dir.iterdir():
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
-                    shutil.copy2(file, target_dir)
+                    dest = target_dir / file.name
+                    tmp = target_dir / (file.name + ".tmp")
+                    shutil.copy2(file, tmp)
+                    os.replace(tmp, dest)
                     found_core = True
             if not found_core:
                 raise Exception(
