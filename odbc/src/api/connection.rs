@@ -332,7 +332,8 @@ async fn apply_pre_connection_attrs_async(
 /// Connect using DSN (SQLConnect / SQLConnectW).
 ///
 /// Reads DSN configuration from odbc.ini (ODBCINI env var, ~/.odbc.ini, or /etc/odbc.ini),
-/// merges caller-supplied UID/PWD overrides, then delegates to `driver_connect_impl`.
+/// merges caller-supplied UID/PWD overrides, then delegates to `connect_with_params` to perform
+/// the actual connection.
 pub fn connect<E: OdbcEncoding>(
     connection_handle: sql::Handle,
     server_name: *const E::Char,
