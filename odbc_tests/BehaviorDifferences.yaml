@@ -296,3 +296,19 @@ behavior_differences:
       arguments and is consistent with the driver's defensive validation.
       Impact: Applications that accidentally pass nullptr to SQLRowCount will
       now receive an error instead of silent success.
+
+  28:
+    name: "SQLBindParameter rejects negative DecimalDigits with HY104 instead of accepting silently"
+    description: |
+      OLD driver: Accepts negative DecimalDigits values without error.
+      NEW driver: Returns SQL_ERROR with SQLSTATE HY104 (Invalid precision
+      or scale value) per the ODBC specification.
+
+  29:
+    name: "Unbound parameter marker returns 42000 (server error) instead of 07002 (COUNT field incorrect)"
+    description: |
+      OLD driver: After SQL_RESET_PARAMS, executing a prepared statement with
+      unbound parameter markers returns SQL_ERROR with SQLSTATE 07002 (COUNT
+      field incorrect), caught locally by the driver.
+      NEW driver: Sends the query to the server, which returns SQL_ERROR with
+      SQLSTATE 42000 (Syntax error: Bind variable ? not set).
