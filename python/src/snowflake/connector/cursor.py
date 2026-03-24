@@ -690,7 +690,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        raise NotImplementedError("timestamp_ltz_output_format is not yet implemented")
+        return self._connection._get_session_parameter("TIMESTAMP_LTZ_OUTPUT_FORMAT") or self.timestamp_output_format
 
     @property
     def timestamp_tz_output_format(self) -> str | None:
@@ -698,7 +698,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        raise NotImplementedError("timestamp_tz_output_format is not yet implemented")
+        return self._connection._get_session_parameter("TIMESTAMP_TZ_OUTPUT_FORMAT") or self.timestamp_output_format
 
     @property
     def timestamp_ntz_output_format(self) -> str | None:
@@ -706,7 +706,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
         """
-        raise NotImplementedError("timestamp_ntz_output_format is not yet implemented")
+        return self._connection._get_session_parameter("TIMESTAMP_NTZ_OUTPUT_FORMAT") or self.timestamp_output_format
 
     @property
     def date_output_format(self) -> str | None:
