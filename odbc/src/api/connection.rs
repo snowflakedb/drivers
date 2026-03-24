@@ -343,11 +343,7 @@ pub fn connect<E: OdbcEncoding>(
     authentication: *const E::Char,
     name_length3: sql::SmallInt,
 ) -> OdbcResult<()> {
-    let dsn = if server_name.is_null() {
-        String::new()
-    } else {
-        E::read_string(server_name, name_length1 as i32)?
-    };
+    let dsn = E::read_string(server_name, name_length1 as i32)?;
 
     let uid = if user_name.is_null() {
         None
