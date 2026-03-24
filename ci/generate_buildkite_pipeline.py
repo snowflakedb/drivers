@@ -333,15 +333,13 @@ def main():
             active.append(name)
         print("  {}: {}".format(name, result), file=sys.stderr)
 
-    lines = []
     for name in active:
         set_metadata("test-filter-" + name, filters[name])
-        label = "ALL tests" if filters[name] == "ALL" else "filtered: " + filters[name]
-        lines.append(":arrow_forward: {} -- {}".format(name, label))
     if skipped:
-        lines.append(":fast_forward: skipped: " + ", ".join(skipped))
-    if lines:
-        annotate("\n".join(lines), style="info", context="test-selection")
+        annotate(
+            ":fast_forward: Skipped (no relevant changes): " + ", ".join(skipped),
+            style="info", context="test-selection",
+        )
 
     steps = [build_step(name) for name in active]
 
@@ -351,7 +349,7 @@ def main():
     else:
         steps.append("wait")
         steps.append({
-            "label": ":junit: Annotate test failures",
+            "label": ":junit: Test results summary",
             "plugins": [{
                 "junit-annotate#v2.4.1": {
                     "artifacts": "junit-results/*.xml",
