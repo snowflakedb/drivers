@@ -37,6 +37,10 @@ jobs:
             java-version: '17'
     runs-on: ${{ matrix.os }}
     name: jdbc_tests (${{ matrix.os }}, Java ${{ matrix.java-version }})
+    # Arrow 17.0.0 does not ship arrow_cdata_jni.dll for Windows ARM64; most tests
+    # fail with FileNotFoundException. Allow the job to fail on ARM64 until Arrow
+    # adds upstream Windows ARM64 JNI support.
+    continue-on-error: ${{ matrix.os == 'windows-11-arm' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
