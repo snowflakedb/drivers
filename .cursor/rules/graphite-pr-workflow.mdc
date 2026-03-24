@@ -1,0 +1,39 @@
+---
+description: Rules for creating commits and PRs using Graphite CLI with SNOW-ticket conventions
+alwaysApply: false
+---
+
+# PR and Commit Workflow
+
+## Commit Message Convention
+
+Prefix with Jira ticket: `SNOW-{ticket}: {description}`
+Use `NO-SNOW:` for changes without a ticket.
+
+## Creating a PR (Graphite)
+
+```bash
+gt branch create {user}/{branch-name}
+git add <files>
+gt commit create -m "SNOW-{ticket}: {description}"
+gt submit --no-edit
+```
+
+## Before Creating a PR
+
+1. **Ask for SNOW ticket** if not provided. Do NOT commit without confirming.
+2. **Check for stacked PR**: if the branch is not based off `main`, ask whether to use `gt submit --stack`.
+
+## PR Description Template
+
+```markdown
+## Summary
+- Bullet points describing what changed and why
+
+## Context
+How this fits into the larger effort
+
+## Test plan
+Explain how the change was tested: what commands were run, what was
+verified, and the results. Be specific to this PR.
+```
