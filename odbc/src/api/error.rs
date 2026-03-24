@@ -63,6 +63,20 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid parameter type: {value}"))]
+    InvalidParameterType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid SQL data type: {value}"))]
+    InvalidSqlDataType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid record number: {number}"))]
     InvalidRecordNumber {
         number: sql::SmallInt,
@@ -156,12 +170,6 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("Statement execution is done"))]
-    ExecutionDone {
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("No more data available"))]
     NoMoreData {
         #[snafu(implicit)]
@@ -184,6 +192,12 @@ pub enum OdbcError {
 
     #[snafu(display("Optional feature not implemented"))]
     UnsupportedFeature {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Fetch type out of range"))]
+    FetchTypeOutOfRange {
         #[snafu(implicit)]
         location: Location,
     },
@@ -381,6 +395,8 @@ impl OdbcError {
             OdbcError::InvalidApplicationBufferType { .. } => {
                 SqlState::InvalidApplicationBufferType
             }
+            OdbcError::InvalidParameterType { .. } => SqlState::InvalidParameterType,
+            OdbcError::InvalidSqlDataType { .. } => SqlState::InvalidSqlDataType,
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
@@ -392,15 +408,15 @@ impl OdbcError {
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::UnknownInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
-            OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::InvalidParameterNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
-            OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,

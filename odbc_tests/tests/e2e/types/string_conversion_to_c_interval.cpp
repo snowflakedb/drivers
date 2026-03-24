@@ -30,7 +30,7 @@
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // ============================================================================
@@ -50,37 +50,43 @@ TEST_CASE("should convert string literals to single-component c_type", "[datatyp
       "'8' AS hours, '30' AS minutes, '45' AS seconds");
 
   // Then <c_type> conversions should work
-  SECTION("SQL_C_INTERVAL_YEAR") {
+  {
+    INFO("SQL_C_INTERVAL_YEAR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
     CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.year_month.year == 5);
   }
-  SECTION("SQL_C_INTERVAL_MONTH") {
+  {
+    INFO("SQL_C_INTERVAL_MONTH");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
     CHECK(interval.interval_type == SQL_IS_MONTH);
     CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.year_month.month == 10);
   }
-  SECTION("SQL_C_INTERVAL_DAY") {
+  {
+    INFO("SQL_C_INTERVAL_DAY");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
     CHECK(interval.interval_type == SQL_IS_DAY);
     CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.day == 15);
   }
-  SECTION("SQL_C_INTERVAL_HOUR") {
+  {
+    INFO("SQL_C_INTERVAL_HOUR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 4);
     CHECK(interval.interval_type == SQL_IS_HOUR);
     CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.hour == 8);
   }
-  SECTION("SQL_C_INTERVAL_MINUTE") {
+  {
+    INFO("SQL_C_INTERVAL_MINUTE");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 5);
     CHECK(interval.interval_type == SQL_IS_MINUTE);
     CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.minute == 30);
   }
-  SECTION("SQL_C_INTERVAL_SECOND") {
+  {
+    INFO("SQL_C_INTERVAL_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 6);
     CHECK(interval.interval_type == SQL_IS_SECOND);
     CHECK(interval.interval_sign == SQL_FALSE);
@@ -97,19 +103,22 @@ TEST_CASE("should convert negative c_type string literals", "[datatype][string][
   auto stmt = conn.execute_fetch("SELECT '-5' AS neg_years, '-10' AS neg_months, '-15' AS neg_days");
 
   // Then negative <c_type> should be correctly parsed
-  SECTION("SQL_C_INTERVAL_YEAR") {
+  {
+    INFO("SQL_C_INTERVAL_YEAR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_YEAR);
     CHECK(interval.interval_sign == SQL_TRUE);
     CHECK(interval.intval.year_month.year == 5);
   }
-  SECTION("SQL_C_INTERVAL_MONTH") {
+  {
+    INFO("SQL_C_INTERVAL_MONTH");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
     CHECK(interval.interval_type == SQL_IS_MONTH);
     CHECK(interval.interval_sign == SQL_TRUE);
     CHECK(interval.intval.year_month.month == 10);
   }
-  SECTION("SQL_C_INTERVAL_DAY") {
+  {
+    INFO("SQL_C_INTERVAL_DAY");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
     CHECK(interval.interval_type == SQL_IS_DAY);
     CHECK(interval.interval_sign == SQL_TRUE);
@@ -170,14 +179,16 @@ TEST_CASE("should convert string literals to compound c_type", "[datatype][strin
       "'12:30:45' AS hour_second, '45:30' AS minute_second");
 
   // Then <c_type> conversions should work
-  SECTION("SQL_C_INTERVAL_DAY_TO_HOUR") {
+  {
+    INFO("SQL_C_INTERVAL_DAY_TO_HOUR");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
     CHECK(interval.interval_type == SQL_IS_DAY_TO_HOUR);
     CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.day == 5);
     CHECK(interval.intval.day_second.hour == 10);
   }
-  SECTION("SQL_C_INTERVAL_DAY_TO_MINUTE") {
+  {
+    INFO("SQL_C_INTERVAL_DAY_TO_MINUTE");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_MINUTE>(stmt, 2);
     CHECK(interval.interval_type == SQL_IS_DAY_TO_MINUTE);
     CHECK(interval.interval_sign == SQL_FALSE);
@@ -185,7 +196,8 @@ TEST_CASE("should convert string literals to compound c_type", "[datatype][strin
     CHECK(interval.intval.day_second.hour == 14);
     CHECK(interval.intval.day_second.minute == 30);
   }
-  SECTION("SQL_C_INTERVAL_DAY_TO_SECOND") {
+  {
+    INFO("SQL_C_INTERVAL_DAY_TO_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 3);
     CHECK(interval.interval_type == SQL_IS_DAY_TO_SECOND);
     CHECK(interval.interval_sign == SQL_FALSE);
@@ -194,14 +206,16 @@ TEST_CASE("should convert string literals to compound c_type", "[datatype][strin
     CHECK(interval.intval.day_second.minute == 15);
     CHECK(interval.intval.day_second.second == 30);
   }
-  SECTION("SQL_C_INTERVAL_HOUR_TO_MINUTE") {
+  {
+    INFO("SQL_C_INTERVAL_HOUR_TO_MINUTE");
     auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 4);
     CHECK(interval.interval_type == SQL_IS_HOUR_TO_MINUTE);
     CHECK(interval.interval_sign == SQL_FALSE);
     CHECK(interval.intval.day_second.hour == 10);
     CHECK(interval.intval.day_second.minute == 45);
   }
-  SECTION("SQL_C_INTERVAL_HOUR_TO_SECOND") {
+  {
+    INFO("SQL_C_INTERVAL_HOUR_TO_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 5);
     CHECK(interval.interval_type == SQL_IS_HOUR_TO_SECOND);
     CHECK(interval.interval_sign == SQL_FALSE);
@@ -209,7 +223,8 @@ TEST_CASE("should convert string literals to compound c_type", "[datatype][strin
     CHECK(interval.intval.day_second.minute == 30);
     CHECK(interval.intval.day_second.second == 45);
   }
-  SECTION("SQL_C_INTERVAL_MINUTE_TO_SECOND") {
+  {
+    INFO("SQL_C_INTERVAL_MINUTE_TO_SECOND");
     auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 6);
     CHECK(interval.interval_type == SQL_IS_MINUTE_TO_SECOND);
     CHECK(interval.interval_sign == SQL_FALSE);
@@ -571,7 +586,7 @@ TEST_CASE("should handle NULL string when converting to interval types",
     SQL_INTERVAL_STRUCT interval;
     SQLLEN indicator;
     SQLRETURN ret = get_data_raw(stmt, 1, SQL_C_INTERVAL_YEAR, &interval, &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == SQL_NULL_DATA);
   }
 }
@@ -590,15 +605,15 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '5' AS interval_year", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQL_INTERVAL_STRUCT interval;
     SQLLEN indicator;
     ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_INTERVAL_YEAR, &interval, sizeof(interval), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then the bound interval value should match the string representation
     CHECK(interval.interval_type == SQL_IS_YEAR);
@@ -610,12 +625,12 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'not_an_interval' AS str_val", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQL_INTERVAL_STRUCT interval;
     SQLLEN indicator;
     ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_INTERVAL_YEAR, &interval, sizeof(interval), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLFetch(stmt.getHandle());
     CHECK(ret == SQL_ERROR);

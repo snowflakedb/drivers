@@ -169,6 +169,10 @@ impl BehaviorDifferencesProcessor {
                                             .old_behaviour_file,
                                         old_behaviour_line: behavior_difference_location
                                             .old_behaviour_line,
+                                        old_driver_skipped: behavior_difference_location
+                                            .old_driver_skipped,
+                                        new_driver_skipped: behavior_difference_location
+                                            .new_driver_skipped,
                                     },
                                 );
                             }
@@ -273,6 +277,10 @@ impl BehaviorDifferencesProcessor {
                                             .old_behaviour_file,
                                         old_behaviour_line: behavior_difference_location
                                             .old_behaviour_line,
+                                        old_driver_skipped: behavior_difference_location
+                                            .old_driver_skipped,
+                                        new_driver_skipped: behavior_difference_location
+                                            .new_driver_skipped,
                                     },
                                 );
                             }

@@ -18,7 +18,7 @@
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(static_cast<unsigned char>(c)); }
@@ -27,7 +27,7 @@ static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(s
 // STRING TRUNCATION
 // ============================================================================
 
-// Byte lenght of data is longer than the buffer length, so the data is truncated.
+// Byte length of data is longer than the buffer length, so the data is truncated.
 TEST_CASE("should truncate string data when byte length is longer than the buffer length",
           "[datatype][string][conversion][char]") {
   // Given Snowflake client is logged in
@@ -81,7 +81,8 @@ TEST_CASE("should truncate wide string data when byte length is longer than the 
   CHECK(buffer[sizeof(buffer) / sizeof(char16_t) - 1] == 0);
 
   // And the indicator should show the actual byte length of the original string in wide char format
-  CHECK(indicator == SQL_NO_TOTAL);  // Length of original string in bytes (52 chars * 2 bytes per wide char)
+  NEW_DRIVER_ONLY("BD#25") { CHECK(indicator == 98); }
+  OLD_DRIVER_ONLY("BD#25") { CHECK((indicator == 98 || indicator == SQL_NO_TOTAL)); }
 }
 
 // ============================================================================
@@ -101,7 +102,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == 5);
     CHECK(buffer[0] == 'h');
     CHECK(buffer[1] == 'e');
@@ -115,7 +116,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == 0);
   }
 
@@ -124,7 +125,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == 9);
     CHECK(buffer[0] == 'A');
     CHECK(buffer[1] == 'B');
@@ -142,7 +143,7 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 4, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(indicator == SQL_NULL_DATA);
   }
 }
@@ -166,7 +167,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 9 UTF-8 bytes → 19 bytes
       // [E6 97 A5 E6 9C AC E8 AA 9E] reinterpreted as Win-1252:
@@ -198,7 +199,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 12 UTF-8 bytes → 26 bytes
       // Each 2-byte Cyrillic sequence reinterpreted as Win-1252 and re-encoded to UTF-8
@@ -219,7 +220,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 6 UTF-8 bytes → 12 bytes
       // [E4 BD A0 E5 A5 BD] reinterpreted as Win-1252 and re-encoded
@@ -254,7 +255,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 4, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 12 UTF-8 bytes → 19 bytes
       // é [C3 A9] → [C3 83 C2 A9], ASCII 'moji: ' kept as-is,
@@ -287,7 +288,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 5, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 5 UTF-8 bytes → 7 bytes
       // ASCII 'caf' kept, é [C3 A9] → [C3 83 C2 A9]
@@ -316,7 +317,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 6, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 6 UTF-8 bytes → 11 bytes
       // Ñ [C3 91] → [C3 83 E2 80 98], ñ [C3 B1] → [C3 83 C2 B1]
@@ -350,7 +351,7 @@ TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][st
     SQLCHAR buffer[100];
     SQLLEN indicator;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 7, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     WINDOWS_ONLY {
       // Win-1252 double-encoding: 4 UTF-8 bytes → 9 bytes
       // U+1D11E [F0 9D 84 9E] → [C3 B0 C2 9D E2 80 9E C5 BE]
@@ -431,4 +432,75 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
   auto surrogate_pair = get_data<SQL_C_CHAR>(stmt, 7);
   CHECK(surrogate_pair == "\x1a");
   // UTF-8 locale: non-ASCII characters preserved as UTF-8
+}
+
+// ============================================================================
+// BASIC STRING QUERY AND PARAMETER BINDING
+// ============================================================================
+
+TEST_CASE("Test string basic query", "[e2e][types][string]") {
+  // Given A Snowflake connection
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When A string value is inserted and selected via SQL_C_CHAR
+  conn.execute("DROP TABLE IF EXISTS test_string_basic");
+  conn.execute("CREATE TABLE test_string_basic (str_col VARCHAR(1000))");
+  conn.execute("INSERT INTO test_string_basic (str_col) VALUES ('Hello World')");
+  auto stmt = conn.createStatement();
+
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  char buffer[1000];
+  SQLLEN indicator;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The retrieved string matches the inserted value
+  REQUIRE(indicator > 0);
+  REQUIRE(std::string(buffer, indicator) == "Hello World");
+}
+
+TEST_CASE("Test basic string binding", "[e2e][types][string]") {
+  // Given A Snowflake connection
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When A string value is inserted via parameter binding and selected
+  conn.execute("DROP TABLE IF EXISTS test_string_basic_binding");
+  conn.execute("CREATE TABLE test_string_basic_binding (str_col VARCHAR(1000))");
+  auto stmt = conn.createStatement();
+
+  SQLRETURN ret =
+      SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_basic_binding (str_col) VALUES (?)", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  const char* test_value = "Hello World";
+  SQLLEN str_len = strlen(test_value);
+
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, str_len, 0,
+                         (SQLPOINTER)test_value, str_len, &str_len);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic_binding", SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  char buffer[1000];
+  SQLLEN indicator;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The retrieved string matches the bound parameter value
+  REQUIRE(indicator > 0);
+  REQUIRE(std::string(buffer, indicator) == "Hello World");
 }

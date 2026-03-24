@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -12,10 +13,11 @@ use snafu::{ResultExt, ensure};
 use tracing::warn;
 
 use super::{
-    CacheDirectoryResolutionSnafu, FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu,
-    IrregularFileTypeSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
+    CacheDirectoryResolutionSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
     TokenRetrievalSnafu, TokenStorageSnafu,
 };
+#[cfg(unix)]
+use super::{FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu, IrregularFileTypeSnafu};
 
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
 const DEFAULT_RETRY_COUNT: u32 = 5;
@@ -814,11 +816,30 @@ mod tests {
         #[cfg(target_os = "linux")]
         #[test]
         fn validate_file_fd_rejects_file_not_owned_by_current_user() {
-            let path = Path::new("/etc/hosts");
-            let file = fs::File::open(path).expect("/etc/hosts should be readable");
+            use std::os::unix::fs::MetadataExt;
 
-            let err = validate_file_fd(&file, path)
-                .expect_err("Expected FileNotOwnedByCurrentUser for root-owned file");
+            let current_uid = unsafe { libc::getuid() };
+
+            let (path, _dir) = if current_uid == 0 {
+                let dir = tempfile::tempdir().unwrap();
+                let p = dir.path().join("not_mine");
+                fs::write(&p, "test").unwrap();
+                let c_path = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+                let ret = unsafe { libc::chown(c_path.as_ptr(), 65534, 65534) };
+                assert_eq!(ret, 0, "chown failed");
+                assert_ne!(
+                    fs::metadata(&p).unwrap().uid(),
+                    current_uid,
+                    "File should be owned by a different user after chown"
+                );
+                (p, Some(dir))
+            } else {
+                (Path::new("/etc/hosts").to_path_buf(), None)
+            };
+
+            let file = fs::File::open(&path).expect("Should be able to open file");
+            let err = validate_file_fd(&file, &path)
+                .expect_err("Expected FileNotOwnedByCurrentUser for file owned by another user");
             assert!(
                 matches!(err, TokenCacheError::FileNotOwnedByCurrentUser { .. }),
                 "Expected FileNotOwnedByCurrentUser, got: {err}"
@@ -912,11 +933,24 @@ mod tests {
 
         const THREAD_COUNT: usize = 10;
 
+        // On Windows ARM64, `RemoveDirectory` is asynchronous and the
+        // "pending delete" state can persist noticeably longer than on
+        // x64, especially on CI runners.  This causes `CreateDirectory`
+        // to return transient errors (`ERROR_DELETE_PENDING`,
+        // `ERROR_ACCESS_DENIED`, etc.) for extended periods, so threads
+        // need a larger retry budget to avoid spurious lock-exhaustion
+        // failures under high contention.
+        const LOCK_RETRY_COUNT: u32 = if cfg!(all(windows, target_arch = "aarch64")) {
+            1000
+        } else {
+            100
+        };
+
         fn create_shared_cache() -> (tempfile::TempDir, Arc<FileTokenCache>) {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = Arc::new(
                 FileTokenCache::with_directory(dir.path().to_path_buf())
-                    .retry_count(100)
+                    .retry_count(LOCK_RETRY_COUNT)
                     .retry_delay(Duration::from_millis(50)),
             );
             (dir, cache)

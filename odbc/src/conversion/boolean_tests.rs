@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::cdata_types::CDataType;
+    use crate::api::CDataType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::boolean::SnowflakeBoolean;
     use crate::conversion::test_utils::helpers::{

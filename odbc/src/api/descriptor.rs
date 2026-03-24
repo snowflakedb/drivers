@@ -1,5 +1,5 @@
+use crate::api::CDataType;
 use crate::api::{DescField, DescriptorRef, OdbcResult, desc_ref_from_handle};
-use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 use tracing;
 
@@ -296,12 +296,7 @@ fn set_ard_field(
         match field {
             DescField::Type | DescField::ConciseType => {
                 let raw = value_ptr as i16;
-                let c_type = CDataType::try_from(raw).map_err(|unknown| {
-                    tracing::error!("set_desc_field: unknown C data type discriminant {unknown}");
-                    crate::api::error::OdbcError::InvalidApplicationBufferType {
-                        location: snafu::location!(),
-                    }
-                })?;
+                let c_type = CDataType::try_from(raw)?;
                 tracing::debug!(
                     "set_desc_field: setting target_type={c_type:?} on record {column_number}",
                 );

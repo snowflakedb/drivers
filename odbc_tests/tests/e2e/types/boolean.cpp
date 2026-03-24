@@ -8,8 +8,8 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 TEST_CASE("should cast boolean values to appropriate type", "[boolean]") {
   // Given Snowflake client is logged in
@@ -63,7 +63,7 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
   const auto stmt = conn.createStatement();
   const auto sql = "SELECT (seq8() % 2 = 0)::BOOLEAN AS col FROM TABLE(GENERATOR(ROWCOUNT => 1000000))";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar(sql), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 500000 TRUE and 500000 FALSE values
   int true_count = 0;
@@ -74,12 +74,12 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLCHAR value = 0;
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE((value == 0 || value == 1));
 
     if (value == 1) {
@@ -127,7 +127,7 @@ TEST_CASE("should handle NULL values from table", "[boolean]") {
   // When Query "SELECT * FROM <table>" is executed
   const auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM boolean_null_table"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain [NULL, TRUE, FALSE] in any order
   int true_count = 0;
@@ -139,7 +139,7 @@ TEST_CASE("should handle NULL values from table", "[boolean]") {
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     if (auto result = get_data_optional<SQL_C_BIT>(stmt, 1); !result.has_value()) {
       null_count++;
@@ -169,7 +169,7 @@ TEST_CASE("should download large result set with multiple chunks from table", "[
   // When Query "SELECT col FROM <table>" is executed
   const auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM boolean_large_table"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain 500000 TRUE and 500000 FALSE values
   int true_count = 0;
@@ -180,12 +180,12 @@ TEST_CASE("should download large result set with multiple chunks from table", "[
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLCHAR value = 0;
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     REQUIRE((value == 0 || value == 1));
 
     if (value == 1) {
@@ -212,16 +212,16 @@ TEST_CASE("should select boolean using parameter binding", "[boolean]") {
     SQLLEN ind1 = 0, ind2 = 0, ind3 = 0;
 
     SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_BIT, 1, 0, &val1, 0, &ind1);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_BIT, SQL_BIT, 1, 0, &val2, 0, &ind2);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_BIT, SQL_BIT, 1, 0, &val3, 0, &ind3);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN"), SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Then Result should contain [TRUE, FALSE, TRUE]
     REQUIRE(get_data<SQL_C_BIT>(stmt, 1) == 1);
@@ -240,12 +240,12 @@ TEST_CASE("should select null boolean using parameter binding", "[boolean]") {
   SQLLEN ind = SQL_NULL_DATA;
 
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_BIT, 1, 0, &val, 0, &ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::BOOLEAN"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then Result should contain [NULL]
   REQUIRE(get_data_optional<SQL_C_BIT>(stmt, 1) == std::nullopt);
@@ -269,25 +269,25 @@ TEST_CASE("should insert boolean using parameter binding", "[boolean]") {
 
   const auto insert_stmt = conn.createStatement();
   SQLRETURN ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_BIND_TYPE, SQL_PARAM_BIND_BY_COLUMN, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMSET_SIZE, reinterpret_cast<SQLPOINTER>(num_rows), 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAM_STATUS_PTR, param_status, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   ret = SQLSetStmtAttr(insert_stmt.getHandle(), SQL_ATTR_PARAMS_PROCESSED_PTR, &params_processed, 0);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
 
   ret = SQLBindParameter(insert_stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_BIT, 1, 0, values, 0, indicators);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
 
   ret = SQLExecDirect(insert_stmt.getHandle(), sqlchar("INSERT INTO boolean_bind_table VALUES (?)"), SQL_NTS);
-  CHECK_ODBC(ret, insert_stmt);
+  REQUIRE_ODBC(ret, insert_stmt);
   REQUIRE(params_processed == num_rows);
 
   // Then SELECT should return the same values in any order
   const auto stmt = conn.createStatement();
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT col FROM boolean_bind_table"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   int true_count = 0;
   int false_count = 0;
@@ -298,7 +298,7 @@ TEST_CASE("should insert boolean using parameter binding", "[boolean]") {
     if (ret == SQL_NO_DATA) {
       break;
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     if (auto result = get_data_optional<SQL_C_BIT>(stmt, 1); !result.has_value()) {
       null_count++;

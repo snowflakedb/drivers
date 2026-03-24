@@ -1,15 +1,15 @@
+use crate::api::CDataType;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
-    NoMoreDataSnafu, OdbcRuntimeSnafu, Required,
+    NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, FreeStmtOption, OdbcResult, ParameterBinding, Statement, StatementState,
-    stmt_from_handle,
+    ConnectionState, FreeStmtOption, OdbcResult, ParamDirection, ParameterBinding, SqlType,
+    Statement, StatementState, stmt_from_handle,
 };
-use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
 use arrow::array::RecordBatchReader;
@@ -353,27 +353,47 @@ fn apply_parameter_bindings(
 pub fn bind_parameter(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
-    input_output_type: sql::ParamType,
-    value_type: CDataType,
-    parameter_type: sql::SqlDataType,
+    raw_input_output_type: sql::SmallInt,
+    raw_value_type: sql::SmallInt,
+    raw_parameter_type: sql::SmallInt,
     _column_size: sql::ULen,
     _decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> OdbcResult<()> {
-    // TODO handle input_output_type
     tracing::debug!(
-        "bind_parameter: parameter_number={}, input_output_type={:?}, value_type={:?}, parameter_type={:?}",
+        "bind_parameter: parameter_number={}, input_output_type={}, value_type={}, parameter_type={}",
         parameter_number,
-        input_output_type,
-        value_type,
-        parameter_type
+        raw_input_output_type,
+        raw_value_type,
+        raw_parameter_type
     );
+
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
 
     if parameter_number == 0 {
         tracing::error!("bind_parameter: parameter_number cannot be 0");
         return InvalidParameterNumberSnafu.fail();
+    }
+
+    let direction = ParamDirection::try_from(raw_input_output_type)?;
+
+    let value_type = CDataType::try_from(raw_value_type)?;
+
+    let sql_type = SqlType::try_from(raw_parameter_type)?;
+    let parameter_type: sql::SqlDataType = sql_type.into();
+
+    if direction == ParamDirection::Input
+        && parameter_value_ptr.is_null()
+        && str_len_or_ind_ptr.is_null()
+    {
+        tracing::error!(
+            "bind_parameter: both parameter_value_ptr and str_len_or_ind_ptr are null for input parameter"
+        );
+        return NullPointerSnafu.fail();
     }
 
     let stmt = stmt_from_handle(statement_handle);
@@ -386,7 +406,6 @@ pub fn bind_parameter(
         str_len_or_ind_ptr,
     };
 
-    // Store the binding
     stmt.parameter_bindings.insert(parameter_number, binding);
 
     tracing::info!(

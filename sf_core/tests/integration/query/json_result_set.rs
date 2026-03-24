@@ -2,6 +2,7 @@ use crate::common::arrow_result_helper::{
     ArrowResultHelper, assert_record_batches_match, assert_schemas_match,
 };
 use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
 
 #[test]
 fn should_return_arrow_even_if_json_result_set_is_returned_for_all_types() {
@@ -158,22 +159,38 @@ fn should_return_array_as_arrow_even_if_json_result_set_is_returned() {
 }
 
 fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, select_query: &str) {
+    let after_table = &create_table_query[create_table_query.find("TABLE ").unwrap() + 6..];
+    let base_name = after_table
+        .split(|c: char| c.is_whitespace() || c == '(')
+        .next()
+        .unwrap();
+    let table_name = unique_table_name(base_name);
+    let create_table_query = create_table_query.replace(base_name, &table_name);
+    let insert_query = insert_query.replace(base_name, &table_name);
+    let select_query = select_query.replace(base_name, &table_name);
+
     let client = SnowflakeTestClient::connect_with_default_auth();
+    let _guard = TableCleanupGuard::new(table_name.clone(), |name| {
+        let stmt = client.new_statement();
+        client.set_sql_query(&stmt, &format!("DROP TABLE IF EXISTS {name}"));
+        client.execute_statement_query(&stmt);
+        client.release_statement(&stmt);
+    });
     let stmt = client.new_statement();
 
-    client.set_sql_query(&stmt, create_table_query);
+    client.set_sql_query(&stmt, &create_table_query);
     client.execute_statement_query(&stmt);
 
     client.set_sql_query(&stmt, "ALTER SESSION SET TIMEZONE = 'Pacific/Honolulu'");
     client.execute_statement_query(&stmt);
 
-    client.set_sql_query(&stmt, insert_query);
+    client.set_sql_query(&stmt, &insert_query);
     client.execute_statement_query(&stmt);
 
     client.set_sql_query(&stmt, "ALTER SESSION SET TIMEZONE = 'Europe/Warsaw'");
     client.execute_statement_query(&stmt);
 
-    client.set_sql_query(&stmt, select_query);
+    client.set_sql_query(&stmt, &select_query);
     let arrow_result = client.execute_statement_query(&stmt);
 
     client.set_sql_query(
@@ -183,7 +200,7 @@ fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, se
     let result = client.execute_statement_query(&stmt);
     assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
 
-    client.set_sql_query(&stmt, select_query);
+    client.set_sql_query(&stmt, &select_query);
     let json_result = client.execute_statement_query(&stmt);
 
     let mut arrow_result_helper = ArrowResultHelper::from_result(arrow_result);

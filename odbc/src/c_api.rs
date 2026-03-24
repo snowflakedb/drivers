@@ -4,8 +4,8 @@
 
 #![allow(non_snake_case)]
 
+use crate::api::CDataType;
 use crate::api::{self, Narrow, ToSqlReturn, Wide};
-use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 
 /// # Safety
@@ -619,16 +619,17 @@ pub unsafe extern "C" fn SQLRowCount(
 pub unsafe extern "C" fn SQLBindParameter(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
-    input_output_type: sql::ParamType,
-    value_type: CDataType,
-    parameter_type: sql::SqlDataType,
+    input_output_type: sql::SmallInt,
+    value_type: sql::SmallInt,
+    parameter_type: sql::SmallInt,
     column_size: sql::ULen,
     decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::statement::bind_parameter(
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::bind_parameter(
         statement_handle,
         parameter_number,
         input_output_type,
@@ -639,8 +640,9 @@ pub unsafe extern "C" fn SQLBindParameter(
         parameter_value_ptr,
         buffer_length,
         str_len_or_ind_ptr,
-    )
-    .to_sql_code()
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety

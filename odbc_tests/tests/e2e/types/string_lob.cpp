@@ -22,7 +22,7 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // Helper to generate random ASCII string for LOB tests
@@ -63,32 +63,32 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_lob VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN value_len = static_cast<SQLLEN>(lob_string.size());
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, lob_string.size(), 0,
                            (SQLCHAR*)lob_string.c_str(), lob_string.size(), &value_len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // And Query "SELECT val, LENGTH(val) as len FROM {table}" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val, LENGTH(val) as len FROM test_string_lob", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // Use SQLBindCol to fetch the large string
   std::vector<char> buffer(string_length + 1);
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer.data(), buffer.size(), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   SQLBIGINT len = 0;
   SQLLEN len_indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_SBIGINT, &len, sizeof(len), &len_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // Then the result should show length 16777216
   CHECK(len == static_cast<SQLBIGINT>(string_length));
   REQUIRE(indicator == buffer.size() - 1);
@@ -120,36 +120,36 @@ TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB s
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_lob VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN value_len = static_cast<SQLLEN>(lob_string.size());
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, lob_string.size(), 0,
                            (SQLCHAR*)lob_string.c_str(), lob_string.size(), &value_len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // And Query "SELECT val, LENGTH(val) as len FROM {table}" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val, LENGTH(val) as len FROM test_string_lob", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Use SQLBindCol to fetch the large string
   std::vector<char> buffer(string_length + 1);
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer.data(), buffer.size(), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLBIGINT len = 0;
   SQLLEN len_indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_SBIGINT, &len, sizeof(len), &len_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should show length 134217728
   CHECK(len == static_cast<SQLBIGINT>(string_length));

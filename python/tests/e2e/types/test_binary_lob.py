@@ -51,6 +51,7 @@ class TestBinaryLob:
 
         # Given Snowflake client is logged in
         pass
+
         # And Table with BINARY column exists
         table_name = f"{tmp_schema}.lob_8mb_table"
         execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val BINARY)")
@@ -77,6 +78,7 @@ class TestBinaryLob:
 
         # Given Snowflake client is logged in
         pass
+
         # And Table with BINARY(67108864) column exists
         table_name = f"{tmp_schema}.lob_64mb_table"
         execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val BINARY(67108864))")

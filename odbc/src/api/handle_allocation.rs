@@ -1,8 +1,8 @@
+use crate::api::error::{DisconnectedSnafu, InvalidHandleSnafu, OdbcRuntimeSnafu, Required};
 use crate::api::{
     ArdDescriptor, Connection, ConnectionState, Environment, IrdDescriptor, OdbcResult, Statement,
     StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
-    error::{DisconnectedSnafu, InvalidHandleSnafu, OdbcRuntimeSnafu, Required},
     runtime::{env_allocated, env_freed, global},
 };
 use odbc_sys as sql;

@@ -70,3 +70,19 @@ Feature: ODBC string to character/binary type conversions
     And Greek letters should be replaced with 0x1a
     And Pure ASCII string should remain unchanged
     And Combined string should have ASCII preserved and non-ASCII replaced with 0x1a
+
+  # ============================================================================
+  # BASIC STRING QUERY AND PARAMETER BINDING
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: Test string basic query
+    Given A Snowflake connection
+    When A string value is inserted and selected via SQL_C_CHAR
+    Then The retrieved string matches the inserted value
+
+  @odbc_e2e
+  Scenario: Test basic string binding
+    Given A Snowflake connection
+    When A string value is inserted via parameter binding and selected
+    Then The retrieved string matches the bound parameter value

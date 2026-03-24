@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::cdata_types::CDataType;
+    use crate::api::CDataType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::number::{NumericSettings, NumericSqlType, SnowflakeNumber};
     use crate::conversion::test_utils::helpers::{
@@ -1415,7 +1415,7 @@ mod tests {
 
     mod nullable_null_tests {
         use super::*;
-        use crate::cdata_types::SQL_NULL_DATA;
+        use crate::api::SQL_NULL_DATA;
         use crate::conversion::WriteODBCType;
         use crate::conversion::error::WriteOdbcError;
         use crate::conversion::nullable::Nullable;

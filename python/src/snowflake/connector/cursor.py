@@ -682,7 +682,7 @@ class SnowflakeCursorBase(abc.ABC):
     @property
     def timestamp_output_format(self) -> str | None:
         """The session's ``TIMESTAMP_OUTPUT_FORMAT`` parameter value."""
-        raise NotImplementedError("timestamp_output_format is not yet implemented")
+        return self._connection._get_session_parameter("TIMESTAMP_OUTPUT_FORMAT")
 
     @property
     def timestamp_ltz_output_format(self) -> str | None:

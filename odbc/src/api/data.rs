@@ -1,13 +1,13 @@
+use crate::api::CDataType;
 use crate::api::error::{
-    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
+    ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu,
     InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
     InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
+    OdbcError, StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
 };
-use crate::cdata_types::CDataType;
 use crate::conversion::warning::Warnings;
 use crate::conversion::{Binding, ConversionError, NumericSettings, make_converter};
 use arrow::array::{Array, RecordBatchReader};
@@ -30,7 +30,31 @@ fn read_arrow_value(
     Ok(warnings)
 }
 
-const SQL_FETCH_NEXT: sql::SmallInt = 1;
+#[derive(Debug, Clone, Copy)]
+enum FetchOrientation {
+    Next,
+    First,
+    Last,
+    Prior,
+    Absolute,
+    Relative,
+}
+
+impl TryFrom<sql::SmallInt> for FetchOrientation {
+    type Error = OdbcError;
+
+    fn try_from(value: sql::SmallInt) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(FetchOrientation::Next),
+            2 => Ok(FetchOrientation::First),
+            3 => Ok(FetchOrientation::Last),
+            4 => Ok(FetchOrientation::Prior),
+            5 => Ok(FetchOrientation::Absolute),
+            6 => Ok(FetchOrientation::Relative),
+            _ => FetchTypeOutOfRangeSnafu.fail(),
+        }
+    }
+}
 
 #[repr(u16)]
 #[derive(Debug, Clone, Copy)]
@@ -49,7 +73,7 @@ fn next_non_empty_batch(
     mut reader: ArrowArrayStreamReader,
     rows_affected: Option<i64>,
     prepared: bool,
-) -> Result<(StatementState, ()), (StatementState, crate::api::OdbcError)> {
+) -> Result<(StatementState, ()), (StatementState, crate::api::error::OdbcError)> {
     loop {
         match reader.next() {
             Some(rb) => {
@@ -117,7 +141,7 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
             }
         }
         state @ StatementState::Error => StatementErrorStateSnafu.fail().with_state(state),
-        state @ StatementState::Done { .. } => ExecutionDoneSnafu.fail().with_state(state),
+        state @ StatementState::Done { .. } => NoMoreDataSnafu.fail().with_state(state),
         state @ StatementState::Created | state @ StatementState::Prepared { .. } => {
             StatementNotExecutedSnafu.fail().with_state(state)
         }
@@ -198,8 +222,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                     }
                 }
             }
-            Err(crate::api::OdbcError::NoMoreData { .. })
-            | Err(crate::api::OdbcError::ExecutionDone { .. }) => {
+            Err(crate::api::OdbcError::NoMoreData { .. }) => {
                 for remaining in row_idx..array_size {
                     write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
                 }
@@ -240,14 +263,14 @@ pub fn fetch_scroll(
     fetch_orientation: sql::SmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    if fetch_orientation != SQL_FETCH_NEXT {
-        tracing::warn!(
-            "fetch_scroll: unsupported orientation {}",
-            fetch_orientation
-        );
-        return UnsupportedFeatureSnafu.fail();
+    let orientation = FetchOrientation::try_from(fetch_orientation)?;
+    match orientation {
+        FetchOrientation::Next => fetch(statement_handle, warnings),
+        other => {
+            tracing::warn!("fetch_scroll: unsupported orientation {other:?}");
+            FetchTypeOutOfRangeSnafu.fail()
+        }
     }
-    fetch(statement_handle, warnings)
 }
 
 /// `SQLExtendedFetch` — ODBC 2.x block-fetch function.
@@ -264,12 +287,13 @@ pub fn extended_fetch(
 ) -> OdbcResult<()> {
     tracing::debug!("extended_fetch called");
 
-    if fetch_orientation != SQL_FETCH_NEXT {
-        tracing::warn!(
-            "extended_fetch: unsupported orientation {}",
-            fetch_orientation
-        );
-        return UnsupportedFeatureSnafu.fail();
+    let orientation = FetchOrientation::try_from(fetch_orientation)?;
+    match orientation {
+        FetchOrientation::Next => {}
+        other => {
+            tracing::warn!("extended_fetch: unsupported orientation {other:?}");
+            return UnsupportedFeatureSnafu.fail();
+        }
     }
 
     let stmt = stmt_from_handle(statement_handle);
@@ -545,7 +569,7 @@ pub fn get_data(
         }
         StatementState::Done { .. } => {
             tracing::debug!("get_data: statement execution is done");
-            ExecutionDoneSnafu.fail()
+            NoMoreDataSnafu.fail()
         }
         StatementState::Created | StatementState::Prepared { .. } => {
             tracing::error!("get_data: data not fetched yet");
@@ -565,7 +589,7 @@ pub fn get_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdata_types::{Double, Real, SBigInt, UBigInt};
+    use crate::api::{Double, Real, SBigInt, UBigInt};
     use arrow::array::{
         Decimal128Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, StringArray,
     };

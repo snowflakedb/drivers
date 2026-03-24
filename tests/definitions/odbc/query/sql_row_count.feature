@@ -31,6 +31,13 @@ Feature: ODBC SQLRowCount function behavior
     Then the number of rows affected should be -1
 
   @odbc_e2e
+  Scenario: SQLRowCount returns HY009 when called with null pointer.
+    Given Snowflake client is logged in and a statement has been executed
+    When SQLRowCount is called with a null pointer for RowCountPtr
+    # The old driver silently returns SQL_SUCCESS (BD#26).
+    Then SQLRowCount should return SQL_ERROR with SQLSTATE HY009 (Invalid use of null pointer)
+
+  @odbc_e2e
   Scenario: SQLRowCount returns HY010 when called without executing statement.
     Given Snowflake client is logged in
     When SQLRowCount is called without executing any statement first
@@ -58,9 +65,26 @@ Feature: ODBC SQLRowCount function behavior
     Then the number of rows affected should be 2 (1 updated + 1 inserted)
 
   @odbc_e2e
+  Scenario: SQLRowCount returns correct count for MERGE with DELETE clause.
+    Given Snowflake client is logged in
+    And a target table with data exists
+    And a source table with actions exists
+    When a MERGE with INSERT, UPDATE, and DELETE clauses is executed
+    And SQLRowCount is called
+    Then the number of rows affected should be 3 (1 deleted + 1 updated + 1 inserted)
+
+  @odbc_e2e
   Scenario: SQLRowCount returns correct count for UPDATE statement.
     Given Snowflake client is logged in
     When an UPDATE statement affecting 2 rows is executed
+    And SQLRowCount is called
+    Then the number of rows affected should be 2
+
+  @odbc_e2e
+  Scenario: SQLRowCount returns correct count for UPDATE with JOIN.
+    Given Snowflake client is logged in
+    And a target table and a source table exist
+    When an UPDATE with JOIN affecting 2 rows is executed
     And SQLRowCount is called
     Then the number of rows affected should be 2
 
@@ -91,6 +115,14 @@ Feature: ODBC SQLRowCount function behavior
     When INSERT INTO ... SELECT copies 3 rows from a source table
     And SQLRowCount is called
     Then the number of rows affected should be 3
+
+  @odbc_e2e
+  Scenario: SQLRowCount returns correct count for INSERT from multi-table JOIN.
+    Given Snowflake client is logged in
+    And two source tables and a destination table exist
+    When INSERT from a multi-table JOIN subquery is executed
+    And SQLRowCount is called
+    Then the number of rows affected should be 2 (only 2 rows match the JOIN)
 
   @odbc_e2e
   Scenario: SQLRowCount returns HY010 after SQLFreeStmt SQL_CLOSE.

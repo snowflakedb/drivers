@@ -133,9 +133,10 @@ class TestFloatLiteral:
         self, execute_query, float_type, select_values, expected
     ):
         # Given Snowflake client is logged in
-        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
+        pass
 
         # When Query "SELECT <query_values>" is executed
+        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
         result = execute_query(f"SELECT {columns}", single_row=True)
 
         # Then Result should contain floats [<expected_values>]

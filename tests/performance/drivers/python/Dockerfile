@@ -53,6 +53,7 @@ COPY protobuf/ ./protobuf/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY jdbc_bridge/ ./jdbc_bridge/
+COPY odbc_trace_tool/ ./odbc_trace_tool/
 
 # Copy Python package sources
 COPY python/ ./python/

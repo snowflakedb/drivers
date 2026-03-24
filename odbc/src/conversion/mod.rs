@@ -6,6 +6,8 @@ mod traits;
 pub mod warning;
 
 mod binary;
+#[cfg(test)]
+mod binary_tests;
 mod boolean;
 #[cfg(test)]
 mod boolean_tests;
@@ -20,6 +22,8 @@ mod real_tests;
 #[cfg(test)]
 mod test_utils;
 mod time;
+#[cfg(test)]
+mod time_tests;
 mod timestamp;
 mod varchar;
 
@@ -142,6 +146,7 @@ enum SnowflakeFieldType {
     Varchar(varchar::SnowflakeVarchar),
     Number(number::SnowflakeNumber),
     Date(date::SnowflakeDate),
+    Time(time::SnowflakeTime),
     TimestampNtz(timestamp::SnowflakeTimestampNtz),
     Boolean(boolean::SnowflakeBoolean),
     Binary(binary::SnowflakeBinary),
@@ -178,9 +183,21 @@ impl SnowflakeFieldType {
                 }))
             }
             "DATE" => Ok(Self::Date(date::SnowflakeDate)),
+            "TIME" => {
+                let scale = get_field_metadata(field, "scale")?;
+                Ok(Self::Time(time::SnowflakeTime { scale }))
+            }
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz)),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
-            "BINARY" => Ok(Self::Binary(binary::SnowflakeBinary)),
+            "BINARY" => {
+                let len = match get_field_metadata(field, "byteLength") {
+                    Ok(len) => len,
+                    // byteLength is optional; default to Snowflake's max (8 MB).
+                    Err(ConversionError::MissingFieldMetadata { .. }) => 8_388_608,
+                    Err(e) => return Err(e),
+                };
+                Ok(Self::Binary(binary::SnowflakeBinary { len }))
+            }
             "REAL" => Ok(Self::Real(real::SnowflakeReal)),
             lt => IncompatibleFieldMetadataSnafu {
                 logical_type: lt.to_string(),
@@ -195,6 +212,7 @@ impl SnowflakeFieldType {
             Self::Varchar(t) => t.sql_type(),
             Self::Number(t) => t.sql_type(),
             Self::Date(t) => t.sql_type(),
+            Self::Time(t) => t.sql_type(),
             Self::TimestampNtz(t) => t.sql_type(),
             Self::Boolean(t) => t.sql_type(),
             Self::Binary(t) => t.sql_type(),
@@ -207,6 +225,7 @@ impl SnowflakeFieldType {
             Self::Varchar(t) => t.column_size(),
             Self::Number(t) => t.column_size(),
             Self::Date(t) => t.column_size(),
+            Self::Time(t) => t.column_size(),
             Self::TimestampNtz(t) => t.column_size(),
             Self::Boolean(t) => t.column_size(),
             Self::Binary(t) => t.column_size(),
@@ -219,6 +238,7 @@ impl SnowflakeFieldType {
             Self::Varchar(t) => t.decimal_digits(),
             Self::Number(t) => t.decimal_digits(),
             Self::Date(t) => t.decimal_digits(),
+            Self::Time(t) => t.decimal_digits(),
             Self::TimestampNtz(t) => t.decimal_digits(),
             Self::Boolean(t) => t.decimal_digits(),
             Self::Binary(t) => t.decimal_digits(),
@@ -271,6 +291,9 @@ pub fn make_converter<'a>(
         },
         SnowflakeFieldType::Date(snowflake_type) => {
             make_primitive_data_converter!(Date32Type, snowflake_type, arrow_array, nullable)
+        }
+        SnowflakeFieldType::Time(snowflake_type) => {
+            make_primitive_data_converter!(Int64Type, snowflake_type, arrow_array, nullable)
         }
         SnowflakeFieldType::TimestampNtz(snowflake_type) => {
             make_converter!(

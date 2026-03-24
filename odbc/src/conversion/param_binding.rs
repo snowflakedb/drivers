@@ -7,8 +7,8 @@ use std::{
 use serde_json::{Map, Value};
 use snafu::ResultExt;
 
+use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
@@ -137,7 +137,7 @@ fn make_converter(
         sql::SqlDataType::EXT_BINARY
         | sql::SqlDataType::EXT_VAR_BINARY
         | sql::SqlDataType::EXT_LONG_VAR_BINARY => Ok(Box::new(JsonParamConverter {
-            snowflake_type: SnowflakeBinary,
+            snowflake_type: SnowflakeBinary { len: 0 },
         })),
 
         sql::SqlDataType::DATE => Ok(Box::new(JsonParamConverter {
@@ -145,7 +145,7 @@ fn make_converter(
         })),
 
         sql::SqlDataType::TIME => Ok(Box::new(JsonParamConverter {
-            snowflake_type: SnowflakeTime,
+            snowflake_type: SnowflakeTime { scale: 9 },
         })),
 
         sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => {
@@ -366,7 +366,7 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cdata_types::CDataType;
+    use crate::api::CDataType;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
