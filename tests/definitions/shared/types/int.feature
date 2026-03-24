@@ -30,13 +30,13 @@ Feature: INT type support
       | int        | -2147483648::<type>, 2147483647::<type>, 4294967295::<type>         | -2147483648, 2147483647, 4294967295          |
       | bigint     | -9223372036854775808::<type>, 9223372036854775807::<type>           | -9223372036854775808, 9223372036854775807    |
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle large integer values for int and synonyms
     Given Snowflake client is logged in
     When Query "SELECT -99999999999999999999999999999999999999::<type>, 99999999999999999999999999999999999999::<type>" is executed
     Then Result should contain integers [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should handle NULL values for int and synonyms
     Given Snowflake client is logged in
     When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
@@ -65,7 +65,7 @@ Feature: INT type support
       | negative    | -1, -128, -32768, -2147483648, -9223372036854775808                       | -9223372036854775808, -2147483648, -32768, -128, -1                           |
       | null        | 0, NULL, 42                                                               | 0, 42, NULL                                                                   |
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should select large integer values from table for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists with values [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
@@ -89,7 +89,7 @@ Feature: INT type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e @jdbc_e2e
+  @python_e2e @odbc_e2e @jdbc_e2e
   Scenario: should insert integer using parameter binding for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists
@@ -97,7 +97,7 @@ Feature: INT type support
     And Query "SELECT * FROM <table>" is executed
     Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should insert and select integers from table using batch parameter binding for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists

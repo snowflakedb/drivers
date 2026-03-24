@@ -14,7 +14,7 @@
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "put_get_utils.hpp"
 #include "test_setup.hpp"
 #include "utils.hpp"
@@ -61,7 +61,7 @@ std::string get_jwt_connection_string_with_invalid_private_key() {
 EnvironmentHandleWrapper setup_environment() {
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env);
+  REQUIRE_ODBC(ret, env);
   return env;
 }
 
@@ -70,20 +70,20 @@ ConnectionHandleWrapper get_connection_handle(EnvironmentHandleWrapper& env) { r
 void attempt_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 }
 
 void verify_simple_query_execution(ConnectionHandleWrapper& dbc) {
   StatementHandleWrapper stmt = dbc.createStatementHandle();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER result = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(result), NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(result == 1);
 }
 

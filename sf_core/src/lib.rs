@@ -4,7 +4,6 @@ extern crate tracing_subscriber;
 pub mod apis;
 
 pub mod arrow_utils;
-mod async_bridge;
 mod auth;
 pub mod c_api;
 mod chunks;

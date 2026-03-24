@@ -6,8 +6,8 @@
 
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 // ============================================================================
 // SQL_C_BIT
@@ -40,14 +40,14 @@ TEST_CASE("should convert boolean to SQL_C_DEFAULT", "[datatype][boolean][conver
   SQLCHAR true_val = 0xFF;
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, &true_val, sizeof(true_val), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(true_val == 1);
   REQUIRE(indicator == sizeof(SQLCHAR));
 
   SQLCHAR false_val = 0xFF;
   indicator = -999;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_DEFAULT, &false_val, sizeof(false_val), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(false_val == 0);
   REQUIRE(indicator == sizeof(SQLCHAR));
 }
@@ -87,14 +87,14 @@ TEST_CASE("should convert boolean using SQLBindCol for SQL_C_BIT", "[datatype][b
   SQLLEN false_ind = 0;
 
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_BIT, &true_val, sizeof(true_val), &true_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_BIT, &false_val, sizeof(false_val), &false_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT TRUE::BOOLEAN, FALSE::BOOLEAN"), SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the bound values should be 1 and 0
   REQUIRE(true_val == 1);

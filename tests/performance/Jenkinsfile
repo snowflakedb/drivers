@@ -159,11 +159,10 @@ pipeline {
                                     // Build test command with optional TEST_ARGS
                                     def testArgs = params.TEST_ARGS?.trim() ?: ""
                                     
-                                    // ODBC has known fetch performance issues causing timeouts.
-                                    // Run a reduced set of E2E tests to stay within the 6hr limit:
-                                    if (!testArgs && params.DRIVER == 'odbc') {
-                                        testArgs = "tests/ -k '(test_select_number_50M_arrow or test_select_date_50M_arrow or test_put_files_12mx100 or test_get_files_12mx100 or 1M) and not (12mx1000 or 50M_arrow_recorded)'"
-                                        echo "ODBC: using reduced test set to avoid timeout"
+                                    // Disable long PUT tests (12mx1000, 1.2Gx10) for ODBC and Python
+                                    if (!testArgs && (params.DRIVER == 'odbc' || params.DRIVER == 'python')) {
+                                        testArgs = "tests/ -k 'not (test_put_files_12mx1000 or test_put_files_1_2Gx10)'"
+                                        echo "${params.DRIVER}: excluding long PUT tests to avoid timeout"
                                     }
                                     
                                     echo "Hatch environment: ${hatchEnv}"

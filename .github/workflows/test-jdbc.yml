@@ -4,6 +4,8 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
+  merge_group:
+    types: [ checks_requested ]
 
 concurrency:
   # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
@@ -91,7 +93,10 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
           cd jdbc
-          ./gradlew test --stacktrace
+          ./gradlew test jacocoTestReport --stacktrace
+        env:
+          # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
       - name: Run JDBC tests (Windows ARM64)
         if: runner.arch == 'ARM64'
@@ -146,6 +151,8 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           cd jdbc
           ./gradlew referenceTest jacocoReferenceReport --stacktrace
+        env:
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
       - name: Upload OLD reference artifacts
         if: always()

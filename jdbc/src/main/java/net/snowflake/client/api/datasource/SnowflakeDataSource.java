@@ -19,10 +19,6 @@ public interface SnowflakeDataSource extends DataSource {
 
   void setPassword(String password);
 
-  void setServerName(String serverName);
-
-  void setPortNumber(int portNumber);
-
   void setAccount(String account);
 
   void setDatabase(String database);

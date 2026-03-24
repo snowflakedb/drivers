@@ -93,7 +93,12 @@ class WiremockManager:
         # Create and start container
         # For very large datasets (50M rows), use 12GB heap / 16GB container
         java_opts = (
-            "-Xmx12g -Xms4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 "
+            "-Xmx12g -Xms12g "
+            "-XX:+UseG1GC "
+            "-XX:MaxGCPauseMillis=100 "
+            "-XX:+ParallelRefProcEnabled "
+            "-XX:InitiatingHeapOccupancyPercent=45 "
+            "-XX:G1ReservePercent=10 "
             "--add-opens java.base/sun.security.x509=ALL-UNNAMED "
             "--add-opens java.base/sun.security.ssl=ALL-UNNAMED"
         )
@@ -495,7 +500,8 @@ class WiremockManager:
         Returns:
             Dictionary containing response time statistics:
             - total_requests: Total number of requests processed
-            - response_times: List of individual response times in milliseconds
+            - serve_times: Per-request stub matching time (ms)
+            - send_times: Per-request socket write time including TCP backpressure (ms)
             - metrics_enabled: Always True (metrics always collected)
         """
         self.flush_stats()
@@ -503,9 +509,11 @@ class WiremockManager:
         suffix = f"-{self.driver_label}" if getattr(self, "driver_label", None) else ""
         stats_file = self.mappings_dir / f"response-time-stats{suffix}.json"
         
+        empty = {"total_requests": 0, "serve_times": [], "send_times": [], "metrics_enabled": True}
+
         if not stats_file.exists():
             logger.warning(f"Stats file not found after flush: {stats_file}")
-            return {"total_requests": 0, "response_times": [], "metrics_enabled": True}
+            return empty
         
         try:
             with open(stats_file, 'r') as f:
@@ -519,5 +527,5 @@ class WiremockManager:
                     logger.warning(f"Stats file content (first 200 chars): {stats_file.read_text()[:200]}")
                 except Exception:
                     pass
-            return {"total_requests": 0, "response_times": [], "metrics_enabled": True}
+            return empty
 

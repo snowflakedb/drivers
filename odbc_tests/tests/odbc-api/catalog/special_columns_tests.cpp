@@ -6,13 +6,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "Schema.hpp"
+#include "ReadOnlyDbFixture.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
-#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -24,20 +22,11 @@
 // SQLSpecialColumns - Result Set Structure
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set has correct number of columns",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set has correct number of columns",
                  "[odbc-api][catalog][specialcolumns]") {
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), sqlchar("CREATE TABLE test_sc_numcols (id INT PRIMARY KEY, name VARCHAR(100))"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_NUMCOLS"), SQL_NTS,
-                          SQL_SCOPE_SESSION, SQL_NULLABLE);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT numCols = 0;
@@ -46,19 +35,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set has corre
   REQUIRE(numCols == 8);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set column names match ODBC 3.x spec",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][specialcolumns]") {
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_colnames (id INT PRIMARY KEY)"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_COLNAMES"), SQL_NTS,
-                          SQL_SCOPE_SESSION, SQL_NULLABLE);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   const char* expectedColNames[] = {"SCOPE",       "COLUMN_NAME",   "DATA_TYPE",      "TYPE_NAME",
@@ -83,75 +64,48 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set column na
 // SQLSpecialColumns - Empty Result Set (Snowflake limitation)
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_BEST_ROWID returns empty result set",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQL_BEST_ROWID returns empty result set",
                  "[odbc-api][catalog][specialcolumns]") {
   // Note: Snowflake does not support row identifiers, so SQLSpecialColumns
   // always returns an empty result set for SQL_BEST_ROWID.
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), sqlchar("CREATE TABLE test_sc_bestrowid (id INT PRIMARY KEY, name VARCHAR(100))"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_BESTROWID"), SQL_NTS,
-                          SQL_SCOPE_SESSION, SQL_NULLABLE);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_ROWVER returns empty result set",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQL_ROWVER returns empty result set",
                  "[odbc-api][catalog][specialcolumns]") {
   // Note: Snowflake does not have auto-updated version columns, so
   // SQLSpecialColumns always returns an empty result set for SQL_ROWVER.
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), sqlchar("CREATE TABLE test_sc_rowver (id INT PRIMARY KEY, name VARCHAR(100))"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret =
-      SQLSpecialColumns(stmt_handle(), SQL_ROWVER, sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()),
-                        SQL_NTS, sqlchar("TEST_SC_ROWVER"), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_ROWVER, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                        sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Various scope and nullable combinations return empty",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Various scope and nullable combinations return empty",
                  "[odbc-api][catalog][specialcolumns]") {
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_combos (id INT PRIMARY KEY)"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
   // SQL_SCOPE_CURROW + SQL_NO_NULLS
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_COMBOS"), SQL_NTS, SQL_SCOPE_CURROW,
-                          SQL_NO_NULLS);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_CURROW, SQL_NO_NULLS);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
   SQLCloseCursor(stmt_handle());
 
   // SQL_SCOPE_TRANSACTION + SQL_NULLABLE
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_COMBOS"), SQL_NTS,
-                          SQL_SCOPE_TRANSACTION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                          SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_TRANSACTION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -161,45 +115,28 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Various scope and nu
 // SQLSpecialColumns - Statement Reuse & SQLRowCount
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Can call multiple times after close cursor",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Can call multiple times after close cursor",
                  "[odbc-api][catalog][specialcolumns]") {
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_reuse (id INT PRIMARY KEY)"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_REUSE"), SQL_NTS, SQL_SCOPE_SESSION,
-                          SQL_NULLABLE);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
   SQLCloseCursor(stmt_handle());
 
-  ret =
-      SQLSpecialColumns(stmt_handle(), SQL_ROWVER, sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()),
-                        SQL_NTS, sqlchar("TEST_SC_REUSE"), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_ROWVER, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
+                          sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQLRowCount returns -1",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQLRowCount returns -1",
                  "[odbc-api][catalog][specialcolumns]") {
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_rowcount (id INT PRIMARY KEY)"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_ROWCOUNT"), SQL_NTS,
-                          SQL_SCOPE_SESSION, SQL_NULLABLE);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLLEN rowCount = 0;
@@ -226,25 +163,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: HY090 - Negative Tab
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: 24000 - Cursor already open",
+TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: 24000 - Cursor already open",
                  "[odbc-api][catalog][specialcolumns][error]") {
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_cursor (id INT PRIMARY KEY)"), SQL_NTS);
-  REQUIRE(ret == SQL_SUCCESS);
-  SQLFreeStmt(stmt_handle(), SQL_CLOSE);
-
-  const std::string currentDb = get_current_database(dbc_handle());
-
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_CURSOR"), SQL_NTS,
-                          SQL_SCOPE_SESSION, SQL_NULLABLE);
+  SQLRETURN ret =
+      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                        SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Second call without closing cursor
-  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
-                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_CURSOR"), SQL_NTS,
-                          SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
+                          SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }
 

@@ -35,11 +35,12 @@ final class PreparedStatementBindingSerializer {
     }
   }
 
-  static final class SerializedBindings implements AutoCloseable {
+  /** Holds bindings plus the native buffer backing the pointer stored in the RPC payload. */
+  static final class NativeBindings implements AutoCloseable {
     private final QueryBindings bindings;
     private final NativeBuffer buffer;
 
-    SerializedBindings(QueryBindings bindings, NativeBuffer buffer) {
+    NativeBindings(QueryBindings bindings, NativeBuffer buffer) {
       this.bindings = bindings;
       this.buffer = buffer;
     }
@@ -50,6 +51,8 @@ final class PreparedStatementBindingSerializer {
 
     @Override
     public void close() {
+      // The bindings payload includes a pointer into this native buffer, so the owner must release
+      // it after the RPC has been constructed and sent.
       if (buffer != null) {
         buffer.close();
       }
@@ -58,10 +61,11 @@ final class PreparedStatementBindingSerializer {
 
   private PreparedStatementBindingSerializer() {}
 
-  static SerializedBindings serialize(ParameterValue[] parameterValues) throws SQLException {
+  static NativeBindings serializeToNativeBindings(ParameterValue[] parameterValues)
+      throws SQLException {
     if (parameterValues.length == 0) {
       logger.debug("No parameter placeholders found, skipping bindings serialization.");
-      return new SerializedBindings(null, null);
+      return new NativeBindings(null, null);
     }
     logger.debug("Serializing prepared bindings: placeholders={}", parameterValues.length);
 
@@ -102,9 +106,9 @@ final class PreparedStatementBindingSerializer {
           "Prepared bindings serialized: payloadBytes={}, pointerBytes={}",
           jsonBytes.length,
           ptrBytes.length);
-      SerializedBindings serializedBindings = new SerializedBindings(queryBindings, nativeBuffer);
+      NativeBindings nativeBindings = new NativeBindings(queryBindings, nativeBuffer);
       success = true;
-      return serializedBindings;
+      return nativeBindings;
     } finally {
       if (!success) {
         nativeBuffer.close();

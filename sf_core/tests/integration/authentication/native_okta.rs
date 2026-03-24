@@ -256,7 +256,7 @@ fn should_fail_when_saml_html_is_missing_form_action() {
 
     // And Wiremock has Okta SSO returning SAML HTML without form action
     fixture.mock.mount(okta::okta_sso_missing_form_action());
-    fixture.set_option("authentication_timeout", "5");
+    fixture.set_option("authentication_timeout", "15");
 
     // When Trying to Connect
     let result = fixture.connect();

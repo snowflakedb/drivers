@@ -43,11 +43,6 @@ import org.apache.arrow.c.Data;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 
-/**
- * Snowflake JDBC ResultSet implementation
- *
- * <p>This is a stub implementation that provides the basic JDBC ResultSet interface.
- */
 public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
 
   private final SnowflakeStatementImpl statement;
@@ -98,6 +93,7 @@ public class SnowflakeResultSetImpl implements ResultSet, SnowflakeResultSet {
       resources.closeAll();
     } finally {
       closed = true;
+      statement.removeClosedResultSet(this);
       resetStateAfterClose();
     }
   }

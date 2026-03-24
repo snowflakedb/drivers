@@ -13,23 +13,31 @@ Feature: ODBC string to interval type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario: should convert string literals to single-component interval types
+  Scenario Outline: should convert string literals to single-component <c_type>
     Given Snowflake client is logged in
     When Query selecting string literals representing interval values is executed
-    Then SQL_C_INTERVAL_YEAR conversions should work
-    And SQL_C_INTERVAL_MONTH conversions should work
-    And SQL_C_INTERVAL_DAY conversions should work
-    And SQL_C_INTERVAL_HOUR conversions should work
-    And SQL_C_INTERVAL_MINUTE conversions should work
-    And SQL_C_INTERVAL_SECOND conversions should work
+    Then <c_type> conversions should work
+
+    Examples:
+      | c_type                 |
+      | SQL_C_INTERVAL_YEAR    |
+      | SQL_C_INTERVAL_MONTH   |
+      | SQL_C_INTERVAL_DAY     |
+      | SQL_C_INTERVAL_HOUR    |
+      | SQL_C_INTERVAL_MINUTE  |
+      | SQL_C_INTERVAL_SECOND  |
 
   @odbc_e2e
-  Scenario: should convert negative interval string literals
+  Scenario Outline: should convert negative <c_type> string literals
     Given Snowflake client is logged in
     When Query selecting negative interval values is executed
-    Then negative SQL_C_INTERVAL_YEAR should be correctly parsed
-    And negative SQL_C_INTERVAL_MONTH should be correctly parsed
-    And negative SQL_C_INTERVAL_DAY should be correctly parsed
+    Then negative <c_type> should be correctly parsed
+
+    Examples:
+      | c_type                 |
+      | SQL_C_INTERVAL_YEAR    |
+      | SQL_C_INTERVAL_MONTH   |
+      | SQL_C_INTERVAL_DAY     |
 
   # ============================================================================
   # SUCCESSFUL CONVERSIONS - Multi-component interval types
@@ -44,15 +52,19 @@ Feature: ODBC string to interval type conversions
     And zero years with months should work
 
   @odbc_e2e
-  Scenario: should convert string literals to day-time interval types
+  Scenario Outline: should convert string literals to compound <c_type>
     Given Snowflake client is logged in
     When Query selecting day-time interval strings is executed
-    Then SQL_C_INTERVAL_DAY_TO_HOUR conversions should work
-    And SQL_C_INTERVAL_DAY_TO_MINUTE conversions should work
-    And SQL_C_INTERVAL_DAY_TO_SECOND conversions should work
-    And SQL_C_INTERVAL_HOUR_TO_MINUTE conversions should work
-    And SQL_C_INTERVAL_HOUR_TO_SECOND conversions should work
-    And SQL_C_INTERVAL_MINUTE_TO_SECOND conversions should work
+    Then <c_type> conversions should work
+
+    Examples:
+      | c_type                           |
+      | SQL_C_INTERVAL_DAY_TO_HOUR       |
+      | SQL_C_INTERVAL_DAY_TO_MINUTE     |
+      | SQL_C_INTERVAL_DAY_TO_SECOND     |
+      | SQL_C_INTERVAL_HOUR_TO_MINUTE    |
+      | SQL_C_INTERVAL_HOUR_TO_SECOND    |
+      | SQL_C_INTERVAL_MINUTE_TO_SECOND  |
 
   # ============================================================================
   # TRUNCATION WITH INFO - Trailing field truncation (SQLSTATE 01S07)

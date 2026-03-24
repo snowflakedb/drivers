@@ -2,6 +2,8 @@
 Integration tests for PEP 249 Connection objects.
 """
 
+import uuid
+
 from io import StringIO
 from unittest.mock import Mock
 
@@ -23,6 +25,61 @@ class TestConnectionInfo:
 
         # Then it should not be None
         assert info is not None
+
+
+class TestConnectionInfoProperties:
+    """Integration tests for Connection properties backed by _get_connection_info."""
+
+    @pytest.mark.parametrize("prop", ["account", "user", "host", "role", "database", "schema", "warehouse"])
+    def test_string_property_is_set(self, connection, prop):
+        """After connecting, string properties should return a non-empty string."""
+        value = getattr(connection, prop)
+        assert value is not None, f"connection.{prop} should not be None"
+        assert isinstance(value, str), f"connection.{prop} should be a str"
+        assert len(value) > 0, f"connection.{prop} should not be empty"
+
+    def test_session_id_is_set(self, connection):
+        """After connecting, session_id should return a positive integer."""
+        sid = connection.session_id
+        assert isinstance(sid, int)
+        assert sid > 0
+
+    def test_port_is_set(self, connection):
+        """After connecting, port should return a valid port number or None."""
+        port = connection.port
+        if port is not None:
+            assert isinstance(port, int)
+            assert port > 0
+
+
+class TestConnectionInfoReflectsSessionChanges:
+    """Integration tests verifying that properties reflect server-side session changes."""
+
+    def test_database_reflects_use_database(self, connection):
+        """After USE DATABASE, the database property should reflect the new database."""
+        original_db = connection.database
+        assert original_db is not None
+
+        tmp_db = f"TEST_DB_{uuid.uuid4().hex}".upper()
+        cur = connection.cursor()
+        try:
+            cur.execute(f"CREATE DATABASE {tmp_db}")
+            cur.execute(f"USE DATABASE {tmp_db}")
+            assert connection.database.upper() == tmp_db
+        finally:
+            cur.execute(f"USE DATABASE {original_db}")
+            cur.execute(f"DROP DATABASE IF EXISTS {tmp_db}")
+            cur.close()
+
+    def test_schema_reflects_use_schema(self, connection):
+        """After USE SCHEMA, the schema property should reflect the new schema."""
+        cur = connection.cursor()
+        try:
+            cur.execute("USE SCHEMA INFORMATION_SCHEMA")
+        finally:
+            cur.close()
+
+        assert connection.schema.upper() == "INFORMATION_SCHEMA"
 
 
 class TestConnectionMethods:

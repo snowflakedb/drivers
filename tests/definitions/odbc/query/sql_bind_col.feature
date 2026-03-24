@@ -117,7 +117,7 @@ Feature: ODBC SQLBindCol function behavior
     And SQLBindCol is called with a buffer too small to hold the full string
     Then SQLFetch should return SQL_SUCCESS_WITH_INFO (data truncated)
     And the buffer should contain truncated data with null termination
-    And the indicator should show the full length of the original data or SQL_NO_TOTAL
+    And the indicator should show the full length of the original data
 
   @odbc_e2e
   Scenario: SQLBindCol ignores BufferLength for fixed-length data types.
@@ -386,7 +386,7 @@ Feature: ODBC SQLBindCol function behavior
     When a query returning a known-length string is executed
     And SQLBindCol uses a buffer that causes truncation
     Then SQLFetch should return SQL_SUCCESS_WITH_INFO
-    And indicator should contain the full data length or SQL_NO_TOTAL
+    And indicator should contain the full data length
 
   @odbc_e2e
   Scenario: SQLBindCol binding persists across SQLFreeStmt SQL_CLOSE and re-execute.

@@ -57,16 +57,14 @@ fn main() {
 
     // On Windows, use a .def file to limit DLL exports to only C API functions.
     // This avoids the PE/COFF 65535 export symbol limit.
-    // IMPORTANT: Use rustc-cdylib-link-arg (not rustc-link-arg) so the /DEF: flag
-    // only applies to the cdylib DLL output. Using rustc-link-arg would also apply
-    // to test executables, causing the linker to produce a DLL with .exe extension
-    // (LIBRARY directive in .def), resulting in "error 193: not a valid Win32
-    // application" when trying to run tests on Windows.
+    // NOTE: rustc-link-arg applies to test executables too, but exports.def omits
+    // the LIBRARY directive so MSVC does not set the DLL bit in test binaries.
+    // Without the DLL bit, test executables remain valid Win32 applications.
     #[cfg(target_os = "windows")]
     {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let def_path = std::path::Path::new(&manifest_dir).join("exports.def");
-        println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
+        println!("cargo:rustc-link-arg=/DEF:{}", def_path.display());
     }
 
     generate_protobuf();

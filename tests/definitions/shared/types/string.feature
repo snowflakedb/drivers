@@ -10,7 +10,7 @@ Feature: String datatype handling
   # TYPE CASTING
   # ============================================================================
 
-  @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should cast string values to appropriate type for string and synonyms
     # Python: Values should be cast to 'str' type
     Given Snowflake client is logged in

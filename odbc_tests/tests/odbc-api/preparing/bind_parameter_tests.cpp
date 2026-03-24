@@ -21,8 +21,6 @@
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds integer input parameter",
                  "[odbc-api][bindparameter][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -47,8 +45,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds integer input p
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds string input parameter",
                  "[odbc-api][bindparameter][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -73,8 +69,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds string input pa
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds NULL parameter value",
                  "[odbc-api][bindparameter][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -98,8 +92,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Binds NULL parameter 
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Re-execute with different parameter value",
                  "[odbc-api][bindparameter][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -134,8 +126,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Re-execute with diffe
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Multiple parameters",
                  "[odbc-api][bindparameter][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?, ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -169,8 +159,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Multiple parameters",
 
 TEST_CASE("SQLBindParameter: SQL_INVALID_HANDLE for null statement handle",
           "[odbc-api][bindparameter][preparing][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   const SQLRETURN ret =
@@ -180,8 +168,6 @@ TEST_CASE("SQLBindParameter: SQL_INVALID_HANDLE for null statement handle",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: 07009 for parameter number 0",
                  "[odbc-api][bindparameter][preparing][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   // 07009: Invalid descriptor index
@@ -192,8 +178,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: 07009 for parameter n
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Rebinding same parameter number replaces binding",
                  "[odbc-api][bindparameter][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -222,8 +206,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: Rebinding same parame
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY009 for both null pointers on input parameter",
                  "[odbc-api][bindparameter][preparing][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // HY009: Invalid argument value (both ParameterValuePtr and StrLen_or_IndPtr are null for input parameter)
   SQLRETURN ret =
       SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, nullptr, 0, nullptr);
@@ -232,8 +214,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY009 for both null p
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY105 for invalid InputOutputType",
                  "[odbc-api][bindparameter][preparing][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   // HY105: Invalid parameter type (999 is not a valid InputOutputType)
@@ -243,8 +223,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY105 for invalid Inp
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY003 for invalid ValueType",
                  "[odbc-api][bindparameter][preparing][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   // HY003: Invalid application buffer type (9999 is not a valid C data type)
@@ -255,8 +233,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY003 for invalid Val
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for invalid ParameterType",
                  "[odbc-api][bindparameter][preparing][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLINTEGER param_value = 1;
   SQLLEN indicator = 0;
   // HY004: Invalid SQL data type (8888 is not a valid SQL data type)
@@ -271,8 +247,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for invalid Par
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQLFreeStmt SQL_RESET_PARAMS clears bindings",
                  "[odbc-api][bindparameter][preparing]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::cdata_types::CDataType;
+    use crate::api::CDataType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
     use crate::conversion::traits::Binding;
@@ -66,6 +66,7 @@ mod tests {
             indicator_ptr: str_len as *mut sql::Len,
             precision,
             scale,
+            datetime_interval_precision: None,
         }
     }
 

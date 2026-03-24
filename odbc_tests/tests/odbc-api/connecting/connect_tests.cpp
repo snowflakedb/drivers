@@ -13,8 +13,8 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -318,10 +318,10 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeed
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
@@ -398,7 +398,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cyc
     REQUIRE(ret == SQL_SUCCESS);
 
     ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
-    CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
     ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
     REQUIRE(ret == SQL_SUCCESS);
@@ -435,7 +435,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connecti
 
     std::string query = "SELECT " + std::to_string(i + 1);
     ret = SQLExecDirect(stmt, sqlchar(query.c_str()), SQL_NTS);
-    CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
     ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
     REQUIRE(ret == SQL_SUCCESS);

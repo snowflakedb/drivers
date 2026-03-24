@@ -8,12 +8,16 @@ Feature: ODBC string to temporal type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario: should convert string literals to date and time types
+  Scenario Outline: should convert string literals to <c_type>
     Given Snowflake client is logged in
     When Query selecting string literals representing dates and times is executed
-    Then SQL_C_TYPE_DATE conversions should work
-    And SQL_C_TYPE_TIME conversions should work
-    And SQL_C_TYPE_TIMESTAMP conversions should work
+    Then <c_type> conversions should work
+
+    Examples:
+      | c_type               |
+      | SQL_C_TYPE_DATE      |
+      | SQL_C_TYPE_TIME      |
+      | SQL_C_TYPE_TIMESTAMP |
 
   # ============================================================================
   # SUCCESSFUL CONVERSIONS - Date/Time strings to TIMESTAMP
