@@ -49,7 +49,8 @@ pub mod param_names {
     pub const PORT: ParamKey = ParamKey("port");
     pub const PROTOCOL: ParamKey = ParamKey("protocol");
     pub const SERVER_URL: ParamKey = ParamKey("server_url");
-    pub const ALLOW_UNDERSCORES_IN_HOST: ParamKey = ParamKey("allow_underscores_in_host");
+    pub const PRESERVE_UNDERSCORES_IN_HOSTNAME: ParamKey =
+        ParamKey("preserve_underscores_in_hostname");
     pub const USER: ParamKey = ParamKey("user");
     pub const PASSWORD: ParamKey = ParamKey("password");
     pub const AUTHENTICATOR: ParamKey = ParamKey("authenticator");
@@ -182,13 +183,13 @@ static PARAM_DEFS: &[ParamDef] = &[
         deprecated_by: None,
     },
     ParamDef {
-        canonical_name: param_names::ALLOW_UNDERSCORES_IN_HOST.as_str(),
+        canonical_name: param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str(),
         aliases: &["ALLOWUNDERSCORESINHOST"],
         value_type: ValueType::Bool,
         required: Required::Never,
         default: Some(|| Setting::Bool(false)),
         sensitive: false,
-        description: "Allow underscores in the hostname derived from the account name",
+        description: "Preserve underscores in the hostname derived from the account name",
         deprecated_by: None,
     },
     // ── Auth ────────────────────────────────────────────────────────────
@@ -520,7 +521,7 @@ mod tests {
             ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
             ("CRL_MODE", "crl_check_mode"),
             ("CRL_ENABLED", "crl_check_mode"),
-            ("ALLOWUNDERSCORESINHOST", "allow_underscores_in_host"),
+            ("ALLOWUNDERSCORESINHOST", "preserve_underscores_in_hostname"),
         ];
         for (alias, expected_canonical) in cases {
             let def = r

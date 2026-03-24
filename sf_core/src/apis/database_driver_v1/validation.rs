@@ -178,7 +178,7 @@ pub fn resolve_options(
 /// names may contain them. When the host or server_url is derived from such an
 /// account, the underscores must be replaced with hyphens so the hostname
 /// resolves correctly.
-/// Skipped when `allow_underscores_in_host` is `true`.
+/// Skipped when `preserve_underscores_in_hostname` is `true`.
 ///
 /// Called from `connection_init` after all settings (explicit options, TOML
 /// config) have been accumulated, so it always sees the complete picture.
@@ -242,10 +242,10 @@ fn starts_with_account_label(value: &str, account_lower: &str) -> bool {
 /// automatically.
 fn is_allow_underscores(settings: &dyn Settings) -> bool {
     let Some(param_def) =
-        param_registry::registry().resolve(param_names::ALLOW_UNDERSCORES_IN_HOST)
+        param_registry::registry().resolve(param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME)
     else {
         tracing::warn!(
-            "Parameter definition for allow_underscores_in_host not found; treating flag as disabled"
+            "Parameter definition for preserve_underscores_in_hostname not found; treating flag as disabled"
         );
         return false;
     };
@@ -584,8 +584,8 @@ mod tests {
         );
     }
 
-    #[test_case("allow_underscores_in_host", Setting::Bool(true) ; "bool on canonical key")]
-    #[test_case("allow_underscores_in_host", Setting::String("true".to_string()) ; "string on canonical key")]
+    #[test_case("preserve_underscores_in_hostname", Setting::Bool(true) ; "bool on canonical key")]
+    #[test_case("preserve_underscores_in_hostname", Setting::String("true".to_string()) ; "string on canonical key")]
     #[test_case("ALLOWUNDERSCORESINHOST", Setting::Bool(true) ; "bool on alias key")]
     fn opt_out_skips_normalization(key: &str, value: Setting) {
         let mut settings = HashMap::new();
