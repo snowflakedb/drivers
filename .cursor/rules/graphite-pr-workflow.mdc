@@ -15,13 +15,16 @@ Use `NO-SNOW:` for changes without a ticket.
 ```bash
 gt branch create {user}/{branch-name}
 git add <files>
+# When the change is associated with a SNOW ticket:
 gt commit create -m "SNOW-{ticket}: {description}"
+# For rare changes without a ticket (see NO-SNOW convention above):
+gt commit create -m "NO-SNOW: {description}"
 gt submit --no-edit
 ```
 
 ## Before Creating a PR
 
-1. **Ask for SNOW ticket** if not provided. Do NOT commit without confirming.
+1. **Ask for SNOW ticket** if not provided. Before committing, explicitly confirm either a valid SNOW ticket number (use `SNOW-{ticket}: ...`) or that there is intentionally no ticket (then use `NO-SNOW:`).
 2. **Check for stacked PR**: if the branch is not based off `main`, ask whether to use `gt submit --stack`.
 
 ## PR Description Template
