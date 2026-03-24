@@ -3,7 +3,9 @@ use std::io;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::arrow_utils::convert_string_rowset_to_arrow_reader;
 use crate::compression::{CompressionError, decompress_data};
+use crate::query_types::RowType;
 use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::{Fields, Schema, SchemaRef};
 use arrow::error::ArrowError;
@@ -167,6 +169,144 @@ impl Iterator for ChunkReader {
 }
 
 impl RecordBatchReader for ChunkReader {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
+/// Reads Arrow record batches from JSON result-set chunks, converting each
+/// chunk from JSON rows to Arrow on demand.
+///
+/// Mirrors `ChunkReader`'s prefetch pattern: a background task downloads
+/// chunks concurrently, parses JSON, converts to Arrow, and sends
+/// `RecordBatch`es through a bounded channel.
+///
+/// See `ChunkReader` for the sync-iteration constraint.
+pub struct JsonChunkReader {
+    schema: SchemaRef,
+    batch_rx: tokio::sync::mpsc::Receiver<Result<RecordBatch, ArrowError>>,
+}
+
+impl JsonChunkReader {
+    pub async fn new(
+        initial_rowset: &[Vec<Option<String>>],
+        row_types: Vec<RowType>,
+        chunk_download_data: Vec<ChunkDownloadData>,
+        client: Client,
+        prefetch_concurrency: usize,
+    ) -> Result<Self, ChunkError> {
+        let reader = convert_string_rowset_to_arrow_reader(initial_rowset, &row_types)
+            .map_err(|e| ArrowError::ExternalError(Box::new(e)))
+            .context(ChunkReadingSnafu)?;
+        let schema = reader.schema();
+        let initial_batches: Vec<RecordBatch> = reader
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .context(ChunkReadingSnafu)?;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        tokio::spawn(prefetch_json_batches(
+            initial_batches,
+            chunk_download_data.into(),
+            row_types,
+            client,
+            tx,
+            prefetch_concurrency,
+        ));
+
+        Ok(Self {
+            schema,
+            batch_rx: rx,
+        })
+    }
+}
+
+/// Background task that sends the initial rowset batches and downloads
+/// remaining JSON chunks concurrently, converting each to Arrow and sending
+/// through `tx`.
+async fn prefetch_json_batches(
+    initial_batches: Vec<RecordBatch>,
+    rest: VecDeque<ChunkDownloadData>,
+    row_types: Vec<RowType>,
+    client: Client,
+    tx: tokio::sync::mpsc::Sender<Result<RecordBatch, ArrowError>>,
+    concurrency: usize,
+) {
+    for batch in initial_batches {
+        if tx.send(Ok(batch)).await.is_err() {
+            return;
+        }
+    }
+
+    let row_types = Arc::new(row_types);
+
+    let mut chunk_stream = stream::iter(rest)
+        .map(move |chunk| {
+            let client = client.clone();
+            let row_types = Arc::clone(&row_types);
+            async move { download_and_parse_json_chunk(&client, &chunk, &row_types).await }
+        })
+        .buffered(concurrency)
+        .map(|result| match result {
+            Ok(batches) => stream::iter(batches.into_iter().map(Ok)).left_stream(),
+            Err(e) => stream::iter(vec![Err(e)]).right_stream(),
+        })
+        .flatten();
+
+    while let Some(result) = chunk_stream.next().await {
+        if tx.send(result).await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn download_and_parse_json_chunk(
+    client: &Client,
+    chunk: &ChunkDownloadData,
+    row_types: &[RowType],
+) -> Result<Vec<RecordBatch>, ArrowError> {
+    let chunk_bytes = get_chunk_data(client, chunk)
+        .await
+        .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+
+    // Chunk data is comma-separated row arrays without outer brackets,
+    // e.g.: [null,"a",...],\n["b","c",...],\n...
+    // Wrap in [] to make it a valid JSON array.
+    let mut wrapped = Vec::with_capacity(chunk_bytes.len() + 2);
+    wrapped.push(b'[');
+    wrapped.extend_from_slice(&chunk_bytes);
+    wrapped.push(b']');
+
+    let chunk_rows: Vec<Vec<Option<String>>> =
+        serde_json::from_slice(&wrapped).map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+
+    let expected_cols = row_types.len();
+    if let Some((row_idx, row)) = chunk_rows
+        .iter()
+        .enumerate()
+        .find(|(_, r)| r.len() != expected_cols)
+    {
+        return Err(ArrowError::InvalidArgumentError(format!(
+            "JSON chunk row {row_idx} has {} columns, expected {expected_cols}",
+            row.len()
+        )));
+    }
+
+    let reader = convert_string_rowset_to_arrow_reader(&chunk_rows, row_types)
+        .map_err(|e| ArrowError::ExternalError(Box::new(e)))?;
+
+    reader.into_iter().collect::<Result<Vec<_>, _>>()
+}
+
+impl Iterator for JsonChunkReader {
+    type Item = Result<RecordBatch, ArrowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.batch_rx.blocking_recv()
+    }
+}
+
+impl RecordBatchReader for JsonChunkReader {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

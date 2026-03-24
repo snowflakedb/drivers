@@ -452,7 +452,14 @@ impl Data {
             }
             Some("json") => {
                 if let Some((rowset, rowtype)) = self.to_json_rowset() {
-                    RowsetData::JsonRowset { rowset, rowtype }
+                    match self.to_chunk_download_data() {
+                        Some(chunk_download_data) => RowsetData::JsonMultiChunk {
+                            rowset,
+                            rowtype,
+                            chunk_download_data,
+                        },
+                        None => RowsetData::JsonRowset { rowset, rowtype },
+                    }
                 } else {
                     tracing::error!("Rowset and/or rowtype are missing for JSON result format");
                     RowsetData::NoData
@@ -524,6 +531,11 @@ pub enum RowsetData<'a> {
     JsonRowset {
         rowset: &'a Vec<Vec<Option<String>>>,
         rowtype: &'a Vec<RowType>,
+    },
+    JsonMultiChunk {
+        rowset: &'a Vec<Vec<Option<String>>>,
+        rowtype: &'a Vec<RowType>,
+        chunk_download_data: Vec<ChunkDownloadData>,
     },
     NoData,
 }

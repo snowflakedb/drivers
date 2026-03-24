@@ -3,7 +3,7 @@ use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{
     boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
 };
-use crate::chunks::{ChunkError, ChunkReader, DEFAULT_PREFETCH_THREADS};
+use crate::chunks::{self, ChunkError, ChunkReader, DEFAULT_PREFETCH_THREADS};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::query_types::RowType;
@@ -124,25 +124,29 @@ async fn read_batches<'a>(
                 .context(RowsetConversionSnafu)
         }
         query_response::RowsetData::JsonRowset { rowset, rowtype } => {
-            let row_types = rowtype
-                .iter()
-                .map(|rt| rt.try_into())
-                .collect::<Result<Vec<_>, _>>()
-                .context(RowTypeParsingSnafu)?;
-
-            // Validate column counts before converting
-            if !rowset.is_empty() {
-                let num_columns_rowset = rowset.first().unwrap().len();
-                let num_columns_rowtype = row_types.len();
-                if num_columns_rowset != num_columns_rowtype {
-                    return ColumnCountMismatchSnafu {
-                        rowtype_count: num_columns_rowtype,
-                        rowset_count: num_columns_rowset,
-                    }
-                    .fail();
-                }
-            }
+            let row_types = parse_row_types(rowtype)?;
+            validate_column_count(rowset, &row_types)?;
             convert_string_rowset_to_arrow_reader(rowset, &row_types).context(RowsetConversionSnafu)
+        }
+        query_response::RowsetData::JsonMultiChunk {
+            rowset,
+            rowtype,
+            chunk_download_data,
+        } => {
+            let row_types = parse_row_types(rowtype)?;
+            validate_column_count(rowset, &row_types)?;
+
+            let reader = chunks::JsonChunkReader::new(
+                rowset,
+                row_types,
+                chunk_download_data,
+                http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
+            )
+            .await
+            .context(ChunkReadingSnafu)?;
+
+            Ok(Box::new(reader))
         }
         query_response::RowsetData::NoData => {
             // No rowset or rowtype found, return empty reader
@@ -150,6 +154,32 @@ async fn read_batches<'a>(
             Ok(Box::new(reader))
         }
     }
+}
+
+fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, ReadBatchesError> {
+    rowtype
+        .iter()
+        .map(|rt| rt.try_into())
+        .collect::<Result<Vec<_>, _>>()
+        .context(RowTypeParsingSnafu)
+}
+
+fn validate_column_count(
+    rowset: &[Vec<Option<String>>],
+    row_types: &[RowType],
+) -> Result<(), ReadBatchesError> {
+    if !rowset.is_empty() {
+        let num_columns_rowset = rowset.first().unwrap().len();
+        let num_columns_rowtype = row_types.len();
+        if num_columns_rowset != num_columns_rowtype {
+            return ColumnCountMismatchSnafu {
+                rowtype_count: num_columns_rowtype,
+                rowset_count: num_columns_rowset,
+            }
+            .fail();
+        }
+    }
+    Ok(())
 }
 
 /// Helper macro to create string arrays from field accessors
