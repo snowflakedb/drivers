@@ -153,7 +153,7 @@ TEST_CASE("should execute via SQLExecDirect with pre-bound parameter.", "[query]
   SQLLEN indicator = 0;
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // And SQLExecDirect is called with a parameterized query
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
@@ -178,13 +178,13 @@ TEST_CASE("should replace binding when same ParameterNumber is rebound.", "[quer
   SQLINTEGER param1 = 111;
   SQLLEN ind1 = 0;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param1, 0, &ind1);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // And parameter 1 is rebound to value 222
   SQLINTEGER param2 = 222;
   SQLLEN ind2 = 0;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param2, 0, &ind2);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // Then executing should return the latest bound value
   ret = SQLExecute(stmt.getHandle());
@@ -207,7 +207,7 @@ TEST_CASE("should reflect changed bound variable on re-execution.", "[query][bin
   SQLINTEGER param = 10;
   SQLLEN indicator = 0;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // And first execution returns 10
   ret = SQLExecute(stmt.getHandle());
@@ -242,12 +242,12 @@ TEST_CASE("should bind multiple parameters to a single statement.", "[query][bin
   SQLINTEGER int_param = 42;
   SQLLEN int_ind = 0;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0, &int_ind);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
   char str_param[] = "hello";
   SQLLEN str_ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0, str_param,
                          sizeof(str_param), &str_ind);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // Then executing and fetching should return both values
   ret = SQLExecute(stmt.getHandle());
@@ -271,7 +271,7 @@ TEST_CASE("should rebind parameter to different type without SQL_RESET_PARAMS.",
   SQLINTEGER int_param = 42;
   SQLLEN int_ind = 0;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0, &int_ind);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
@@ -285,7 +285,7 @@ TEST_CASE("should rebind parameter to different type without SQL_RESET_PARAMS.",
   SQLLEN str_ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0, str_param,
                          sizeof(str_param), &str_ind);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // Then re-executing should return the new string value
   ret = SQLExecute(stmt.getHandle());
@@ -305,7 +305,7 @@ TEST_CASE("should bind NULL via SQL_NULL_DATA indicator.", "[query][bind_paramet
   REQUIRE_ODBC(ret, stmt);
   SQLLEN indicator = SQL_NULL_DATA;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, nullptr, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // Then executing and fetching should return NULL
   ret = SQLExecute(stmt.getHandle());
@@ -329,7 +329,7 @@ TEST_CASE("should alternate NULL and non-NULL across sequential executions.", "[
   SQLINTEGER param = 0;
   SQLLEN indicator = 0;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // And rows are inserted: 100, NULL, 200
   param = 100;
@@ -377,7 +377,7 @@ TEST_CASE("should allow rebinding after SQL_RESET_PARAMS.", "[query][bind_parame
   SQLINTEGER int_param = 42;
   SQLLEN int_ind = 0;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &int_param, 0, &int_ind);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
@@ -395,7 +395,7 @@ TEST_CASE("should allow rebinding after SQL_RESET_PARAMS.", "[query][bind_parame
   SQLLEN str_ind = SQL_NTS;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(str_param), 0, str_param,
                          sizeof(str_param), &str_ind);
-  REQUIRE_ODBC(ret, stmt);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
 
   // Then re-executing should return the new string value
   ret = SQLExecute(stmt.getHandle());
