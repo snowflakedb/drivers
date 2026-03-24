@@ -299,7 +299,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ matrix.os }}-cargo-registry-deps-${{ hashFiles('python/pyproject.toml') }}
+          key: ${{ matrix.os }}-cargo-registry-deps-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
             ${{ matrix.os }}-cargo-registry-deps-
             ${{ matrix.os }}-cargo-registry-
