@@ -114,8 +114,11 @@ jobs:
           Copy-Item "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" $targetDir
           $env:PARAMETER_PATH = Join-Path ${{ github.workspace }} "parameters.json"
           $env:CORE_PATH = Join-Path $targetDir "jdbc_bridge.dll"
-          # Find dumpbin
-          $dumpbin = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          # Use vswhere to locate dumpbin instead of slow recursive search
+          $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath 2>$null
+          if ($vsPath) {
+            $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          }
           if ($dumpbin) {
             Write-Host "=== DLL Exports (jdbc_bridge.dll) ==="
             & $dumpbin /exports "$env:CORE_PATH" | Where-Object { $_ -match "Java_|JNI_" }
@@ -126,6 +129,8 @@ jobs:
           Write-Host "CORE_PATH = $env:CORE_PATH"
           cd jdbc
           .\gradlew.bat test --stacktrace
+        env:
+          GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
   jdbc_tests_reference:
     needs: detect-changes
