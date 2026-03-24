@@ -23,7 +23,6 @@ from .utils import assert_datetime_type, assert_sequential_values, batch_insert
 # =============================================================================
 TZ_PLUS_5 = timezone(timedelta(hours=5))
 TZ_MINUS_8 = timezone(timedelta(hours=-8))
-TZ_PLUS_5_30 = timezone(timedelta(hours=5, minutes=30))
 
 TS_2024_JAN = datetime(2024, 1, 15, 10, 30, 0, tzinfo=TZ_PLUS_5)
 TS_2024_JUN = datetime(2024, 6, 20, 14, 45, 30, tzinfo=TZ_MINUS_8)
