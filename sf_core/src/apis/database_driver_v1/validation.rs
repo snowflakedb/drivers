@@ -537,6 +537,8 @@ mod tests {
 
     #[test_case("abc_test", "host", "abc_test.us-east-1.snowflakecomputing.com", "abc-test.us-east-1.snowflakecomputing.com" ; "host")]
     #[test_case("ABC_Test", "host", "abc_test.snowflakecomputing.com", "abc-test.snowflakecomputing.com" ; "host case insensitive")]
+    #[test_case("foo_account_test_1", "host", "foo_account_test_1.snowflakecomputing.com", "foo-account-test-1.snowflakecomputing.com" ; "host multiple underscores")]
+    #[test_case("org-account_test_1", "host", "org-account_test_1.snowflakecomputing.com", "org-account-test-1.snowflakecomputing.com" ; "host org-account regionless")]
     #[test_case("abc_test", "server_url", "https://abc_test.snowflakecomputing.com", "https://abc-test.snowflakecomputing.com" ; "server_url")]
     #[test_case("abc_test", "server_url", "https://abc_test.snowflakecomputing.com:443", "https://abc-test.snowflakecomputing.com:443" ; "server_url with port")]
     fn normalizes_underscores(account: &str, key: &str, input: &str, expected: &str) {
