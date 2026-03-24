@@ -281,7 +281,15 @@ DRIVER_STEPS = {
 def build_step(driver_name):
     """Build a pipeline group dict for a driver."""
     cfg = DRIVER_STEPS[driver_name]
+    plugins = list(COMMON_STEP["plugins"]) + [{
+        "test-collector#v1.10.0": {
+            "files": "junit-results/*.xml",
+            "format": "junit",
+            "tags": ["driver={}".format(driver_name)],
+        }
+    }]
     step = dict(COMMON_STEP)
+    step["plugins"] = plugins
     step["label"] = cfg["step_label"]
     step["key"] = cfg["step_key"]
     step["timeout_in_minutes"] = cfg["timeout"]
@@ -343,29 +351,13 @@ def main():
     else:
         steps.append("wait")
         steps.append({
-            "label": ":junit: Process test results",
-            "plugins": [
-                {
-                    VAULT_PLUGIN: {
-                        "secrets": [{
-                            "path": "secret/jenkins/rt-tests/universal_driver_test_suite_api_token",
-                            "env_name": "BUILDKITE_ANALYTICS_TOKEN",
-                        }]
-                    }
-                },
-                {
-                    "junit-annotate#v2.4.1": {
-                        "artifacts": "junit-results/*.xml",
-                        "always-annotate": True,
-                    }
-                },
-                {
-                    "test-collector#v1.10.0": {
-                        "files": "junit-results/*.xml",
-                        "format": "junit",
-                    }
-                },
-            ],
+            "label": ":junit: Annotate test failures",
+            "plugins": [{
+                "junit-annotate#v2.4.1": {
+                    "artifacts": "junit-results/*.xml",
+                    "always-annotate": True,
+                }
+            }],
             "agents": {"queue": "discovery", "repo": "snowflakedb/universal-driver"},
         })
 
