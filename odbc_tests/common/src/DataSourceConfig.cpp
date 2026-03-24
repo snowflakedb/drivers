@@ -6,8 +6,22 @@
 #include <sstream>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "ODBCConfig.hpp"
 #include "utils.hpp"
+
+static int current_pid() {
+#ifdef _WIN32
+  return _getpid();
+#else
+  return getpid();
+#endif
+}
 
 // ============================================================================
 // DataSourceConfig
@@ -30,14 +44,27 @@ static std::string get_or_create_private_key_file(const picojson::object& params
       it != params.end() && it->second.is<std::string>() && !it->second.get<std::string>().empty()) {
     return it->second.get<std::string>();
   }
-  static const std::string path = (std::filesystem::temp_directory_path() / "odbc_test_rsa_key.p8").string();
+  static const std::string shared_path = (std::filesystem::temp_directory_path() / "odbc_test_rsa_key.p8").string();
+
+  std::error_code ec;
+  if (std::filesystem::exists(shared_path, ec) && !ec && std::filesystem::file_size(shared_path, ec) > 0 && !ec) {
+    return shared_path;
+  }
+
   std::string pem = read_private_key_pem(params);
-  std::ofstream f(path, std::ios::out | std::ios::trunc);
+  std::string staging = shared_path + "." + std::to_string(current_pid());
+  std::ofstream f(staging, std::ios::out | std::ios::trunc);
   if (!f.is_open()) {
-    throw std::runtime_error("Cannot create temp key file: " + path);
+    throw std::runtime_error("Cannot create temp key file: " + staging);
   }
   f << pem;
-  return path;
+  f.close();
+
+  std::filesystem::rename(staging, shared_path, ec);
+  if (ec) {
+    std::filesystem::remove(staging, ec);
+  }
+  return shared_path;
 }
 
 DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name) {

@@ -9,6 +9,14 @@
 #include <set>
 #include <sstream>
 
+#ifdef _WIN32
+#include <process.h>
+inline int current_pid() { return _getpid(); }
+#else
+#include <unistd.h>
+inline int current_pid() { return getpid(); }
+#endif
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
@@ -95,12 +103,25 @@ inline std::string get_or_create_private_key_file(const picojson::object& params
   if (!path.empty()) {
     return path;
   }
-  static const std::string tmp_path = (std::filesystem::temp_directory_path() / "odbc_test_rsa_key.p8").string();
+  static const std::string shared_path = (std::filesystem::temp_directory_path() / "odbc_test_rsa_key.p8").string();
+
+  std::error_code ec;
+  if (std::filesystem::exists(shared_path, ec) && !ec && std::filesystem::file_size(shared_path, ec) > 0 && !ec) {
+    return shared_path;
+  }
+
   std::string pem = read_private_key(params);
-  std::ofstream f(tmp_path, std::ios::out | std::ios::trunc);
+  std::string staging = shared_path + "." + std::to_string(current_pid());
+  std::ofstream f(staging, std::ios::out | std::ios::trunc);
   REQUIRE(f.is_open());
   f << pem;
-  return tmp_path;
+  f.close();
+
+  std::filesystem::rename(staging, shared_path, ec);
+  if (ec) {
+    std::filesystem::remove(staging, ec);
+  }
+  return shared_path;
 }
 
 inline void configure_driver_string(std::stringstream& ss) {
