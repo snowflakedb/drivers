@@ -10,8 +10,11 @@ def tmp_schema(connection_factory):
     instead of once per test.
 
     Uses a dedicated connection so schema lifecycle does not compete with test
-    queries. Tables inside must use CREATE OR REPLACE TEMPORARY TABLE to avoid
-    name conflicts between tests and to ensure cleanup at session end.
+    queries. Tests should generally use CREATE OR REPLACE TEMPORARY TABLE
+    within this schema to avoid name conflicts; these temporary tables are
+    dropped when the creating connection is closed (typically at end of each
+    test). Some tests may intentionally create non-temporary tables for DDL
+    coverage.
     """
     import uuid
 
@@ -19,8 +22,9 @@ def tmp_schema(connection_factory):
     with connection_factory() as schema_conn:
         with schema_conn.cursor() as cur:
             cur.execute(f"CREATE SCHEMA {schema_name}")
-        try:
-            yield schema_name
-        finally:
+    try:
+        yield schema_name
+    finally:
+        with connection_factory() as schema_conn:
             with schema_conn.cursor() as cur:
                 cur.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
