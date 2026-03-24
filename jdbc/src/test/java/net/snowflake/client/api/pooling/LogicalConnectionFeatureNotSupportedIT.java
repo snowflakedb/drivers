@@ -1,7 +1,7 @@
 package net.snowflake.client.api.pooling;
 
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -62,16 +62,10 @@ public class LogicalConnectionFeatureNotSupportedIT extends PoolingTestBase {
     pooledConnection.close();
   }
 
-  private void expectFeatureNotSupported(Runnable0 f) {
+  private void expectFeatureNotSupported(SQLErrorThrowingRunnable f) {
     SQLException ex = assertThrows(SQLException.class, f::run);
-    assertTrue(
-        ex instanceof SQLFeatureNotSupportedException,
+    assertInstanceOf(SQLFeatureNotSupportedException.class, ex,
         "Expected SQLFeatureNotSupportedException but got " + ex.getClass().getName());
-  }
-
-  @FunctionalInterface
-  interface Runnable0 {
-    void run() throws SQLException;
   }
 
   static class FakeSavepoint implements Savepoint {

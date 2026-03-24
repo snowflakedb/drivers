@@ -17,6 +17,7 @@ import java.sql.SQLXML;
 import java.sql.Savepoint;
 import java.sql.Statement;
 import java.sql.Struct;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
 import net.snowflake.client.api.exception.SnowflakeSQLException;
@@ -271,7 +272,7 @@ class LogicalConnection implements Connection {
   }
 
   @Override
-  public java.util.Map<String, Class<?>> getTypeMap() throws SQLException {
+  public Map<String, Class<?>> getTypeMap() throws SQLException {
     throwExceptionIfClosed();
     try {
       return physicalConnection.getTypeMap();
@@ -282,7 +283,7 @@ class LogicalConnection implements Connection {
   }
 
   @Override
-  public void setTypeMap(java.util.Map<String, Class<?>> map) throws SQLException {
+  public void setTypeMap(Map<String, Class<?>> map) throws SQLException {
     throwExceptionIfClosed();
     try {
       physicalConnection.setTypeMap(map);
