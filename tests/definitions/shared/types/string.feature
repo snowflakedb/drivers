@@ -10,7 +10,7 @@ Feature: String datatype handling
   # TYPE CASTING
   # ============================================================================
 
-  @python_e2e @jdbc_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should cast string values to appropriate type for string and synonyms
     # Python: Values should be cast to 'str' type
     Given Snowflake client is logged in
@@ -86,7 +86,7 @@ Feature: String datatype handling
   # BINDING TESTS
   # ============================================================================
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should insert and select back hardcoded string values using parameter binding
     Given Snowflake client is logged in
     And A temporary table with VARCHAR column is created
@@ -95,7 +95,7 @@ Feature: String datatype handling
     Then the result should contain the bound string value 'Test binding value 日本語'
 
   
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select string literals using parameter binding
     # SELECT binding test: Uses SELECT ?::VARCHAR to bind string values
     Given Snowflake client is logged in
@@ -104,7 +104,7 @@ Feature: String datatype handling
       | col1  | col2        | col3       |
       | hello | Hello World | 日本語テスト |
 
-  @odbc_e2e @python_e2e
+  @odbc_e2e @python_e2e @jdbc_e2e
   Scenario: should select corner case string values using parameter binding
     Given Snowflake client is logged in
     When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
@@ -134,5 +134,4 @@ Feature: String datatype handling
     # ~10000 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
     When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id" is executed
-    Then there are 10000 rows returned
-    And all returned string values should match the generated values in order
+    Then there are 10000 rows returned and all string values should match the generated values in order

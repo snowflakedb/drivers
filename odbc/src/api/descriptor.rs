@@ -1,5 +1,5 @@
+use crate::api::CDataType;
 use crate::api::{DescField, DescriptorRef, OdbcResult, desc_ref_from_handle};
-use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 use tracing;
 
@@ -147,6 +147,13 @@ fn get_ard_field(
                 }
                 Ok(())
             }
+            DescField::DatetimeIntervalPrecision => {
+                let dip = binding.datetime_interval_precision.unwrap_or(2);
+                unsafe {
+                    std::ptr::write_unaligned(value_ptr as *mut sql::SmallInt, dip);
+                }
+                Ok(())
+            }
             _ => {
                 tracing::warn!("get_desc_field: unsupported ARD record field {:?}", field);
                 crate::api::error::UnknownAttributeSnafu {
@@ -289,12 +296,7 @@ fn set_ard_field(
         match field {
             DescField::Type | DescField::ConciseType => {
                 let raw = value_ptr as i16;
-                let c_type = CDataType::try_from(raw).map_err(|unknown| {
-                    tracing::error!("set_desc_field: unknown C data type discriminant {unknown}");
-                    crate::api::error::OdbcError::InvalidApplicationBufferType {
-                        location: snafu::location!(),
-                    }
-                })?;
+                let c_type = CDataType::try_from(raw)?;
                 tracing::debug!(
                     "set_desc_field: setting target_type={c_type:?} on record {column_number}",
                 );
@@ -369,6 +371,26 @@ fn set_ard_field(
                 );
                 let binding = desc.bindings.entry(column_number).or_default();
                 binding.octet_length_ptr = ptr;
+                Ok(())
+            }
+            DescField::DatetimeIntervalPrecision => {
+                let dip = value_ptr as i16;
+                if !(0..=9).contains(&dip) {
+                    tracing::error!(
+                        "set_desc_field: datetime_interval_precision {dip} out of valid range 0..=9"
+                    );
+                    return crate::api::error::InvalidPrecisionOrScaleSnafu {
+                        reason: format!(
+                            "SQL_DESC_DATETIME_INTERVAL_PRECISION value {dip} is out of valid range (0-9)"
+                        ),
+                    }
+                    .fail();
+                }
+                tracing::debug!(
+                    "set_desc_field: setting datetime_interval_precision={dip} on record {column_number}"
+                );
+                let binding = desc.bindings.entry(column_number).or_default();
+                binding.datetime_interval_precision = Some(dip);
                 Ok(())
             }
             _ => {

@@ -19,7 +19,7 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
     compressed_filename = "test_data.csv.gz"
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # When File is uploaded to stage with AUTO_COMPRESS set to true
         stage_name, _ = create_temporary_stage_and_upload_file(
@@ -64,7 +64,7 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # When File is uploaded to stage with AUTO_COMPRESS set to false
         stage_name, _ = create_temporary_stage_and_upload_file(

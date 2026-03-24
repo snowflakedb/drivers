@@ -1,6 +1,6 @@
 //! Results output and CSV formatting
 
-use crate::connection::get_server_version as get_server_version_internal;
+use crate::connection::{DriverRuntime, get_server_version as get_server_version_internal};
 use crate::types::{IterationResult, PutGetResult};
 use sf_core::protobuf::generated::database_driver_v1::ConnectionHandle;
 use std::fs;
@@ -193,11 +193,14 @@ where
     Ok(filename.display().to_string())
 }
 
-pub fn write_metadata_if_not_replay(conn_handle: ConnectionHandle) -> Result<()> {
+pub fn write_metadata_if_not_replay(
+    rt: &DriverRuntime,
+    conn_handle: ConnectionHandle,
+) -> Result<()> {
     // In replay mode, skip server version query and use N/A
     let actual_server_version = match std::env::var("WIREMOCK_REPLAY") {
         Ok(val) if val == "true" => "N/A".to_string(),
-        _ => get_server_version_internal(conn_handle).unwrap_or_else(|e| {
+        _ => get_server_version_internal(rt, conn_handle).unwrap_or_else(|e| {
             eprintln!("⚠️  Warning: Could not retrieve server version: {}", e);
             "UNKNOWN".to_string()
         }),

@@ -1,4 +1,5 @@
-use crate::api::{OdbcResult, env_from_handle, error::UnknownAttributeSnafu};
+use crate::api::error::UnknownAttributeSnafu;
+use crate::api::{OdbcResult, env_from_handle};
 use odbc_sys as sql;
 use tracing;
 

@@ -256,9 +256,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY016 - Cannot set NAM
   SQLHDESC ird = get_descriptor(stmt_handle(), SQL_ATTR_IMP_ROW_DESC);
 
   ret = SQLSetDescField(ird, 1, SQL_DESC_NAME, sqlchar("NEW_NAME"), SQL_NTS);
-  // Note: The ODBC spec says HY091 for setting a read-only field on IRD.
-  // The reference driver returns HY016 (cannot modify IRD) for all IRD writes.
-  REQUIRE_EXPECTED_ERROR(ret, "HY016", ird, SQL_HANDLE_DESC);
+  WINDOWS_ONLY {
+    // Windows DM intercepts the call and returns HY091 (descriptor type out of range)
+    REQUIRE_EXPECTED_ERROR(ret, "HY091", ird, SQL_HANDLE_DESC);
+  }
+  UNIX_ONLY {
+    // Note: The ODBC spec says HY091 for setting a read-only field on IRD.
+    // The reference driver returns HY016 (cannot modify IRD) for all IRD writes.
+    REQUIRE_EXPECTED_ERROR(ret, "HY016", ird, SQL_HANDLE_DESC);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - RecNumber 0 on IPD for record field",
@@ -391,7 +397,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: 07009 - DESC_COUNT set
   SQLHDESC ard = get_descriptor(stmt_handle(), SQL_ATTR_APP_ROW_DESC);
 
   SQLRETURN ret = SQLSetDescField(ard, 0, SQL_DESC_COUNT, reinterpret_cast<SQLPOINTER>(-1), 0);
-  REQUIRE_EXPECTED_ERROR(ret, "07009", ard, SQL_HANDLE_DESC);
+  WINDOWS_ONLY {
+    // Windows DM returns HY024 (Invalid argument value) for negative DESC_COUNT
+    REQUIRE_EXPECTED_ERROR(ret, "HY024", ard, SQL_HANDLE_DESC);
+  }
+  UNIX_ONLY { REQUIRE_EXPECTED_ERROR(ret, "07009", ard, SQL_HANDLE_DESC); }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetDescField: HY090 - Negative BufferLength for string field",

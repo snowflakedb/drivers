@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use crate::connection::{DatabaseDriver, reset_statement_query};
+use crate::connection::{DriverRuntime, reset_statement_query};
 use crate::results::{
     current_unix_timestamp, print_statistics_put_get, write_csv_results_put_get,
     write_metadata_if_not_replay,
@@ -15,6 +15,7 @@ use crate::results::{
 use crate::types::PutGetResult;
 
 pub fn execute_put_get_test(
+    rt: &DriverRuntime,
     conn_handle: ConnectionHandle,
     stmt_handle: StatementHandle,
     sql_command: &str,
@@ -26,23 +27,23 @@ pub fn execute_put_get_test(
     println!("Query: {}", sql_command);
 
     // Warmup
-    run_warmup_put_get(stmt_handle, sql_command, warmup_iterations)
+    run_warmup_put_get(rt, stmt_handle, sql_command, warmup_iterations)
         .map_err(|e| format!("Warmup phase failed: {:?}", e))?;
 
     if warmup_iterations > 0 {
-        reset_statement_query(stmt_handle, sql_command)
+        reset_statement_query(rt, stmt_handle, sql_command)
             .map_err(|e| format!("Failed to reset statement after warmup: {:?}", e))?;
     }
 
     // Execute
-    let results = run_test_iterations_put_get(stmt_handle, sql_command, iterations)
+    let results = run_test_iterations_put_get(rt, stmt_handle, sql_command, iterations)
         .map_err(|e| format!("Test phase failed: {:?}", e))?;
 
     // Write & print
     let results_file = write_csv_results_put_get(&results, test_name)
         .map_err(|e| format!("Failed to write results: {:?}", e))?;
 
-    write_metadata_if_not_replay(conn_handle)?;
+    write_metadata_if_not_replay(rt, conn_handle)?;
 
     print_statistics_put_get(&results);
 
@@ -52,6 +53,7 @@ pub fn execute_put_get_test(
 }
 
 pub fn run_warmup_put_get(
+    rt: &DriverRuntime,
     stmt_handle: StatementHandle,
     sql: &str,
     warmup_iterations: usize,
@@ -61,16 +63,17 @@ pub fn run_warmup_put_get(
     }
 
     for i in 0..warmup_iterations {
-        execute_put_get_iteration(stmt_handle, sql)?;
+        execute_put_get_iteration(rt, stmt_handle, sql)?;
 
         if i < warmup_iterations - 1 {
-            reset_statement_query(stmt_handle, sql)?;
+            reset_statement_query(rt, stmt_handle, sql)?;
         }
     }
     Ok(())
 }
 
 pub fn run_test_iterations_put_get(
+    rt: &DriverRuntime,
     stmt_handle: StatementHandle,
     sql: &str,
     iterations: usize,
@@ -78,7 +81,7 @@ pub fn run_test_iterations_put_get(
     let mut results = Vec::with_capacity(iterations);
 
     for i in 0..iterations {
-        let query_time = execute_put_get_iteration(stmt_handle, sql)?;
+        let query_time = execute_put_get_iteration(rt, stmt_handle, sql)?;
 
         results.push(PutGetResult {
             timestamp: current_unix_timestamp(),
@@ -86,20 +89,27 @@ pub fn run_test_iterations_put_get(
         });
 
         if i < iterations - 1 {
-            reset_statement_query(stmt_handle, sql)?;
+            reset_statement_query(rt, stmt_handle, sql)?;
         }
     }
 
     Ok(results)
 }
 
-fn execute_put_get_iteration(stmt_handle: StatementHandle, sql: &str) -> Result<f64> {
+fn execute_put_get_iteration(
+    rt: &DriverRuntime,
+    stmt_handle: StatementHandle,
+    sql: &str,
+) -> Result<f64> {
     create_get_target_directory(sql)?;
 
     let start_query = Instant::now();
-    DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
-        stmt_handle: Some(stmt_handle),
-        bindings: None,
+    rt.block_on(async |c| {
+        c.statement_execute_query(StatementExecuteQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            bindings: None,
+        })
+        .await
     })
     .map_err(|e| format!("PUT/GET execution failed: {:?}", e))?;
     let query_time = start_query.elapsed().as_secs_f64();

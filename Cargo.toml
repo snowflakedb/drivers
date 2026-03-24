@@ -11,6 +11,7 @@ members = [
     "sf_core/tests/common/arrow_deserialize_macro",
     "error_trace",
     "error_trace_derive",
+    "odbc_trace_tool",
 ]
 resolver = "2"
 
@@ -18,3 +19,6 @@ resolver = "2"
 strip = true
 opt-level = "z"
 lto = false
+
+[profile.dev]
+opt-level = 1

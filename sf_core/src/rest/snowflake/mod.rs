@@ -54,6 +54,14 @@ pub struct LoginResult {
     pub tokens: SessionTokens,
     /// Session parameters returned by the server
     pub session_parameters: Option<HashMap<String, String>>,
+    /// Server-echoed database name from sessionInfo
+    pub database_name: Option<String>,
+    /// Server-echoed schema name from sessionInfo
+    pub schema_name: Option<String>,
+    /// Server-echoed warehouse name from sessionInfo
+    pub warehouse_name: Option<String>,
+    /// Server-echoed role name from sessionInfo
+    pub role_name: Option<String>,
 }
 
 impl SessionTokens {
@@ -357,6 +365,20 @@ pub async fn snowflake_login_with_client(
             .collect::<HashMap<String, String>>()
     });
 
+    // Extract server-echoed sessionInfo names separately so they can be
+    // stored on the connection as `final_session_names` (not mixed into
+    // session parameters).
+    let (database_name, schema_name, warehouse_name, role_name) =
+        match &auth_response.data.session_info {
+            Some(info) => (
+                info.database_name.clone(),
+                info.schema_name.clone(),
+                info.warehouse_name.clone(),
+                info.role_name.clone(),
+            ),
+            None => (None, None, None, None),
+        };
+
     tracing::info!(
         session_id,
         session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
@@ -373,6 +395,10 @@ pub async fn snowflake_login_with_client(
             master_expires_at,
         },
         session_parameters: session_params,
+        database_name,
+        schema_name,
+        warehouse_name,
+        role_name,
     })
 }
 

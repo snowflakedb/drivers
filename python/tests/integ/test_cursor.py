@@ -886,20 +886,23 @@ class TestCursorMethods:
         cursor.close()
         assert cursor.is_closed()
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(
+        reason="Reference driver forwards callproc to server instead of raising NotSupportedError"
+    )
     def test_callproc_not_implemented(self, cursor):
         """Test that callproc raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.callproc("test_proc", [1, 2, 3])
         assert "callproc is not implemented" in str(excinfo.value)
 
-    @pytest.mark.skip_reference
     def test_executemany_is_callable(self, cursor):
         """Test that executemany is callable (basic smoke test)."""
         # Just verify it's callable and accepts empty sequence without error
         cursor.executemany("INSERT INTO test VALUES (?)", [])
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(
+        reason="Reference driver returns None from nextset instead of raising NotSupportedError"
+    )
     def test_nextset_not_implemented(self, cursor):
         """Test that nextset raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
@@ -1069,7 +1072,6 @@ class TestCursorFetch:
         result = cursor.fetchmany(0)
         assert result == []
 
-    @pytest.mark.skip_reference
     def test_fetchmany_negative_size_raises_error(self, cursor):
         """Test fetchmany with negative size raises ProgrammingError."""
         cursor.execute("SELECT 1")
@@ -1369,7 +1371,6 @@ class TestDictCursorCreation:
         with connection.cursor(DictCursor) as cur:
             assert isinstance(cur, DictCursor)
 
-    @pytest.mark.skip_reference
     def test_dict_cursor_is_base_cursor_subclass(self):
         """Test that DictCursor is a subclass of BaseCursor."""
         from snowflake.connector.cursor import DictCursor, SnowflakeCursorBase

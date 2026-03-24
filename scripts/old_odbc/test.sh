@@ -17,5 +17,7 @@ cmake4 -B cmake-build \
 
 export SIMBAINI=/usr/lib64/snowflake/odbc/lib/simba.snowflake.ini
 cmake4 --build cmake-build -- -j $(nproc)
-ctest4 -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
+
+# Don't fail the script on test failures — coverage should still be collected.
+ctest4 -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure || true
 

@@ -9,6 +9,7 @@ use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_f
 use crate::query_types::RowType;
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
+use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
@@ -168,7 +169,7 @@ macro_rules! int64_array {
     };
 }
 
-fn upload_row_types() -> Vec<RowType> {
+fn upload_row_types() -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
@@ -181,7 +182,7 @@ fn upload_row_types() -> Vec<RowType> {
     ]
 }
 
-fn download_row_types() -> Vec<RowType> {
+fn download_row_types() -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("file"),
         build_generic_fixed_rowtype("size"),
@@ -227,17 +228,23 @@ pub fn download_results_reader(
     boxed_arrow_reader(schema, columns)
 }
 
-fn build_generic_text_rowtype(name: &str) -> RowType {
-    RowType::text(
-        name,
-        false,
-        PUT_GET_ROWSET_TEXT_LENGTH,
-        PUT_GET_ROWSET_TEXT_LENGTH,
+fn build_generic_text_rowtype(name: &str) -> (RowType, DataType) {
+    (
+        RowType::text(
+            name,
+            false,
+            PUT_GET_ROWSET_TEXT_LENGTH,
+            PUT_GET_ROWSET_TEXT_LENGTH,
+        ),
+        DataType::Utf8,
     )
 }
 
-fn build_generic_fixed_rowtype(name: &str) -> RowType {
-    RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH)
+fn build_generic_fixed_rowtype(name: &str) -> (RowType, DataType) {
+    (
+        RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH),
+        DataType::Int64,
+    )
 }
 
 /// Convert an internal `RowType` to protobuf `ColumnMetadata`.
@@ -279,7 +286,7 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
 pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
     upload_row_types()
         .iter()
-        .map(rowtype_to_column_metadata)
+        .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
 }
 
@@ -287,7 +294,7 @@ pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
 pub fn download_column_metadata() -> Vec<ColumnMetadata> {
     download_row_types()
         .iter()
-        .map(rowtype_to_column_metadata)
+        .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
 }
 
@@ -448,7 +455,7 @@ mod tests {
     #[test]
     fn text_column_metadata_has_correct_fields() {
         let rt = build_generic_text_rowtype("test_col");
-        let meta = rowtype_to_column_metadata(&rt);
+        let meta = rowtype_to_column_metadata(&rt.0);
 
         assert_eq!(meta.name, "test_col");
         assert_eq!(meta.r#type, "TEXT");
@@ -457,12 +464,14 @@ mod tests {
         assert_eq!(meta.precision, None);
         assert_eq!(meta.scale, None);
         assert!(!meta.nullable);
+
+        assert_eq!(rt.1, DataType::Utf8);
     }
 
     #[test]
     fn fixed_column_metadata_has_correct_fields() {
         let rt = build_generic_fixed_rowtype("test_col");
-        let meta = rowtype_to_column_metadata(&rt);
+        let meta = rowtype_to_column_metadata(&rt.0);
 
         assert_eq!(meta.name, "test_col");
         assert_eq!(meta.r#type, "FIXED");
@@ -471,5 +480,7 @@ mod tests {
         assert_eq!(meta.length, None);
         assert_eq!(meta.byte_length, None);
         assert!(!meta.nullable);
+
+        assert_eq!(rt.1, DataType::Int64);
     }
 }

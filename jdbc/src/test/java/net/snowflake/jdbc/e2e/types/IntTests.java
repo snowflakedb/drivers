@@ -11,11 +11,14 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Stream;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class IntTests extends SnowflakeIntegrationTestBase {
   private static final String INT_TYPE = "INT";
@@ -26,207 +29,239 @@ public class IntTests extends SnowflakeIntegrationTestBase {
   @Test
   public void shouldCastIntegerValuesToAppropriateTypeForIntAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT 0::<type>, 1000000::<type>, 9223372036854775807::<type>" is executed
-    // Then All values should be returned as appropriate type
-    // And No precision loss should occur
     Connection connection = getDefaultConnection();
+
+    // When Query "SELECT 0::<type>, 1000000::<type>, 9223372036854775807::<type>" is executed
     String sql =
         String.format("SELECT 0::%1$s, 1000000::%1$s, 9223372036854775807::%1$s", INT_TYPE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
-      assertAllIntegerGettersInRange(resultSet, 1, 0L, "Column 1 mismatch for " + INT_TYPE);
-      assertAllIntegerGettersInRange(resultSet, 2, 1_000_000L, "Column 2 mismatch for " + INT_TYPE);
-      assertAllIntegerGettersInRange(
-          resultSet, 3, Long.MAX_VALUE, "Column 3 mismatch for " + INT_TYPE);
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
-    }
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then All values should be returned as appropriate type with no precision loss
+          assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
+          assertAllIntegerGettersInRange(resultSet, 1, 0L, "Column 1 mismatch for " + INT_TYPE);
+          assertAllIntegerGettersInRange(
+              resultSet, 2, 1_000_000L, "Column 2 mismatch for " + INT_TYPE);
+          assertAllIntegerGettersInRange(
+              resultSet, 3, Long.MAX_VALUE, "Column 3 mismatch for " + INT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
+        });
   }
 
-  @Test
-  public void shouldSelectIntegerValuesForIntAndSynonyms() throws Exception {
+  private static Stream<Arguments> integerLiteralValues() {
+    return Stream.of(
+        Arguments.of("zero", String.format("SELECT 0::%s", INT_TYPE), Arrays.asList(0L)),
+        Arguments.of(
+            "tinyint",
+            String.format("SELECT -128::%1$s, 127::%1$s, 255::%1$s", INT_TYPE),
+            Arrays.asList(-128L, 127L, 255L)),
+        Arguments.of(
+            "smallint",
+            String.format("SELECT -32768::%1$s, 32767::%1$s, 65535::%1$s", INT_TYPE),
+            Arrays.asList((long) Short.MIN_VALUE, (long) Short.MAX_VALUE, 65535L)),
+        Arguments.of(
+            "int",
+            String.format("SELECT -2147483648::%1$s, 2147483647::%1$s, 4294967295::%1$s", INT_TYPE),
+            Arrays.asList((long) Integer.MIN_VALUE, (long) Integer.MAX_VALUE, 4294967295L)),
+        Arguments.of(
+            "bigint",
+            String.format("SELECT -9223372036854775808::%1$s, 9223372036854775807::%1$s", INT_TYPE),
+            Arrays.asList(Long.MIN_VALUE, Long.MAX_VALUE)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("integerLiteralValues")
+  public void shouldSelectIntegerValuesForIntAndSynonyms(
+      String values, String queryValues, List<Long> expectedValues) throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT <query_values>" is executed
-    // Then Result should contain integers <expected_values>
     Connection connection = getDefaultConnection();
-    assertSingleRow(connection, String.format("SELECT 0::%1$s", INT_TYPE), Arrays.asList(0L));
-    assertSingleRow(
+
+    // When Query "SELECT <query_values>" is executed
+    withQueryResult(
         connection,
-        String.format("SELECT -128::%1$s, 127::%1$s, 255::%1$s", INT_TYPE),
-        Arrays.asList(-128L, 127L, 255L));
-    assertSingleRow(
-        connection,
-        String.format("SELECT -32768::%1$s, 32767::%1$s, 65535::%1$s", INT_TYPE),
-        Arrays.asList((long) Short.MIN_VALUE, (long) Short.MAX_VALUE, 65535L));
-    assertSingleRow(
-        connection,
-        String.format("SELECT -2147483648::%1$s, 2147483647::%1$s, 4294967295::%1$s", INT_TYPE),
-        Arrays.asList((long) Integer.MIN_VALUE, (long) Integer.MAX_VALUE, 4294967295L));
-    assertSingleRow(
-        connection,
-        String.format("SELECT -9223372036854775808::%1$s, 9223372036854775807::%1$s", INT_TYPE),
-        Arrays.asList(Long.MIN_VALUE, Long.MAX_VALUE));
+        queryValues,
+        resultSet -> {
+
+          // Then Result should contain integers <expected_values>
+          assertSingleRow(resultSet, expectedValues);
+        });
   }
 
   @Test
   public void shouldHandleLargeIntegerValuesForIntAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT -99999999999999999999999999999999999999::<type>,
     // 99999999999999999999999999999999999999::<type>" is executed
-    // Then Result should contain integers [-99999999999999999999999999999999999999,
-    // 99999999999999999999999999999999999999]
-    Connection connection = getDefaultConnection();
     String sql = String.format("SELECT %1$s::%3$s, %2$s::%3$s", SMALL_INT, LARGE_INT, INT_TYPE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
-      assertInt38NumberGetters(resultSet, 1, SMALL_INT, "Column 1 mismatch for " + INT_TYPE);
-      assertInt38NumberGetters(resultSet, 2, LARGE_INT, "Column 2 mismatch for " + INT_TYPE);
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
-    }
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain integers [-99999999999999999999999999999999999999,
+          // 99999999999999999999999999999999999999]
+          assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
+          assertInt38NumberGetters(resultSet, 1, SMALL_INT, "Column 1 mismatch for " + INT_TYPE);
+          assertInt38NumberGetters(resultSet, 2, LARGE_INT, "Column 2 mismatch for " + INT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
+        });
   }
 
   @Test
   public void shouldHandleNULLValuesForIntAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
-    // Then Result should contain [NULL, 42, NULL]
     Connection connection = getDefaultConnection();
+
+    // When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
     String sql = String.format("SELECT NULL::%1$s, 42::%1$s, NULL::%1$s", INT_TYPE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
-      assertNull(resultSet.getObject(1), "Column 1 should be NULL for " + INT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for " + INT_TYPE);
-      assertEquals(
-          0L, resultSet.getLong(1), "Column 1 getLong should return 0 for NULL " + INT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 1 getLong should set wasNull() for " + INT_TYPE);
-      assertAllIntegerGettersInRange(resultSet, 2, 42L, "Column 2 mismatch for " + INT_TYPE);
-      assertNull(resultSet.getObject(3), "Column 3 should be NULL for " + INT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 3 should set wasNull() for " + INT_TYPE);
-      assertEquals(
-          0L, resultSet.getLong(3), "Column 3 getLong should return 0 for NULL " + INT_TYPE);
-      assertTrue(resultSet.wasNull(), "Column 3 getLong should set wasNull() for " + INT_TYPE);
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
-    }
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain [NULL, 42, NULL]
+          assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
+          assertNull(resultSet.getObject(1), "Column 1 should be NULL for " + INT_TYPE);
+          assertTrue(resultSet.wasNull(), "Column 1 should set wasNull() for " + INT_TYPE);
+          assertEquals(
+              0L, resultSet.getLong(1), "Column 1 getLong should return 0 for NULL " + INT_TYPE);
+          assertTrue(resultSet.wasNull(), "Column 1 getLong should set wasNull() for " + INT_TYPE);
+          assertAllIntegerGettersInRange(resultSet, 2, 42L, "Column 2 mismatch for " + INT_TYPE);
+          assertNull(resultSet.getObject(3), "Column 3 should be NULL for " + INT_TYPE);
+          assertTrue(resultSet.wasNull(), "Column 3 should set wasNull() for " + INT_TYPE);
+          assertEquals(
+              0L, resultSet.getLong(3), "Column 3 getLong should return 0 for NULL " + INT_TYPE);
+          assertTrue(resultSet.wasNull(), "Column 3 getLong should set wasNull() for " + INT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
+        });
   }
 
   @Test
   public void shouldDownloadLargeResultSetWithMultipleChunksForIntAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY
     // id" is executed
-    // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
-    Connection connection = getDefaultConnection();
     String sql =
         String.format(
             "SELECT seq8()::%1$s as id FROM TABLE(GENERATOR(ROWCOUNT => %2$d)) v ORDER BY id",
             INT_TYPE, LARGE_RESULT_SET_SIZE);
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      int expected = 0;
-      while (resultSet.next()) {
-        assertAllIntegerGettersInRange(
-            resultSet, 1, expected, "Value mismatch for " + INT_TYPE + ", row " + expected);
-        expected++;
-      }
-      assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + INT_TYPE);
-    }
+    withQueryResult(
+        connection,
+        sql,
+        resultSet -> {
+
+          // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
+          int expected = 0;
+          while (resultSet.next()) {
+            assertAllIntegerGettersInRange(
+                resultSet, 1, expected, "Value mismatch for " + INT_TYPE + ", row " + expected);
+            expected++;
+          }
+          assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + INT_TYPE);
+        });
   }
 
-  @Test
-  public void shouldSelectValuesFromTableForIntAndSynonyms() throws Exception {
+  private static Stream<Arguments> tableInsertValues() {
+    return Stream.of(
+        Arguments.of(
+            "positive",
+            "(0), (1), (127), (255), (32767), (65535), (2147483647), (4294967295),"
+                + " (9223372036854775807)",
+            Arrays.asList(
+                0L,
+                1L,
+                127L,
+                255L,
+                (long) Short.MAX_VALUE,
+                65535L,
+                (long) Integer.MAX_VALUE,
+                4294967295L,
+                Long.MAX_VALUE)),
+        Arguments.of(
+            "negative",
+            "(-1), (-128), (-32768), (-2147483648), (-9223372036854775808)",
+            Arrays.asList(
+                Long.MIN_VALUE, (long) Integer.MIN_VALUE, (long) Short.MIN_VALUE, -128L, -1L)),
+        Arguments.of("null", "(0), (NULL), (42)", Arrays.asList(0L, 42L, null)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("tableInsertValues")
+  public void shouldSelectValuesFromTableForIntAndSynonyms(
+      String values, String insertValues, List<Long> expectedValues) throws Exception {
     // Given Snowflake client is logged in
-    // And Table with <type> column exists with values <insert_values>
-    // When Query "SELECT * FROM <table> ORDER BY col" is executed
-    // Then Result should contain integers <expected_values>
     Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists with values <insert_values>
     String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
+    execute(connection, "INSERT INTO " + tableName + " VALUES " + insertValues);
 
-    execute(
+    // When Query "SELECT * FROM <table> ORDER BY col" is executed
+    withQueryResult(
         connection,
-        "INSERT INTO "
-            + tableName
-            + " VALUES (0), (1), (127), (255), (32767), (65535), (2147483647), (4294967295), (9223372036854775807)");
-    assertSingleColumnRows(
-        connection,
-        tableName,
-        Arrays.asList(
-            0L,
-            1L,
-            127L,
-            255L,
-            (long) Short.MAX_VALUE,
-            65535L,
-            (long) Integer.MAX_VALUE,
-            4294967295L,
-            Long.MAX_VALUE));
+        "SELECT * FROM " + tableName + " ORDER BY col",
+        resultSet -> {
 
-    execute(connection, "TRUNCATE TABLE " + tableName);
-    execute(
-        connection,
-        "INSERT INTO "
-            + tableName
-            + " VALUES (-1), (-128), (-32768), (-2147483648), (-9223372036854775808)");
-    assertSingleColumnRows(
-        connection,
-        tableName,
-        Arrays.asList(
-            Long.MIN_VALUE, (long) Integer.MIN_VALUE, (long) Short.MIN_VALUE, -128L, -1L));
-
-    execute(connection, "TRUNCATE TABLE " + tableName);
-    execute(connection, "INSERT INTO " + tableName + " VALUES (0), (NULL), (42)");
-    assertSingleColumnRows(connection, tableName, Arrays.asList(0L, 42L, null));
+          // Then Result should contain integers <expected_values>
+          assertSingleColumnRows(resultSet, expectedValues);
+        });
   }
 
   @Test
   public void shouldSelectLargeIntegerValuesFromTableForIntAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // And Table with <type> column exists with values [-99999999999999999999999999999999999999,
     // 99999999999999999999999999999999999999]
-    // When Query "SELECT * FROM <table> ORDER BY col" is executed
-    // Then Result should contain integers [-99999999999999999999999999999999999999,
-    // 99999999999999999999999999999999999999]
-    Connection connection = getDefaultConnection();
     String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
     execute(
         connection,
         "INSERT INTO " + tableName + " VALUES (" + SMALL_INT + "), (" + LARGE_INT + ")");
 
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet =
-            statement.executeQuery("SELECT * FROM " + tableName + " ORDER BY col")) {
-      assertTrue(resultSet.next(), "Expected first row for type: " + INT_TYPE);
-      assertEquals(new BigDecimal(SMALL_INT), resultSet.getBigDecimal(1));
-      assertFalse(resultSet.wasNull(), "First row should not be NULL for " + INT_TYPE);
-      assertTrue(resultSet.next(), "Expected second row for type: " + INT_TYPE);
-      assertEquals(new BigDecimal(LARGE_INT), resultSet.getBigDecimal(1));
-      assertFalse(resultSet.wasNull(), "Second row should not be NULL for " + INT_TYPE);
-      assertFalse(resultSet.next(), "Expected exactly two rows for type: " + INT_TYPE);
-    }
+    // When Query "SELECT * FROM <table> ORDER BY col" is executed
+    withQueryResult(
+        connection,
+        "SELECT * FROM " + tableName + " ORDER BY col",
+        resultSet -> {
+
+          // Then Result should contain integers [-99999999999999999999999999999999999999,
+          // 99999999999999999999999999999999999999]
+          assertTrue(resultSet.next(), "Expected first row for type: " + INT_TYPE);
+          assertEquals(new BigDecimal(SMALL_INT), resultSet.getBigDecimal(1));
+          assertFalse(resultSet.wasNull(), "First row should not be NULL for " + INT_TYPE);
+          assertTrue(resultSet.next(), "Expected second row for type: " + INT_TYPE);
+          assertEquals(new BigDecimal(LARGE_INT), resultSet.getBigDecimal(1));
+          assertFalse(resultSet.wasNull(), "Second row should not be NULL for " + INT_TYPE);
+          assertFalse(resultSet.next(), "Expected exactly two rows for type: " + INT_TYPE);
+        });
   }
 
   @Test
   public void shouldHandleServerSideArrowMemoryOptimizationForIntColumnsOnMultipleChunks()
       throws Exception {
     // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
+
     // And Table with four INT columns exists
-    // And Each column contains values of different magnitudes (50000 rows to span multiple Arrow
-    // chunks)
-    // When Query "SELECT * FROM <table>" is executed
-    // Then Result should contain 50000 rows
-    // And All values should be equal to expected data
     final long expectedInt8Value = 100L;
     final long expectedInt16Value = 30_000L;
     final long expectedInt32Value = 2_000_000_000L;
     final long expectedInt64Value = 9_000_000_000_000_000_000L;
-
-    Connection connection = getDefaultConnection();
     String tableName =
         createTempTable(
             connection,
             "ud_int_arrow_",
             "col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT");
+
+    // And Each column contains values of different magnitudes (50000 rows to span multiple Arrow
+    // chunks)
     execute(
         connection,
         "INSERT INTO "
@@ -243,35 +278,39 @@ public class IntTests extends SnowflakeIntegrationTestBase {
             + LARGE_RESULT_SET_SIZE
             + "))");
 
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery("SELECT * FROM " + tableName)) {
-      int rowCount = 0;
-      while (resultSet.next()) {
-        assertEquals(
-            expectedInt8Value, resultSet.getLong(1), "col_int8 mismatch at row " + rowCount);
-        assertEquals(
-            expectedInt16Value, resultSet.getLong(2), "col_int16 mismatch at row " + rowCount);
-        assertEquals(
-            expectedInt32Value, resultSet.getLong(3), "col_int32 mismatch at row " + rowCount);
-        assertEquals(
-            expectedInt64Value, resultSet.getLong(4), "col_int64 mismatch at row " + rowCount);
-        rowCount++;
-      }
-      assertEquals(LARGE_RESULT_SET_SIZE, rowCount, "Unexpected row count");
-    }
+    // When Query "SELECT * FROM <table>" is executed
+    withQueryResult(
+        connection,
+        "SELECT * FROM " + tableName,
+        resultSet -> {
+
+          // Then Result should contain 50000 rows with all values equal to expected data
+          int rowCount = 0;
+          while (resultSet.next()) {
+            assertEquals(
+                expectedInt8Value, resultSet.getLong(1), "col_int8 mismatch at row " + rowCount);
+            assertEquals(
+                expectedInt16Value, resultSet.getLong(2), "col_int16 mismatch at row " + rowCount);
+            assertEquals(
+                expectedInt32Value, resultSet.getLong(3), "col_int32 mismatch at row " + rowCount);
+            assertEquals(
+                expectedInt64Value, resultSet.getLong(4), "col_int64 mismatch at row " + rowCount);
+            rowCount++;
+          }
+          assertEquals(LARGE_RESULT_SET_SIZE, rowCount, "Unexpected row count");
+        });
   }
 
   @Test
   public void shouldInsertIntegerUsingParameterBindingForIntAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
-    // And Table with <type> column exists
-    // When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using
-    // binding
-    // And Query "SELECT * FROM <table>" is executed
-    // Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
     Connection connection = getDefaultConnection();
+
+    // And Table with <type> column exists
     String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
 
+    // When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using
+    // binding
     try (PreparedStatement preparedStatement =
         connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
       preparedStatement.setLong(1, 0L);
@@ -284,45 +323,45 @@ public class IntTests extends SnowflakeIntegrationTestBase {
       preparedStatement.execute();
     }
 
-    assertSingleColumnRows(
+    // And Query "SELECT * FROM <table>" is executed
+    withQueryResult(
         connection,
-        tableName,
-        Arrays.asList((long) Integer.MIN_VALUE, 0L, (long) Integer.MAX_VALUE, Long.MAX_VALUE));
+        "SELECT * FROM " + tableName + " ORDER BY col",
+        resultSet -> {
+
+          // Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
+          assertSingleColumnRows(
+              resultSet,
+              Arrays.asList(
+                  (long) Integer.MIN_VALUE, 0L, (long) Integer.MAX_VALUE, Long.MAX_VALUE));
+        });
   }
 
-  private static void assertSingleRow(Connection connection, String sql, List<Long> expected)
+  private static void assertSingleRow(ResultSet resultSet, List<Long> expected) throws Exception {
+    assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
+    for (int i = 0; i < expected.size(); i++) {
+      assertAllIntegerGettersInRange(
+          resultSet, i + 1, expected.get(i), "Column mismatch for " + INT_TYPE);
+    }
+    assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
+  }
+
+  private static void assertSingleColumnRows(ResultSet resultSet, List<Long> expectedValues)
       throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet = statement.executeQuery(sql)) {
-      assertTrue(resultSet.next(), "Expected one row for type: " + INT_TYPE);
-      for (int i = 0; i < expected.size(); i++) {
+    for (int i = 0; i < expectedValues.size(); i++) {
+      assertTrue(resultSet.next(), "Missing row " + i + " for " + INT_TYPE);
+      Long expected = expectedValues.get(i);
+      if (expected == null) {
+        assertNull(resultSet.getObject(1), "Expected NULL at row " + i + " for " + INT_TYPE);
+        assertTrue(resultSet.wasNull(), "Expected wasNull() after getObject NULL at row " + i);
+        assertEquals(0L, resultSet.getLong(1), "Expected getLong=0 for NULL at row " + i);
+        assertTrue(resultSet.wasNull(), "Expected wasNull() after getLong NULL at row " + i);
+      } else {
         assertAllIntegerGettersInRange(
-            resultSet, i + 1, expected.get(i), "Column mismatch for " + INT_TYPE);
+            resultSet, 1, expected, "Value mismatch for " + INT_TYPE + ", row " + i);
       }
-      assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
     }
-  }
-
-  private static void assertSingleColumnRows(
-      Connection connection, String tableName, List<Long> expectedValues) throws Exception {
-    try (Statement statement = connection.createStatement();
-        ResultSet resultSet =
-            statement.executeQuery("SELECT * FROM " + tableName + " ORDER BY col")) {
-      for (int i = 0; i < expectedValues.size(); i++) {
-        assertTrue(resultSet.next(), "Missing row " + i + " for " + INT_TYPE);
-        Long expected = expectedValues.get(i);
-        if (expected == null) {
-          assertNull(resultSet.getObject(1), "Expected NULL at row " + i + " for " + INT_TYPE);
-          assertTrue(resultSet.wasNull(), "Expected wasNull() after getObject NULL at row " + i);
-          assertEquals(0L, resultSet.getLong(1), "Expected getLong=0 for NULL at row " + i);
-          assertTrue(resultSet.wasNull(), "Expected wasNull() after getLong NULL at row " + i);
-        } else {
-          assertAllIntegerGettersInRange(
-              resultSet, 1, expected, "Value mismatch for " + INT_TYPE + ", row " + i);
-        }
-      }
-      assertFalse(resultSet.next(), "Unexpected extra rows for " + INT_TYPE);
-    }
+    assertFalse(resultSet.next(), "Unexpected extra rows for " + INT_TYPE);
   }
 
   private static void assertAllIntegerGettersInRange(

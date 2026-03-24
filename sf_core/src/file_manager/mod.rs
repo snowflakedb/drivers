@@ -49,14 +49,28 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
 
     let (encryption_result, file_metadata) = preprocess_file_before_upload(file_buffer, &data)?;
 
-    let status = upload_to_s3_or_skip(
-        encryption_result,
-        &data.stage_info,
-        file_metadata.target.as_str(),
-        data.overwrite,
-    )
-    .await
-    .context(S3UploadSnafu)?;
+    let status = match data.stage_info.location_type {
+        LocationType::S3 => upload_to_s3_or_skip(
+            encryption_result,
+            &data.stage_info,
+            file_metadata.target.as_str(),
+            data.overwrite,
+        )
+        .await
+        .context(S3UploadSnafu)?,
+        LocationType::Gcs => {
+            return UnsupportedStorageTypeSnafu {
+                storage_type: "GCS",
+            }
+            .fail();
+        }
+        LocationType::Azure => {
+            return UnsupportedStorageTypeSnafu {
+                storage_type: "Azure",
+            }
+            .fail();
+        }
+    };
 
     // TODO: Right now empty message is hardcoded, because any error in the upload process will
     // result in an error before this point and an ERROR status is never returned.
@@ -169,11 +183,24 @@ pub async fn download_files(
 pub async fn download_single_file(
     data: SingleDownloadData,
 ) -> Result<DownloadResult, FileManagerError> {
-    // Download encrypted data and metadata from S3
-    let (encrypted_data, file_metadata) =
-        download_from_s3(&data.stage_info, data.src_location.as_str())
+    // Download encrypted data and metadata from cloud storage
+    let (encrypted_data, file_metadata) = match data.stage_info.location_type {
+        LocationType::S3 => download_from_s3(&data.stage_info, data.src_location.as_str())
             .await
-            .context(S3DownloadSnafu)?;
+            .context(S3DownloadSnafu)?,
+        LocationType::Gcs => {
+            return UnsupportedStorageTypeSnafu {
+                storage_type: "GCS",
+            }
+            .fail();
+        }
+        LocationType::Azure => {
+            return UnsupportedStorageTypeSnafu {
+                storage_type: "Azure",
+            }
+            .fail();
+        }
+    };
 
     // Decrypt the data (this gives us the compressed data)
     let compressed_data =
@@ -243,6 +270,12 @@ pub enum FileManagerError {
     #[snafu(display("Failed to download file from S3"))]
     S3Download {
         source: DownloadFileError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported storage type: {storage_type}"))]
+    UnsupportedStorageType {
+        storage_type: &'static str,
         #[snafu(implicit)]
         location: Location,
     },

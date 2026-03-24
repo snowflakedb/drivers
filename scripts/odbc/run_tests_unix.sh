@@ -23,5 +23,5 @@ cmake -B cmake-build \
     -D ODBC_INCLUDE_DIR="${ODBC_INCLUDE_DIR}" \
     -D DRIVER_TYPE="${DRIVER_TYPE}" \
     .
-cmake --build cmake-build -- -j "${NPROC}"
-ctest -j "${NPROC}" -C Debug --test-dir cmake-build --output-on-failure
+cmake --build cmake-build -- -j $((NPROC * 2))
+ctest -j $((NPROC * 4)) -C Debug --test-dir cmake-build --output-on-failure

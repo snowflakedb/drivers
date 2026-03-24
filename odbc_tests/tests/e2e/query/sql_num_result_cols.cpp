@@ -29,7 +29,7 @@ TEST_CASE("SQLNumResultCols returns 1 for SELECT with single column.", "[query]"
   // Then SQLNumResultCols should return 1
   SQLSMALLINT num_cols = 0;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 1);
 }
 
@@ -47,7 +47,7 @@ TEST_CASE("SQLNumResultCols returns correct count for SELECT with many columns."
   // Then SQLNumResultCols should return 5
   SQLSMALLINT num_cols = 0;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 5);
 }
 
@@ -68,7 +68,7 @@ TEST_CASE("SQLNumResultCols returns correct count for SELECT * from table.", "[q
   // Then SQLNumResultCols should return 3
   SQLSMALLINT num_cols = 0;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 3);
 }
 
@@ -91,7 +91,7 @@ TEST_CASE("SQLNumResultCols returns correct column count for empty result set.",
   // Then SQLNumResultCols should still return the column count (2)
   SQLSMALLINT num_cols = 0;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 2);
 }
 
@@ -111,12 +111,12 @@ TEST_CASE("SQLNumResultCols returns 0 after DDL statement.", "[query]") {
 
   // When a DDL statement is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE ddl_numcols_test (id INT)", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLNumResultCols should return 0 (DDL produces no result set columns)
   SQLSMALLINT num_cols = -1;
   ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 0);
 }
 
@@ -136,7 +136,7 @@ TEST_CASE("SQLNumResultCols returns correct count after calling a stored procedu
   // Then SQLNumResultCols should return 1
   SQLSMALLINT num_cols = 0;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 1);
 }
 
@@ -177,12 +177,12 @@ TEST_CASE("SQLNumResultCols returns column count after SQLPrepare.", "[query]") 
 
   // When a SELECT statement is prepared but not executed
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 2 AS b, 3 AS c", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLNumResultCols should return the column count
   SQLSMALLINT num_cols = 0;
   ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 3);
 }
 
@@ -200,25 +200,25 @@ TEST_CASE("SQLNumResultCols updates column count after re-execution with differe
 
   // When a query with 3 columns is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 2 AS b, 3 AS c", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLNumResultCols is called
   SQLSMALLINT num_cols = 0;
   ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 3);
 
   // And the cursor is closed before re-executing
   ret = SQLCloseCursor(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a different query with 1 column is executed on the same statement
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS only_col", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLNumResultCols should return the updated column count
   ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 1);
 }
 
@@ -237,12 +237,12 @@ TEST_CASE("SQLNumResultCols returns same value as SQL_DESC_COUNT of the IRD.", "
 
   // When a query with 4 columns is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLNumResultCols is called
   SQLSMALLINT num_cols = 0;
   ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And the IRD SQL_DESC_COUNT is read
   SQLHDESC ird = SQL_NULL_HDESC;

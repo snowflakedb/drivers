@@ -78,8 +78,7 @@ class TestConfig:
             connection_params["authenticator"] = "SNOWFLAKE_JWT"
             connection_params["private_key_file"] = private_key_file
 
-        # Process TLS/certificate verification parameters (for WireMock testing)
-        _process_tls_parameters(conn_params, connection_params, self.driver_type)
+        _disable_ocsp_for_wiremock(connection_params, self.driver_type)
 
         return connection_params
     
@@ -88,58 +87,9 @@ class TestConfig:
         return "PYTHON" if self.driver_type == "universal" else "PYTHON (Old)"
 
 
-def _process_tls_parameters(conn_params, connection_params, driver_type):
-    """
-    Process TLS/certificate verification parameters for WireMock testing.
-    
-    This function handles verification parameters differently for old vs universal drivers:
-    
-    For OLD driver:
-        - Sets insecure_mode=True to disable OCSP checks (partial SSL bypass)
-        - The old driver also requires SSL patching in connection.py via _disable_ssl_verification_for_wiremock() for full SSL bypass.
-    
-    For UNIVERSAL driver:
-        - Passes verify_certificates and verify_hostname directly to sf_core
-    
-    Args:
-        conn_params: Raw connection parameters from JSON
-        connection_params: Processed connection parameters dict to update
-        driver_type: Type of driver being used ("universal" or "old")
-    """
-    if driver_type == "universal":
-        _process_tls_for_universal(conn_params, connection_params)
-    else:
-        _process_tls_for_old(conn_params, connection_params)
-
-
-def _process_tls_for_universal(conn_params, connection_params):
-    """
-    Process TLS parameters for universal driver.
-    
-    Passes verify_certificates and verify_hostname directly to sf_core.
-    """
-    if "verify_certificates" in conn_params:
-        connection_params["verify_certificates"] = conn_params["verify_certificates"]
-    
-    if "verify_hostname" in conn_params:
-        connection_params["verify_hostname"] = conn_params["verify_hostname"]
-
-
-def _process_tls_for_old(conn_params, connection_params):
-    """
-    Process TLS parameters for old driver.
-    
-    Converts verify_certificates to insecure_mode (inverted logic).
-    The old driver also requires SSL patching in connection.py for full SSL bypass.
-    """
-    if "verify_certificates" in conn_params:
-        verify_value = conn_params["verify_certificates"]
-        
-        # Convert string to boolean for insecure_mode (inverted)
-        if isinstance(verify_value, str):
-            should_disable_verify = (verify_value.lower() == "false")
-        else:
-            should_disable_verify = not verify_value
-        
-        connection_params["insecure_mode"] = should_disable_verify
+def _disable_ocsp_for_wiremock(connection_params, driver_type):
+    """Disable OCSP for the old driver when proxied through WireMock,
+    since WireMock-generated certs have no OCSP responder."""
+    if driver_type == "old" and os.getenv("HTTPS_PROXY"):
+        connection_params["insecure_mode"] = True
 

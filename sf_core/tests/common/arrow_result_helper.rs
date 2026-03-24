@@ -4,11 +4,16 @@ extern crate tracing_subscriber;
 
 use super::arrow_deserialize::ArrowDeserialize;
 use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
+use arrow::array::{Array, ArrayRef, AsArray};
+use arrow::compute::kernels::cmp::not_distinct;
+use arrow::datatypes::{DataType, FieldRef, Schema};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use arrow::record_batch::RecordBatchReader;
+use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
+use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::mem::discriminant;
 use std::sync::Arc;
 
 /// Helper for processing Arrow stream results
@@ -111,5 +116,190 @@ impl ArrowResultHelper {
             return T::deserialize_one(&batch, 0);
         }
         Err("Expected exactly one row in the batch".to_string())
+    }
+}
+
+/// Returns metadata keys to exclude from comparison for a given Arrow DataType.
+fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
+    match logical_type {
+        "TEXT" => &["finalType", "precision", "scale"],
+        "FIXED" => &["finalType", "charLength", "byteLength"],
+        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" => &[
+            "finalType",
+            "charLength",
+            "byteLength",
+            "scale",
+            "precision",
+            "physicalType",
+        ],
+        "TIME" => &[
+            "finalType",
+            "charLength",
+            "byteLength",
+            "precision",
+            "physicalType",
+        ],
+        "BINARY" => &["finalType", "precision", "scale", "physicalType"],
+        "DECFLOAT" => &["finalType", "precision", "scale", "physicalType"],
+        "ARRAY" | "OBJECT" | "VARIANT" => &[
+            "finalType",
+            "byteLength",
+            "charLength",
+            "precision",
+            "scale",
+            "physicalType",
+        ],
+        _ => &[],
+    }
+}
+
+/// Asserts that two Arrow schemas match in field name, data type, nullability,
+/// and relevant metadata keys (excluding keys that are known to differ between
+/// Arrow-native and JSON-converted-to-Arrow results).
+pub fn assert_schemas_match(left: &Schema, right: &Schema) {
+    assert_eq!(
+        left.fields().len(),
+        right.fields().len(),
+        "Schema field count mismatch: left has {}, right has {}",
+        left.fields().len(),
+        right.fields().len()
+    );
+
+    for (arrow_field, json_field) in left.fields().iter().zip(right.fields().iter()) {
+        assert_fields_match(arrow_field, json_field);
+    }
+}
+
+fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
+    assert_eq!(left.name(), right.name(), "Field name mismatch");
+    assert_eq!(
+        left.is_nullable(),
+        right.is_nullable(),
+        "Nullability mismatch for field '{}'",
+        left.name()
+    );
+    assert_eq!(
+        discriminant(left.data_type()),
+        discriminant(right.data_type()),
+        "Data type variant mismatch for field '{}', left type: {:?}, right type: {:?}",
+        left.name(),
+        left.data_type(),
+        right.data_type()
+    );
+    let logical_type = left
+        .metadata()
+        .get("logicalType")
+        .unwrap_or_else(|| panic!("logicalType metadata key missing for field {}", left.name()));
+    let excluded = metadata_keys_to_exclude(logical_type);
+
+    let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
+        metadata
+            .iter()
+            .filter(|(k, _)| !excluded.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    };
+
+    let left_meta: BTreeMap<String, String> = left
+        .metadata()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let right_meta: BTreeMap<String, String> = right
+        .metadata()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let filtered_left_meta = filter_metadata(&left_meta);
+    let filtered_right_meta = filter_metadata(&right_meta);
+
+    assert_eq!(
+        filtered_left_meta,
+        filtered_right_meta,
+        "Metadata mismatch for field '{}'\n  left: {:?}\n  right:  {:?}",
+        left.name(),
+        filtered_left_meta,
+        filtered_right_meta
+    );
+    match (left.data_type(), right.data_type()) {
+        (DataType::Struct(left_fields), DataType::Struct(right_fields)) => {
+            left_fields
+                .iter()
+                .zip(right_fields.iter())
+                .for_each(|(a, j)| assert_fields_match(a, j));
+        }
+        (left_data_type, right_data_type) => {
+            assert_eq!(
+                left_data_type,
+                right_data_type,
+                "Data type mismatch for field '{}'",
+                left.name()
+            );
+        }
+    }
+}
+
+/// Asserts that two RecordBatches match in schema (using relaxed metadata comparison)
+/// and column data.
+pub fn assert_record_batches_match(left: &RecordBatch, right: &RecordBatch) {
+    assert_schemas_match(left.schema().as_ref(), right.schema().as_ref());
+
+    assert_eq!(
+        left.num_columns(),
+        right.num_columns(),
+        "Column count mismatch"
+    );
+    assert_eq!(left.num_rows(), right.num_rows(), "Row count mismatch");
+
+    for col_idx in 0..left.num_columns() {
+        let left_col = left.column(col_idx);
+        let right_col = right.column(col_idx);
+        let schema = left.schema();
+        let field_name = schema.field(col_idx).name();
+        assert_arrays_match(left_col, right_col, field_name);
+    }
+}
+
+fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
+    match (left.data_type(), right.data_type()) {
+        (DataType::Struct(_), DataType::Struct(_)) => {
+            let left_struct = left.as_struct();
+            let right_struct = right.as_struct();
+            assert_eq!(
+                left_struct.num_columns(),
+                right_struct.num_columns(),
+                "Struct '{field_path}' child count mismatch"
+            );
+            for (i, name) in left_struct.column_names().iter().enumerate() {
+                let child_name = format!("{field_path}.{name}");
+                assert_arrays_match(left_struct.column(i), right_struct.column(i), &child_name);
+            }
+        }
+        _ => {
+            let result = not_distinct(left, right)
+                .unwrap_or_else(|e| panic!("Failed to compare '{field_path}': {e}"));
+
+            let mismatches: Vec<usize> = result
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| v != &Some(true))
+                .map(|(i, _)| i)
+                .collect();
+
+            for idx in mismatches.iter().take(5) {
+                println!(
+                    "Mismatch at idx {:?}, left: {:?}, right: {:?}",
+                    idx,
+                    extract_arrow_value::<String>(left, *idx),
+                    extract_arrow_value::<String>(right, *idx)
+                );
+            }
+
+            assert!(
+                mismatches.is_empty(),
+                "'{field_path}' has mismatched values at rows: {mismatches:?}",
+            );
+        }
     }
 }

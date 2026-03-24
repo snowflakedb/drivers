@@ -95,13 +95,13 @@ pub struct NameValueParameter {
 #[derive(Debug, Deserialize)]
 pub struct AuthResponseSessionInfo {
     #[serde(rename = "databaseName")]
-    pub _database_name: Option<String>,
+    pub database_name: Option<String>,
     #[serde(rename = "schemaName")]
-    pub _schema_name: Option<String>,
+    pub schema_name: Option<String>,
     #[serde(rename = "warehouseName")]
-    pub _warehouse_name: Option<String>,
+    pub warehouse_name: Option<String>,
     #[serde(rename = "roleName")]
-    pub _role_name: Option<String>,
+    pub role_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,7 +153,7 @@ pub struct AuthResponseMain {
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "sessionInfo")]
-    pub _session_info: Option<AuthResponseSessionInfo>,
+    pub session_info: Option<AuthResponseSessionInfo>,
     #[serde(rename = "tokenUrl")]
     pub _token_url: Option<String>,
     #[serde(rename = "ssoUrl")]

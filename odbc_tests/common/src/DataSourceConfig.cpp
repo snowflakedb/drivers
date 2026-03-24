@@ -24,7 +24,11 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   config.name_ = "Snowflake_" + unique_suffix;
   config.driver_config_ = DriverConfig::Default();
   config.parameters_["Description"] = "Snowflake Test DSN";
+#ifdef _WIN32
+  config.parameters_["Driver"] = DriverConfig::get_driver_path();
+#else
   config.parameters_["Driver"] = config.driver_config_.value()->name();
+#endif
   config.parameters_["Locale"] = "en-US";
   config.parameters_["SERVER"] = get_string(
       params, "SNOWFLAKE_TEST_HOST", get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "") + ".snowflakecomputing.com");
@@ -41,7 +45,11 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   if (auto schema = get_string(params, "SNOWFLAKE_TEST_SCHEMA", ""); !schema.empty()) {
     config.parameters_["SCHEMA"] = schema;
   }
-  if (auto warehouse = get_string(params, "SNOWFLAKE_TEST_WAREHOUSE", ""); !warehouse.empty()) {
+  auto warehouse = get_string(params, "SNOWFLAKE_TEST_WAREHOUSE_ODBC", "");
+  if (warehouse.empty()) {
+    warehouse = get_string(params, "SNOWFLAKE_TEST_WAREHOUSE", "");
+  }
+  if (!warehouse.empty()) {
     config.parameters_["WAREHOUSE"] = warehouse;
   }
   if (auto role = get_string(params, "SNOWFLAKE_TEST_ROLE", ""); !role.empty()) {

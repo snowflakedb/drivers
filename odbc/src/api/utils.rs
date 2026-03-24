@@ -1,9 +1,10 @@
+use crate::api::encoding::{OdbcEncoding, write_string_chars};
 use crate::api::error::{
     ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
     StatementNotExecutedSnafu,
 };
 use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
-use crate::conversion::warning::{Warning, Warnings};
+use crate::conversion::warning::Warnings;
 use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
 use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
@@ -19,12 +20,12 @@ pub fn num_result_cols(
     let stmt = stmt_from_handle(statement_handle);
 
     let num_cols = match stmt.state.as_ref() {
-        StatementState::Prepared { reader } => reader.schema().fields().len() as sql::SmallInt,
+        StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
         StatementState::Executed { reader, .. } => reader.schema().fields().len() as sql::SmallInt,
         StatementState::Fetching { record_batch, .. } => {
             record_batch.schema().fields().len() as sql::SmallInt
         }
-        StatementState::NoResultSet => 0,
+        StatementState::NoResultSet { .. } => 0,
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
@@ -45,7 +46,7 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
     let row_count = match stmt.state.as_ref() {
         StatementState::Executed { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
-        StatementState::NoResultSet => -1,
+        StatementState::NoResultSet { .. } => -1,
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
@@ -121,12 +122,12 @@ pub fn col_attribute(
     }
 }
 
-/// Describe a column in the result set (SQLDescribeCol)
+/// Describe a column in the result set (SQLDescribeCol / SQLDescribeColW).
 #[allow(clippy::too_many_arguments)]
-pub fn describe_col(
+pub fn describe_col<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
-    column_name: *mut sql::Char,
+    column_name: *mut E::Char,
     buffer_length: sql::SmallInt,
     name_length_ptr: *mut sql::SmallInt,
     data_type_ptr: *mut sql::SmallInt,
@@ -141,7 +142,7 @@ pub fn describe_col(
     let schema = match stmt.state.as_ref() {
         StatementState::Executed { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
-        StatementState::Prepared { reader } => reader.schema(),
+        StatementState::Prepared { schema } => schema.clone(),
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
@@ -162,48 +163,33 @@ pub fn describe_col(
 
     let field = schema.field(col_idx);
 
-    // Write column name
     let name = field.name();
-    let name_bytes = name.as_bytes();
-    let full_len = name_bytes.len() as sql::SmallInt;
+    write_string_chars::<E>(
+        name,
+        column_name,
+        buffer_length,
+        name_length_ptr,
+        Some(warnings),
+    );
 
-    if !name_length_ptr.is_null() {
-        unsafe { std::ptr::write(name_length_ptr, full_len) };
-    }
-
-    if !column_name.is_null() && buffer_length > 0 {
-        let max_copy = (buffer_length as usize - 1).min(name_bytes.len());
-        unsafe {
-            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), column_name, max_copy);
-            std::ptr::write(column_name.add(max_copy), 0);
-        }
-        if max_copy < name_bytes.len() {
-            warnings.push(Warning::StringDataTruncated);
-        }
-    }
-
-    // Write data type
     if !data_type_ptr.is_null() {
         let sql_type =
             sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
     }
 
-    // Write column size
     if !column_size_ptr.is_null() {
         let col_size =
             column_size_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(column_size_ptr, col_size) };
     }
 
-    // Write decimal digits
     if !decimal_digits_ptr.is_null() {
         let digits = decimal_digits_from_field(field, &stmt.conn.numeric_settings)
             .context(ConversionSnafu)?;
         unsafe { std::ptr::write(decimal_digits_ptr, digits) };
     }
 
-    // Write nullability
     if !nullable_ptr.is_null() {
         let nullable = if field.is_nullable() {
             sql::Nullability::NULLABLE.0

@@ -1,6 +1,5 @@
-use super::{ConfigError, ConfigFileReadSnafu, InsecurePermissionsSnafu, TomlParseSnafu};
+use super::{ConfigError, ConfigFileReadSnafu, TomlParseSnafu};
 use snafu::ResultExt;
-use std::env;
 use std::fs;
 use std::path::Path;
 
@@ -35,9 +34,11 @@ pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
 }
 
 /// Check file permissions for security (Unix only)
+#[allow(unused_variables)]
 pub fn check_file_permissions(path: &Path) -> Result<(), ConfigError> {
     #[cfg(unix)]
     {
+        use super::InsecurePermissionsSnafu;
         use std::os::unix::fs::PermissionsExt;
 
         let metadata = fs::metadata(path).context(ConfigFileReadSnafu {
@@ -46,7 +47,6 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigError> {
         let permissions = metadata.permissions();
         let mode = permissions.mode();
 
-        // Error if writable by group or others (0o022)
         if mode & 0o022 != 0 {
             return InsecurePermissionsSnafu {
                 path: path.display().to_string(),
@@ -55,9 +55,8 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigError> {
             .fail();
         }
 
-        // Warn if readable by group or others (0o044), unless skip env var is set
         if mode & 0o044 != 0
-            && env::var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE").is_err()
+            && std::env::var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE").is_err()
         {
             eprintln!(
                 "Warning: Config file {} is readable by group or others",
@@ -172,7 +171,7 @@ number = 42
 
         // Set env var to skip warning
         // SAFETY: Test-only, not run in parallel.
-        unsafe { env::set_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE", "1") };
+        unsafe { std::env::set_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE", "1") };
 
         // Should not print warning (we can't easily test stderr output,
         // but at least verify it doesn't error)
@@ -180,6 +179,6 @@ number = 42
         assert!(result.is_ok());
 
         // SAFETY: Test-only, not run in parallel.
-        unsafe { env::remove_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE") };
+        unsafe { std::env::remove_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE") };
     }
 }

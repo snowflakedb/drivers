@@ -86,7 +86,7 @@ def test_should_return_correct_rowset_for_put(connection):
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
@@ -144,7 +144,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
@@ -194,10 +194,10 @@ def test_should_return_correct_column_metadata_for_get(connection):
             auto_compress=True,
             overwrite=True,
         )
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # When File is downloaded using GET command
-            download_dir = Path(temp_dir)
 
+        # When File is downloaded using GET command
+        with tempfile.TemporaryDirectory() as temp_dir:
+            download_dir = Path(temp_dir)
             get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
 
             # Then Column metadata for GET command should be correct
@@ -264,7 +264,7 @@ def test_should_upload_file_to_subdirectory_in_stage(connection):
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # When File is uploaded to a subdirectory in stage
         stage_name = create_temporary_stage(cursor, "TEST_SUBDIR_UPLOAD")

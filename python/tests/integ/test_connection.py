@@ -2,6 +2,8 @@
 Integration tests for PEP 249 Connection objects.
 """
 
+import uuid
+
 from io import StringIO
 from unittest.mock import Mock
 
@@ -14,7 +16,7 @@ from snowflake.connector.errors import NotSupportedError
 class TestConnectionInfo:
     """Integration tests for Connection._get_connection_info."""
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no _get_connection_info method")
     def test_get_connection_info_returns_info_after_connect(self, connection):
         """Test that _get_connection_info returns info after connection is established."""
         # Given an established connection
@@ -23,6 +25,61 @@ class TestConnectionInfo:
 
         # Then it should not be None
         assert info is not None
+
+
+class TestConnectionInfoProperties:
+    """Integration tests for Connection properties backed by _get_connection_info."""
+
+    @pytest.mark.parametrize("prop", ["account", "user", "host", "role", "database", "schema", "warehouse"])
+    def test_string_property_is_set(self, connection, prop):
+        """After connecting, string properties should return a non-empty string."""
+        value = getattr(connection, prop)
+        assert value is not None, f"connection.{prop} should not be None"
+        assert isinstance(value, str), f"connection.{prop} should be a str"
+        assert len(value) > 0, f"connection.{prop} should not be empty"
+
+    def test_session_id_is_set(self, connection):
+        """After connecting, session_id should return a positive integer."""
+        sid = connection.session_id
+        assert isinstance(sid, int)
+        assert sid > 0
+
+    def test_port_is_set(self, connection):
+        """After connecting, port should return a valid port number or None."""
+        port = connection.port
+        if port is not None:
+            assert isinstance(port, int)
+            assert port > 0
+
+
+class TestConnectionInfoReflectsSessionChanges:
+    """Integration tests verifying that properties reflect server-side session changes."""
+
+    def test_database_reflects_use_database(self, connection):
+        """After USE DATABASE, the database property should reflect the new database."""
+        original_db = connection.database
+        assert original_db is not None
+
+        tmp_db = f"TEST_DB_{uuid.uuid4().hex}".upper()
+        cur = connection.cursor()
+        try:
+            cur.execute(f"CREATE DATABASE {tmp_db}")
+            cur.execute(f"USE DATABASE {tmp_db}")
+            assert connection.database.upper() == tmp_db
+        finally:
+            cur.execute(f"USE DATABASE {original_db}")
+            cur.execute(f"DROP DATABASE IF EXISTS {tmp_db}")
+            cur.close()
+
+    def test_schema_reflects_use_schema(self, connection):
+        """After USE SCHEMA, the schema property should reflect the new schema."""
+        cur = connection.cursor()
+        try:
+            cur.execute("USE SCHEMA INFORMATION_SCHEMA")
+        finally:
+            cur.close()
+
+        assert connection.schema.upper() == "INFORMATION_SCHEMA"
 
 
 class TestConnectionMethods:
@@ -38,21 +95,21 @@ class TestConnectionMethods:
 class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no cancel method")
     def test_cancel_not_implemented(self, connection):
         """Test that cancel raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
             connection.cancel()
         assert "cancel is not implemented" in str(excinfo.value)
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no ping method")
     def test_ping_not_implemented(self, connection):
         """Test that ping raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
             connection.ping()
         assert "ping is not implemented" in str(excinfo.value)
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
     def test_set_autocommit(self, connection):
         """Test that set_autocommit changes the autocommit flag."""
         connection.set_autocommit(False)
@@ -60,7 +117,7 @@ class TestConnectionOptionalMethods:
         connection.set_autocommit(True)
         assert connection._autocommit is True
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/get_autocommit methods")
     def test_get_autocommit(self, connection):
         """Test that get_autocommit returns the current setting."""
         connection.set_autocommit(False)
@@ -72,7 +129,7 @@ class TestConnectionOptionalMethods:
 class TestConnectionAutocommitMethod:
     """Test Connection autocommit method."""
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
     def test_autocommit_sets_flag_and_calls_set_autocommit(self, connection, monkeypatch):
         """Test that autocommit() delegates to set_autocommit."""
         mock_set_autocommit = Mock()
@@ -82,12 +139,12 @@ class TestConnectionAutocommitMethod:
 
         mock_set_autocommit.assert_called_once_with(True)
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver _autocommit defaults to None, not True")
     def test_autocommit_default_is_server_default(self, connection):
         """Test that autocommit defaults to the server default (true) when not explicitly set."""
         assert connection._autocommit is True
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no get_autocommit method")
     def test_autocommit_roundtrip(self, connection):
         """Test setting autocommit via autocommit() and reading via get_autocommit()."""
         connection.autocommit(True)
@@ -309,13 +366,13 @@ class TestCommitRollback:
 class TestAutocommitAlterSession:
     """Integration tests for set_autocommit ALTER SESSION."""
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_get_session_parameter methods")
     def test_set_autocommit_true_updates_session_parameter(self, connection):
         """Test that set_autocommit(True) sets the AUTOCOMMIT session parameter."""
         connection.set_autocommit(True)
         assert connection._get_session_parameter("AUTOCOMMIT") == "true"
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_get_session_parameter methods")
     def test_set_autocommit_false_updates_session_parameter(self, connection):
         """Test that set_autocommit(False) sets the AUTOCOMMIT session parameter."""
         connection.set_autocommit(False)
