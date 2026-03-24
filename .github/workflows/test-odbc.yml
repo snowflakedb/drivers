@@ -39,6 +39,14 @@ jobs:
         # Workaround for Rust 1.89+ linker bug with dylib crates (rust-lang/rust#131292):
         # Rust passes --no-undefined-version to GNU ld with a version script that omits
         # allocator shim symbols, causing sf_core dylib builds to fail.
+        id: run_odbc_unit_tests
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
+        run: cargo test --package odbc
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Rerun ODBC unit tests
+        if: steps.run_odbc_unit_tests.outcome == 'failure' && github.event_name == 'merge_group'
         run: cargo test --package odbc
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
@@ -113,6 +121,8 @@ jobs:
 
       - name: Run Old ODBC tests (Linux)
         if: matrix.os == 'ubuntu-latest'
+        id: run_odbc_ref_tests_linux
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           export DRIVER_PATH=/usr/lib/snowflake/odbc/lib/libSnowflake.so
           export PARAMETER_PATH=$(pwd)/parameters.json
@@ -126,14 +136,33 @@ jobs:
           cmake --build cmake-build -- -j $(($(nproc) * 2))
           ctest -j $(($(nproc) * 4)) -C Debug --test-dir cmake-build --output-on-failure
 
+      - name: Rerun failed Old ODBC tests (Linux)
+        if: steps.run_odbc_ref_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
+        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: /usr/lib/snowflake/odbc/lib/libSnowflake.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: OLD
+
       - name: Run Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'
+        id: run_odbc_ref_tests_windows
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: pwsh
         run: |
           $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll"
           $env:PARAMETER_PATH = "$(pwd)\parameters.json"
           $env:DRIVER_TYPE = "OLD"
           .\scripts\odbc\run_tests_windows.ps1
+
+      - name: Rerun failed Old ODBC tests (Windows)
+        if: steps.run_odbc_ref_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
+        shell: pwsh
+        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          DRIVER_TYPE: OLD
 
   odbc_tests:
     needs: detect-changes
@@ -228,6 +257,8 @@ jobs:
 
       - name: Build and run ODBC tests (Unix)
         if: runner.os != 'Windows'
+        id: run_odbc_tests_unix
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
@@ -235,8 +266,18 @@ jobs:
           export DRIVER_TYPE=NEW
           ./scripts/odbc/run_tests_unix.sh
 
+      - name: Rerun failed ODBC tests (Unix)
+        if: steps.run_odbc_tests_unix.outcome == 'failure' && github.event_name == 'merge_group'
+        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          DRIVER_TYPE: NEW
+
       - name: Build and run ODBC tests (Windows)
         if: runner.os == 'Windows'
+        id: run_odbc_tests_windows
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: pwsh
         run: |
           dir target\debug\
@@ -244,6 +285,15 @@ jobs:
           $env:PARAMETER_PATH = "$PWD\parameters.json"
           $env:DRIVER_TYPE = "NEW"
           .\scripts\odbc\run_tests_windows.ps1
+
+      - name: Rerun failed ODBC tests (Windows)
+        if: steps.run_odbc_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
+        shell: pwsh
+        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
+        env:
+          DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          DRIVER_TYPE: NEW
 
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests]

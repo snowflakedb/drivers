@@ -840,11 +840,13 @@ fn create_column_array(
                 })
                 .collect();
             let parsed = parsed?;
-            let exponents: Vec<Option<i16>> =
-                parsed.iter().map(|v| v.as_ref().map(|(e, _)| *e)).collect();
-            let mantissas: Vec<Option<&[u8]>> = parsed
+            let exponents: Vec<i16> = parsed
                 .iter()
-                .map(|v| v.as_ref().map(|(_, m)| m.as_slice()))
+                .map(|v| v.as_ref().map_or(0, |(e, _)| *e))
+                .collect();
+            let mantissas: Vec<&[u8]> = parsed
+                .iter()
+                .map(|v| v.as_ref().map_or(&[] as &[u8], |(_, m)| m.as_slice()))
                 .collect();
             let null_buffer = arrow::buffer::NullBuffer::from(
                 parsed.iter().map(|v| v.is_some()).collect::<Vec<bool>>(),
@@ -855,16 +857,12 @@ fn create_column_array(
                 DataType::Struct(fields) => {
                     let exponent_array: Arc<dyn Array> = Arc::new(Int16Array::from(exponents));
                     let mantissa_array: Arc<dyn Array> = Arc::new(BinaryArray::from(mantissas));
-                    let struct_array = arrow::array::StructArray::from(vec![
-                        (fields[0].clone(), exponent_array),
-                        (fields[1].clone(), mantissa_array),
-                    ]);
-                    let nullable_struct = arrow::array::StructArray::new(
-                        struct_array.fields().clone(),
-                        struct_array.columns().to_vec(),
+                    let struct_array = arrow::array::StructArray::new(
+                        fields.clone(),
+                        vec![exponent_array, mantissa_array],
                         Some(null_buffer),
                     );
-                    Ok((field, Arc::new(nullable_struct)))
+                    Ok((field, Arc::new(struct_array)))
                 }
                 _ => UnsupportedDataTypeSnafu {
                     data_type: format!("{:?}", field.data_type()),

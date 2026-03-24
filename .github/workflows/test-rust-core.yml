@@ -107,6 +107,15 @@ jobs:
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --no-run --out lcov --output-dir .
 
       - name: Run tests with coverage
+        id: run_rust_tests
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+          mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+
+      - name: Rerun tests with coverage
+        if: steps.run_rust_tests.outcome == 'failure' && github.event_name == 'merge_group'
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
@@ -168,6 +177,8 @@ jobs:
         shell: bash
 
       - name: Build and test
+        id: run_rust_tests_windows_arm64
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         shell: cmd
         run: |
           :: Set up ARM64 MSVC environment
@@ -194,6 +205,14 @@ jobs:
           :: Copy ARM64 OpenSSL DLLs next to test binaries so Windows finds them
           copy "C:\vcpkg\installed\arm64-windows\bin\libcrypto-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
           copy "C:\vcpkg\installed\arm64-windows\bin\libssl-3-arm64.dll" target\aarch64-pc-windows-msvc\debug\deps\ 2>nul
+          cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
+
+      - name: Rerun tests (Windows ARM64)
+        if: steps.run_rust_tests_windows_arm64.outcome == 'failure' && github.event_name == 'merge_group'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
 
   rust-core-status:

@@ -1,0 +1,280 @@
+** iODBC Trace file
+** Trace started on Sun Mar 22 19:13:50 2026
+** Driver Manager: 03.52.1623.0502
+
+
+[000001.147792]
+iodbctest       20108F080 EXIT  SQLDriverConnect with return code 1 (SQL_SUCCESS_WITH_INFO)
+		SQLHDBC           0x104ee5c60
+		SQLPOINTER        0x0
+		SQLCHAR         * 0x16b59a1a0
+		SQLSMALLINT       -3 (SQL_NTS)
+		SQLCHAR         * 0x1048aa000
+				  | DSN=SnowflakeLegacy;                     |
+		SQLSMALLINT       4096
+		SQLSMALLINT     * 0x16b599d8a (20)
+		SQLUSMALLINT      1 (SQL_DRIVER_COMPLETE)
+
+[000001.147994]
+iodbctest       20108F080 ENTER SQLGetDiagRec
+		SQLSMALLINT       2 (SQL_HANDLE_DBC)
+		SQLHDBC           0x104ee5c60
+		SQLSMALLINT       1
+		SQLCHAR         * 0x16b599af1
+		SQLINTEGER      * 0x16b599aec
+		SQLCHAR         * 0x16b599b00
+		SQLSMALLINT       512
+		SQLSMALLINT     * 0x0
+
+[000001.148366]
+iodbctest       20108F080 EXIT  SQLGetDiagRec with return code 100 (SQL_NO_DATA_FOUND)
+		SQLSMALLINT       2 (SQL_HANDLE_DBC)
+		SQLHDBC           0x104ee5c60
+		SQLSMALLINT       1
+		SQLCHAR         * 0x16b599af1
+		SQLINTEGER      * 0x16b599aec
+		SQLCHAR         * 0x16b599b00
+		SQLSMALLINT       512
+		SQLSMALLINT     * 0x0
+
+[000001.148473]
+iodbctest       20108F080 ENTER SQLGetDiagRec
+		SQLSMALLINT       1 (SQL_HANDLE_ENV)
+		SQLHENV           0x104ee4810
+		SQLSMALLINT       1
+		SQLCHAR         * 0x16b599af1
+		SQLINTEGER      * 0x16b599aec
+		SQLCHAR         * 0x16b599b00
+		SQLSMALLINT       512
+		SQLSMALLINT     * 0x0
+
+[000001.148553]
+iodbctest       20108F080 EXIT  SQLGetDiagRec with return code 100 (SQL_NO_DATA_FOUND)
+		SQLSMALLINT       1 (SQL_HANDLE_ENV)
+		SQLHENV           0x104ee4810
+		SQLSMALLINT       1
+		SQLCHAR         * 0x16b599af1
+		SQLINTEGER      * 0x16b599aec
+		SQLCHAR         * 0x16b599b00
+		SQLSMALLINT       512
+		SQLSMALLINT     * 0x0
+
+[000001.148629]
+iodbctest       20108F080 ENTER SQLGetInfo
+		SQLHDBC           0x104ee5c60
+		SQLUSMALLINT      7 (SQL_DRIVER_VER)
+		SQLPOINTER        0x16b599f81
+		SQLSMALLINT       255
+		SQLSMALLINT     * 0x16b599d88
+
+[000001.148697]
+iodbctest       20108F080 EXIT  SQLGetInfo with return code 0 (SQL_SUCCESS)
+		SQLHDBC           0x104ee5c60
+		SQLUSMALLINT      7 (SQL_DRIVER_VER)
+		SQLPOINTER        0x16b599f81
+				  | 3.9.0                                    |
+		SQLSMALLINT       255
+		SQLSMALLINT     * 0x16b599d88 (5)
+
+[000001.148763]
+iodbctest       20108F080 ENTER SQLGetInfo
+		SQLHDBC           0x104ee5c60
+		SQLUSMALLINT      6 (SQL_DRIVER_NAME)
+		SQLPOINTER        0x16b599f81
+		SQLSMALLINT       255
+		SQLSMALLINT     * 0x16b599d88
+
+[000001.148819]
+iodbctest       20108F080 EXIT  SQLGetInfo with return code 0 (SQL_SUCCESS)
+		SQLHDBC           0x104ee5c60
+		SQLUSMALLINT      6 (SQL_DRIVER_NAME)
+		SQLPOINTER        0x16b599f81
+				  | Snowflake                                |
+		SQLSMALLINT       255
+		SQLSMALLINT     * 0x16b599d88 (9)
+
+[000001.148905]
+iodbctest       20108F080 ENTER SQLGetFunctions
+		SQLHDBC           0x104ee5c60
+		SQLUSMALLINT      999 (SQL_API_ODBC3_ALL_FUNCTIONS)
+
+[000001.148941]
+iodbctest       20108F080 EXIT  SQLGetFunctions with return code 0 (SQL_SUCCESS)
+		SQLHDBC           0x104ee5c60
+		SQLUSMALLINT      999 (SQL_API_ODBC3_ALL_FUNCTIONS)
+		SQLUSMALLINT    * 0x16b599d8c
+
+[000001.149000]
+iodbctest       20108F080 ENTER SQLAllocHandle
+		SQLSMALLINT       3 (SQL_HANDLE_STMT)
+		SQLHANDLE         0x104ee5c60
+		SQLHANDLE       * 0x1048a9010
+
+[000001.149416]
+iodbctest       20108F080 EXIT  SQLAllocHandle with return code 0 (SQL_SUCCESS)
+		SQLSMALLINT       3 (SQL_HANDLE_STMT)
+		SQLHANDLE         0x104ee5c60
+		SQLHANDLE       * 0x1048a9010 (0x104956bc0)
+
+[000006.865033]
+iodbctest       20108F080 ENTER SQLPrepare
+		SQLHSTMT          0x104956bc0
+		SQLCHAR         * 0x16b5995a0
+				  | SELECT 1                                 |
+		SQLINTEGER        -3 (SQL_NTS)
+
+[000007.099249]
+iodbctest       20108F080 EXIT  SQLPrepare with return code 0 (SQL_SUCCESS)
+		SQLHSTMT          0x104956bc0
+		SQLCHAR         * 0x16b5995a0
+		SQLINTEGER        -3 (SQL_NTS)
+
+[000007.099679]
+iodbctest       20108F080 ENTER SQLExecute
+		SQLHSTMT          0x104956bc0
+
+[000007.358901]
+iodbctest       20108F080 EXIT  SQLExecute with return code 0 (SQL_SUCCESS)
+		SQLHSTMT          0x104956bc0
+
+[000007.358980]
+iodbctest       20108F080 ENTER SQLNumResultCols
+		SQLHSTMT          0x104956bc0
+		SQLSMALLINT     * 0x16b5980ec
+
+[000007.359023]
+iodbctest       20108F080 EXIT  SQLNumResultCols with return code 0 (SQL_SUCCESS)
+		SQLHSTMT          0x104956bc0
+		SQLSMALLINT     * 0x16b5980ec (1)
+
+[000007.359065]
+iodbctest       20108F080 ENTER SQLDescribeCol
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1
+		SQLCHAR         * 0x16b5980ee
+		SQLSMALLINT       50
+		SQLSMALLINT     * 0x0
+		SQLSMALLINT     * 0x16b5980ea
+		SQLULEN         * 0x16b5980e0
+		SQLSMALLINT     * 0x16b5980d6
+		SQLSMALLINT     * 0x16b5980d4
+
+[000007.359168]
+iodbctest       20108F080 EXIT  SQLDescribeCol with return code 0 (SQL_SUCCESS)
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1
+		SQLCHAR         * 0x16b5980ee
+				  | 1                                        |
+		SQLSMALLINT       50
+		SQLSMALLINT     * 0x0
+		SQLSMALLINT     * 0x16b5980ea (SQL_DECIMAL)
+		SQLULEN         * 0x16b5980e0 (1)
+		SQLSMALLINT     * 0x16b5980d6 (0)
+		SQLSMALLINT     * 0x16b5980d4 (SQL_NO_NULLS)
+
+[000007.359278]
+iodbctest       20108F080 ENTER SQLFetchScroll
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1 (SQL_FETCH_NEXT)
+		SQLLEN            1
+
+[000007.359356]
+iodbctest       20108F080 EXIT  SQLFetchScroll with return code 0 (SQL_SUCCESS)
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1 (SQL_FETCH_NEXT)
+		SQLLEN            1
+
+[000007.359393]
+iodbctest       20108F080 ENTER SQLGetData
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1
+		SQLSMALLINT       1 (SQL_C_CHAR)
+		SQLPOINTER        0x16b5991a0
+		SQLLEN            1024
+		SQLLEN          * 0x16b5980d8
+
+[000007.359570]
+iodbctest       20108F080 EXIT  SQLGetData with return code 0 (SQL_SUCCESS)
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1
+		SQLSMALLINT       1 (SQL_C_CHAR)
+		SQLPOINTER        0x16b5991a0
+				  | 1                                        |
+		SQLLEN            1024
+		SQLLEN          * 0x16b5980d8 (1)
+
+[000007.359639]
+iodbctest       20108F080 ENTER SQLFetchScroll
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1 (SQL_FETCH_NEXT)
+		SQLLEN            1
+
+[000007.359682]
+iodbctest       20108F080 EXIT  SQLFetchScroll with return code 100 (SQL_NO_DATA_FOUND)
+		SQLHSTMT          0x104956bc0
+		SQLUSMALLINT      1 (SQL_FETCH_NEXT)
+		SQLLEN            1
+
+[000007.359738]
+iodbctest       20108F080 ENTER SQLMoreResults
+		SQLHSTMT          0x104956bc0
+
+[000007.566419]
+iodbctest       20108F080 EXIT  SQLMoreResults with return code 100 (SQL_NO_DATA_FOUND)
+		SQLHSTMT          0x104956bc0
+
+[000007.566528]
+iodbctest       20108F080 ENTER SQLCloseCursor
+		SQLHSTMT          0x104956bc0
+
+[000007.566818]
+iodbctest       20108F080 EXIT  SQLCloseCursor with return code -1 (SQL_ERROR)
+		SQLHSTMT          0x104956bc0
+
+[000009.008176]
+iodbctest       20108F080 ENTER SQLCloseCursor
+		SQLHSTMT          0x104956bc0
+
+[000009.008379]
+iodbctest       20108F080 EXIT  SQLCloseCursor with return code -1 (SQL_ERROR)
+		SQLHSTMT          0x104956bc0
+
+[000009.008424]
+iodbctest       20108F080 ENTER SQLFreeHandle
+		SQLSMALLINT       3 (SQL_HANDLE_STMT)
+		SQLHSTMT          0x104956bc0
+
+[000009.008496]
+iodbctest       20108F080 EXIT  SQLFreeHandle with return code 0 (SQL_SUCCESS)
+		SQLSMALLINT       3 (SQL_HANDLE_STMT)
+		SQLHSTMT          0x104956bc0
+
+[000009.008540]
+iodbctest       20108F080 ENTER SQLDisconnect
+		SQLHDBC           0x104ee5c60
+
+[000009.214765]
+iodbctest       20108F080 EXIT  SQLDisconnect with return code 0 (SQL_SUCCESS)
+		SQLHDBC           0x104ee5c60
+
+[000009.214824]
+iodbctest       20108F080 ENTER SQLFreeHandle
+		SQLSMALLINT       2 (SQL_HANDLE_DBC)
+		SQLHDBC           0x104ee5c60
+
+[000009.265865]
+iodbctest       20108F080 EXIT  SQLFreeHandle with return code 0 (SQL_SUCCESS)
+		SQLSMALLINT       2 (SQL_HANDLE_DBC)
+		SQLHDBC           0x104ee5c60
+
+[000009.265910]
+iodbctest       20108F080 ENTER SQLFreeHandle
+		SQLSMALLINT       1 (SQL_HANDLE_ENV)
+		SQLHENV           0x104ee4810
+
+[000009.265950]
+iodbctest       20108F080 EXIT  SQLFreeHandle with return code 0 (SQL_SUCCESS)
+		SQLSMALLINT       1 (SQL_HANDLE_ENV)
+		SQLHENV           0x104ee4810
+
+** Trace finished on Sun Mar 22 19:13:59 2026

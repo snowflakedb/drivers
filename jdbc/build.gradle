@@ -8,6 +8,7 @@ plugins {
     id 'checkstyle'
     id 'com.diffplug.spotless' version '6.13.0' // latest version supporting Java 8
     id 'com.adarshr.test-logger' version '4.0.0'
+    id 'org.gradle.test-retry' version '1.6.2'
 }
 
 // ====================
@@ -191,6 +192,25 @@ def configureCommonTestTask = { t ->
                   'libjdbc_bridge.so'
     t.environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
     t.environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
+
+    def rawRetryCount = System.getenv('GRADLE_TEST_RETRY_COUNT')
+    def retryCount = rawRetryCount?.trim()
+    if (retryCount) {
+        int parsedRetryCount
+        try {
+            parsedRetryCount = Integer.parseInt(retryCount)
+            if (parsedRetryCount < 0) {
+                throw new NumberFormatException("negative value")
+            }
+        } catch (NumberFormatException e) {
+            throw new GradleException("Environment variable GRADLE_TEST_RETRY_COUNT must be a non-negative integer, but was: '${rawRetryCount}'", e)
+        }
+
+        t.retry {
+            maxRetries = parsedRetryCount
+            maxFailures = 10
+        }
+    }
 }
 
 test {

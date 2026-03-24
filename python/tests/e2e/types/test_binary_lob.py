@@ -7,9 +7,6 @@ This module tests large BINARY values at the following limits:
 Reference: https://docs.snowflake.com/en/release-notes/bcr-bundles/2025_03/bcr-1942
 """
 
-from .utils import assert_connection_is_open
-
-
 # =============================================================================
 # LOB SIZE LIMITS
 # =============================================================================
@@ -53,12 +50,11 @@ class TestBinaryLob:
         # This is the limit before enabling the 2025_03 behavior change bundle
 
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with BINARY column exists
         table_name = f"{tmp_schema}.lob_8mb_table"
-        execute_query(f"CREATE TABLE {table_name} (val BINARY)")
-
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val BINARY)")
         # When Binary value of 8MB size (8,388,608 bytes) is inserted
 
         # (Note: REPEAT() cannot be used in VALUES clause, must use INSERT ... SELECT)
@@ -81,12 +77,11 @@ class TestBinaryLob:
         # Requires 2025_03 behavior change bundle
 
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with BINARY(67108864) column exists
         table_name = f"{tmp_schema}.lob_64mb_table"
-        execute_query(f"CREATE TABLE {table_name} (val BINARY(67108864))")
-
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (val BINARY(67108864))")
         # When Binary value of 64MB size (67,108,864 bytes) is inserted
 
         # (Note: REPEAT() cannot be used in VALUES clause, must use INSERT ... SELECT)

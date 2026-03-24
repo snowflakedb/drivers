@@ -90,6 +90,20 @@ class IsInvalidHandle : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string describe() const override { return "is SQL_INVALID_HANDLE"; }
 };
 
+// Matches SQL_NEED_DATA.
+class IsNeedData : public Catch::Matchers::MatcherBase<OdbcResult> {
+ public:
+  bool match(const OdbcResult& result) const override { return result.returnCode == SQL_NEED_DATA; }
+  std::string describe() const override { return "is SQL_NEED_DATA"; }
+};
+
+// Matches SQL_STILL_EXECUTING.
+class IsStillExecuting : public Catch::Matchers::MatcherBase<OdbcResult> {
+ public:
+  bool match(const OdbcResult& result) const override { return result.returnCode == SQL_STILL_EXECUTING; }
+  std::string describe() const override { return "is SQL_STILL_EXECUTING"; }
+};
+
 // Matches when any diagnostic record has the given SQLSTATE.
 class HasSqlState : public Catch::Matchers::MatcherBase<OdbcResult> {
   std::string expectedState_;

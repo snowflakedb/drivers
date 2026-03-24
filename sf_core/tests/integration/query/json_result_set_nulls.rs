@@ -33,16 +33,33 @@ fn should_handle_null_values_in_json_result_set() {
     });
     let stmt = client.new_statement();
 
+    // Create table with nullable columns of various types
     client.set_sql_query(
         &stmt,
         &format!(
-            "CREATE OR REPLACE TABLE {table} (
+            "CREATE OR REPLACE TEMPORARY TABLE {table} (
             str_col STRING,
-            int_col INTEGER,
+            tinyint_col TINYINT,
+            smallint_col SMALLINT,
+            int_col INT,
+            bigint_col BIGINT,
+            num_col NUMBER(38, 0),
+            num_scale_col NUMBER(38, 2),
             bool_col BOOLEAN,
             real_col DOUBLE,
             date_col DATE,
-            ntz_col TIMESTAMP_NTZ(3)
+            ntz_col TIMESTAMP_NTZ(3),
+            ntz_hi_col TIMESTAMP_NTZ(9),
+            ltz_col TIMESTAMP_LTZ(3),
+            ltz_hi_col TIMESTAMP_LTZ(9),
+            tz_col TIMESTAMP_TZ(3),
+            tz_hi_col TIMESTAMP_TZ(9),
+            time_col TIME(3),
+            bin_col BINARY,
+            variant_col VARIANT,
+            object_col OBJECT,
+            array_col ARRAY,
+            decfloat_col DECFLOAT
         )"
         ),
     );
@@ -51,10 +68,36 @@ fn should_handle_null_values_in_json_result_set() {
     client.set_sql_query(
         &stmt,
         &format!(
-            "INSERT INTO {table} VALUES
-            ('hello', 42, true, 3.14, '2024-01-15', '2024-01-15 10:30:00.123'),
-            (null, null, null, null, null, null),
-            ('world', 7, false, 2.71, '2024-06-01', '2024-06-01 12:00:00.456')"
+            "INSERT INTO {table}
+            SELECT 'hello', 42, 1234, 123456, 1234567890123, 12345678901234567890123456789012345678, 123.45,
+                true, 3.14, '2024-01-15', '2024-01-15 10:30:00.123',
+                '2024-01-15 10:30:00.123456789',
+                '2024-01-15 10:30:00.123', '2024-01-15 10:30:00.123456789',
+                '2024-01-15 10:30:00.123 +01:00', '2024-01-15 10:30:00.123456789 +01:00',
+                '10:30:00.123',
+                TO_BINARY('hello', 'UTF-8'),
+                TO_VARIANT('test'), PARSE_JSON('{{\"k\": 1}}'), PARSE_JSON('[1, 2]'),
+                123.456::DECFLOAT
+            UNION ALL
+            SELECT null, null, null, null, null, null, null,
+                null, null, null, null,
+                null,
+                null, null,
+                null, null,
+                null,
+                null,
+                null, null, null,
+                null
+            UNION ALL
+            SELECT 'world', 7, 567, 78901, 9876543210987, 98765432109876543210987654321098765432, 789.01,
+                false, 2.71, '2024-06-01', '2024-06-01 12:00:00.456',
+                '2024-06-01 12:00:00.456789012',
+                '2024-06-01 12:00:00.456', '2024-06-01 12:00:00.456789012',
+                '2024-06-01 12:00:00.456 +02:00', '2024-06-01 12:00:00.456789012 +02:00',
+                '12:00:00.456',
+                TO_BINARY('world', 'UTF-8'),
+                TO_VARIANT(123), PARSE_JSON('{{\"k\": 2}}'), PARSE_JSON('[3, 4]'),
+                789.012::DECFLOAT"
         ),
     );
     client.execute_statement_query(&stmt);
@@ -67,7 +110,7 @@ fn should_handle_null_values_in_json_result_set() {
 
     let batch = helper.next_batch().expect("Expected a record batch");
     assert_eq!(batch.num_rows(), 3);
-    assert_eq!(batch.num_columns(), 6);
+    assert_eq!(batch.num_columns(), 22);
 
     for col_idx in 0..batch.num_columns() {
         assert!(
