@@ -910,6 +910,24 @@ pub unsafe extern "C" fn SQLGetStmtAttrW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::RetCode {
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    // TODO: Implement proper SQLMoreResults functionality (multiple result sets).
+    // For now, close the cursor as if SQLFreeStmt(SQL_CLOSE) was called, per ODBC spec.
+    let result = api::statement::free_stmt(statement_handle, api::FreeStmtOption::Close);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    if result.is_err() {
+        return result.to_sql_code();
+    }
+    sql::SqlReturn::NO_DATA.0
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetDescField(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
