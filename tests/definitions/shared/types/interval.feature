@@ -10,8 +10,34 @@ Feature: INTERVAL datatype handling
   # second and fractional second components.
   #
   # Note: the docs state INTERVAL is not a data type, but Snowflake does support
-  # it as a full column type.
+  # it as a full column type (public preview, gated by ENABLE_INTERVAL_TYPE).
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-datetime#interval
+  #
+  # Both JSON and Arrow fully support INTERVAL as a distinct type
+  # (INTERVAL_YEAR_MONTH / INTERVAL_DAY_TIME). Arrow physical vectors are int64
+  # (months or nanos) or Decimal128 (large nanos). The GS parameter
+  # ENABLE_INTERVAL_TYPES_AS_TEXT_IN_CLIENT_RESPONSE (session-settable,
+  # default false) switches to formatted text strings with TEXT metadata for
+  # drivers without native support.
+  #
+  # Python >= 3.18.0, JDBC >= 3.27.0 handle the native interval types. The
+  # reference ODBC driver does not have native support, so intervals are
+  # surfaced as SQL_VARCHAR with numeric string values (total months for
+  # YEAR/MONTH family, scaled nanoseconds for DAY/TIME family). Column
+  # metadata is identical between default and text-fallback modes.
+  #
+  # TODO: The UD ODBC driver should map INTERVAL columns to SQL_INTERVAL_*
+  # types once Arrow-level interval support is implemented in the Rust driver.
+  #
+  # Test coverage: These tests cover the default path (native interval
+  # metadata with numeric values). The two other backend modes are
+  # intentionally not tested:
+  #   - Feature off (ENABLE_INTERVAL_TYPE disabled): The SQL engine rejects
+  #     interval syntax entirely; nothing to test from the driver side.
+  #   - Text fallback (ENABLE_INTERVAL_TYPES_AS_TEXT_IN_CLIENT_RESPONSE = true):
+  #     Intervals arrive as formatted VARCHAR strings (e.g., "+1-02",
+  #     "+0 00:00:01.000000000"). No interval-specific driver logic is
+  #     exercised; it is just standard string passthrough.
 
   # ============================================================================
   # TYPE CASTING

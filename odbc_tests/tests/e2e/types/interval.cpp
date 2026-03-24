@@ -2,8 +2,10 @@
 // Based on: tests/definitions/shared/types/interval.feature
 //
 // Snowflake INTERVAL has two families:
-//   - YEAR/MONTH: stored as signed month count, reported as FIXED via SQL_C_CHAR.
-//   - DAY/TIME: stored as signed fractional-second duration, reported as FIXED via SQL_C_CHAR.
+//   - YEAR/MONTH: stored as signed month count (e.g., "14" for 1 year 2 months).
+//   - DAY/TIME: stored as scaled nanosecond duration (e.g., "1000000.000" for 1 second).
+// The reference ODBC driver surfaces all INTERVAL types as SQL_VARCHAR with
+// numeric string values (column_size=134217728, decimal_digits=0).
 //
 // The new driver does not yet support INTERVAL Arrow format; most tests
 // are skipped via SKIP_NEW_DRIVER_NOT_IMPLEMENTED() until support lands.
@@ -47,7 +49,7 @@ TEST_CASE("should cast INTERVAL values to appropriate type for YEAR TO MONTH and
     SQLRETURN ret =
         SQLDescribeCol(stmt.getHandle(), col, nullptr, 0, nullptr, &data_type, &column_size, &decimal_digits, nullptr);
     REQUIRE_ODBC(ret, stmt);
-    CHECK(data_type == SQL_DECIMAL);
+    CHECK(data_type == SQL_VARCHAR);
   }
 
   // And values should match the canonical numeric representation
@@ -352,8 +354,8 @@ TEST_CASE("should treat INTERVAL without explicit part as seconds", "[interval]"
       "'2024-04-15 12:00:00'::TIMESTAMP + INTERVAL '2 seconds' AS d2");
 
   // Then the result should contain:
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "2024-04-15 12:00:02.000");
-  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "2024-04-15 12:00:02.000");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "2024-04-15 12:00:02");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "2024-04-15 12:00:02");
 }
 
 // ============================================================================
