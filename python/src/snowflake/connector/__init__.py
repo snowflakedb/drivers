@@ -10,6 +10,7 @@ from typing import Any
 from ._internal.api_client.c_api import register_default_logger_callback
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
+from .constants import QueryStatus
 from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
     DatabaseError,
@@ -80,6 +81,7 @@ __all__ = [
     # Classes
     "Connection",
     "SnowflakeConnection",
+    "QueryStatus",
     "DictCursor",
     "SnowflakeCursor",
     # Exceptions
