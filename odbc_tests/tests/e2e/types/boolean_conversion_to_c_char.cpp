@@ -6,7 +6,7 @@
 
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 // ============================================================================
 // SQL_C_CHAR
@@ -44,7 +44,7 @@ TEST_CASE("should convert boolean to SQL_C_WCHAR", "[datatype][boolean][conversi
 // NULL handling
 // ============================================================================
 
-TEST_CASE("should handle NULL boolean with character C types", "[datatype][boolean][conversion][char]") {
+TEST_CASE("should handle NULL boolean with c_type", "[datatype][boolean][conversion][char]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -58,8 +58,13 @@ TEST_CASE("should handle NULL boolean with character C types", "[datatype][boole
     REQUIRE(indicator == SQL_NULL_DATA);
   };
 
-  // Then SQL_C_CHAR should return SQL_NULL_DATA indicator
-  check_null(SQL_C_CHAR);
-  // And SQL_C_WCHAR should return SQL_NULL_DATA indicator
-  check_null(SQL_C_WCHAR);
+  // Then <c_type> should return SQL_NULL_DATA indicator
+  {
+    INFO("SQL_C_CHAR");
+    check_null(SQL_C_CHAR);
+  }
+  {
+    INFO("SQL_C_WCHAR");
+    check_null(SQL_C_WCHAR);
+  }
 }

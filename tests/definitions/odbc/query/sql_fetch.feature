@@ -294,3 +294,56 @@ Feature: ODBC SQLFetch function behavior
     Then SQLFetch should return SQL_SUCCESS_WITH_INFO (not SQL_ERROR) because errors occurred on some but not all rows
     And rows_fetched should indicate how many rows were attempted
     And row_status array should show mixed results Valid rows should have SQL_ROW_SUCCESS Invalid rows should have SQL_ROW_ERROR or SQL_ROW_SUCCESS_WITH_INFO
+
+  @odbc_e2e
+  Scenario: SQLFetch returns SQL_NO_DATA consistently after end of result set.
+    Given Snowflake client is logged in
+    When all rows are consumed
+    Then subsequent SQLFetch calls should consistently return SQL_NO_DATA
+
+  @odbc_e2e
+  Scenario: SQLFetch returns SQL_NO_DATA on empty result set and stays consistent.
+    Given Snowflake client is logged in
+    When SQLFetch is called on an empty result set
+    Then subsequent calls should also return SQL_NO_DATA
+
+  @odbc_e2e
+  Scenario: SQLFetchScroll returns 24000 when no result set exists after DDL.
+    Given Snowflake client is logged in
+    When a DDL statement is executed (no result set)
+    And SQLFetchScroll is called on the statement with no result set
+    Then SQLFetchScroll should return SQL_ERROR with SQLSTATE 24000
+
+  @odbc_e2e
+  Scenario: SQLFetchScroll returns HY010 when called without executing statement.
+    Given Snowflake client is logged in
+    When SQLFetchScroll is called without executing any statement first
+    Then SQLFetchScroll should return SQL_ERROR with SQLSTATE HY010
+
+  @odbc_e2e
+  Scenario: SQLFetchScroll returns SQL_NO_DATA consistently after end of result set.
+    Given Snowflake client is logged in
+    When all rows are consumed via SQLFetchScroll
+    Then subsequent SQLFetchScroll calls should consistently return SQL_NO_DATA
+
+  @odbc_e2e
+  Scenario: SQLFetchScroll with SQL_FETCH_NEXT fetches block cursor rows correctly.
+    Given Snowflake client is logged in
+    And SQL_ATTR_ROW_ARRAY_SIZE is set for block cursor
+    And SQL_ATTR_ROW_STATUS_PTR and SQL_ATTR_ROWS_FETCHED_PTR are set
+    And a query returning 12 rows is executed
+    And columns are bound
+    When the first block is fetched via SQLFetchScroll SQL_FETCH_NEXT
+    Then all 5 rows should be fetched successfully
+    When the second block is fetched
+    Then rows 5-9 should be fetched
+    When the third (partial) block is fetched
+    Then only 2 rows should be fetched, with remaining marked SQL_ROW_NOROW
+    And the next call should return SQL_NO_DATA
+
+  @odbc_e2e
+  Scenario: SQLFetchScroll with non-NEXT orientations on forward-only cursor returns HY106.
+    Given Snowflake client is logged in and a result set exists on a forward-only cursor
+    And the first row is fetched successfully
+    When SQLFetchScroll is called with each non-NEXT orientation
+    Then each should return SQL_ERROR with SQLSTATE HY106

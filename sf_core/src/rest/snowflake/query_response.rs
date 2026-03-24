@@ -20,7 +20,7 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<String>>>,
+    pub rowset: Option<Vec<Vec<Option<String>>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
@@ -65,13 +65,13 @@ pub struct Data {
     #[serde(rename = "databaseProvider")]
     _database_provider: Option<String>,
     #[serde(rename = "finalDatabaseName")]
-    _final_database_name: Option<String>,
+    pub final_database_name: Option<String>,
     #[serde(rename = "finalSchemaName")]
-    _final_schema_name: Option<String>,
+    pub final_schema_name: Option<String>,
     #[serde(rename = "finalWarehouseName")]
-    _final_warehouse_name: Option<String>,
+    pub final_warehouse_name: Option<String>,
     #[serde(rename = "finalRoleName")]
-    _final_role_name: Option<String>,
+    pub final_role_name: Option<String>,
     #[serde(rename = "numberOfBinds")]
     _number_of_binds: Option<i32>,
     #[serde(rename = "statementTypeId")]
@@ -227,17 +227,18 @@ pub struct StageInfo {
     #[serde(rename = "endPoint")]
     end_point: Option<String>,
 
-    // unused fields
     #[serde(rename = "locationType")]
-    _location_type: Option<String>,
+    location_type: Option<String>,
+    #[serde(rename = "presignedUrl")]
+    presigned_url: Option<String>,
+
+    // unused fields
     #[serde(rename = "path")]
     _path: Option<String>,
     #[serde(rename = "storageAccount")]
     _storage_account: Option<String>,
     #[serde(rename = "isClientSideEncrypted")]
     _is_client_side_encrypted: Option<bool>,
-    #[serde(rename = "presignedUrl")]
-    _presigned_url: Option<String>,
     #[serde(rename = "useS3RegionalUrl")]
     _use_s3_regional_url: Option<bool>,
     #[serde(rename = "useRegionalUrl")]
@@ -255,6 +256,9 @@ pub struct Credentials {
     #[serde(rename = "AWS_TOKEN")]
     aws_token: Option<String>,
 
+    #[serde(rename = "GCS_ACCESS_TOKEN")]
+    gcs_access_token: Option<String>,
+
     // unused fields
     #[serde(rename = "AWS_ID")]
     _aws_id: Option<String>,
@@ -262,8 +266,6 @@ pub struct Credentials {
     _aws_key: Option<String>,
     #[serde(rename = "AZURE_SAS_TOKEN")]
     _azure_sas_token: Option<String>,
-    #[serde(rename = "GCS_ACCESS_TOKEN")]
-    _gcs_access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -490,7 +492,8 @@ impl Data {
         if value.is_empty() { None } else { Some(value) }
     }
 
-    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<String>>, &Vec<RowType>)> {
+    #[allow(clippy::type_complexity)]
+    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<Option<String>>>, &Vec<RowType>)> {
         match (self.rowset.as_ref(), self.row_type.as_ref()) {
             (Some(rowset), Some(row_type)) => Some((rowset, row_type)),
             (Some(_), None) => {
@@ -519,7 +522,7 @@ pub enum RowsetData<'a> {
         chunk_base64: &'a str,
     },
     JsonRowset {
-        rowset: &'a Vec<Vec<String>>,
+        rowset: &'a Vec<Vec<Option<String>>>,
         rowtype: &'a Vec<RowType>,
     },
     NoData,
@@ -576,7 +579,39 @@ impl TryFrom<&RowType> for query_types::RowType {
                 let scale = value.scale.unwrap_or(9);
                 Ok(query_types::RowType::timestamp_ntz(&name, nullable, scale))
             }
+            "TIMESTAMP_LTZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_ltz(&name, nullable, scale))
+            }
+            "TIMESTAMP_TZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_tz(&name, nullable, scale))
+            }
             "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
+            "TIME" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::time(&name, nullable, scale))
+            }
+            "BINARY" => {
+                let length = value.length.context(MissingParameterSnafu {
+                    parameter: format!("row type -> length for BINARY column '{name}'"),
+                })?;
+
+                let byte_length = value.byte_length.context(MissingParameterSnafu {
+                    parameter: format!("row type -> byte length for BINARY column '{name}'"),
+                })?;
+
+                Ok(query_types::RowType::binary(
+                    &name,
+                    nullable,
+                    length,
+                    byte_length,
+                ))
+            }
+            "DECFLOAT" => Ok(query_types::RowType::decfloat(&name, nullable)),
+            "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
+            "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
+            "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
@@ -589,6 +624,24 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
     type Error = QueryResponseError;
 
     fn try_from(value: &StageInfo) -> Result<Self, Self::Error> {
+        // Determine location type (default to S3 for backward compatibility)
+        let location_type = match value.location_type.as_deref() {
+            Some("GCS") => file_manager::LocationType::Gcs,
+            Some("AZURE") => {
+                return InvalidFormatSnafu {
+                    message: "Azure storage is not yet supported".to_string(),
+                }
+                .fail();
+            }
+            Some("S3") | None => file_manager::LocationType::S3,
+            Some(other) => {
+                return InvalidFormatSnafu {
+                    message: format!("Unknown location type: {other}"),
+                }
+                .fail();
+            }
+        };
+
         let location = value
             .location
             .as_ref()
@@ -598,7 +651,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .clone();
 
         let bucket_separator = location.find('/').context(InvalidFormatSnafu {
-            message: format!("Invalid S3 location format: {location}"),
+            message: format!("Invalid location format: {location}"),
         })?;
 
         let bucket = location[..bucket_separator].to_string();
@@ -615,13 +668,49 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             })?
             .clone();
 
-        let creds: file_manager::Credentials = value
-            .creds
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "stage info -> credentials",
-            })?
-            .try_into()?;
+        // Build credentials based on location type
+        let creds_data = value.creds.as_ref().context(MissingParameterSnafu {
+            parameter: "stage info -> credentials",
+        })?;
+
+        let creds = match location_type {
+            file_manager::LocationType::S3 => file_manager::CloudCredentials::S3 {
+                aws_key_id: creds_data
+                    .aws_key_id
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws key id",
+                    })?
+                    .clone(),
+                aws_secret_key: creds_data
+                    .aws_secret_key
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws secret key",
+                    })?
+                    .clone()
+                    .into(),
+                aws_token: creds_data
+                    .aws_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> aws token",
+                    })?
+                    .clone()
+                    .into(),
+            },
+            file_manager::LocationType::Gcs => file_manager::CloudCredentials::Gcs {
+                gcs_access_token: creds_data
+                    .gcs_access_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> gcs access token",
+                    })?
+                    .clone()
+                    .into(),
+            },
+            file_manager::LocationType::Azure => unreachable!("Azure rejected above"),
+        };
 
         let end_point = value
             .end_point
@@ -629,48 +718,20 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .filter(|ep| !ep.is_empty())
             .cloned();
 
+        let presigned_url = value
+            .presigned_url
+            .as_ref()
+            .filter(|url| !url.is_empty())
+            .cloned();
+
         Ok(file_manager::StageInfo {
+            location_type,
             bucket,
             key_prefix,
             region,
             creds,
             end_point,
-        })
-    }
-}
-
-impl TryFrom<&Credentials> for file_manager::Credentials {
-    type Error = QueryResponseError;
-
-    fn try_from(value: &Credentials) -> Result<Self, Self::Error> {
-        let aws_key_id = value
-            .aws_key_id
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws key id",
-            })?
-            .clone();
-
-        let aws_secret_key = value
-            .aws_secret_key
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws secret key",
-            })?
-            .clone();
-
-        let aws_token = value
-            .aws_token
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "credentials -> aws token",
-            })?
-            .clone();
-
-        Ok(file_manager::Credentials {
-            aws_key_id,
-            aws_secret_key: aws_secret_key.into(),
-            aws_token: aws_token.into(),
+            presigned_url,
         })
     }
 }
@@ -724,4 +785,173 @@ pub enum QueryResponseError {
         #[snafu(implicit)]
         location: snafu::Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_rowset_with_null_values() {
+        let json = r#"{
+            "data": {
+                "rowset": [["val1", null, "val3"], [null, "val2", null]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": false, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c3", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+
+        let rowset = response.data.rowset.as_ref().unwrap();
+        assert_eq!(rowset.len(), 2);
+
+        // First row: "val1", null, "val3"
+        assert_eq!(rowset[0][0], Some("val1".to_string()));
+        assert_eq!(rowset[0][1], None);
+        assert_eq!(rowset[0][2], Some("val3".to_string()));
+
+        // Second row: null, "val2", null
+        assert_eq!(rowset[1][0], None);
+        assert_eq!(rowset[1][1], Some("val2".to_string()));
+        assert_eq!(rowset[1][2], None);
+    }
+
+    #[test]
+    fn test_deserialize_rowset_all_nulls() {
+        let json = r#"{
+            "data": {
+                "rowset": [[null, null]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let rowset = response.data.rowset.as_ref().unwrap();
+        assert_eq!(rowset[0][0], None);
+        assert_eq!(rowset[0][1], None);
+    }
+
+    #[test]
+    fn test_to_json_rowset_with_nulls() {
+        let json = r#"{
+            "data": {
+                "rowset": [["a", null], [null, "b"]],
+                "queryResultFormat": "json",
+                "rowtype": [
+                    {"name": "c1", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null},
+                    {"name": "c2", "type": "TEXT", "nullable": true, "scale": null, "byteLength": 64, "length": 16, "precision": null}
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let (rowset, row_types) = response.data.to_json_rowset().unwrap();
+        assert_eq!(rowset.len(), 2);
+        assert_eq!(row_types.len(), 2);
+    }
+
+    #[test]
+    fn test_object_type_maps_to_object() {
+        let row_type = RowType {
+            name: "obj_col".to_string(),
+            type_: "OBJECT".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(1024),
+            byte_length: Some(4096),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Object {
+                ref name,
+                nullable: true,
+            } if name == "obj_col"
+        ));
+    }
+
+    #[test]
+    fn test_variant_type_maps_to_variant() {
+        let row_type = RowType {
+            name: "var_col".to_string(),
+            type_: "VARIANT".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Variant {
+                ref name,
+                nullable: false,
+            } if name == "var_col"
+        ));
+    }
+
+    #[test]
+    fn test_array_type_maps_to_array() {
+        let row_type = RowType {
+            name: "arr_col".to_string(),
+            type_: "ARRAY".to_string(),
+            nullable: true,
+            scale: None,
+            precision: None,
+            length: Some(512),
+            byte_length: Some(2048),
+            _fields: None,
+        };
+
+        let converted: crate::query_types::RowType = (&row_type).try_into().unwrap();
+        assert!(matches!(
+            converted,
+            crate::query_types::RowType::Array {
+                ref name,
+                nullable: true,
+            } if name == "arr_col"
+        ));
+    }
+
+    #[test]
+    fn test_unsupported_column_type_returns_error() {
+        let row_type = RowType {
+            name: "bad_col".to_string(),
+            type_: "GEOGRAPHY".to_string(),
+            nullable: false,
+            scale: None,
+            precision: None,
+            length: None,
+            byte_length: None,
+            _fields: None,
+        };
+
+        let result: Result<crate::query_types::RowType, _> = (&row_type).try_into();
+        match result {
+            Err(err) => assert!(
+                err.to_string().contains("GEOGRAPHY"),
+                "Error should mention the unsupported type: {err}"
+            ),
+            Ok(_) => panic!("Expected error for unsupported column type GEOGRAPHY"),
+        }
+    }
 }

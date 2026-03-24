@@ -8,14 +8,14 @@ StatementHandleWrapper execute_large_result_query(Connection& conn) {
   auto stmt = conn.createStatement();
   const auto sql = "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   return stmt;
 }
 
 void verify_column_count(StatementHandleWrapper& stmt, int expected_count) {
   SQLSMALLINT num_cols;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(num_cols == expected_count);
 }
 
@@ -28,11 +28,11 @@ void verify_row_count_and_sequential_numbering(StatementHandleWrapper& stmt, int
     if (ret == SQL_NO_DATA) {
       break;  // No more data
     }
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLINTEGER result = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(result), NULL);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     // Verify sequential numbering
     REQUIRE(result == expected_value);
@@ -55,7 +55,7 @@ TEST_CASE("should process one million row result set", "[large_result_set]") {
   // Then there are 1000000 numbered sequentially rows returned
   SQLSMALLINT num_cols;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(num_cols == 1);
   verify_row_count_and_sequential_numbering(stmt, 1000000);
 }

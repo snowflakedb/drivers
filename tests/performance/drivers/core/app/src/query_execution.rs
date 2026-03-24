@@ -5,13 +5,14 @@ use sf_core::protobuf::generated::database_driver_v1::*;
 use std::time::Instant;
 
 use crate::arrow::fetch_result_rows;
-use crate::connection::{DatabaseDriver, reset_statement_query};
+use crate::connection::{DriverRuntime, reset_statement_query};
 use crate::results::{
     current_unix_timestamp, print_statistics, write_csv_results, write_metadata_if_not_replay,
 };
 use crate::types::IterationResult;
 
 pub fn execute_fetch_test(
+    rt: &DriverRuntime,
     conn_handle: ConnectionHandle,
     stmt_handle: StatementHandle,
     sql_command: &str,
@@ -23,23 +24,23 @@ pub fn execute_fetch_test(
     println!("Query: {}", sql_command);
 
     // Warmup
-    run_warmup(stmt_handle, sql_command, warmup_iterations)
+    run_warmup(rt, stmt_handle, sql_command, warmup_iterations)
         .map_err(|e| format!("Warmup phase failed: {:?}", e))?;
 
     if warmup_iterations > 0 {
-        reset_statement_query(stmt_handle, sql_command)
+        reset_statement_query(rt, stmt_handle, sql_command)
             .map_err(|e| format!("Failed to reset statement after warmup: {:?}", e))?;
     }
 
     // Execute
-    let results = run_test_iterations(stmt_handle, sql_command, iterations)
+    let results = run_test_iterations(rt, stmt_handle, sql_command, iterations)
         .map_err(|e| format!("Test phase failed: {:?}", e))?;
 
     // Write & print
     let results_file = write_csv_results(&results, test_name)
         .map_err(|e| format!("Failed to write results: {:?}", e))?;
 
-    write_metadata_if_not_replay(conn_handle)?;
+    write_metadata_if_not_replay(rt, conn_handle)?;
 
     print_statistics(&results);
 
@@ -48,22 +49,28 @@ pub fn execute_fetch_test(
     Ok(())
 }
 
-pub fn run_warmup(stmt_handle: StatementHandle, sql: &str, warmup_iterations: usize) -> Result<()> {
+pub fn run_warmup(
+    rt: &DriverRuntime,
+    stmt_handle: StatementHandle,
+    sql: &str,
+    warmup_iterations: usize,
+) -> Result<()> {
     if warmup_iterations == 0 {
         return Ok(());
     }
 
     for i in 0..warmup_iterations {
-        let (_query_time, _fetch_time, _row_count) = execute_iteration(stmt_handle)?;
+        let (_query_time, _fetch_time, _row_count) = execute_iteration(rt, stmt_handle)?;
 
         if i < warmup_iterations - 1 {
-            reset_statement_query(stmt_handle, sql)?;
+            reset_statement_query(rt, stmt_handle, sql)?;
         }
     }
     Ok(())
 }
 
 pub fn run_test_iterations(
+    rt: &DriverRuntime,
     stmt_handle: StatementHandle,
     sql: &str,
     iterations: usize,
@@ -72,7 +79,7 @@ pub fn run_test_iterations(
     let mut expected_row_count = get_expected_row_count();
 
     for i in 0..iterations {
-        let (query_time, fetch_time, row_count) = execute_iteration(stmt_handle)?;
+        let (query_time, fetch_time, row_count) = execute_iteration(rt, stmt_handle)?;
 
         expected_row_count = validate_row_count(row_count, expected_row_count, i)?;
 
@@ -84,7 +91,7 @@ pub fn run_test_iterations(
         });
 
         if i < iterations - 1 {
-            reset_statement_query(stmt_handle, sql)?;
+            reset_statement_query(rt, stmt_handle, sql)?;
         }
     }
 
@@ -129,17 +136,23 @@ fn validate_row_count(
     }
 }
 
-fn execute_iteration(stmt_handle: StatementHandle) -> Result<(f64, f64, usize)> {
-    // Execute query (measure query execution time)
+fn execute_iteration(
+    rt: &DriverRuntime,
+    stmt_handle: StatementHandle,
+) -> Result<(f64, f64, usize)> {
     let start_query = Instant::now();
-    let response = DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
-        stmt_handle: Some(stmt_handle),
-        bindings: None,
-    })
-    .map_err(|e| format!("Query execution failed: {:?}", e))?;
+    let response = rt
+        .block_on(async |c| {
+            c.statement_execute_query(StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings: None,
+            })
+            .await
+        })
+        .map_err(|e| format!("Query execution failed: {:?}", e))?;
     let query_time = start_query.elapsed().as_secs_f64();
 
-    // Fetch results (measure fetch time)
+    // Fetch results outside the runtime so ChunkReader can use its own block_on
     let start_fetch = Instant::now();
     let row_count = if let Some(result) = response.result {
         fetch_result_rows(result).map_err(|e| format!("Failed to fetch results: {:?}", e))?

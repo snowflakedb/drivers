@@ -1,0 +1,313 @@
+id: odbc-tests-cpp-rules
+friendly_name: "Universal Driver ODBC Tests (C++)"
+status: shadow
+percentage_of_prs_reviewed: 100
+allowed_folders:
+  - "odbc_tests"
+excluded_folders: []
+llm_model: "claude-4-sonnet"
+allowed_file_extensions:
+  - ".cpp"
+  - ".hpp"
+  - ".h"
+rules:
+  - id: return-code-checking
+    rule: |
+      **OBJECTIVE**: Prevent silent failures from unchecked ODBC API return codes and incorrect type usage.
+
+      **REQUIREMENT**: Always capture and assert the `SQLRETURN` value from every ODBC API call. Use the correct ODBC types for pointer-valued attributes (`SQLULEN` for `SQL_ATTR_ROWS_FETCHED_PTR`, not `SQLINTEGER`). When constructing strings from `SQLGetData` output, check `indicator` for `SQL_NULL_DATA` before using the value.
+
+      ❌ **BAD:**
+      ```cpp
+      SQLExecDirect(stmt, (SQLCHAR*)"SELECT 1", SQL_NTS);
+      SQLFetch(stmt);
+      SQLGetData(stmt, 1, SQL_C_CHAR, db, sizeof(db), nullptr);
+
+      SQLINTEGER rows = 0;
+      SQLSetStmtAttr(stmt, SQL_ATTR_ROWS_FETCHED_PTR, &rows, sizeof(rows));
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      SQLRETURN ret = SQLExecDirect(stmt, (SQLCHAR*)"SELECT 1", SQL_NTS);
+      REQUIRE(ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO);
+      ret = SQLFetch(stmt);
+      CHECK_ODBC(ret, stmt);
+
+      SQLULEN rows_fetched = 0;
+      ret = SQLSetStmtAttr(stmt, SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
+      CHECK_ODBC(ret, stmt);
+      ```
+
+  - id: test-assertion-robustness
+    rule: |
+      **OBJECTIVE**: Ensure test assertions detect missing, partial, or stale output from ODBC API calls.
+
+      **REQUIREMENT**: Pre-fill output buffers with non-zero sentinel values (e.g., `0xFF`) before calling `SQLGetData` so tests detect when the driver fails to write. Reset indicator variables before each API call and assert their values individually. Never remove existing assertions without justification in the PR.
+
+      ❌ **BAD:**
+      ```cpp
+      SQLCHAR true_val = 0xFF;
+      SQLLEN indicator = 0;
+      SQLGetData(stmt, 1, SQL_C_DEFAULT, &true_val, sizeof(true_val), &indicator);
+      REQUIRE(true_val == 1);
+      REQUIRE(indicator == sizeof(SQLCHAR));
+
+      SQLCHAR false_val = 0xFF;
+      SQLGetData(stmt, 2, SQL_C_DEFAULT, &false_val, sizeof(false_val), &indicator);
+      REQUIRE(false_val == 0);
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      SQLCHAR true_val = 0xFF;
+      SQLLEN indicator = 0;
+      ret = SQLGetData(stmt, 1, SQL_C_DEFAULT, &true_val, sizeof(true_val), &indicator);
+      CHECK_ODBC(ret, stmt);
+      REQUIRE(true_val == 1);
+      REQUIRE(indicator == sizeof(SQLCHAR));
+
+      SQLCHAR false_val = 0xFF;
+      indicator = 0;
+      ret = SQLGetData(stmt, 2, SQL_C_DEFAULT, &false_val, sizeof(false_val), &indicator);
+      CHECK_ODBC(ret, stmt);
+      REQUIRE(false_val == 0);
+      REQUIRE(indicator == sizeof(SQLCHAR));
+      ```
+
+  - id: cleanup-safety
+    rule: |
+      **OBJECTIVE**: Prevent crashes, resource leaks, and silent failures during test cleanup and object destruction.
+
+      **REQUIREMENT**: Ensure destructors never throw exceptions by wrapping cleanup in `try/catch` or checking validity before executing. When a class supports move semantics, verify the moved-from destructor is safe (e.g., check `std::function` is non-empty before calling). Never allocate a handle manually when a RAII wrapper already allocated one. Always check error codes from file cleanup operations.
+
+      ❌ **BAD:**
+      ```cpp
+      ~PatSetup() { cleanup(); }
+
+      Schema(Schema&&) = default;
+      ~Schema() { execute_fn("DROP SCHEMA ..."); }
+
+      StatementHandleWrapper stmt = dbc.createStatementHandle();
+      SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
+
+      std::error_code ec;
+      fs::remove(path, ec);
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      ~PatSetup() {
+        try { cleanup(); } catch (...) {}
+      }
+
+      ~Schema() {
+        if (execute_fn) { execute_fn("DROP SCHEMA ..."); }
+      }
+
+      StatementHandleWrapper stmt = dbc.createStatementHandle();
+
+      std::error_code ec;
+      fs::remove(path, ec);
+      if (ec) { std::cerr << "cleanup failed: " << ec.message() << "\n"; }
+      ```
+
+  - id: undefined-behavior-prevention
+    rule: |
+      **OBJECTIVE**: Eliminate undefined behavior patterns common in C++ ODBC test code.
+
+      **REQUIREMENT**: Never use `const_cast` to remove `const` from string literals when passing to ODBC APIs. Declare a mutable `char[]` or `std::string` buffer instead. When calling `std::tolower` or `std::toupper` on `char` values, always cast to `unsigned char` first. When constructing shell commands, quote all path arguments to prevent breakage on paths with spaces.
+
+      ❌ **BAD:**
+      ```cpp
+      ret = SQLPutData(stmt, const_cast<char*>("hello"), 5);
+
+      std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+
+      std::string cmd = "openssl pkey -in " + path + " -passin pass:" + pwd;
+      system(cmd.c_str());
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      char data[] = "hello";
+      ret = SQLPutData(stmt, data, 5);
+
+      std::transform(s.begin(), s.end(), s.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+
+      decrypt_pem_key_to_file(encrypted_pem, password, output_path);
+      ```
+
+  - id: test-resource-cleanup
+    rule: |
+      **OBJECTIVE**: Prevent test pollution and flakiness from leftover files, schemas, or stages.
+
+      **REQUIREMENT**: Always clean up databases, schemas, and stages created during tests. Write temporary files to unique per-test directories (e.g., `fs::temp_directory_path()` with a random suffix) rather than fixed relative paths. Ensure cleanup happens even on test failure via RAII wrappers.
+
+      ❌ **BAD:**
+      ```cpp
+      const std::string path = "./rsa_key_encrypted.p8";
+      std::ofstream file(path);
+      file << encrypted_pem;
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      TempTestDir tmp("e2e_auth_unenc_");
+      const auto path = (tmp.path() / "encrypted.p8").string();
+      std::ofstream file(path);
+      file << encrypted_pem;
+      ```
+
+  - id: cross-platform-compatibility
+    rule: |
+      **OBJECTIVE**: Ensure tests and build scripts work across Linux, macOS, and Windows on both x86_64 and aarch64.
+
+      **REQUIREMENT**: Never hardcode platform-specific tool paths. Resolve tools from `PATH` or use platform detection. CMake compile options must support MSVC, MinGW, and Clang. Docker images downloading architecture-specific artifacts must specify `--platform` or detect the host arch dynamically. Open files in binary mode (`std::ios::binary` or `"wb"`) when reading/writing cryptographic material or data compared byte-for-byte.
+
+      ❌ **BAD:**
+      ```cpp
+      target_compile_options(common PUBLIC /FI"windows.h")
+
+      std::ifstream file(key_path.string());
+      auto* bio = BIO_new_file(path.c_str(), "w");
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      if (MSVC)
+        target_compile_options(common PUBLIC /FI"windows.h")
+      elseif (MINGW)
+        target_compile_options(common PUBLIC -include windows.h)
+      endif()
+
+      std::ifstream file(key_path.string(), std::ios::binary);
+      auto* bio = BIO_new_file(path.c_str(), "wb");
+      ```
+
+  - id: test-diagnostic-output
+    rule: |
+      **OBJECTIVE**: Keep test output clean and actionable by using Catch2 reporting mechanisms.
+
+      **REQUIREMENT**: Never add bare `std::cout` or `std::cerr` debug prints in test utilities or production test code. Use Catch2 `INFO()` or `CAPTURE()` macros to attach diagnostic context that only appears when a test fails. When iterating parameterized test cases, use `INFO(name)` to label which case failed.
+
+      ❌ **BAD:**
+      ```cpp
+      std::cout << "SQLGetDiagRec: record #" << recNumber << std::endl;
+      std::cout << "SQLState: " << sqlState << std::endl;
+
+      for (const auto& [name, query, expected] : test_cases) {
+        auto stmt = conn.execute_fetch(query);
+        CHECK(get_data<SQL_C_LONG>(stmt, 1) == expected[0]);
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      INFO("Retrieving diagnostic record #" << recNumber);
+
+      for (const auto& [name, query, expected] : test_cases) {
+        INFO(name);
+        auto stmt = conn.execute_fetch(query);
+        CHECK(get_data<SQL_C_LONG>(stmt, 1) == expected[0]);
+      }
+      ```
+
+  - id: test-coverage-gap
+    rule: |
+      **OBJECTIVE**: Ensure test suites cover all relevant ODBC data types, attributes, and error paths.
+
+      **REQUIREMENT**: When writing data type conversion tests, verify behavior with multiple C types (`SQL_C_LONG`, `SQL_C_DOUBLE`, `SQL_C_CHAR`, `SQL_C_SBIGINT`) not just `SQL_C_CHAR`. When testing ODBC API functions, include tests for `SQL_INVALID_HANDLE` (NULL handle) error paths. When adding new conversion logic, verify that related descriptor fields (`SQL_DESC_SCALE`, `SQL_DESC_PRECISION`) are also tested.
+
+      ❌ **BAD:**
+      ```cpp
+      CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1");
+      CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "hello");
+      CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "3.14");
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      CHECK(get_data<SQL_C_LONG>(stmt, 1) == 1);
+      CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "hello");
+      CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == Catch::Approx(3.14));
+
+      TEST_CASE("SQLGetInfo: SQL_INVALID_HANDLE", "[error]") {
+        char buf[256];
+        REQUIRE(SQLGetInfo(SQL_NULL_HDBC, SQL_DBMS_NAME, buf, sizeof(buf), nullptr)
+                == SQL_INVALID_HANDLE);
+      }
+      ```
+
+  - id: tag-consistency
+    rule: |
+      **OBJECTIVE**: Maintain consistent Catch2 test tag patterns for reliable test filtering.
+
+      **REQUIREMENT**: Follow established tag conventions when creating new test cases. Data type conversion tests must use the pattern `[datatype][<type>][conversion][<target>]` (e.g., `[datatype][boolean][conversion][real]`). Match the tag structure of existing test files in the same category.
+
+      ❌ **BAD:**
+      ```cpp
+      TEST_CASE("should convert boolean to floating point types",
+                "[datatype][boolean]") {
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      TEST_CASE("should convert boolean to floating point types",
+                "[datatype][boolean][conversion][real]") {
+      ```
+
+  - id: test-naming-accuracy
+    rule: |
+      **OBJECTIVE**: Ensure test case names accurately describe the behavior being tested.
+
+      **REQUIREMENT**: Verify that the test name matches the actual assertions. If the name says "idempotent" but the test asserts an error on the second call, rename it. If assertions change, update the name. Misleading names cause engineers to misunderstand test coverage.
+
+      ❌ **BAD:**
+      ```cpp
+      TEST_CASE("SQLDisconnect: Multiple disconnects are idempotent") {
+        ret = SQLDisconnect(dbc);
+        REQUIRE(ret == SQL_SUCCESS);
+        ret = SQLDisconnect(dbc);
+        REQUIRE_EXPECTED_ERROR(ret, "08003", dbc, SQL_HANDLE_DBC);
+      }
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      TEST_CASE("SQLDisconnect: Second disconnect returns 08003 error") {
+        ret = SQLDisconnect(dbc);
+        REQUIRE(ret == SQL_SUCCESS);
+        ret = SQLDisconnect(dbc);
+        REQUIRE_EXPECTED_ERROR(ret, "08003", dbc, SQL_HANDLE_DBC);
+      }
+      ```
+
+  - id: explicit-includes
+    rule: |
+      **OBJECTIVE**: Ensure each file includes the headers it directly uses, independent of transitive includes.
+
+      **REQUIREMENT**: Include ODBC headers (`<sql.h>`, `<sqlext.h>`) and standard library headers (`<algorithm>`, `<memory>`, `<cstring>`) explicitly when their symbols are used directly. Do not rely on transitive includes from project headers. Header files must be self-contained: types used in declarations must have their defining header included directly.
+
+      ❌ **BAD:**
+      ```cpp
+      #include <sql.h>
+      #include <sqltypes.h>
+      // Uses SQLPrepare (declared in <sqlext.h>) without including it
+
+      #ifndef GET_DIAG_REC_HPP
+      #include <string>
+      // Uses SQLSMALLINT without including <sql.h>
+      ```
+
+      ✅ **GOOD:**
+      ```cpp
+      #include <sql.h>
+      #include <sqlext.h>
+      #include <sqltypes.h>
+
+      #ifndef GET_DIAG_REC_HPP
+      #include <sql.h>
+      #include <string>
+      ```

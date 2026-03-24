@@ -80,6 +80,10 @@ Feature: DATE type support
     Given Snowflake client is logged in
     When Query "SELECT ?::DATE, ?::DATE, ?::DATE" is executed with bound date values [2024-01-15, 1970-01-01, 1999-12-31]
     Then Result should contain [2024-01-15, 1970-01-01, 1999-12-31]
+
+  @jdbc_e2e
+  Scenario: should select null date using parameter binding
+    Given Snowflake client is logged in
     When Query "SELECT ?::DATE" is executed with bound NULL value
     Then Result should contain [NULL]
 

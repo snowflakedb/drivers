@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [ main ]
+  merge_group:
+    types: [ checks_requested ]
 
 concurrency:
   # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)

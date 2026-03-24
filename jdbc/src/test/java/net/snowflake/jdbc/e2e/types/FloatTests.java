@@ -12,8 +12,12 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class FloatTests extends SnowflakeIntegrationTestBase {
   private static final String FLOAT_TYPE = "FLOAT";
@@ -89,51 +93,61 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
         });
   }
 
-  @Test
-  public void shouldHandleFloatBoundaryValuesFromLiteralsForFloatAndSynonyms() throws Exception {
+  private static Stream<Arguments> floatCaseBoundaryValues() {
+    return Stream.of(
+        Arguments.of(
+            "max",
+            String.format(
+                "SELECT 1.7976931348623157e308::%1$s, -1.7976931348623157e308::%1$s", FLOAT_TYPE)),
+        Arguments.of(
+            "min",
+            String.format("SELECT 2.2250738585072014e-308::%1$s, 5e-324::%1$s", FLOAT_TYPE)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("floatCaseBoundaryValues")
+  public void shouldHandleFloatCaseBoundaryValuesFromLiteralsForFloatAndSynonyms(
+      String caseName, String sql) throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
 
-    // When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is
-    // executed
-    String maxBoundarySql =
-        String.format(
-            "SELECT 1.7976931348623157e308::%1$s, -1.7976931348623157e308::%1$s", FLOAT_TYPE);
+    // When Query "SELECT <query_values>" is executed
     withQueryResult(
         connection,
-        maxBoundarySql,
+        sql,
         resultSet -> {
-
-          // Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
-          assertSingleRow(resultSet, Arrays.asList(Double.MAX_VALUE, -Double.MAX_VALUE));
-        });
-
-    // When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
-    String minBoundarySql =
-        String.format("SELECT 2.2250738585072014e-308::%1$s, 5e-324::%1$s", FLOAT_TYPE);
-    withQueryResult(
-        connection,
-        minBoundarySql,
-        resultSet -> {
-
-          // Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
+          // Then Result should contain floats [<expected_values>]
           assertTrue(resultSet.next(), "Expected one row for type: " + FLOAT_TYPE);
-          assertFiniteDouble(
-              resultSet.getDouble(1), Double.MIN_NORMAL, "Column 1 mismatch for " + FLOAT_TYPE);
-          double actualSubnormal = resultSet.getDouble(2);
-          assertTrue(actualSubnormal > 0.0, "Column 2 should be positive for " + FLOAT_TYPE);
-          assertTrue(
-              actualSubnormal <= Double.MIN_VALUE,
-              "Column 2 should be subnormal for " + FLOAT_TYPE);
+          if ("max".equals(caseName)) {
+            assertFiniteDouble(
+                resultSet.getDouble(1), Double.MAX_VALUE, "Column 1 mismatch for " + FLOAT_TYPE);
+            assertFiniteDouble(
+                resultSet.getDouble(2), -Double.MAX_VALUE, "Column 2 mismatch for " + FLOAT_TYPE);
+          } else {
+            assertFiniteDouble(
+                resultSet.getDouble(1), Double.MIN_NORMAL, "Column 1 mismatch for " + FLOAT_TYPE);
+            double actualSubnormal = resultSet.getDouble(2);
+            assertTrue(actualSubnormal > 0.0, "Column 2 should be positive for " + FLOAT_TYPE);
+            assertTrue(
+                actualSubnormal <= Double.MIN_VALUE,
+                "Column 2 should be subnormal for " + FLOAT_TYPE);
+          }
           assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
         });
+  }
+
+  @Test
+  public void shouldHandleFloatPrecisionBoundaryValuesFromLiteralsForFloatAndSynonyms()
+      throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
 
     // When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
-    String precisionSql =
+    String sql =
         String.format("SELECT 123456789012345.0::%1$s, 1234567890123456.0::%1$s", FLOAT_TYPE);
     withQueryResult(
         connection,
-        precisionSql,
+        sql,
         resultSet -> {
 
           // Then Result should verify precision around 15 decimal digits
@@ -414,7 +428,6 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
     // When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values
     // [123.456, -789.012, 42.0]
     String sql = String.format("SELECT ?::%1$s, ?::%1$s, ?::%1$s", FLOAT_TYPE);
-    // When
     withPreparedQueryResult(
         connection,
         sql,
@@ -431,12 +444,18 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
           assertAllFloatGetters(resultSet, 3, 42.0, "Column 3 mismatch for " + FLOAT_TYPE);
           assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
         });
+  }
+
+  @Test
+  public void shouldSelectNullFloatUsingParameterBindingForFloatAndSynonyms() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
 
     // When Query "SELECT ?::<type>" is executed with bound NULL value
-    String nullSql = String.format("SELECT ?::%1$s", FLOAT_TYPE);
+    String sql = String.format("SELECT ?::%1$s", FLOAT_TYPE);
     withPreparedQueryResult(
         connection,
-        nullSql,
+        sql,
         ps -> ps.setNull(1, Types.DOUBLE),
         resultSet -> {
           // Then Result should contain NULL

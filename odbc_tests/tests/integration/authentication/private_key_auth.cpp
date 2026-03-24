@@ -15,7 +15,7 @@
 #include "ODBCConfig.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "put_get_utils.hpp"
 #include "sf_odbc.h"
 #include "test_setup.hpp"
@@ -65,7 +65,7 @@ std::string read_test_private_key_content() {
 EnvironmentHandleWrapper setup_environment_integration() {
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env);
+  REQUIRE_ODBC(ret, env);
   return env;
 }
 
@@ -149,7 +149,7 @@ TEST_CASE("should forward private key content set via SQLSetConnectAttr to core"
 
   SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT,
                                     (SQLPOINTER)test_key_pem.c_str(), (SQLINTEGER)test_key_pem.size());
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 
   // When Trying to Connect
   std::string connection_string = get_base_jwt_connection_string_int();
@@ -170,7 +170,7 @@ TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core",
 
   SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_BASE64, (SQLPOINTER)test_key_b64.c_str(),
                                     (SQLINTEGER)test_key_b64.size());
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 
   // When Trying to Connect
   std::string connection_string = get_base_jwt_connection_string_int();
@@ -196,7 +196,7 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
   // Set password via SQLSetConnectAttr
   SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD,
                                     (SQLPOINTER)test_password.c_str(), (SQLINTEGER)test_password.size());
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 
   // When Trying to Connect
   std::string connection_string = get_base_jwt_connection_string_int();

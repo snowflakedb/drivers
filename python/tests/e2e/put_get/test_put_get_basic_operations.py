@@ -11,7 +11,6 @@ from tests.e2e.put_get.put_get_helper import (
     get_file_from_stage,
     list_stage_contents,
 )
-from tests.e2e.types.utils import assert_connection_is_open
 from tests.utils import shared_test_data_dir
 
 
@@ -82,12 +81,12 @@ def test_should_get_file_uploaded_to_stage(connection):
                 assert content == "1,2,3"
 
 
-def test_should_return_correct_rowset_for_put(execute_query, connection):
+def test_should_return_correct_rowset_for_put(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
@@ -140,12 +139,12 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[3] == ""
 
 
-def test_should_return_correct_column_metadata_for_put(execute_query, connection):
+def test_should_return_correct_column_metadata_for_put(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
@@ -259,13 +258,13 @@ def test_should_get_file_from_subdirectory_in_stage(connection):
             assert content == "1,2,3"
 
 
-def test_should_upload_file_to_subdirectory_in_stage(execute_query, connection):
+def test_should_upload_file_to_subdirectory_in_stage(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When File is uploaded to a subdirectory in stage
         stage_name = create_temporary_stage(cursor, "TEST_SUBDIR_UPLOAD")

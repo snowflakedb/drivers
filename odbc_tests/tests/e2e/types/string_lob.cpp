@@ -22,7 +22,7 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // Helper to generate random ASCII string for LOB tests
@@ -43,12 +43,6 @@ static std::string generate_random_ascii_string(std::mt19937& gen, size_t length
 
 TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][string][lob]") {
   // Corner case: string at the historical LOB limit (16 MB = 16,777,216 bytes)
-  // TODO: Reenable this test for the new driver
-  // The test is flaky because the driver does not handle async query responses correctly
-  // When we insert the string, the driver does not wait for the insert to complete before returning
-  // Test flakiness occurs more often on Windows
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -69,32 +63,32 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_lob VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN value_len = static_cast<SQLLEN>(lob_string.size());
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, lob_string.size(), 0,
                            (SQLCHAR*)lob_string.c_str(), lob_string.size(), &value_len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // And Query "SELECT val, LENGTH(val) as len FROM {table}" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val, LENGTH(val) as len FROM test_string_lob", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // Use SQLBindCol to fetch the large string
   std::vector<char> buffer(string_length + 1);
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer.data(), buffer.size(), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   SQLBIGINT len = 0;
   SQLLEN len_indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_SBIGINT, &len, sizeof(len), &len_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   // Then the result should show length 16777216
   CHECK(len == static_cast<SQLBIGINT>(string_length));
   REQUIRE(indicator == buffer.size() - 1);
@@ -105,12 +99,6 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
 
 TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB size", "[datatype][string][lob]") {
   // Corner case: string at maximum LOB limit (128 MB) - requires Increased LOB Size feature
-  // TODO: Reenable this test for the new driver
-  // The test is flaky because the driver does not handle async query responses correctly
-  // When we insert the string, the driver does not wait for the insert to complete before returning
-  // Test flakiness occurs more often on Windows
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -132,36 +120,36 @@ TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB s
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_lob VALUES (?)", SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLLEN value_len = static_cast<SQLLEN>(lob_string.size());
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, lob_string.size(), 0,
                            (SQLCHAR*)lob_string.c_str(), lob_string.size(), &value_len);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
   }
 
   // And Query "SELECT val, LENGTH(val) as len FROM {table}" is executed
   auto stmt = conn.createStatement();
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val, LENGTH(val) as len FROM test_string_lob", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Use SQLBindCol to fetch the large string
   std::vector<char> buffer(string_length + 1);
   SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer.data(), buffer.size(), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLBIGINT len = 0;
   SQLLEN len_indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_SBIGINT, &len, sizeof(len), &len_indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the result should show length 134217728
   CHECK(len == static_cast<SQLBIGINT>(string_length));

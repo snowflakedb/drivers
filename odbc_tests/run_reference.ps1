@@ -92,6 +92,32 @@ $env:DRIVER_PATH = $DriverPath
 $env:PARAMETER_PATH = $ParameterPath
 $env:DRIVER_TYPE = "OLD"
 
-& "$ProjectRoot\scripts\odbc\run_tests_windows.ps1" @args
+Push-Location $ScriptDir
+
+try {
+    $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+
+    New-Item -ItemType Directory -Force -Path cmake-build-reference | Out-Null
+    $cmakeArgs = @("-B", "cmake-build-reference", "-D", "DRIVER_TYPE=OLD")
+    $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } elseif ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { $null }
+    if ($vcpkgRoot) {
+        $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake"
+    }
+
+    & "C:\Program Files\CMake\bin\cmake" @cmakeArgs .
+    if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+
+    & "C:\Program Files\CMake\bin\cmake" --build cmake-build-reference --config Debug --parallel $NPROC
+    if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+
+    $ctestArgs = @("-j", ($NPROC * 4), "-C", "Debug", "--test-dir", "cmake-build-reference", "--output-on-failure")
+    $ctestArgs += $args
+
+    & "C:\Program Files\CMake\bin\ctest" @ctestArgs
+    if ($LASTEXITCODE -ne 0) { throw "ctest failed" }
+}
+finally {
+    Pop-Location
+}
 
 Write-Host "ODBC reference tests completed!"

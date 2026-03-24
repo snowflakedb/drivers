@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -12,10 +13,11 @@ use snafu::{ResultExt, ensure};
 use tracing::warn;
 
 use super::{
-    CacheDirectoryResolutionSnafu, FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu,
-    IrregularFileTypeSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
+    CacheDirectoryResolutionSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
     TokenRetrievalSnafu, TokenStorageSnafu,
 };
+#[cfg(unix)]
+use super::{FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu, IrregularFileTypeSnafu};
 
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
 const DEFAULT_RETRY_COUNT: u32 = 5;
@@ -129,6 +131,19 @@ impl FileLock {
                         std::thread::sleep(retry_delay);
                     }
                 }
+                // On Windows, concurrent create_dir + remove_dir can transiently
+                // fail when the directory is in a pending-delete state.  Treat
+                // these as retryable lock contention rather than fatal errors.
+                // On the final attempt, fall through to the Err(e) arm so the
+                // original OS error is preserved (avoids masking genuine
+                // permission failures behind a generic LockExhausted).
+                #[cfg(windows)]
+                Err(ref e)
+                    if Self::is_transient_windows_error(e, &lock_path)
+                        && attempt < retry_count - 1 =>
+                {
+                    std::thread::sleep(retry_delay);
+                }
                 Err(e) => {
                     return Err(e).context(LockAcquisitionSnafu);
                 }
@@ -136,6 +151,33 @@ impl FileLock {
         }
 
         LockExhaustedSnafu.fail()
+    }
+
+    /// On Windows, `RemoveDirectory` marks a directory for deletion-on-close
+    /// rather than removing it synchronously.  Between that mark and the actual
+    /// removal, `CreateDirectory` on the same path can fail with one of several
+    /// transient error codes instead of `ERROR_ALREADY_EXISTS`.
+    ///
+    /// `ERROR_SHARING_VIOLATION` and `ERROR_DELETE_PENDING` are unambiguously
+    /// transient.  `ERROR_ACCESS_DENIED` is broader (can also mean genuine ACL
+    /// denial), so we only treat it as transient when the lock directory still
+    /// exists — that indicates contention rather than a permission problem on
+    /// the parent directory.
+    ///
+    /// See <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-removedirectoryw>
+    #[cfg(windows)]
+    fn is_transient_windows_error(e: &std::io::Error, lock_path: &Path) -> bool {
+        // Win32 system error codes.
+        // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+        const ERROR_ACCESS_DENIED: i32 = 5;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        const ERROR_DELETE_PENDING: i32 = 303;
+
+        match e.raw_os_error() {
+            Some(ERROR_SHARING_VIOLATION | ERROR_DELETE_PENDING) => true,
+            Some(ERROR_ACCESS_DENIED) => lock_path.exists(),
+            _ => false,
+        }
     }
 
     fn is_stale(lock_path: &Path, stale_timeout: Duration) -> bool {
@@ -588,22 +630,60 @@ impl CredentialApi for FileTokenCacheEntry {
     }
 }
 
-/// Checks whether the platform keyring provides persistent storage and
-/// installs the file-based credential store as a fallback if it does not.
-///
-/// Call once at application startup, before creating any `keyring::Entry`.
-pub(super) fn install_file_credential_fallback() -> Result<(), TokenCacheError> {
-    let default_persistence = keyring::default::default_credential_builder().persistence();
-    if !matches!(default_persistence, CredentialPersistence::UntilDelete) {
-        let cache = FileTokenCache::new()?;
-        keyring::set_default_credential_builder(Box::new(cache));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    mod file_lock_tests {
+        use super::*;
+        use std::path::Path;
+
+        #[test]
+        fn transient_error_sharing_violation_and_delete_pending() {
+            let path = Path::new("unused");
+            // ERROR_SHARING_VIOLATION (32) and ERROR_DELETE_PENDING (303)
+            // are unconditionally transient regardless of path existence.
+            for code in [32, 303] {
+                let err = std::io::Error::from_raw_os_error(code);
+                assert!(
+                    FileLock::is_transient_windows_error(&err, path),
+                    "expected code {code} to be transient"
+                );
+            }
+        }
+
+        #[test]
+        fn transient_error_access_denied_only_when_lock_dir_exists() {
+            let temp_dir = tempfile::tempdir().expect("failed to create temp dir for test");
+            let existing = temp_dir.path().to_path_buf(); // guaranteed to exist for the duration of the test
+            let missing = existing.join("nonexistent_child");
+            assert!(!missing.exists(), "test precondition: path must not exist");
+
+            let err = std::io::Error::from_raw_os_error(5); // ERROR_ACCESS_DENIED
+            assert!(
+                FileLock::is_transient_windows_error(&err, &existing),
+                "ACCESS_DENIED should be transient when lock dir exists"
+            );
+            assert!(
+                !FileLock::is_transient_windows_error(&err, &missing),
+                "ACCESS_DENIED should NOT be transient when lock dir is absent"
+            );
+        }
+
+        #[test]
+        fn unrelated_error_codes_are_not_transient() {
+            let path = Path::new("unused");
+            // ERROR_FILE_NOT_FOUND (2), ERROR_PATH_NOT_FOUND (3), ERROR_INVALID_HANDLE (6)
+            for code in [2, 3, 6, 123, 9999] {
+                let err = std::io::Error::from_raw_os_error(code);
+                assert!(
+                    !FileLock::is_transient_windows_error(&err, path),
+                    "expected code {code} to NOT be transient"
+                );
+            }
+        }
+    }
 
     mod file_token_cache_tests {
         use super::*;
@@ -736,11 +816,30 @@ mod tests {
         #[cfg(target_os = "linux")]
         #[test]
         fn validate_file_fd_rejects_file_not_owned_by_current_user() {
-            let path = Path::new("/etc/hosts");
-            let file = fs::File::open(path).expect("/etc/hosts should be readable");
+            use std::os::unix::fs::MetadataExt;
 
-            let err = validate_file_fd(&file, path)
-                .expect_err("Expected FileNotOwnedByCurrentUser for root-owned file");
+            let current_uid = unsafe { libc::getuid() };
+
+            let (path, _dir) = if current_uid == 0 {
+                let dir = tempfile::tempdir().unwrap();
+                let p = dir.path().join("not_mine");
+                fs::write(&p, "test").unwrap();
+                let c_path = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+                let ret = unsafe { libc::chown(c_path.as_ptr(), 65534, 65534) };
+                assert_eq!(ret, 0, "chown failed");
+                assert_ne!(
+                    fs::metadata(&p).unwrap().uid(),
+                    current_uid,
+                    "File should be owned by a different user after chown"
+                );
+                (p, Some(dir))
+            } else {
+                (Path::new("/etc/hosts").to_path_buf(), None)
+            };
+
+            let file = fs::File::open(&path).expect("Should be able to open file");
+            let err = validate_file_fd(&file, &path)
+                .expect_err("Expected FileNotOwnedByCurrentUser for file owned by another user");
             assert!(
                 matches!(err, TokenCacheError::FileNotOwnedByCurrentUser { .. }),
                 "Expected FileNotOwnedByCurrentUser, got: {err}"
@@ -834,11 +933,24 @@ mod tests {
 
         const THREAD_COUNT: usize = 10;
 
+        // On Windows ARM64, `RemoveDirectory` is asynchronous and the
+        // "pending delete" state can persist noticeably longer than on
+        // x64, especially on CI runners.  This causes `CreateDirectory`
+        // to return transient errors (`ERROR_DELETE_PENDING`,
+        // `ERROR_ACCESS_DENIED`, etc.) for extended periods, so threads
+        // need a larger retry budget to avoid spurious lock-exhaustion
+        // failures under high contention.
+        const LOCK_RETRY_COUNT: u32 = if cfg!(all(windows, target_arch = "aarch64")) {
+            1000
+        } else {
+            100
+        };
+
         fn create_shared_cache() -> (tempfile::TempDir, Arc<FileTokenCache>) {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = Arc::new(
                 FileTokenCache::with_directory(dir.path().to_path_buf())
-                    .retry_count(100)
+                    .retry_count(LOCK_RETRY_COUNT)
                     .retry_delay(Duration::from_millis(50)),
             );
             (dir, cache)

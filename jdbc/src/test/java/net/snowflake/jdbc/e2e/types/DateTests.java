@@ -275,6 +275,12 @@ public class DateTests extends SnowflakeIntegrationTestBase {
           assertDateGetters(resultSet, 3, LocalDate.of(1999, 12, 31));
           assertFalse(resultSet.next());
         });
+  }
+
+  @Test
+  public void shouldSelectNullDateUsingParameterBinding() throws Exception {
+    // Given Snowflake client is logged in
+    Connection connection = getDefaultConnection();
 
     // When Query "SELECT ?::DATE" is executed with bound NULL value
     withPreparedQueryResult(

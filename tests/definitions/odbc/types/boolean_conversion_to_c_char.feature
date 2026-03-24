@@ -28,8 +28,12 @@ Feature: ODBC boolean to character type conversions
   # ============================================================================
 
   @odbc_e2e
-  Scenario: should handle NULL boolean with character C types
+  Scenario Outline: should handle NULL boolean with <c_type>
     Given Snowflake client is logged in
     When Query "SELECT NULL::BOOLEAN" is executed
-    Then SQL_C_CHAR should return SQL_NULL_DATA indicator
-    And SQL_C_WCHAR should return SQL_NULL_DATA indicator
+    Then <c_type> should return SQL_NULL_DATA indicator
+
+    Examples:
+      | c_type     |
+      | SQL_C_CHAR  |
+      | SQL_C_WCHAR |

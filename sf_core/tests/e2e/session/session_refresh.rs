@@ -101,7 +101,7 @@ fn should_refresh_session_proactively() {
             },
             database: parameters.database.clone(),
             schema: parameters.schema.clone(),
-            warehouse: parameters.warehouse.clone(),
+            warehouse: parameters.warehouse(),
             role: parameters.role.clone(),
             client_info: client_info.clone(),
             session_parameters: None,

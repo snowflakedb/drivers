@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 
 #include <catch2/catch_test_macros.hpp>
@@ -27,17 +28,17 @@ TEST_CASE("SQLGetData retrieves data for a single column after SQLFetch.", "[que
 
   // When a query returning data is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to position the cursor
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should retrieve the data for the column
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -54,11 +55,11 @@ TEST_CASE("SQLGetData can be called multiple times to retrieve variable-length d
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(),
                     (SQLCHAR*)"SELECT 'This is a very long string that will be retrieved in parts' AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to position the cursor
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData can be called multiple times with small buffers to retrieve data in parts
   SQLCHAR buffer1[10] = {0};
@@ -80,7 +81,7 @@ TEST_CASE("SQLGetData can be called multiple times to retrieve variable-length d
   SQLCHAR buffer3[50] = {0};
   SQLLEN indicator3 = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer3, sizeof(buffer3), &indicator3);
-  CHECK_ODBC(ret, stmt);  // Should be SQL_SUCCESS (no more data)
+  REQUIRE_ODBC(ret, stmt);  // Should be SQL_SUCCESS (no more data)
   CHECK(std::string((char*)buffer3) == "hat will be retrieved in parts");
 }
 
@@ -96,7 +97,7 @@ TEST_CASE("SQLGetData can only be called after rows have been fetched.", "[query
 
   // When a query is executed but SQLFetch is NOT called
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should return SQL_ERROR with SQLSTATE 24000 (Invalid cursor state)
   SQLINTEGER value = 0;
@@ -118,17 +119,17 @@ TEST_CASE("SQLGetData can retrieve data after SQLFetchScroll.", "[query][get_dat
   // When a query returning multiple rows is executed
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 3)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetchScroll is called to fetch the first row
   ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should retrieve data for the current row
   SQLBIGINT value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 0);
   CHECK(indicator == sizeof(SQLBIGINT));
 }
@@ -145,27 +146,27 @@ TEST_CASE("SQLGetData retrieves data for multiple columns.", "[query][get_data]"
   // When a query with multiple columns is executed and fetched
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 'hello' AS col2, 3.14 AS col3", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should retrieve each column individually
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(col1 == 10);
 
   SQLCHAR col2[100] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)col2) == "hello");
 
   SQLDOUBLE col3 = 0.0;
   SQLLEN col3_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 3, SQL_C_DOUBLE, &col3, sizeof(col3), &col3_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(col3 == 3.14);
 }
 
@@ -230,7 +231,7 @@ TEST_CASE("SQLGetData converts data to the specified TargetType.", "[query][get_
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
   // Then the data should be converted to string representation
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)buffer) == "12345");
   CHECK(indicator == 5);
 }
@@ -247,7 +248,7 @@ TEST_CASE("SQLGetData with SQL_C_DEFAULT selects default C type based on SQL typ
   // And we determine the SQL data type of the column
   SQLLEN sql_type = 0;
   SQLRETURN ret = SQLColAttribute(stmt.getHandle(), 1, SQL_DESC_TYPE, NULL, 0, NULL, (SQLLEN*)&sql_type);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(sql_type == SQL_DECIMAL);
 
   // When SQLGetData is called with SQL_C_DEFAULT
@@ -256,7 +257,7 @@ TEST_CASE("SQLGetData with SQL_C_DEFAULT selects default C type based on SQL typ
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, buffer, sizeof(buffer), &indicator);
 
   // Then the driver should select a default C type and return data
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)buffer) == "42");
   CHECK(indicator == 2);
 }
@@ -276,19 +277,19 @@ TEST_CASE("SQLGetData overrides SQLBindCol type when a different TargetType is s
   SQLINTEGER bound_value = 0;
   SQLLEN bound_ind = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &bound_value, sizeof(bound_value), &bound_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData with SQL_C_CHAR should override the bound type and return a string
   SQLCHAR char_buffer[100] = {0};
   SQLLEN char_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, char_buffer, sizeof(char_buffer), &char_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)char_buffer) == "42");
   CHECK(char_ind == 2);
 }
@@ -340,7 +341,7 @@ TEST_CASE("SQLGetData counts null terminator when returning character data.", "[
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
   // Then the full string should be returned with null termination
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(ret == SQL_SUCCESS);
   CHECK(std::string((char*)buffer) == "ABCDE");
   CHECK(indicator == 5);
@@ -369,7 +370,8 @@ TEST_CASE("SQLGetData truncates character data when buffer is too small.", "[que
   CHECK(std::string((char*)buffer) == "Hello");
 
   // And the indicator should show the full length of the original data
-  CHECK((indicator == SQL_NO_TOTAL || indicator == 11));
+  NEW_DRIVER_ONLY("BD#25") { CHECK(indicator == 11); }
+  OLD_DRIVER_ONLY("BD#25") { CHECK((indicator == 11 || indicator == SQL_NO_TOTAL)); }
 }
 
 TEST_CASE("SQLGetData truncates binary data to BufferLength bytes.", "[query][get_data]") {
@@ -390,7 +392,7 @@ TEST_CASE("SQLGetData truncates binary data to BufferLength bytes.", "[query][ge
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   CHECK(get_sqlstate(stmt) == "01004");
 
-  // And the indicator should show SQL_NO_TOTAL
+  // And the indicator should show the full length of the original data
   CHECK(indicator == 10);
 
   // And the buffer should contain the first 3 bytes
@@ -415,7 +417,7 @@ TEST_CASE("SQLGetData ignores BufferLength for fixed-length data types.", "[quer
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, 0, &indicator);
 
   // Then the driver should ignore BufferLength and return the data
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
@@ -476,7 +478,7 @@ TEST_CASE("SQLGetData returns data length in StrLen_or_IndPtr for character data
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
   // Then the indicator should contain the data length (not including null terminator)
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == 11);  // Length of "test string"
   CHECK(std::string((char*)buffer) == "test string");
 }
@@ -497,7 +499,7 @@ TEST_CASE("SQLGetData returns type size in StrLen_or_IndPtr for fixed-length dat
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
 
   // Then the indicator should contain the size of the C type
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == sizeof(SQLINTEGER));
 }
 
@@ -515,7 +517,7 @@ TEST_CASE("SQLGetData returns SQL_NULL_DATA in StrLen_or_IndPtr for NULL values.
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
 
   // Then the indicator should be SQL_NULL_DATA
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == SQL_NULL_DATA);
 }
 
@@ -551,7 +553,7 @@ TEST_CASE("SQLGetData with null StrLen_or_IndPtr succeeds for non-null data.", "
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), NULL);
 
   // Then SQLGetData should succeed for non-null data
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
 }
 
@@ -669,13 +671,13 @@ TEST_CASE("SQLGetData can be called on unbound columns after bound columns.", "[
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query with two columns is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS col1, 'hello' AS col2", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the bound column should have data
   CHECK(col1 == 42);
@@ -684,7 +686,7 @@ TEST_CASE("SQLGetData can be called on unbound columns after bound columns.", "[
   SQLCHAR col2[100] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)col2) == "hello");
 }
 
@@ -709,15 +711,15 @@ TEST_CASE("SQLGetData retrieves data in increasing column number order.", "[quer
 
   // Then each column should return its correct value
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 1);
 
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 2);
 
   ret = SQLGetData(stmt.getHandle(), 3, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 3);
 }
 
@@ -740,7 +742,7 @@ TEST_CASE("SQLGetInfo returns SQL_GETDATA_EXTENSIONS bitmask.", "[query][get_dat
   SQLSMALLINT length = 0;
   SQLRETURN ret =
       SQLGetInfo(conn.handleWrapper().getHandle(), SQL_GETDATA_EXTENSIONS, &extensions, sizeof(extensions), &length);
-  CHECK_ODBC(ret, conn.handleWrapper());
+  REQUIRE_ODBC(ret, conn.handleWrapper());
 
   // Then the call should succeed and return a valid bitmask
   REQUIRE(ret == SQL_SUCCESS);
@@ -775,7 +777,7 @@ TEST_CASE("SQLGetData for a different column resets prior column offset.", "[que
   SQLSMALLINT length = 0;
   SQLRETURN ret =
       SQLGetInfo(conn.handleWrapper().getHandle(), SQL_GETDATA_EXTENSIONS, &extensions, sizeof(extensions), &length);
-  CHECK_ODBC(ret, conn.handleWrapper());
+  REQUIRE_ODBC(ret, conn.handleWrapper());
   if ((extensions & SQL_GD_ANY_ORDER) == 0) {
     SKIP("Driver does not support SQL_GD_ANY_ORDER");
   }
@@ -793,14 +795,14 @@ TEST_CASE("SQLGetData for a different column resets prior column offset.", "[que
   SQLCHAR col2_buf[100] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, col2_buf, sizeof(col2_buf), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)col2_buf) == "XY");
 
   // Then reading column 1 again should start from the beginning (offset reset)
   SQLCHAR full_buffer[100] = {0};
   SQLLEN full_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, full_buffer, sizeof(full_buffer), &full_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)full_buffer) == "ABCDEFGHIJ");
 }
 
@@ -843,13 +845,13 @@ TEST_CASE("SQLGetData returns 07009 when Col_or_Param_Num is 0 and bookmarks are
 
   // And bookmarks are off (default)
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_USE_BOOKMARKS, (SQLPOINTER)SQL_UB_OFF, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // When a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLGetData is called with column 0
   SQLINTEGER value = 0;
@@ -891,11 +893,11 @@ TEST_CASE("SQLGetData returns 24000 when cursor is positioned after end of resul
 
   // When a query returning one row is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And all rows have been fetched
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE(ret == SQL_NO_DATA);
 
@@ -926,7 +928,7 @@ TEST_CASE("SQLGetData supports SQL_C_CHAR retrieval.", "[query][get_data]") {
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
   // Then the string data should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)buffer) == "ODBC Test");
   CHECK(indicator == 9);
 }
@@ -946,7 +948,7 @@ TEST_CASE("SQLGetData supports SQL_C_SBIGINT retrieval.", "[query][get_data]") {
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
 
   // Then the large integer should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 9223372036854775807LL);
   CHECK(indicator == sizeof(SQLBIGINT));
 }
@@ -966,7 +968,7 @@ TEST_CASE("SQLGetData supports SQL_C_DOUBLE retrieval.", "[query][get_data]") {
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &value, sizeof(value), &indicator);
 
   // Then the double value should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 3.14159);
   CHECK(indicator == sizeof(SQLDOUBLE));
 }
@@ -986,7 +988,7 @@ TEST_CASE("SQLGetData supports SQL_C_FLOAT retrieval.", "[query][get_data]") {
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_FLOAT, &value, sizeof(value), &indicator);
 
   // Then the float value should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 2.5f);
   CHECK(indicator == sizeof(SQLREAL));
 }
@@ -1006,7 +1008,7 @@ TEST_CASE("SQLGetData supports SQL_C_SHORT retrieval.", "[query][get_data]") {
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SHORT, &value, sizeof(value), &indicator);
 
   // Then the short value should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 127);
   CHECK(indicator == sizeof(SQLSMALLINT));
 }
@@ -1026,7 +1028,7 @@ TEST_CASE("SQLGetData supports SQL_C_BIT retrieval.", "[query][get_data]") {
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
 
   // Then the boolean value should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 1);
 }
 
@@ -1045,7 +1047,7 @@ TEST_CASE("SQLGetData supports SQL_C_TYPE_DATE retrieval.", "[query][get_data]")
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_TYPE_DATE, &date_value, sizeof(date_value), &indicator);
 
   // Then the date components should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(date_value.year == 2025);
   CHECK(date_value.month == 1);
   CHECK(date_value.day == 15);
@@ -1066,7 +1068,7 @@ TEST_CASE("SQLGetData supports SQL_C_TYPE_TIMESTAMP retrieval.", "[query][get_da
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_TYPE_TIMESTAMP, &ts_value, sizeof(ts_value), &indicator);
 
   // Then the timestamp components should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(ts_value.year == 2025);
   CHECK(ts_value.month == 6);
   CHECK(ts_value.day == 15);
@@ -1090,7 +1092,7 @@ TEST_CASE("SQLGetData supports SQL_C_BINARY retrieval.", "[query][get_data]") {
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
 
   // Then the binary data should be returned
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == 5);  // "Hello" is 5 bytes
   CHECK(memcmp(buffer, "Hello", 5) == 0);
 }
@@ -1223,25 +1225,25 @@ TEST_CASE("SQLGetData cannot be called when SQL_ATTR_ROW_ARRAY_SIZE is set and S
 
   // When SQLSetStmtAttr is called to set the row array size
   SQLRETURN ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)10, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQL_GD_BLOCK is not supported
   SQLINTEGER getdata_extensions = 0;
   SQLSMALLINT length = 0;
   ret =
       SQLGetInfo(conn.handleWrapper().getHandle(), SQL_GETDATA_EXTENSIONS, (SQLPOINTER)&getdata_extensions, 0, &length);
-  CHECK_ODBC(ret, conn.handleWrapper());
+  REQUIRE_ODBC(ret, conn.handleWrapper());
   REQUIRE((getdata_extensions & SQL_GD_BLOCK) == 0);
   REQUIRE(length == sizeof(SQLINTEGER));
 
   // And SQLExecDirect is called to execute the query that returns 10 rows
   ret = SQLExecDirect(stmt.getHandle(),
                       (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 10)) v ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetch is called to fetch the rows
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should return SQL_ERROR with SQLSTATE HY109 (Invalid cursor position)
   SQLBIGINT result = 0;
@@ -1268,17 +1270,17 @@ TEST_CASE("SQLGetData retrieves correct data on each successive row after SQLFet
   // When a query returning multiple rows is executed
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should return the correct value for each row
   for (int i = 0; i < 5; i++) {
     ret = SQLFetch(stmt.getHandle());
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     SQLBIGINT value = 0;
     SQLLEN indicator = 0;
     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(value == i);
     CHECK(indicator == sizeof(SQLBIGINT));
   }
@@ -1313,15 +1315,15 @@ TEST_CASE("SQLGetData with SQL_ARD_TYPE uses the type from the ARD descriptor.",
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData with SQL_ARD_TYPE should use the ARD's type
   SQLBIGINT value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_ARD_TYPE, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 42);
   CHECK(indicator == sizeof(SQLBIGINT));
 }
@@ -1343,9 +1345,9 @@ TEST_CASE("SQLGetData with SQL_ARD_TYPE returns 07009 error when ARD is unmodifi
 
   // When a query is executed and fetched without modifying the ARD
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData with SQL_ARD_TYPE should return SQL_ERROR with SQLSTATE 07009
   SQLCHAR buffer[64] = {0};
@@ -1378,14 +1380,14 @@ TEST_CASE("SQLGetData does not modify ARD descriptor fields.", "[query][get_data
 
   // And a query is executed, fetched, and data retrieved via SQLGetData
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then the ARD descriptor count should remain unchanged
   SQLSMALLINT count_after = -1;
@@ -1410,30 +1412,30 @@ TEST_CASE("SQLGetData works after SQLFreeStmt SQL_CLOSE and re-execute.", "[quer
 
   // When a first query is executed, fetched, and data retrieved
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 10);
 
   // And the cursor is closed
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a new query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 20 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should work on the new result set
   value = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 20);
 }
 
@@ -1453,22 +1455,22 @@ TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL value regardless of TargetT
   SQLCHAR char_buf[100] = {0};
   SQLLEN char_ind = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, char_buf, sizeof(char_buf), &char_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(char_ind == SQL_NULL_DATA);
 
   // Close and re-execute to test another type
   ret = SQLFreeStmt(stmt.getHandle(), SQL_CLOSE);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT NULL AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And when called with SQL_C_LONG for a NULL column
   SQLINTEGER int_value = 999;
   SQLLEN int_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &int_value, sizeof(int_value), &int_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then both should return SQL_NULL_DATA indicator
   CHECK(int_ind == SQL_NULL_DATA);
@@ -1491,7 +1493,7 @@ TEST_CASE("SQLGetData retrieves same data for same column on same row with SQL_G
   SQLSMALLINT length = 0;
   SQLRETURN ret =
       SQLGetInfo(conn.handleWrapper().getHandle(), SQL_GETDATA_EXTENSIONS, &extensions, sizeof(extensions), &length);
-  CHECK_ODBC(ret, conn.handleWrapper());
+  REQUIRE_ODBC(ret, conn.handleWrapper());
   REQUIRE((extensions & SQL_GD_ANY_ORDER) == SQL_GD_ANY_ORDER);
 
   auto stmt = conn.execute_fetch("SELECT 42 AS col1, 'hello' AS col2");
@@ -1500,12 +1502,12 @@ TEST_CASE("SQLGetData retrieves same data for same column on same row with SQL_G
   SQLCHAR col2[100] = {0};
   SQLLEN col2_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER col1 = 0;
   SQLLEN col1_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then both columns should return their correct values
   CHECK(std::string((char*)col2) == "hello");
@@ -1529,7 +1531,7 @@ TEST_CASE("SQLGetData on a bound column when SQL_GD_BOUND is supported.", "[quer
   SQLSMALLINT length = 0;
   SQLRETURN ret =
       SQLGetInfo(conn.handleWrapper().getHandle(), SQL_GETDATA_EXTENSIONS, &extensions, sizeof(extensions), &length);
-  CHECK_ODBC(ret, conn.handleWrapper());
+  REQUIRE_ODBC(ret, conn.handleWrapper());
   REQUIRE((extensions & SQL_GD_BOUND) == SQL_GD_BOUND);
 
   auto stmt = conn.createStatement();
@@ -1538,19 +1540,19 @@ TEST_CASE("SQLGetData on a bound column when SQL_GD_BOUND is supported.", "[quer
   SQLINTEGER bound_value = 0;
   SQLLEN bound_ind = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &bound_value, sizeof(bound_value), &bound_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // And a query is executed and fetched
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then SQLGetData should also be able to retrieve the bound column
   SQLINTEGER getdata_value = 0;
   SQLLEN getdata_ind = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &getdata_value, sizeof(getdata_value), &getdata_ind);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(getdata_value == 42);
 
   // And the bound buffer should also have the data from SQLFetch
@@ -1573,7 +1575,7 @@ TEST_CASE("SQLGetData can be mixed with SQLFetch and SQLFetchScroll calls.", "[q
   // When a query returning 4 rows is executed
   SQLRETURN ret = SQLExecDirect(
       stmt.getHandle(), (SQLCHAR*)"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 4)) ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   // Then alternating between SQLFetch and SQLFetchScroll should work with SQLGetData
   SQLBIGINT value = 0;
@@ -1581,30 +1583,30 @@ TEST_CASE("SQLGetData can be mixed with SQLFetch and SQLFetchScroll calls.", "[q
 
   // Row 0 via SQLFetch
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 0);
 
   // Row 1 via SQLFetchScroll
   ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 1);
 
   // Row 2 via SQLFetch
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 2);
 
   // Row 3 via SQLFetchScroll
   ret = SQLFetchScroll(stmt.getHandle(), SQL_FETCH_NEXT, 0);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(value == 3);
 }
 
@@ -1627,7 +1629,7 @@ TEST_CASE("SQLGetData returns empty string with indicator 0 for empty string col
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
   // Then the data should be an empty string
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(std::string((char*)buffer) == "");
   CHECK(indicator == 0);
 }
@@ -1658,7 +1660,8 @@ TEST_CASE("SQLGetData with BufferLength 1 for character data returns only null t
   CHECK(buffer[0] == '\0');
 
   // And the indicator should show the full data length
-  CHECK((indicator == SQL_NO_TOTAL || indicator == 3));
+  NEW_DRIVER_ONLY("BD#25") { CHECK(indicator == 3); }
+  OLD_DRIVER_ONLY("BD#25") { CHECK((indicator == 3 || indicator == SQL_NO_TOTAL)); }
 }
 
 // =============================================================================
@@ -1678,7 +1681,7 @@ TEST_CASE("SQLGetData converts same integer to multiple C types.", "[query][get_
     SQLINTEGER value = 0;
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     // Then each C type conversion should return the correct value
     CHECK(value == 42);
   }
@@ -1689,7 +1692,7 @@ TEST_CASE("SQLGetData converts same integer to multiple C types.", "[query][get_
     SQLBIGINT value = 0;
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(value == 42);
   }
 
@@ -1699,7 +1702,7 @@ TEST_CASE("SQLGetData converts same integer to multiple C types.", "[query][get_
     SQLDOUBLE value = 0.0;
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &value, sizeof(value), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(value == 42.0);
   }
 
@@ -1709,7 +1712,290 @@ TEST_CASE("SQLGetData converts same integer to multiple C types.", "[query][get_
     SQLCHAR buffer[100] = {0};
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     CHECK(std::string((char*)buffer) == "42");
   }
+}
+
+// =============================================================================
+// SQLGetData with BufferLength = 0 (Length-Only Query)
+// =============================================================================
+
+TEST_CASE("SQLGetData with BufferLength 0 for SQL_C_CHAR returns data length without writing data.",
+          "[query][get_data]") {
+  // Doc: "SQLGetData returns SQLSTATE HY090 (Invalid string or buffer length) when
+  //       BufferLength is less than 0 but not when BufferLength is 0."
+  // Per spec, if BufferLength = 0 and TargetValuePtr != NULL for variable-length types,
+  // the driver returns the data length in StrLen_or_IndPtr without writing data.
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute_fetch("SELECT 'Hello World' AS value");
+
+  // When SQLGetData is called with BufferLength = 0 for SQL_C_CHAR
+  SQLCHAR buffer[1] = {'X'};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, 0, &indicator);
+
+  // Then the call should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+
+  // And the indicator should contain the full data length
+  CHECK((indicator == 11 || indicator == SQL_NO_TOTAL));
+
+  // And the buffer should remain unchanged (no data written)
+  CHECK(buffer[0] == 'X');
+}
+
+TEST_CASE("SQLGetData with BufferLength 0 for SQL_C_BINARY returns data length without writing data.",
+          "[query][get_data]") {
+  // Doc: "SQLGetData returns SQLSTATE HY090 (Invalid string or buffer length) when
+  //       BufferLength is less than 0 but not when BufferLength is 0."
+  // For SQL_C_BINARY with BufferLength = 0, return the total data length in bytes.
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute_fetch("SELECT TO_BINARY('48656C6C6F', 'HEX') AS value");
+
+  // When SQLGetData is called with BufferLength = 0 for SQL_C_BINARY
+  SQLCHAR buffer[1] = {0xFF};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, 0, &indicator);
+
+  // Then the call should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+
+  // And the indicator should contain the full data length
+  CHECK((indicator == 5 || indicator == SQL_NO_TOTAL));
+
+  // And the buffer should remain unchanged (no data written)
+  CHECK(buffer[0] == 0xFF);
+}
+
+// =============================================================================
+// Multi-call SQLGetData for SQL_C_WCHAR
+// =============================================================================
+
+TEST_CASE("SQLGetData retrieves wide string data in parts with SQL_C_WCHAR.", "[query][get_data]") {
+  // Doc: "It can be called multiple times to retrieve variable-length data in parts."
+  // For SQL_C_WCHAR, the offset tracking must account for UTF-16 code unit
+  // boundaries (sizeof(SQLWCHAR) per code unit), not byte boundaries.
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-variable-length-data-in-parts
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute_fetch("SELECT 'ABCDEFGHIJ' AS value");
+
+  // When SQLGetData is called with SQL_C_WCHAR and a small buffer
+  SQLWCHAR buffer[4] = {0};  // 3 chars + null terminator
+  SQLLEN indicator = 0;
+  std::string result;
+
+  // Then the first call should return 3 wide chars with SQL_SUCCESS_WITH_INFO
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  for (int i = 0; buffer[i] != 0; ++i) {
+    result += static_cast<char>(buffer[i]);
+  }
+
+  // And the second call should return the next 3 wide chars
+  memset(buffer, 0, sizeof(buffer));
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  for (int i = 0; buffer[i] != 0; ++i) {
+    result += static_cast<char>(buffer[i]);
+  }
+
+  // And the third call should return the next 3 wide chars
+  memset(buffer, 0, sizeof(buffer));
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  for (int i = 0; buffer[i] != 0; ++i) {
+    result += static_cast<char>(buffer[i]);
+  }
+
+  // And the fourth call should return the last character with SQL_SUCCESS
+  memset(buffer, 0, sizeof(buffer));
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccess());
+  for (int i = 0; buffer[i] != 0; ++i) {
+    result += static_cast<char>(buffer[i]);
+  }
+
+  // And the complete string should be reconstructed correctly
+  CHECK(result == "ABCDEFGHIJ");
+}
+
+// =============================================================================
+// Multi-call SQLGetData for SQL_C_BINARY
+// =============================================================================
+
+TEST_CASE("SQLGetData retrieves binary data in parts with multiple SQL_C_BINARY calls.", "[query][get_data]") {
+  // Doc: "It can be called multiple times to retrieve variable-length data in parts."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-variable-length-data-in-parts
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  // "HelloWorld" = 48656C6C6F576F726C64 (10 bytes)
+  auto stmt = conn.execute_fetch("SELECT TO_BINARY('48656C6C6F576F726C64', 'HEX') AS value");
+
+  // When SQLGetData is called with SQL_C_BINARY and a 4-byte buffer
+  SQLCHAR buffer[4] = {0};
+  SQLLEN indicator = 0;
+  std::string result;
+
+  // Then the first call should return the first 4 bytes with SQL_SUCCESS_WITH_INFO
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  CHECK((indicator == 10 || indicator == SQL_NO_TOTAL));
+  result.append(reinterpret_cast<char*>(buffer), sizeof(buffer));
+
+  // And the second call should return the next 4 bytes
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  CHECK((indicator == 6 || indicator == SQL_NO_TOTAL));
+  result.append(reinterpret_cast<char*>(buffer), sizeof(buffer));
+
+  // And the third call should return the last 2 bytes with SQL_SUCCESS
+  memset(buffer, 0, sizeof(buffer));
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccess());
+  CHECK(indicator == 2);
+  result.append(reinterpret_cast<char*>(buffer), std::min(static_cast<size_t>(indicator), sizeof(buffer)));
+
+  // And the complete binary data should be reconstructed
+  CHECK(result == "HelloWorld");
+}
+
+// =============================================================================
+// SQLGetData NULL handling for additional data types
+// =============================================================================
+
+TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL double column.", "[query][get_data]") {
+  // Doc: "Sets *StrLen_or_IndPtr to SQL_NULL_DATA if the data is NULL."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute_fetch("SELECT NULL::FLOAT AS value");
+
+  // When SQLGetData is called with SQL_C_DOUBLE for a NULL FLOAT column
+  SQLDOUBLE value = 999.0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DOUBLE, &value, sizeof(value), &indicator);
+
+  // Then the indicator should be SQL_NULL_DATA and the call should succeed
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
+TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL binary column.", "[query][get_data]") {
+  // Doc: "Sets *StrLen_or_IndPtr to SQL_NULL_DATA if the data is NULL."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute_fetch("SELECT NULL::BINARY AS value");
+
+  // When SQLGetData is called with SQL_C_BINARY for a NULL BINARY column
+  SQLCHAR buffer[100] = {0};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+
+  // Then the indicator should be SQL_NULL_DATA and the call should succeed
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
+TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL wide string column.", "[query][get_data]") {
+  // Doc: "Sets *StrLen_or_IndPtr to SQL_NULL_DATA if the data is NULL."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.execute_fetch("SELECT NULL AS value");
+
+  // When SQLGetData is called with SQL_C_WCHAR for a NULL column
+  SQLWCHAR buffer[100] = {0};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+
+  // Then the indicator should be SQL_NULL_DATA and the call should succeed
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
+// =============================================================================
+// SQLGetData function sequence error (HY010)
+// =============================================================================
+
+TEST_CASE("SQLGetData returns HY010 when called on a statement with no executed query.", "[query][get_data]") {
+  // Doc: "HY010 - Function sequence error: (DM) The specified StatementHandle was
+  //       not in an executed state. The function was called without first calling
+  //       SQLExecDirect, SQLExecute, or a catalog function."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#diagnostics
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLGetData is called without executing any query first
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+
+  // Then SQLGetData should return SQL_ERROR with SQLSTATE HY010
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
+}
+
+// =============================================================================
+// SQLGetData column offset reset with lower column number
+// =============================================================================
+
+TEST_CASE("SQLGetData on a lower column number after partial read resets the offset.", "[query][get_data]") {
+  // Doc: "Successive calls to SQLGetData will retrieve data from the last column
+  //       requested; prior offsets become invalid. For example, when the following
+  //       sequence is performed:
+  //       SQLGetData(icol=n), SQLGetData(icol=m), SQLGetData(icol=n)
+  //       the second call to SQLGetData(icol=n) retrieves data from the start of
+  //       the n column."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
+
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // And SQL_GD_ANY_ORDER is supported
+  SQLINTEGER extensions = 0;
+  SQLSMALLINT length = 0;
+  SQLRETURN ret =
+      SQLGetInfo(conn.handleWrapper().getHandle(), SQL_GETDATA_EXTENSIONS, &extensions, sizeof(extensions), &length);
+  REQUIRE_ODBC(ret, conn.handleWrapper());
+  if ((extensions & SQL_GD_ANY_ORDER) == 0) {
+    SKIP("Driver does not support SQL_GD_ANY_ORDER");
+  }
+
+  auto stmt = conn.execute_fetch("SELECT 'ABCDEF' AS col1, 'GHIJ' AS col2, 'KLMNO' AS col3");
+
+  // When SQLGetData partially reads column 3
+  SQLCHAR buffer[4] = {0};
+  SQLLEN indicator = 0;
+  ret = SQLGetData(stmt.getHandle(), 3, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsSuccessWithInfo() && OdbcMatchers::HasSqlState("01004"));
+  CHECK(std::string((char*)buffer) == "KLM");
+
+  // And SQLGetData is called on column 1 (lower number than previous call on column 3)
+  SQLCHAR col1_buf[100] = {0};
+  SQLLEN col1_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, col1_buf, sizeof(col1_buf), &col1_ind);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(std::string((char*)col1_buf) == "ABCDEF");
+
+  // Then reading column 3 again should start from the beginning (offset was reset)
+  SQLCHAR col3_buf[100] = {0};
+  SQLLEN col3_ind = 0;
+  ret = SQLGetData(stmt.getHandle(), 3, SQL_C_CHAR, col3_buf, sizeof(col3_buf), &col3_ind);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(std::string((char*)col3_buf) == "KLMNO");
 }

@@ -82,6 +82,10 @@ pub struct BehaviorDifferenceImplementation {
     pub new_behaviour_line: Option<usize>,
     pub old_behaviour_file: Option<String>,
     pub old_behaviour_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub old_driver_skipped: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_driver_skipped: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1177,7 +1181,7 @@ impl GherkinValidator {
                 // Extract Behavior Difference scenarios (scenarios with @{driver}_behavior_difference annotations)
                 // Include scenarios with driver tags that might have Behavior Difference implementations
                 // We'll check for actual Behavior Difference implementations during processing
-                let behavior_difference_scenarios = feature
+                let behavior_difference_scenarios: Vec<String> = feature
                     .scenarios
                     .iter()
                     .filter(|scenario| {
@@ -1209,12 +1213,14 @@ impl GherkinValidator {
                     .map(|s| s.name.clone())
                     .collect();
 
-                features.insert(
-                    feature.name.clone(),
-                    crate::behavior_differences_processor::FeatureInfo {
-                        behavior_difference_scenarios,
-                    },
-                );
+                let feature_id = self.get_feature_id(entry.path());
+                features
+                    .entry(feature_id)
+                    .or_insert_with(|| crate::behavior_differences_processor::FeatureInfo {
+                        behavior_difference_scenarios: Vec::new(),
+                    })
+                    .behavior_difference_scenarios
+                    .extend(behavior_difference_scenarios);
             }
         }
 

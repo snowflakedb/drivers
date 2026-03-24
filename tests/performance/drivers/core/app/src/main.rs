@@ -16,7 +16,7 @@ use sf_core::protobuf::generated::database_driver_v1::*;
 
 use config::TestConfig;
 use connection::{
-    DatabaseDriver, create_connection, create_database, create_statement, execute_setup_queries,
+    DriverRuntime, create_connection, create_database, create_statement, execute_setup_queries,
 };
 use put_execution::execute_put_get_test;
 use query_execution::execute_fetch_test;
@@ -34,14 +34,18 @@ fn run() -> Result<()> {
 
     let config = TestConfig::from_env()?;
 
-    let db_handle = create_database().map_err(|e| format!("Failed to create database: {:?}", e))?;
-    let conn_handle = create_connection(db_handle, &config.params.testconnection)
+    let rt = DriverRuntime::new();
+
+    let db_handle =
+        create_database(&rt).map_err(|e| format!("Failed to create database: {:?}", e))?;
+    let conn_handle = create_connection(&rt, db_handle, &config.params.testconnection)
         .map_err(|e| format!("Failed to connect to Snowflake: {:?}", e))?;
 
-    execute_setup_queries(conn_handle, &config.setup_queries)
+    execute_setup_queries(&rt, conn_handle, &config.setup_queries)
         .map_err(|e| format!("Failed to execute setup queries: {:?}", e))?;
 
     let stmt_handle = create_statement(
+        &rt,
         conn_handle,
         &config.sql_command,
         config.statement_async_override,
@@ -50,6 +54,7 @@ fn run() -> Result<()> {
 
     match config.test_type {
         TestType::Select => execute_fetch_test(
+            &rt,
             conn_handle,
             stmt_handle,
             &config.sql_command,
@@ -58,6 +63,7 @@ fn run() -> Result<()> {
             &config.test_name,
         )?,
         TestType::PutGet => execute_put_get_test(
+            &rt,
             conn_handle,
             stmt_handle,
             &config.sql_command,
@@ -68,13 +74,19 @@ fn run() -> Result<()> {
     }
 
     // Cleanup
-    DatabaseDriver::statement_release(StatementReleaseRequest {
-        stmt_handle: Some(stmt_handle),
+    rt.block_on(async |c| {
+        c.statement_release(StatementReleaseRequest {
+            stmt_handle: Some(stmt_handle),
+        })
+        .await
     })
     .ok();
 
-    DatabaseDriver::connection_release(ConnectionReleaseRequest {
-        conn_handle: Some(conn_handle),
+    rt.block_on(async |c| {
+        c.connection_release(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .await
     })
     .ok();
 

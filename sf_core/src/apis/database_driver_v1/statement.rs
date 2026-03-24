@@ -1,23 +1,23 @@
-use snafu::{OptionExt, ResultExt};
-use std::sync::Mutex;
+use snafu::{OptionExt, ResultExt, Snafu};
+use tokio::sync::Mutex;
 
-use super::Handle;
-use super::connection::RefreshContext;
+use super::connection::{Connection, RefreshContext};
 use super::error::*;
-use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
-use crate::apis::database_driver_v1::query::process_query_response;
+use super::global_state::DatabaseDriverV1;
+use super::query::process_query_response;
+use super::validation::{ValidationIssue, resolve_and_apply_options};
+use crate::config::ParamStore;
+use crate::config::param_registry::param_names;
+use crate::config::rest_parameters::QueryParameters;
+use crate::config::settings::Setting;
+use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_response::Data;
-use crate::{
-    config::{rest_parameters::QueryParameters, settings::Setting},
-    rest::snowflake::{self, QueryExecutionMode, QueryInput, snowflake_query_with_client},
-};
+use crate::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
 
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
-use snafu::Snafu;
 use std::{collections::HashMap, sync::Arc};
 
-use super::connection::Connection;
 #[cfg(test)]
 use crate::rest::snowflake::query_request;
 
@@ -31,6 +31,17 @@ pub struct DataPtr<'a> {
     /// Phantom data to enforce lifetime
     _phantom: std::marker::PhantomData<&'a [u8]>,
 }
+
+// Safety: DataPtr semantically represents a &[u8] (immutable borrowed slice),
+// which is Send. The raw pointer is only used for FFI interop and is always
+// accessed immutably within the lifetime 'a.
+//
+// Callers must ensure the backing memory is not freed or mutated while
+// any DataPtr (or Future holding one) is alive — including across .await
+// points. All current production paths run the entire async execution
+// synchronously via block_on, keeping the source data on the stack for
+// the full duration, which satisfies this requirement.
+unsafe impl Send for DataPtr<'_> {}
 
 impl<'a> DataPtr<'a> {
     /// Create a new DataPtr from a raw pointer and length
@@ -101,7 +112,7 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
 /// - For DML: Parse rowset columns to sum affected rows
 /// - For SELECT and other queries: Use total field
 /// - For unknown: Return None
-fn calculate_rows_affected(data: &Data) -> Option<i64> {
+pub(crate) fn calculate_rows_affected(data: &Data) -> Option<i64> {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
         // For DML, parse the rowset to get affected rows
@@ -119,7 +130,7 @@ fn calculate_rows_affected(data: &Data) -> Option<i64> {
                     || DML_AFFECTED_ROWS_COLUMN_PREFIXES
                         .iter()
                         .any(|p| col_name.starts_with(p)))
-                    && let Some(value) = rowset[0].get(idx)
+                    && let Some(Some(value)) = rowset[0].get(idx)
                     && let Ok(count) = value.parse::<i64>()
                 {
                     affected_rows += count;
@@ -137,57 +148,83 @@ fn calculate_rows_affected(data: &Data) -> Option<i64> {
     data.total
 }
 
-pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {
-    let handle = conn_handle;
-    match CONN_HANDLE_MANAGER.get_obj(handle) {
-        Some(conn_ptr) => {
-            let stmt = Mutex::new(Statement::new(conn_ptr));
-            let handle = STMT_HANDLE_MANAGER.add_handle(stmt);
-            Ok(handle)
+impl DatabaseDriverV1 {
+    pub fn statement_new(&self, conn_handle: Handle) -> Result<Handle, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let stmt = Mutex::new(Statement::new(conn_ptr));
+                let handle = self.statements.add_handle(stmt);
+                Ok(handle)
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
     }
-}
 
-pub fn statement_release(stmt_handle: Handle) -> Result<(), ApiError> {
-    match STMT_HANDLE_MANAGER.delete_handle(stmt_handle) {
-        true => Ok(()),
-        false => InvalidArgumentSnafu {
-            argument: "Failed to release statement handle".to_string(),
+    pub fn statement_release(&self, stmt_handle: Handle) -> Result<(), ApiError> {
+        match self.statements.delete_handle(stmt_handle) {
+            true => Ok(()),
+            false => InvalidArgumentSnafu {
+                argument: "Failed to release statement handle".to_string(),
+            }
+            .fail(),
         }
-        .fail(),
     }
-}
 
-pub fn statement_set_option(handle: Handle, key: String, value: Setting) -> Result<(), ApiError> {
-    match STMT_HANDLE_MANAGER.get_obj(handle) {
-        Some(stmt_ptr) => {
-            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-            stmt.settings.insert(key, value);
-            Ok(())
+    pub async fn statement_set_option(
+        &self,
+        handle: Handle,
+        key: String,
+        value: Setting,
+    ) -> Result<(), ApiError> {
+        match self.statements.get_obj(handle) {
+            Some(stmt_ptr) => {
+                let mut stmt = stmt_ptr.lock().await;
+                stmt.settings.insert(key, value);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
-        }
-        .fail(),
     }
-}
 
-pub fn statement_set_sql_query(stmt_handle: Handle, query: String) -> Result<(), ApiError> {
-    let handle = stmt_handle;
-    match STMT_HANDLE_MANAGER.get_obj(handle) {
-        Some(stmt_ptr) => {
-            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-            stmt.query = Some(query);
-            Ok(())
+    pub async fn statement_set_options(
+        &self,
+        handle: Handle,
+        options: HashMap<String, Setting>,
+    ) -> Result<Vec<ValidationIssue>, ApiError> {
+        match self.statements.get_obj(handle) {
+            Some(stmt_ptr) => {
+                let mut stmt = stmt_ptr.lock().await;
+                resolve_and_apply_options(&mut stmt.settings, options)
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .fail(),
         }
-        None => InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
+    }
+
+    pub async fn statement_set_sql_query(
+        &self,
+        stmt_handle: Handle,
+        query: String,
+    ) -> Result<(), ApiError> {
+        match self.statements.get_obj(stmt_handle) {
+            Some(stmt_ptr) => {
+                let mut stmt = stmt_ptr.lock().await;
+                stmt.query = Some(query);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .fail(),
         }
-        .fail(),
     }
 }
 
@@ -196,12 +233,16 @@ pub struct PrepareResult {
     pub columns: Vec<ColumnMetadata>,
 }
 
-pub fn statement_prepare(stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
-    let result = execute_query_internal(stmt_handle, None, Some(true))?;
-    Ok(PrepareResult {
-        stream: result.stream,
-        columns: result.columns,
-    })
+impl DatabaseDriverV1 {
+    pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
+        let result = self
+            .execute_query_internal(stmt_handle, None, Some(true))
+            .await?;
+        Ok(PrepareResult {
+            stream: result.stream,
+            columns: result.columns,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -225,163 +266,166 @@ pub struct ExecuteResult {
     pub sql_state: Option<String>,
 }
 
-pub fn statement_execute_query<'a>(
-    stmt_handle: Handle,
-    bindings: Option<BindingType<'a>>,
-) -> Result<ExecuteResult, ApiError> {
-    execute_query_internal(stmt_handle, bindings, None)
-}
-
-fn execute_query_internal<'a>(
-    stmt_handle: Handle,
-    bindings: Option<BindingType<'a>>,
-    describe_only: Option<bool>,
-) -> Result<ExecuteResult, ApiError> {
-    let handle = stmt_handle;
-    let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
-        }
-        .build()
-    })?;
-
-    let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-    let query = stmt.query.as_deref().ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Query not found".to_string(),
-        }
-        .build()
-    })?;
-
-    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
-    let (query_parameters, http_client, retry_policy) = {
-        let conn = stmt
-            .conn
-            .lock()
-            .map_err(|_| ConnectionLockingSnafu.build())?;
-        (
-            QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
-            conn.http_client
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?,
-            conn.retry_policy.clone(),
-        )
-    };
-
-    let execution_mode = stmt.execution_mode(Some(query));
-
-    // Get bindings from request.
-    // JSON path: zero-copy — borrows directly from wrapper memory.
-    let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
-        match &binding_type {
-            BindingType::Json(data_ptr) => {
-                // True zero-copy: pointer → &'static RawValue (no allocation, no validation).
-                // Wrapper guarantees data lives through synchronous execute call.
-                Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
-            }
-            BindingType::Csv(_csv_ptr) => {
-                // TODO: Implement CSV binding handling (stage upload)
-                return Err(InvalidArgumentSnafu {
-                    argument: "CSV bindings are not yet implemented".to_string(),
-                }
-                .build());
-            }
-        }
-    } else {
-        None
-    };
-
-    let query_input = QueryInput {
-        sql: query.to_string(),
-        bindings: query_bindings,
-        describe_only,
-    };
-
-    let response = rt.block_on(async {
-        let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
-        let mut last_error = None;
-        loop {
-            let session_token = ctx.refresh_token(last_error).await?;
-            match snowflake_query_with_client(
-                &http_client,
-                query_parameters.clone(),
-                session_token.reveal(),
-                query_input.clone(),
-                &retry_policy,
-                execution_mode,
-            )
+impl DatabaseDriverV1 {
+    pub async fn statement_execute_query<'a>(
+        &self,
+        stmt_handle: Handle,
+        bindings: Option<BindingType<'a>>,
+    ) -> Result<ExecuteResult, ApiError> {
+        self.execute_query_internal(stmt_handle, bindings, None)
             .await
-            {
-                Ok(result) => return Ok(result),
-                Err(e) => last_error = Some(e),
-            }
-        }
-    })?;
-
-    if response.success {
-        let conn = stmt
-            .conn
-            .lock()
-            .map_err(|_| ConnectionLockingSnafu.build())?;
-        conn.update_session_params_cache(query, response.data.parameters.as_ref());
     }
 
-    let query_result = rt
-        .block_on(process_query_response(&response.data, &http_client))
-        .context(QueryResponseProcessingSnafu)?;
+    async fn execute_query_internal<'a>(
+        &self,
+        stmt_handle: Handle,
+        bindings: Option<BindingType<'a>>,
+        describe_only: Option<bool>,
+    ) -> Result<ExecuteResult, ApiError> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .build()
+        })?;
 
-    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
+        let mut stmt = stmt_ptr.lock().await;
+        let query = stmt.query.as_deref().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Query not found".to_string(),
+            }
+            .build()
+        })?;
 
-    // Extract query_id from response
-    let query_id = response.data.query_id.clone().unwrap_or_default();
+        let (query_parameters, http_client, retry_policy) = {
+            let conn = stmt.conn.lock().await;
+            (
+                QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?,
+                conn.retry_policy.clone(),
+            )
+        };
 
-    // Calculate rows_affected based on statement type
-    // For DML: Sum of affected rows from rowset columns
-    // For SELECT: Total rows in result set
-    // For DDL/Unknown: None
-    let rows_affected = calculate_rows_affected(&response.data);
-    let statement_type_id = response.data.statement_type_id;
+        let execution_mode = stmt.execution_mode(Some(query));
 
-    // Extract column metadata: prefer synthetic metadata from PUT/GET processing,
-    // fall back to server-provided rowtype for regular queries.
-    let columns = query_result.columns.unwrap_or_else(|| {
-        response
-            .data
-            .row_type
-            .unwrap_or_default()
-            .iter()
-            .map(|rt| ColumnMetadata {
-                name: rt.name.clone(),
-                r#type: rt.type_.clone(),
-                precision: rt.precision.map(|v| v as i64),
-                scale: rt.scale.map(|v| v as i64),
-                length: rt.length.map(|v| v as i64),
-                byte_length: rt.byte_length.map(|v| v as i64),
-                nullable: rt.nullable,
-            })
-            .collect()
-    });
+        // Get bindings from request.
+        // JSON path: zero-copy — borrows directly from wrapper memory.
+        let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
+            match &binding_type {
+                BindingType::Json(data_ptr) => {
+                    Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
+                }
+                BindingType::Csv(_csv_ptr) => {
+                    return Err(InvalidArgumentSnafu {
+                        argument: "CSV bindings are not yet implemented".to_string(),
+                    }
+                    .build());
+                }
+            }
+        } else {
+            None
+        };
 
-    // Extract sql_state from response
-    let sql_state = response.data.sql_state;
+        let query_input = QueryInput {
+            sql: query.to_string(),
+            bindings: query_bindings,
+            describe_only,
+        };
 
-    let result = ExecuteResult {
-        stream: rowset_stream,
-        rows_affected,
-        query_id,
-        columns,
-        statement_type_id,
-        query: query.to_string(),
-        sql_state,
-    };
-    stmt.state = StatementState::Executed;
-    Ok(result)
+        let response = {
+            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
+            let mut last_error = None;
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match snowflake_query_with_client(
+                    &http_client,
+                    query_parameters.clone(),
+                    session_token.reveal(),
+                    query_input.clone(),
+                    &retry_policy,
+                    execution_mode,
+                )
+                .await
+                {
+                    Ok(result) => break Ok(result),
+                    Err(e) => last_error = Some(e),
+                }
+            }
+        }?;
+
+        if response.success {
+            let conn = stmt.conn.lock().await;
+            conn.update_session_params_cache(
+                query,
+                response.data.parameters.as_ref(),
+                &super::connection::FinalSessionNames {
+                    database: response.data.final_database_name.clone(),
+                    schema: response.data.final_schema_name.clone(),
+                    warehouse: response.data.final_warehouse_name.clone(),
+                    role: response.data.final_role_name.clone(),
+                },
+            )
+            .await;
+        }
+
+        let query_result = process_query_response(&response.data, &http_client)
+            .await
+            .context(QueryResponseProcessingSnafu)?;
+
+        let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
+
+        // Extract query_id from response
+        let query_id = response.data.query_id.clone().unwrap_or_default();
+
+        // Calculate rows_affected based on statement type
+        // For DML: Sum of affected rows from rowset columns
+        // For SELECT: Total rows in result set
+        // For DDL/Unknown: None
+        let rows_affected = calculate_rows_affected(&response.data);
+        let statement_type_id = response.data.statement_type_id;
+
+        // Extract column metadata: prefer synthetic metadata from PUT/GET processing,
+        // fall back to server-provided rowtype for regular queries.
+        let columns = query_result.columns.unwrap_or_else(|| {
+            response
+                .data
+                .row_type
+                .unwrap_or_default()
+                .iter()
+                .map(|rt| ColumnMetadata {
+                    name: rt.name.clone(),
+                    r#type: rt.type_.clone(),
+                    precision: rt.precision.map(|v| v as i64),
+                    scale: rt.scale.map(|v| v as i64),
+                    length: rt.length.map(|v| v as i64),
+                    byte_length: rt.byte_length.map(|v| v as i64),
+                    nullable: rt.nullable,
+                })
+                .collect()
+        });
+
+        // Extract sql_state from response
+        let sql_state = response.data.sql_state;
+
+        let result = ExecuteResult {
+            stream: rowset_stream,
+            rows_affected,
+            query_id,
+            columns,
+            statement_type_id,
+            query: query.to_string(),
+            sql_state,
+        };
+        stmt.state = StatementState::Executed;
+        Ok(result)
+    }
 }
 
 pub struct Statement {
     pub state: StatementState,
-    pub settings: HashMap<String, Setting>,
+    pub(crate) settings: ParamStore,
     pub query: Option<String>,
     pub conn: Arc<Mutex<Connection>>,
 }
@@ -395,17 +439,17 @@ pub enum StatementState {
 impl Statement {
     pub fn new(conn: Arc<Mutex<Connection>>) -> Self {
         Statement {
-            settings: HashMap::new(),
+            settings: ParamStore::new(),
             state: StatementState::Initialized,
             query: None,
             conn,
         }
     }
 
-    fn execution_mode(&self, query: Option<&str>) -> QueryExecutionMode {
+    pub(crate) fn execution_mode(&self, query: Option<&str>) -> QueryExecutionMode {
         let async_requested = self
             .settings
-            .get(snowflake::STATEMENT_ASYNC_EXECUTION_OPTION)
+            .get(param_names::ASYNC_EXECUTION)
             .and_then(parse_bool_setting)
             .unwrap_or(false);
 
@@ -418,6 +462,7 @@ impl Statement {
 
 fn parse_bool_setting(setting: &Setting) -> Option<bool> {
     match setting {
+        Setting::Bool(v) => Some(*v),
         Setting::String(s) => {
             let s = s.trim();
             if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("yes") || s == "1" {
@@ -524,7 +569,9 @@ pub enum StatementError {
 /// The caller (language wrapper) MUST guarantee:
 /// 1. The pointer points to memory that remains valid for the entire `statement_execute_query` call
 /// 2. `statement_execute_query` is called synchronously (blocks until HTTP completes)
-fn parse_json_bindings<'a>(data_ptr: &'a DataPtr<'a>) -> Result<&'a RawValue, StatementError> {
+pub(crate) fn parse_json_bindings<'a>(
+    data_ptr: &'a DataPtr<'a>,
+) -> Result<&'a RawValue, StatementError> {
     // Get the byte slice from the pointer - zero allocation.
     // The slice lifetime is tied to DataPtr, ensuring safety.
     let json_bytes: &'a [u8] = data_ptr.slice();
@@ -552,6 +599,25 @@ fn parse_json_bindings<'a>(data_ptr: &'a DataPtr<'a>) -> Result<&'a RawValue, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_bool_setting_accepts_native_bool_values() {
+        assert_eq!(parse_bool_setting(&Setting::Bool(true)), Some(true));
+        assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
+    }
+
+    #[test]
+    fn execution_mode_uses_native_bool_async_setting() {
+        let conn = Arc::new(Mutex::new(Connection::new()));
+        let mut stmt = Statement::new(conn);
+        stmt.settings
+            .insert("async_execution".to_string(), Setting::Bool(true));
+
+        assert_eq!(
+            stmt.execution_mode(Some("SELECT 1")),
+            QueryExecutionMode::Async
+        );
+    }
 
     #[test]
     fn is_file_transfer_detects_put_statements() {
@@ -990,5 +1056,63 @@ mod tests {
             !serialized.contains("bindings"),
             "None bindings should be omitted from serialized output.\nSerialized: {serialized}"
         );
+    }
+
+    fn deserialize_query_response(json: &str) -> Data {
+        serde_json::from_str(json).expect("test JSON must be valid query response Data")
+    }
+
+    #[test]
+    fn calculate_rows_affected_sums_dml_columns() {
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [["10", "3"]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                    {"name": "number of rows updated", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(13));
+    }
+
+    #[test]
+    fn calculate_rows_affected_skips_null_cells() {
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [["5", null]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                    {"name": "number of rows deleted", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(5));
+    }
+
+    #[test]
+    fn calculate_rows_affected_all_null_cells() {
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [[null]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(0));
+    }
+
+    #[test]
+    fn calculate_rows_affected_select_uses_total() {
+        let data = deserialize_query_response(
+            r#"{
+                "total": 42
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(42));
     }
 }

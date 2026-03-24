@@ -7,10 +7,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionGetInfoResponse,
     ConnectionHandle,
     DatabaseHandle,
 )
-from snowflake.connector.errors import ProgrammingError
+from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
@@ -226,3 +227,134 @@ class TestContextManagerUnit:
         with pytest.raises(ValueError, match="original error"):
             with connection:
                 raise ValueError("original error")
+
+
+class TestConnectionInfoProperties:
+    """Unit tests for Connection properties that read from _get_connection_info."""
+
+    @pytest.fixture
+    def conn_with_info(self, connection, mock_db_api):
+        """Set up a connection with a controllable ConnectionGetInfoResponse."""
+        mock_db_api.connection_get_info.return_value = ConnectionGetInfoResponse(
+            host="test.snowflakecomputing.com",
+            port=443,
+            account="test_acct",
+            user="test_usr",
+            role="SYSADMIN",
+            database="MY_DB",
+            schema="PUBLIC",
+            warehouse="COMPUTE_WH",
+            session_id=12345678,
+        )
+        return connection
+
+    def test_host_returns_value(self, conn_with_info):
+        assert conn_with_info.host == "test.snowflakecomputing.com"
+
+    def test_port_returns_value(self, conn_with_info):
+        assert conn_with_info.port == 443
+
+    def test_account_returns_value(self, conn_with_info):
+        assert conn_with_info.account == "test_acct"
+
+    def test_user_returns_value(self, conn_with_info):
+        assert conn_with_info.user == "test_usr"
+
+    def test_role_returns_value(self, conn_with_info):
+        assert conn_with_info.role == "SYSADMIN"
+
+    def test_database_returns_value(self, conn_with_info):
+        assert conn_with_info.database == "MY_DB"
+
+    def test_schema_returns_value(self, conn_with_info):
+        assert conn_with_info.schema == "PUBLIC"
+
+    def test_warehouse_returns_value(self, conn_with_info):
+        assert conn_with_info.warehouse == "COMPUTE_WH"
+
+    def test_session_id_returns_value(self, conn_with_info):
+        assert conn_with_info.session_id == 12345678
+
+
+class TestConnectionInfoPropertiesUnset:
+    """Test that properties return None when the underlying proto field is unset."""
+
+    @pytest.fixture
+    def conn_empty_info(self, connection, mock_db_api):
+        """Set up a connection with an empty ConnectionGetInfoResponse."""
+        mock_db_api.connection_get_info.return_value = ConnectionGetInfoResponse()
+        return connection
+
+    def test_host_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.host is None
+
+    def test_port_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.port is None
+
+    def test_account_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.account is None
+
+    def test_user_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.user is None
+
+    def test_role_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.role is None
+
+    def test_database_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.database is None
+
+    def test_schema_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.schema is None
+
+    def test_warehouse_none_when_unset(self, conn_empty_info):
+        assert conn_empty_info.warehouse is None
+
+    def test_session_id_raises_when_unset(self, conn_empty_info):
+        with pytest.raises(InterfaceError, match="Session ID is not available"):
+            _ = conn_empty_info.session_id
+
+
+class TestConnectionInfoDelegation:
+    """Test that each property delegates to _get_connection_info correctly."""
+
+    def test_each_access_calls_get_connection_info(self, connection, mock_db_api):
+        """Each property access should call _get_connection_info (no caching)."""
+        mock_db_api.connection_get_info.return_value = ConnectionGetInfoResponse(
+            host="h",
+            account="a",
+            user="u",
+            role="r",
+            database="d",
+            schema="s",
+            warehouse="w",
+            port=1,
+            session_id=1,
+        )
+
+        _ = connection.host
+        _ = connection.account
+        _ = connection.user
+        _ = connection.role
+        _ = connection.database
+        _ = connection.schema
+        _ = connection.warehouse
+        _ = connection.port
+        _ = connection.session_id
+
+        assert mock_db_api.connection_get_info.call_count == 9
+
+    def test_reflects_changing_values(self, connection, mock_db_api):
+        """Properties should reflect updated values from sf_core between calls."""
+        mock_db_api.connection_get_info.return_value = ConnectionGetInfoResponse(
+            database="DB_V1",
+            role="ROLE_V1",
+        )
+        assert connection.database == "DB_V1"
+        assert connection.role == "ROLE_V1"
+
+        mock_db_api.connection_get_info.return_value = ConnectionGetInfoResponse(
+            database="DB_V2",
+            role="ROLE_V2",
+        )
+        assert connection.database == "DB_V2"
+        assert connection.role == "ROLE_V2"

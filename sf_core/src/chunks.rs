@@ -11,7 +11,7 @@ use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Client;
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 
 const MAX_CHUNK_DECOMPRESSION_RETRIES: u32 = 2;
 
@@ -29,11 +29,24 @@ impl ChunkDownloadData {
         }
     }
 }
+/// Reads Arrow record batches from one or more Snowflake result-set chunks.
+///
+/// # Sync iteration constraint
+///
+/// The `Iterator` implementation for multi-chunk readers calls
+/// `Handle::block_on(get_chunk_data(...))` to download subsequent chunks.
+/// This **must not** be called from within an active tokio runtime context
+/// (e.g., inside a `Runtime::block_on` or from a spawned task), as doing so
+/// will panic (current-thread runtime) or deadlock (multi-thread runtime).
+///
+/// All current consumers (ODBC `fetch`, C API wrappers, tests) iterate the
+/// reader from a plain synchronous context, which is correct.
 pub struct ChunkReader {
     rest: VecDeque<ChunkDownloadData>,
     schema: SchemaRef,
     current_stream: Option<StreamReader<io::Cursor<Vec<u8>>>>,
     client: Option<Client>,
+    rt_handle: Option<tokio::runtime::Handle>,
 }
 
 impl ChunkReader {
@@ -42,6 +55,9 @@ impl ChunkReader {
         mut rest: VecDeque<ChunkDownloadData>,
         client: Client,
     ) -> Result<Self, ChunkError> {
+        let rt_handle = tokio::runtime::Handle::try_current()
+            .ok()
+            .context(MissingRuntimeHandleSnafu)?;
         let initial = if let Some(initial) = initial_base64_opt {
             BASE64.decode(initial).context(Base64DecodingSnafu)?
         } else {
@@ -55,6 +71,7 @@ impl ChunkReader {
             schema,
             current_stream: Some(reader),
             client: Some(client),
+            rt_handle: Some(rt_handle),
         })
     }
 
@@ -67,6 +84,7 @@ impl ChunkReader {
             schema: reader.schema().clone(),
             current_stream: Some(reader),
             client: None,
+            rt_handle: None,
         })
     }
 
@@ -76,6 +94,7 @@ impl ChunkReader {
             schema: Arc::new(Schema::new(Fields::empty())),
             current_stream: None,
             client: None,
+            rt_handle: None,
         }
     }
 }
@@ -99,7 +118,15 @@ impl Iterator for ChunkReader {
                         )));
                     }
                 };
-                let chunk_data_result = get_chunk_data_sync(client, &chunk);
+                let handle = match &self.rt_handle {
+                    Some(h) => h,
+                    None => {
+                        return Some(Err(ArrowError::ExternalError(Box::new(
+                            MissingRuntimeHandleSnafu.build(),
+                        ))));
+                    }
+                };
+                let chunk_data_result = handle.block_on(get_chunk_data(client, &chunk));
                 if let Err(e) = chunk_data_result {
                     return Some(Err(ArrowError::IpcError(e.to_string())));
                 }
@@ -120,14 +147,6 @@ impl RecordBatchReader for ChunkReader {
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
-}
-
-pub fn get_chunk_data_sync(
-    client: &Client,
-    chunk: &ChunkDownloadData,
-) -> Result<Vec<u8>, ChunkError> {
-    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-    rt.block_on(async { get_chunk_data(client, chunk).await })
 }
 
 pub async fn get_chunk_data(
@@ -236,12 +255,6 @@ fn decode_chunk_body(body: Vec<u8>, encoding: Option<&HeaderValue>) -> Result<Ve
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum ChunkError {
-    #[snafu(display("Failed to create runtime"))]
-    RuntimeCreation {
-        source: std::io::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
     #[snafu(display("Invalid header name for {key}"))]
     HeaderName {
         key: String,
@@ -289,6 +302,11 @@ pub enum ChunkError {
     #[snafu(display("Failed to read chunk data"))]
     ChunkReading {
         source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Tokio runtime handle unavailable for chunk downloads"))]
+    MissingRuntimeHandle {
         #[snafu(implicit)]
         location: Location,
     },

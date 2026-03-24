@@ -99,6 +99,8 @@ pub enum SqlState {
     IndicatorVariableRequiredButNotSupplied,
     /// 22003 - Numeric value out of range
     NumericValueOutOfRange,
+    /// 22015 - Interval field overflow
+    IntervalFieldOverflow,
     /// 22018 - Invalid character value for cast
     InvalidCharacterValueForCast,
 
@@ -345,6 +347,7 @@ impl SqlState {
             SqlState::FeatureNotSupported => "0A000",
             SqlState::IndicatorVariableRequiredButNotSupplied => "22002",
             SqlState::NumericValueOutOfRange => "22003",
+            SqlState::IntervalFieldOverflow => "22015",
             SqlState::InvalidCharacterValueForCast => "22018",
             SqlState::InvalidCursorState => "24000",
             SqlState::InvalidTransactionState => "25000",
@@ -518,6 +521,7 @@ impl FromStr for SqlState {
             "0A000" => SqlState::FeatureNotSupported,
             "22002" => SqlState::IndicatorVariableRequiredButNotSupplied,
             "22003" => SqlState::NumericValueOutOfRange,
+            "22015" => SqlState::IntervalFieldOverflow,
             "22018" => SqlState::InvalidCharacterValueForCast,
             "24000" => SqlState::InvalidCursorState,
             "25000" => SqlState::InvalidTransactionState,

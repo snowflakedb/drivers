@@ -62,7 +62,11 @@ public abstract class SnowflakeIntegrationTestBase {
     props.setProperty("password", params.getString("SNOWFLAKE_TEST_PASSWORD"));
     props.setProperty("db", params.getString("SNOWFLAKE_TEST_DATABASE"));
     props.setProperty("schema", params.getString("SNOWFLAKE_TEST_SCHEMA"));
-    props.setProperty("warehouse", params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
+    props.setProperty(
+        "warehouse",
+        params.has("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
+            ? params.getString("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
+            : params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
     props.setProperty("account", params.getString("SNOWFLAKE_TEST_ACCOUNT"));
 
     addOptionalConnectionProperties(params, props);
