@@ -933,13 +933,12 @@ mod tests {
 
         const THREAD_COUNT: usize = 10;
 
-        // On Windows ARM64, `RemoveDirectory` is asynchronous and the
-        // "pending delete" state can persist noticeably longer than on
-        // x64, especially on CI runners.  This causes `CreateDirectory`
-        // to return transient errors (`ERROR_DELETE_PENDING`,
-        // `ERROR_ACCESS_DENIED`, etc.) for extended periods, so threads
-        // need a larger retry budget to avoid spurious lock-exhaustion
-        // failures under high contention.
+        // On Windows, `RemoveDirectory` is asynchronous and the
+        // "pending delete" state can cause `CreateDirectory` to return
+        // transient errors (`ERROR_DELETE_PENDING`,
+        // `ERROR_ACCESS_DENIED`, etc.), so threads need a larger retry
+        // budget to avoid spurious lock-exhaustion failures under high
+        // contention.
         const LOCK_RETRY_COUNT: u32 = if cfg!(all(windows)) { 1000 } else { 100 };
 
         fn create_shared_cache() -> (tempfile::TempDir, Arc<FileTokenCache>) {

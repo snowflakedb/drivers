@@ -115,6 +115,62 @@ pub fn login_success() -> Mock {
         })))
 }
 
+// ─── MFA Login Failure with EXT_AUTHN error (cached token) ───────────────────
+
+fn login_failure_with_ext_authn_error(code: &str, message: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "USERNAME_PASSWORD_MFA",
+                "TOKEN": "cached_mfa_token"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": code,
+            "message": message
+        })))
+}
+
+pub fn login_failure_ext_authn_denied() -> Mock {
+    login_failure_with_ext_authn_error("390120", "Authentication denied by external provider")
+}
+
+pub fn login_failure_ext_authn_locked() -> Mock {
+    login_failure_with_ext_authn_error("390123", "Account locked by external provider")
+}
+
+pub fn login_failure_ext_authn_timeout() -> Mock {
+    login_failure_with_ext_authn_error("390126", "External authentication timed out")
+}
+
+pub fn login_failure_ext_authn_invalid() -> Mock {
+    login_failure_with_ext_authn_error("390127", "External authentication token is invalid")
+}
+
+pub fn login_failure_ext_authn_exception() -> Mock {
+    login_failure_with_ext_authn_error("390129", "External authentication exception")
+}
+
+// ─── MFA Login Failure (DUO push, no passcode) ──────────────────────────────
+
+pub fn login_failure_duo_push() -> Mock {
+    Mock::given(method("POST"))
+        .and(path_regex(r"/session/v1/login-request"))
+        .and(body_partial_json(json!({
+            "data": {
+                "AUTHENTICATOR": "USERNAME_PASSWORD_MFA",
+                "EXT_AUTHN_DUO_METHOD": "push"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": false,
+            "code": "390100",
+            "message": "Incorrect username or password was specified."
+        })))
+}
+
 // ─── MFA Login Failure ───────────────────────────────────────────────────────
 
 pub fn login_failure() -> Mock {

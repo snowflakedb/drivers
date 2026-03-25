@@ -109,7 +109,7 @@ pub struct AuthResponseSessionInfo {
     pub role_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct AuthResponseMain {
     /// Session token for authenticating requests
     pub token: Option<String>,
@@ -167,6 +167,7 @@ pub struct AuthResponseMain {
 
 #[derive(Debug, Deserialize)]
 pub struct AuthResponse {
+    #[serde(default)]
     pub data: AuthResponseMain,
     pub message: Option<String>,
     #[serde(rename = "code")]

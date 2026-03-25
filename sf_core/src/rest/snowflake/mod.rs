@@ -158,6 +158,14 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
+const EXT_AUTHN_ERROR_CODES: [i32; 5] = [
+    390120, // EXT_AUTHN_DENIED
+    390123, // EXT_AUTHN_LOCKED
+    390126, // EXT_AUTHN_TIMEOUT
+    390127, // EXT_AUTHN_INVALID
+    390129, // EXT_AUTHN_EXCEPTION
+];
+
 fn extract_host_from_url(server_url: &str) -> Option<String> {
     Url::parse(server_url)
         .ok()?
@@ -203,6 +211,26 @@ fn store_mfa_token_in_cache(
         tracing::warn!(error = %e, "Failed to cache MFA token");
     } else {
         tracing::info!("Cached MFA token for future use");
+    }
+}
+
+fn remove_mfa_token_from_cache(
+    server_url: &str,
+    username: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let Some(host) = extract_host_from_url(server_url) else {
+        tracing::warn!("Cannot remove cached MFA token: unable to extract host from server URL");
+        return;
+    };
+    let Some(cache) = token_cache else {
+        tracing::debug!("No token cache available for MFA token removal");
+        return;
+    };
+    if let Err(e) = cache.remove_token(&host, username, TokenType::MfaToken) {
+        tracing::warn!(error = %e, "Failed to remove cached MFA token");
+    } else {
+        tracing::info!("Removed cached MFA token due to authentication error");
     }
 }
 
@@ -308,6 +336,57 @@ pub async fn snowflake_login(
     snowflake_login_with_client(&client, login_parameters, session_parameters, None).await
 }
 
+async fn send_login_request(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    login_request: &AuthRequest,
+) -> Result<AuthResponse, RestError> {
+    let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
+    tracing::info!(login_url = %login_url, "Making Snowflake login request");
+    let request = client
+        .post(&login_url)
+        .query(&[
+            (
+                "databaseName",
+                login_parameters.database.as_deref().unwrap_or_default(),
+            ),
+            (
+                "schemaName",
+                login_parameters.schema.as_deref().unwrap_or_default(),
+            ),
+            (
+                "warehouse",
+                login_parameters.warehouse.as_deref().unwrap_or_default(),
+            ),
+            (
+                "roleName",
+                login_parameters.role.as_deref().unwrap_or_default(),
+            ),
+        ])
+        .json(login_request)
+        .header("accept", "application/snowflake")
+        .header(
+            "User-Agent",
+            format!(
+                "{}/{} ({}) CPython/3.11.6",
+                login_parameters.client_info.application,
+                login_parameters.client_info.version.clone(),
+                login_parameters.client_info.os.clone()
+            ),
+        )
+        .header("Authorization", "Snowflake Token=\"None\"")
+        .build()
+        .context(RequestConstructionSnafu { request: "login" })?;
+
+    let response = client.execute(request).await.context(CommunicationSnafu {
+        context: "Failed to execute login request",
+    })?;
+
+    read_response_json::<AuthResponse>(response)
+        .await
+        .context(InvalidSnowflakeResponseSnafu)
+}
+
 #[tracing::instrument(
     skip(client, login_parameters, session_parameters, token_cache),
     fields(account_name, login_name)
@@ -334,11 +413,15 @@ pub async fn snowflake_login_with_client(
     );
 
     // Build the login request data (handles all auth methods including Okta SAML exchange)
-    let auth_request_data =
+    let login_request_data =
         auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
-    tracing::Span::current().record("login_name", &auth_request_data.login_name);
+    tracing::Span::current().record("login_name", &login_request_data.login_name);
+    let used_cached_mfa_token = matches!(
+        &login_parameters.login_method,
+        LoginMethod::UserPasswordMfa { .. }
+    ) && login_request_data.token.is_some();
     let login_request = AuthRequest {
-        data: auth_request_data,
+        data: login_request_data,
     };
 
     tracing::debug!(
@@ -347,50 +430,32 @@ pub async fn snowflake_login_with_client(
         "Login request prepared (secrets redacted)"
     );
 
-    let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
-    tracing::info!(login_url = %login_url, "Making Snowflake login request");
-    let request = client
-        .post(&login_url)
-        .query(&[
-            (
-                "databaseName",
-                login_parameters.database.as_deref().unwrap_or_default(),
-            ),
-            (
-                "schemaName",
-                login_parameters.schema.as_deref().unwrap_or_default(),
-            ),
-            (
-                "warehouse",
-                login_parameters.warehouse.as_deref().unwrap_or_default(),
-            ),
-            (
-                "roleName",
-                login_parameters.role.as_deref().unwrap_or_default(),
-            ),
-        ])
-        .json(&login_request)
-        .header("accept", "application/snowflake")
-        .header(
-            "User-Agent",
-            format!(
-                "{}/{} ({}) CPython/3.11.6",
-                login_parameters.client_info.application,
-                login_parameters.client_info.version.clone(),
-                login_parameters.client_info.os.clone()
-            ),
-        )
-        .header("Authorization", "Snowflake Token=\"None\"")
-        .build()
-        .context(RequestConstructionSnafu { request: "login" })?;
+    let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
 
-    let response = client.execute(request).await.context(CommunicationSnafu {
-        context: "Failed to execute login request",
-    })?;
-
-    let auth_response = read_response_json::<AuthResponse>(response)
-        .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+    // When a cached MFA token caused an EXT_AUTHN error, evict it and retry
+    // via the normal DUO push/passcode flow.
+    if !auth_response.success && used_cached_mfa_token {
+        let code = auth_response
+            ._code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        if EXT_AUTHN_ERROR_CODES.contains(&code)
+            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
+        {
+            tracing::warn!(
+                code = code,
+                "MFA authentication error detected, removing cached MFA token"
+            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+            tracing::info!("Retrying login without cached MFA token");
+            let retry_data =
+                auth_request_data(client, login_parameters, session_parameters, token_cache)
+                    .await?;
+            let retry_request = AuthRequest { data: retry_data };
+            auth_response = send_login_request(client, login_parameters, &retry_request).await?;
+        }
+    }
 
     if !auth_response.success {
         let message = auth_response
@@ -402,6 +467,15 @@ pub async fn snowflake_login_with_client(
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
+        if EXT_AUTHN_ERROR_CODES.contains(&code)
+            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
+        {
+            tracing::warn!(
+                code = code,
+                "MFA authentication error detected, removing cached MFA token"
+            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+        }
         LoginSnafu { message, code }.fail()?;
     }
 
@@ -1285,6 +1359,36 @@ mod tests {
         fn no_panic_for_invalid_url() {
             let cache = StubTokenCache::new();
             store_mfa_token_in_cache("not-a-url", "alice", "tok", Some(&cache));
+        }
+    }
+
+    mod remove_mfa_token_from_cache_tests {
+        use super::*;
+
+        #[test]
+        fn removes_existing_token() {
+            let cache = StubTokenCache::with_token(
+                "host.example.com",
+                "alice",
+                TokenType::MfaToken,
+                "tok_to_remove",
+            );
+            remove_mfa_token_from_cache("https://host.example.com", "alice", Some(&cache));
+            let stored = cache
+                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .unwrap();
+            assert!(stored.is_none());
+        }
+
+        #[test]
+        fn no_panic_when_no_cache() {
+            remove_mfa_token_from_cache("https://host.example.com", "alice", None);
+        }
+
+        #[test]
+        fn no_panic_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            remove_mfa_token_from_cache("not-a-url", "alice", Some(&cache));
         }
     }
 }

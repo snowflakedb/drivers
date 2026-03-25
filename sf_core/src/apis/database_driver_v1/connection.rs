@@ -98,15 +98,10 @@ impl DatabaseDriverV1 {
                     }
                 );
 
-                let token_cache = match self.token_cache() {
-                    Ok(cache) => Some(cache),
-                    Err(err) => {
-                        if mfa_caching_requested {
-                            return Err(err).context(TokenCacheInitializationSnafu);
-                        }
-                        tracing::warn!("Token cache initialization failed: {err}");
-                        None
-                    }
+                let token_cache = if mfa_caching_requested {
+                    Some(self.token_cache().context(TokenCacheInitializationSnafu)?)
+                } else {
+                    None
                 };
 
                 let login_result = crate::rest::snowflake::snowflake_login_with_client(
