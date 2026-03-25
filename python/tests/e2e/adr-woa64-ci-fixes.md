@@ -11,11 +11,11 @@ review comments addressed or consciously deferred.
 - PRs: #438 (speed-up-woa64-build), #402 (woa64-jdbc), #403 (woa64-odbc)
 - Target: All 6 CI workflows per PR (Pre-commit, Validate, JDBC, ODBC, Python, Rust Core)
 
-## Current state — CI pending on latest pushes; all known comments addressed (see Iteration 5)
+## Current state — CI running after /DEF: quoting revert; expect() migrations in place
 
-- PR #438 commit 29aa2578: CI running (vcpkg regex fix + sf_core expect() migration complete)
-- PR #402 commit c2cf1a82: CI running (sf_core expect() migration complete)
-- PR #403 commit a45f2a49: CI running (odbc/build.rs /DEF: quoting + sf_core expect() complete)
+- PR #438 commit c3011b65: CI running (reverted /DEF: quoting; vcpkg fix + expect() kept)
+- PR #402 commit 6156fafd: CI running (reverted /DEF: quoting; expect() kept)
+- PR #403 commit d281445f: CI running (reverted /DEF: quoting on all 3 build scripts; expect() kept)
 
 ### Honest WoA64 status by component
 
@@ -180,19 +180,30 @@ Source: gh api repos/snowflakedb/universal-driver/pulls/403/comments
 6. Comment 2982376287 on `jdbc_bridge/build.rs:18`:
    "cargo:rustc-cdylib-link-arg=/DEF:{def_path.display()} — path unquoted;
    workspace with spaces would fail."
-   — Code: println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display())
-   — Standard GitHub Actions windows-11-arm workspace: D:\a\<repo>\<repo> — no spaces.
-     Current CI will NOT fail. This is a latent portability bug.
-   — Fix pending Lens B/C reviewer assessment of correct quoting mechanism.
+   — VERDICT (post-CI failure): The Copilot comment is based on a false premise.
+     cargo:rustc-link-arg and cargo:rustc-cdylib-link-arg are written to a linker
+     response file as individual tokens. The linker receives the path verbatim —
+     no shell word-splitting occurs. Adding quotes makes them LITERAL characters
+     in the path, which both lld-link and MSVC link.exe reject with
+     "invalid argument" / LNK1104. The unquoted form is CORRECT. Deferred (no fix).
 
-### O8 — odbc/build.rs unquoted /DEF: path (found 2026-03-25 by reviewer pipeline)
-Source: ADR reviewer Lens A analysis of commit 4e37265e on speed-up branch
+### O8 — /DEF: path quoting hypothesis was wrong; caused CI regression (2026-03-25)
+Source: CI failure on commits 4e37265e, 7166ed7e, a45f2a49
 
-`odbc/build.rs:15` had `println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display())` —
-identical latent portability bug as the `sf_core/build.rs` and `jdbc_bridge/build.rs` gaps.
-Not flagged by Copilot on PR #403; identified by the internal reviewer pipeline.
-Standard GitHub Actions workspace has no spaces so current CI is unaffected.
-Fix: quote to `/DEF:\"{}\"` — applied in commit a45f2a49 (woa64-odbc).
+Applied "latent portability fix" quoting `/DEF:"path"` to sf_core, odbc, jdbc_bridge
+build scripts across all three branches. Immediately broke CI:
+- Rust Core ARM64: `LNK1104: cannot open file '\C:\a\...\exports.def\'`
+- ODBC x64 lld-link: `could not open "...\exports.def": invalid argument`
+- Python ARM64: cargo sf_core build fails (exit 101) → hatchling build fails
+
+Root cause: cargo passes link-args via response file; `"` becomes a literal path
+character. Neither lld-link nor MSVC link.exe strip quotes in this context.
+The "latent bug" claimed by O7 comment 2982376287 does NOT exist in practice.
+
+Fix: revert quoting on all three branches.
+- speed-up: c3011b65
+- woa64-jdbc: 6156fafd
+- woa64-odbc: d281445f
 
 ### Iteration 5 — Reviewer pipeline post-context-restore findings — COMPLETED
 
@@ -210,9 +221,13 @@ on current runner environments (no spaces in workspace paths).
 **Changes**:
 - speed-up (#438): test-python.yml vcpkg regex Groups[1].Value fix + Write-Error guard;
   sf_core/build.rs generate_protobuf() expect() migration.
-  Commits: 4e37265e (vcpkg + sf_core/build.rs quoting), 29aa2578 (expect() migration)
-- woa64-odbc (#403): odbc/build.rs /DEF: quoting + expect(); sf_core generate_protobuf() expect().
-  Commit: a45f2a49
+  NOTE: commit 4e37265e also added /DEF: quoting which broke CI → reverted in c3011b65.
+  Commits: 4e37265e (vcpkg fix + broken quoting), 29aa2578 (expect()), c3011b65 (revert quoting)
+- woa64-odbc (#403): odbc/build.rs expect(); sf_core generate_protobuf() expect().
+  NOTE: commit a45f2a49 also added /DEF: quoting which broke CI → reverted in d281445f.
+  Commits: a45f2a49 (expect() + broken quoting), d281445f (revert quoting)
+- woa64-jdbc (#402): sf_core generate_protobuf() expect().
+  NOTE: commit 6156fafd reverted /DEF: quoting from 7166ed7e which broke CI.
 - woa64-jdbc (#402): sf_core generate_protobuf() expect().
   Commit: c2cf1a82
 
@@ -223,7 +238,8 @@ on current runner environments (no spaces in workspace paths).
 - generate_protobuf() unwrap() gap identified by Lens A; addressed in follow-up commit
 - Safe to push: YES
 
-**Conclusion**: pending CI results on latest commits
+**Conclusion**: /DEF: quoting was WRONG — broke CI immediately. Reverted.
+The expect() and vcpkg changes are correct. CI running on fix commits.
 
 ## Confirmed conclusions
 
