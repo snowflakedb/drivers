@@ -67,7 +67,7 @@ class TestWheelPackaging:
             env = {"SKIP_CORE_BUILD": ""}
 
             result = self._run_command(
-                [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist_dir)],
+                [sys.executable, "-m", "build", "--wheel", "--installer", "uv", "--outdir", str(dist_dir)],
                 cwd=python_dir,
                 env=env,
                 timeout=900,
