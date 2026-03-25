@@ -29,7 +29,7 @@ const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
 /// Maps ODBC connection string parameter names to their sf_core equivalents.
 /// Parameters listed here are forwarded as-is via `connection_set_option_string`.
 /// Parameters that need special handling (type conversion, conditional skipping,
-/// side-effects) are handled separately in `driver_connect`.
+/// side-effects) are handled separately in `connect_with_params`.
 const PARAM_MAPPINGS: &[(&str, &str)] = &[
     ("ACCOUNT", "account"),
     ("SERVER", "host"),
@@ -55,7 +55,7 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     for pair in connection_string.split(';') {
         let parts: Vec<&str> = pair.splitn(2, '=').collect();
         if parts.len() == 2 {
-            map.insert(parts[0].trim().to_string(), parts[1].trim().to_string());
+            map.insert(parts[0].trim().to_uppercase(), parts[1].trim().to_string());
         }
     }
     map
@@ -184,7 +184,7 @@ fn connect_with_params(
                     "PRIV_KEY_FILE" => {
                         if attr_key_set {
                             tracing::debug!(
-                                "driver_connect: skipping PRIV_KEY_FILE — attribute-based key takes priority"
+                                "connect_with_params: skipping PRIV_KEY_FILE — attribute-based key takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
@@ -198,7 +198,7 @@ fn connect_with_params(
                     "PRIV_KEY_BASE64" => {
                         if attr_key_set {
                             tracing::debug!(
-                                "driver_connect: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
+                                "connect_with_params: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
@@ -212,7 +212,7 @@ fn connect_with_params(
                     "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
                         if attr_has_priv_key_password {
                             tracing::debug!(
-                                "driver_connect: skipping {key} — attribute-based password takes priority"
+                                "connect_with_params: skipping {key} — attribute-based password takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
@@ -224,7 +224,7 @@ fn connect_with_params(
                         }
                     }
                     _ => {
-                        tracing::warn!("driver_connect: unknown connection string key: {key:?}");
+                        tracing::warn!("connect_with_params: unknown connection string key: {key:?}");
                     }
                 }
             }
@@ -432,7 +432,7 @@ fn parse_ini_section(content: &str, section: &str) -> Option<HashMap<String, Str
             continue;
         }
         if let Some(eq_pos) = line.find('=') {
-            let key = line[..eq_pos].trim().to_string();
+            let key = line[..eq_pos].trim().to_uppercase();
             let value = line[eq_pos + 1..].trim().to_string();
             params.insert(key, value);
         }
@@ -464,7 +464,7 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
                 if let Ok((name, value)) = result {
                     if !name.is_empty() {
                         if let Ok(s) = String::from_reg_value(&value) {
-                            params.insert(name, s);
+                            params.insert(name.to_uppercase(), s);
                         }
                     }
                 }
@@ -747,11 +747,64 @@ mod tests {
     #[test_case("PRIV_KEY_FILE=abc=def", &[("PRIV_KEY_FILE", "abc=def")] ; "preserves equals in value")]
     #[test_case("UID=admin;  ;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "skips blank segments")]
     #[test_case("UID=admin;", &[("UID", "admin")] ; "trailing semicolon")]
+    #[test_case("uid=admin;Server=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "normalizes mixed case keys")]
     fn parse_connection_string_cases(input: &str, expected: &[(&str, &str)]) {
         let map = parse_connection_string(input);
         assert_eq!(map.len(), expected.len());
         for (key, value) in expected {
             assert_eq!(map.get(*key).unwrap(), value);
+        }
+    }
+
+    #[cfg(not(windows))]
+    mod ini_tests {
+        use super::*;
+
+        #[test]
+        fn parse_ini_section_normalizes_keys_to_uppercase() {
+            let ini = "\
+[MyDSN]
+Server = myserver.snowflakecomputing.com
+Uid = myuser
+pwd = mypass
+Account = myaccount
+";
+            let params = parse_ini_section(ini, "MyDSN").unwrap();
+            assert_eq!(
+                params.get("SERVER").unwrap(),
+                "myserver.snowflakecomputing.com"
+            );
+            assert_eq!(params.get("UID").unwrap(), "myuser");
+            assert_eq!(params.get("PWD").unwrap(), "mypass");
+            assert_eq!(params.get("ACCOUNT").unwrap(), "myaccount");
+            assert!(!params.contains_key("Server"));
+        }
+
+        #[test]
+        fn parse_ini_section_not_found() {
+            let ini = "[OtherDSN]\nServer = foo\n";
+            assert!(parse_ini_section(ini, "MyDSN").is_none());
+        }
+
+        #[test]
+        fn parse_ini_section_skips_comments_and_empty_lines() {
+            let ini = "\
+[MyDSN]
+# this is a comment
+; this is also a comment
+
+Server = myserver
+";
+            let params = parse_ini_section(ini, "MyDSN").unwrap();
+            assert_eq!(params.len(), 1);
+            assert_eq!(params.get("SERVER").unwrap(), "myserver");
+        }
+
+        #[test]
+        fn parse_ini_section_case_insensitive_section_name() {
+            let ini = "[mydsn]\nServer = foo\n";
+            let params = parse_ini_section(ini, "MyDSN").unwrap();
+            assert_eq!(params.get("SERVER").unwrap(), "foo");
         }
     }
 }
