@@ -139,15 +139,6 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      - name: Cache C++ ODBC test build (reference)
-        uses: actions/cache@v5
-        with:
-
-          path: odbc_tests/cmake-build
-          key: ${{ runner.os }}-cpp-odbc-tests-old-${{ hashFiles('odbc_tests/**/*.cpp', 'odbc_tests/**/*.hpp', 'odbc_tests/**/*.h', 'odbc_tests/**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-cpp-odbc-tests-old-
-
       - name: Run Old ODBC tests (Linux)
         if: matrix.os == 'ubuntu-latest'
         id: run_odbc_ref_tests_linux
@@ -303,15 +294,6 @@ jobs:
         run: cargo build
         env:
           RUSTFLAGS: "-C linker=rust-lld"
-
-      - name: Cache C++ ODBC test build
-        uses: actions/cache@v5
-        with:
-
-          path: odbc_tests/cmake-build
-          key: ${{ runner.os }}-cpp-odbc-tests-${{ hashFiles('odbc_tests/**/*.cpp', 'odbc_tests/**/*.hpp', 'odbc_tests/**/*.h', 'odbc_tests/**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-cpp-odbc-tests-
 
       - name: Build and run ODBC tests (Unix)
         if: runner.os != 'Windows'
