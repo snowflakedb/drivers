@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use proto_utils::ProtoError;
 use sf_core::protobuf::apis::database_driver_v1::{DatabaseDriverClient, database_driver_client};
 use sf_core::protobuf::generated::database_driver_v1::*;
@@ -8,17 +6,6 @@ use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 use super::config::{Parameters, get_parameters, setup_logging};
 use super::private_key_helper::{self, PrivateKeyFile};
 
-static TEST_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create test tokio runtime")
-});
-
-fn rt() -> &'static tokio::runtime::Runtime {
-    &TEST_RUNTIME
-}
-
 /// Creates a connected Snowflake client with database and connection initialized
 pub struct SnowflakeTestClient {
     pub conn_handle: ConnectionHandle,
@@ -26,16 +13,25 @@ pub struct SnowflakeTestClient {
     pub parameters: Parameters,
     private_key_file: Option<PrivateKeyFile>,
     client: DatabaseDriverClient,
+    rt: tokio::runtime::Runtime,
 }
 
 impl SnowflakeTestClient {
+    fn new_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create test tokio runtime")
+    }
+
     /// Creates a client with default parameters (no authentication parameters set)
     pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();
         let client = database_driver_client();
+        let rt = Self::new_runtime();
 
-        let (db_handle, conn_handle) = rt().block_on(async {
+        let (db_handle, conn_handle) = rt.block_on(async {
             let db_response = client.database_new(DatabaseNewRequest {}).await.unwrap();
             let db_handle = db_response.db_handle.unwrap();
 
@@ -60,6 +56,7 @@ impl SnowflakeTestClient {
             parameters,
             private_key_file: None,
             client,
+            rt,
         };
 
         test_client.set_options_from_parameters();
@@ -82,7 +79,7 @@ impl SnowflakeTestClient {
 
         let temp_key_file = test_client.setup_jwt_auth();
 
-        rt().block_on(async {
+        test_client.rt.block_on(async {
             test_client
                 .client
                 .connection_init(ConnectionInitRequest {
@@ -117,8 +114,9 @@ impl SnowflakeTestClient {
         };
 
         let client = database_driver_client();
+        let rt = Self::new_runtime();
 
-        let (db_handle, conn_handle) = rt().block_on(async {
+        let (db_handle, conn_handle) = rt.block_on(async {
             let db_response = client.database_new(DatabaseNewRequest {}).await.unwrap();
             let db_handle = db_response.db_handle.unwrap();
 
@@ -143,6 +141,7 @@ impl SnowflakeTestClient {
             parameters: test_parameters,
             private_key_file: None,
             client,
+            rt,
         };
 
         test_client.set_options_from_parameters();
@@ -158,7 +157,7 @@ impl SnowflakeTestClient {
         test_client
             .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        rt().block_on(async {
+        test_client.rt.block_on(async {
             test_client
                 .client
                 .connection_init(ConnectionInitRequest {
@@ -175,7 +174,7 @@ impl SnowflakeTestClient {
 
     /// Creates a new statement handle
     pub fn new_statement(&self) -> StatementHandle {
-        rt().block_on(async {
+        self.rt.block_on(async {
             let response = self
                 .client
                 .statement_new(StatementNewRequest {
@@ -205,7 +204,7 @@ impl SnowflakeTestClient {
                 })),
             }
         });
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(*stmt),
@@ -219,7 +218,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(*stmt),
@@ -249,7 +248,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn result_chunks(&self, stmt: &StatementHandle) -> ResultChunksResult {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .statement_result_chunks(StatementResultChunksRequest {
                     stmt_handle: Some(*stmt),
@@ -262,7 +261,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn fetch_chunk(&self, chunk: ResultChunk) -> DatabaseFetchChunkResponse {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .database_fetch_chunk(DatabaseFetchChunkRequest {
                     db_handle: Some(self.db_handle),
@@ -274,7 +273,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn release_statement(&self, stmt: &StatementHandle) {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .statement_release(StatementReleaseRequest {
                     stmt_handle: Some(*stmt),
@@ -288,7 +287,7 @@ impl SnowflakeTestClient {
     pub fn execute_query(&self, sql: &str) -> ExecuteResult {
         let stmt_handle = self.new_statement();
 
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
@@ -313,7 +312,7 @@ impl SnowflakeTestClient {
     pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
         let stmt_handle = self.new_statement();
 
-        rt().block_on(async {
+        self.rt.block_on(async {
             if let Err(e) = self
                 .client
                 .statement_set_sql_query(StatementSetSqlQueryRequest {
@@ -350,7 +349,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn connect(&self) -> Result<(), String> {
-        rt().block_on(async {
+        self.rt.block_on(async {
             match self
                 .client
                 .connection_init(ConnectionInitRequest {
@@ -366,7 +365,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_connection_option(&self, option_name: &str, option_value: &str) {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .connection_set_option_string(ConnectionSetOptionStringRequest {
                     conn_handle: Some(self.conn_handle),
@@ -379,7 +378,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_connection_option_int(&self, option_name: &str, option_value: i64) {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .connection_set_option_int(ConnectionSetOptionIntRequest {
                     conn_handle: Some(self.conn_handle),
@@ -392,7 +391,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .connection_set_option_bytes(ConnectionSetOptionBytesRequest {
                     conn_handle: Some(self.conn_handle),
@@ -405,7 +404,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
-        rt().block_on(async {
+        self.rt.block_on(async {
             self.client
                 .statement_set_option_bool(StatementSetOptionBoolRequest {
                     stmt_handle: Some(*stmt),
@@ -509,7 +508,7 @@ impl SnowflakeTestClient {
 
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
-        rt().block_on(async {
+        self.rt.block_on(async {
             // Release the connection when the client is dropped
             if let Err(e) = self
                 .client
