@@ -24,8 +24,9 @@ DRIVERS = [
 ]
 
 VAULT_PLUGIN = "${GLOBAL_PLUGIN}/vault_secrets"
-DOCKER_PLUGIN = "${GLOBAL_PLUGIN}/docker"
-TEST_COLLECTOR_PLUGIN = "${GLOBAL_PLUGIN}/test-collector"
+DOCKER_PLUGIN = "docker#v5.11.0"
+TEST_COLLECTOR_PLUGIN = "test-collector#v1.10.0"
+JUNIT_ANNOTATE_PLUGIN = "junit-annotate#v2.4.1"
 DOCKER_IMAGE = (
     "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/"
     "internal-production-docker-snowflake-virtual/docker/"
@@ -361,7 +362,7 @@ def main():
         steps.append({
             "label": ":junit: Test results summary",
             "plugins": [{
-                "${GLOBAL_PLUGIN}/junit-annotate": {
+                JUNIT_ANNOTATE_PLUGIN: {
                     "artifacts": "junit-results/*.xml",
                     "always-annotate": True,
                 }
