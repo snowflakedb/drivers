@@ -24,6 +24,8 @@ DRIVERS = [
 ]
 
 VAULT_PLUGIN = "${GLOBAL_PLUGIN}/vault_secrets"
+DOCKER_PLUGIN = "${GLOBAL_PLUGIN}/docker"
+TEST_COLLECTOR_PLUGIN = "${GLOBAL_PLUGIN}/test-collector"
 DOCKER_IMAGE = (
     "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/"
     "internal-production-docker-snowflake-virtual/docker/"
@@ -48,7 +50,7 @@ COMMON_STEP = {
             }
         },
         {
-            "docker#v5.11.0": {
+            DOCKER_PLUGIN: {
                 "image": DOCKER_IMAGE,
                 "propagate-environment": True,
                 "mount-buildkite-agent": True,
@@ -290,7 +292,7 @@ def build_step(driver_name):
     upload = UPLOAD_SNIPPET.format(driver=driver_name, label=DRIVER_LABELS[driver_name])
     command = cfg["command"].replace("{upload}", upload)
     plugins = list(COMMON_STEP["plugins"]) + [{
-        "test-collector#v1.10.0": {
+        TEST_COLLECTOR_PLUGIN: {
             "files": "junit-results/*.xml",
             "format": "junit",
             "tags": ["driver={}".format(driver_name)],
@@ -359,7 +361,7 @@ def main():
         steps.append({
             "label": ":junit: Test results summary",
             "plugins": [{
-                "junit-annotate#v2.4.1": {
+                "${GLOBAL_PLUGIN}/junit-annotate": {
                     "artifacts": "junit-results/*.xml",
                     "always-annotate": True,
                 }
