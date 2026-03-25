@@ -104,20 +104,26 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # ARM64 build uses --target, output is in target\aarch64-pc-windows-msvc\debug\
-          $targetDir = Join-Path ${{ github.workspace }} "target\aarch64-pc-windows-msvc\debug"
+          # Quote the workspace so paths with spaces are handled correctly.
+          $targetDir = Join-Path "${{ github.workspace }}" "target\aarch64-pc-windows-msvc\debug"
           Get-ChildItem $targetDir
           $env:CORE_PATH = Join-Path $targetDir "jdbc_bridge.dll"
-          # Use vswhere to locate dumpbin
+          # Use vswhere to locate dumpbin; fail if unavailable so export gaps are not silently missed.
           $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath 2>$null
           if ($vsPath) {
             $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           }
-          if ($dumpbin) {
-            Write-Host "=== DLL Exports (jdbc_bridge.dll) ==="
-            & $dumpbin /exports "$env:CORE_PATH" | Where-Object { $_ -match "Java_|JNI_" }
-          } else {
-            Write-Host "dumpbin not found"
+          if (-not $dumpbin) {
+            Write-Error "dumpbin not found — cannot verify jdbc_bridge.dll exports"
+            exit 1
           }
+          Write-Host "=== DLL Exports (jdbc_bridge.dll) ==="
+          $exports = & $dumpbin /exports "$env:CORE_PATH" | Where-Object { $_ -match "Java_|JNI_" }
+          if (-not $exports) {
+            Write-Error "jdbc_bridge.dll has no Java_ or JNI_ exports — DLL is not a valid JNI library"
+            exit 1
+          }
+          $exports
           # JDBC tests are NOT run on ARM64: Apache Arrow does not ship
           # arrow_cdata_jni.dll for Windows ARM64 in any version through 19.0.0.
           # All tests fail with FileNotFoundException at class initialization.

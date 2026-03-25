@@ -12,6 +12,8 @@ fn main() {
     {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
         let def_path = std::path::Path::new(&manifest_dir).join("exports.def");
+        // Rebuild when the export list changes so the DLL export table stays in sync.
+        println!("cargo:rerun-if-changed={}", def_path.display());
         // No quoting: cargo passes rustc-cdylib-link-arg as a single OS-level
         // token (via a response file), so the linker receives the path verbatim.
         println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
