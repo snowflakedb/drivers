@@ -1238,7 +1238,9 @@ mod tests {
 
         fn with_token(host: &str, username: &str, token_type: TokenType, value: &str) -> Self {
             let cache = Self::new();
-            cache.add_token(host, username, token_type, value).unwrap();
+            cache
+                .add_token(host, username, token_type, value)
+                .expect("test: add_token should succeed");
             cache
         }
 
@@ -1255,7 +1257,7 @@ mod tests {
             token_type: TokenType,
             token_value: &str,
         ) -> Result<(), TokenCacheError> {
-            self.store.lock().unwrap().insert(
+            self.store.lock().expect("test: lock poisoned").insert(
                 Self::key(host, username, token_type),
                 token_value.to_string(),
             );
@@ -1270,7 +1272,7 @@ mod tests {
         ) -> Result<(), TokenCacheError> {
             self.store
                 .lock()
-                .unwrap()
+                .expect("test: lock poisoned")
                 .remove(&Self::key(host, username, token_type));
             Ok(())
         }
@@ -1284,7 +1286,7 @@ mod tests {
             Ok(self
                 .store
                 .lock()
-                .unwrap()
+                .expect("test: lock poisoned")
                 .get(&Self::key(host, username, token_type))
                 .cloned())
         }

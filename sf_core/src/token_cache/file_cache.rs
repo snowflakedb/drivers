@@ -939,7 +939,7 @@ mod tests {
         // `ERROR_ACCESS_DENIED`, etc.), so threads need a larger retry
         // budget to avoid spurious lock-exhaustion failures under high
         // contention.
-        const LOCK_RETRY_COUNT: u32 = if cfg!(all(windows)) { 1000 } else { 100 };
+        const LOCK_RETRY_COUNT: u32 = if cfg!(windows) { 1000 } else { 100 };
 
         fn create_shared_cache() -> (tempfile::TempDir, Arc<FileTokenCache>) {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
