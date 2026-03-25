@@ -793,7 +793,7 @@ pub struct Connection {
 /// the pointer to the application's data buffer, its length, and the
 /// indicator/length pointer. Populated by `SQLBindParameter` or
 /// `SQLSetDescField` on the APD handle.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ApdRecord {
     pub value_type: CDataType,
     pub data_ptr: sql::Pointer,
@@ -817,7 +817,7 @@ impl Default for ApdRecord {
 /// Stores the implementation-side view of a bound parameter: the SQL data type,
 /// column size, decimal digits, and parameter direction. Populated by
 /// `SQLBindParameter` or `SQLSetDescField` on the IPD handle.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct IpdRecord {
     pub parameter_type: sql::SqlDataType,
     pub column_size: sql::ULen,
