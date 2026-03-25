@@ -15,8 +15,8 @@ fn normalize_path(path: PathBuf) -> PathBuf {
 }
 
 fn generate_protobuf() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let proto_file = normalize_path(
         PathBuf::from(&manifest_dir)
             .join(
