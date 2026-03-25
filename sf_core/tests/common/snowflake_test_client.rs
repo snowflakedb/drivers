@@ -9,7 +9,7 @@ use super::config::{Parameters, get_parameters, setup_logging};
 use super::private_key_helper::{self, PrivateKeyFile};
 
 static TEST_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_current_thread()
+    tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to create test tokio runtime")
