@@ -118,9 +118,12 @@ Feature: ODBC binary to character type conversions
 
   @odbc_e2e
   Scenario: should truncate binary hex with one-byte-short buffer for SQL_C_CHAR
+    # BD#30: Old driver writes only complete hex pairs on even BufferLength
+    # ("ABCD\0", last byte unused). New driver fills all available space ("ABCDE\0").
     Given Snowflake client is logged in
     When Query "SELECT X'ABCDEF'::BINARY" is executed (3 bytes -> hex "ABCDEF" = 6 chars, needs 7)
     Then SQL_C_CHAR with buffer = 6 (one short of the 7 needed) should return 01004
+    And Truncated output should be null-terminated with valid hex prefix
 
   @odbc_e2e
   Scenario: should handle buffer size 1 for SQL_C_CHAR with binary
