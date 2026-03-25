@@ -195,10 +195,14 @@ def configureCommonTestTask = { t ->
                       System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' :
                       'libjdbc_bridge.so'
         corePath = file("${libPath}/${libName}").absolutePath
+    } else {
+        // Normalize to absolute path so System.load() works from any working directory.
+        corePath = file(corePath).absolutePath
     }
     t.environment 'CORE_PATH', corePath
     def parameterPath = System.getenv('PARAMETER_PATH')?.trim() ?: null
-    t.environment 'PARAMETER_PATH', (parameterPath && !parameterPath.isEmpty()) ? parameterPath : file('../parameters.json').absolutePath
+    // Normalize to absolute path regardless of source to ensure consistent resolution.
+    t.environment 'PARAMETER_PATH', parameterPath ? file(parameterPath).absolutePath : file('../parameters.json').absolutePath
 
     def rawRetryCount = System.getenv('GRADLE_TEST_RETRY_COUNT')
     def retryCount = rawRetryCount?.trim()
