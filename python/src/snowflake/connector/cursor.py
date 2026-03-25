@@ -36,10 +36,9 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     QueryBindings,
     QueryStats,
     StatementExecuteQueryRequest,
-    StatementNewRequest,
-    StatementReleaseRequest,
-    StatementSetSqlQueryRequest,
+    StatementHandle,
 )
+from ._internal.query_utils import create_statement, extract_rowcount, extract_sqlstate, get_stream_ptr
 from ._internal.type_codes import FIXED, get_type_code
 from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
@@ -93,6 +92,13 @@ class ResultMetadata(NamedTuple):
             scale=scale,
             is_nullable=col.nullable,
         )
+
+    @classmethod
+    def create_description(cls, result: ExecuteResult | None) -> list[ResultMetadata] | None:
+        """Extract description from execute result column metadata."""
+        if result and result.columns:
+            return [cls.from_column(col) for col in result.columns]
+        return None
 
 
 # Backward compatibility alias
@@ -201,6 +207,8 @@ class SnowflakeCursorBase(abc.ABC):
         self._rowcount: int | None = None
         self._arraysize: int = 1
         self._sqlstate: str | None = None
+        self._sfqid: str | None = None
+        self._query: str | None = None
         self._closed = False
         # Streaming state for Arrow results
         self.execute_result: ExecuteResult | None = None
@@ -294,9 +302,7 @@ class SnowflakeCursorBase(abc.ABC):
         Returns:
             str | None: The SQL query string, or None if no query has been executed
         """
-        if self.execute_result is None:
-            return None
-        return self.execute_result.query if self.execute_result.query else None
+        return self._query
 
     @property
     def sfqid(self) -> str | None:
@@ -306,9 +312,7 @@ class SnowflakeCursorBase(abc.ABC):
         Returns:
             str | None: Snowflake Query ID (UUID format), or None if no query has been executed
         """
-        if self.execute_result is None:
-            return None
-        return self.execute_result.query_id if self.execute_result.query_id else None
+        return self._sfqid
 
     @property
     def stats(self) -> QueryResultStats | None:
@@ -335,9 +339,20 @@ class SnowflakeCursorBase(abc.ABC):
         raise NotSupportedError("callproc is not implemented")
 
     @pep249
-    def close(self) -> None:
-        """Close the cursor now (rather than whenever __del__ is called)."""
-        self._closed = True
+    def close(self) -> bool | None:
+        """Close the cursor now.
+
+        Returns whether the cursor was closed during this call.
+        """
+        try:
+            if self._closed:
+                return False
+            self.reset(closing=True)
+            self._closed = True
+            del self._messages[:]
+            return True
+        except Exception:
+            return None
 
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
@@ -428,6 +443,7 @@ class SnowflakeCursorBase(abc.ABC):
     ) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
+        Resets the cursor state before the execution.
 
         Args:
             operation (str): SQL statement to execute
@@ -436,52 +452,47 @@ class SnowflakeCursorBase(abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
         """
+        self.reset()
+        return self._execute(operation, parameters, _is_put_get, **kwargs)
+
+    def _execute(
+        self,
+        operation: str,
+        parameters: Sequence[Any] | dict[str, Any] | None = None,
+        _is_put_get: bool | None = None,
+        **kwargs: Any,
+    ) -> SnowflakeCursorBase:
+        """Execute query logic."""
         query, bindings = self._prepare_query(operation, parameters)
-        stmt_handle = self._connection.db_api.statement_new(
-            StatementNewRequest(conn_handle=self._connection.conn_handle)
-        ).stmt_handle
-        self._connection.db_api.statement_set_sql_query(
-            StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
-        )
 
-        request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
+        result: ExecuteResult | None = None
+        with create_statement(self.connection, query) as stmt_handle:
+            result = self._execute_query(stmt_handle, bindings)
 
+        # populate cursor state from the result
+        self._description = ResultMetadata.create_description(result)
+        self._rowcount = extract_rowcount(result)
+        self._sqlstate = extract_sqlstate(result)
+        self._sfqid = (result.query_id if result.query_id else None) if result else None
+        self._query = (result.query if result.query else None) if result else None
+        # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
+        self._rownumber = -1
+        # save execute result (holds arrow stream data needed for fetching)
+        self.execute_result = result
+
+        return self
+
+    def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteResult:
         try:
-            self.execute_result = self._connection.db_api.statement_execute_query(request).result
+            request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
+            return self._connection.db_api.statement_execute_query(request).result
         except ProgrammingError as exc:
             self._sqlstate = exc.sqlstate or None
             raise
-        finally:
-            self._connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=stmt_handle))
-
-        # Reset streaming state for a new result
-        self._binding_data = None
-        self._iterator = None
-        self._fetch_mode = None
-        self._rownumber = -1
-
-        # Populate description, rowcount, and sqlstate
-        self._populate_description()
-        self._populate_rowcount()
-        self._populate_sqlstate()
-        return self
-
-    def _populate_rowcount(self) -> None:
-        if self.execute_result and self.execute_result.HasField("rows_affected"):
-            self._rowcount = self.execute_result.rows_affected
-        else:
-            self._rowcount = None
-
-    def _populate_sqlstate(self) -> None:
-        # "00000" (successful completion) is treated as None for
-        # backwards compatibility with the old connector.
-        sql_state = self.execute_result.sql_state if self.execute_result else None
-        if sql_state and sql_state != "00000":
-            self._sqlstate = sql_state
-        else:
-            self._sqlstate = None
 
     @pep249
+    @_requires_not_closed
+    @_requires_open_connection
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
@@ -507,17 +518,19 @@ class SnowflakeCursorBase(abc.ABC):
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
         if paramstyle.is_client_side() or isinstance(first_params, dict):
+            self.reset()
             total_rowcount = 0
             unknown_rowcount = False
             for params in seq_of_parameters:
-                self.execute(operation, params)
+                self._execute(operation, params)  # no reset between calls
                 rc = self._rowcount
                 if rc is None or rc == -1:
                     unknown_rowcount = True
                 elif not unknown_rowcount:
                     total_rowcount += rc
             # Per PEP 249, -1 indicates that the number of rows is unknown
-            self._rowcount = -1 if unknown_rowcount else total_rowcount
+            # but for backward compatibility we set it to None
+            self._rowcount = None if unknown_rowcount else total_rowcount
             return
 
         # Server-side binding: validate and use array binding
@@ -546,50 +559,8 @@ class SnowflakeCursorBase(abc.ABC):
     # Arrow stream helpers
     # ------------------------------------------------------------------
 
-    def _get_stream_ptr(self) -> int:
-        """Get the ArrowArrayStream pointer from execute result.
-
-        Returns:
-            int: The ArrowArrayStream pointer as an integer
-
-        Raises:
-            RuntimeError: If execute_result is invalid or stream pointer is null
-        """
-        if self.execute_result is None:
-            raise RuntimeError("No query has been executed")
-
-        if not hasattr(self.execute_result, "stream") or self.execute_result.stream is None:
-            raise RuntimeError("Execute result does not contain a valid stream")
-
-        if not hasattr(self.execute_result.stream, "value") or self.execute_result.stream.value is None:
-            raise RuntimeError("Stream does not contain a valid pointer value")
-
-        stream_value = self.execute_result.stream.value
-        if len(stream_value) != 8:
-            raise RuntimeError(f"Stream pointer value has wrong length: {len(stream_value)} (expected 8)")
-
-        stream_ptr = int.from_bytes(stream_value, byteorder="little", signed=False)
-
-        if stream_ptr == 0:
-            raise RuntimeError("Stream pointer is null")
-
-        return stream_ptr
-
-    def _populate_description(self) -> None:
-        """Populate cursor description from execute result column metadata."""
-        if self.execute_result is None:
-            self._description = None
-            return
-
-        columns = self.execute_result.columns
-        if not columns:
-            self._description = None
-            return
-
-        self._description = [ResultMetadata.from_column(col) for col in columns]
-
     def _get_iterator(self) -> ArrowStreamIterator:
-        stream_ptr = self._get_stream_ptr()
+        stream_ptr = get_stream_ptr(self.execute_result)
         arrow_context = ArrowConverterContext()
         return ArrowStreamIterator(
             stream_ptr,
@@ -603,7 +574,7 @@ class SnowflakeCursorBase(abc.ABC):
         self,
         force_microsecond_precision: bool = False,
     ) -> ArrowStreamTableIterator:
-        stream_ptr = self._get_stream_ptr()
+        stream_ptr = get_stream_ptr(self.execute_result)
         arrow_context = ArrowConverterContext()
         return ArrowStreamTableIterator(
             stream_ptr,
@@ -880,8 +851,23 @@ class SnowflakeCursorBase(abc.ABC):
         raise NotSupportedError("scroll is not supported")
 
     def reset(self, closing: bool = False) -> None:
-        """Reset the result set."""
-        raise NotImplementedError("reset is not yet implemented")
+        """Reset the result set.
+
+        Frees heavy result data (arrow streams) while for backward compatibility
+        preserving metadata that the old driver also keeps across resets:
+        ``description``, ``rownumber``, ``sfqid``, ``query``, and ``sqlstate``.
+
+        Args:
+            closing: If True, do not reset rowcount,
+                     see: SNOW-647539: Do not erase the rowcount information when closing the cursor.
+                     If False, reset rowcount to None.
+        """
+        if not closing:
+            self._rowcount = None
+        self.execute_result = None
+        self._iterator = None
+        self._fetch_mode = None
+        self._binding_data = None
 
     def query_result(self, qid: str) -> SnowflakeCursorBase:
         """Query the result of a previously executed query."""

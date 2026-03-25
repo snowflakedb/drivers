@@ -1098,6 +1098,70 @@ class TestCursorMethods:
         cursor.setoutputsize(100, 1)
 
 
+class TestCursorExecutemany:
+    """Integration tests for Cursor.executemany with client-side binding."""
+
+    def test_executemany_rowcount_with_dict_params(self, cursor, tmp_schema):
+        """Test that executemany accumulates rowcount across individual executions."""
+        # Given a table to insert into
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_em (id INTEGER, name VARCHAR)")
+
+        # When inserting multiple rows via executemany with dict params
+        params = [
+            {"id": 1, "name": "alice"},
+            {"id": 2, "name": "bob"},
+            {"id": 3, "name": "charlie"},
+        ]
+        cursor.executemany(f"INSERT INTO {tmp_schema}.test_em VALUES (%(id)s, %(name)s)", params)
+
+        # Then rowcount should equal the total number of rows inserted
+        assert cursor.rowcount == 3
+
+        # And the data should actually be in the table
+        cursor.execute(f"SELECT id, name FROM {tmp_schema}.test_em ORDER BY id")
+        rows = cursor.fetchall()
+        assert rows == [(1, "alice"), (2, "bob"), (3, "charlie")]
+
+
+class TestCursorReset:
+    """Integration tests for Cursor.reset method."""
+
+    def test_reset_clears_state_after_execute(self, cursor):
+        """Test that reset() matches old driver semantics.
+
+        Fields preserved after reset: description, sfqid, query, rownumber, sqlstate.
+        Fields cleared after reset: rowcount.
+        """
+        query_text = "SELECT 1 AS col1, 2 AS col2"
+
+        # Given a cursor that has executed a query and fetched results
+        cursor.execute(query_text)
+        cursor.fetchone()
+        assert cursor.description is not None
+        assert cursor.rowcount is not None
+        assert cursor.sfqid is not None
+        assert cursor.rownumber == 0
+
+        saved_sfqid = cursor.sfqid
+        saved_description = cursor.description
+
+        # When resetting the cursor
+        cursor.reset()
+
+        # Then rowcount should be cleared
+        assert cursor.rowcount is None
+
+        # But metadata fields must survive (consistent with old driver)
+        assert cursor.sfqid == saved_sfqid
+        assert cursor.description == saved_description
+        assert cursor.query == query_text
+
+        # And the cursor should still be usable for a new query
+        cursor.execute("SELECT 42 AS answer")
+        assert cursor.fetchone() == (42,)
+        assert cursor.sfqid != saved_sfqid
+
+
 class TestCursorContextManager:
     """Test Cursor context manager functionality."""
 
