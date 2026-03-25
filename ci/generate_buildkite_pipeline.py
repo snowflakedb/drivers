@@ -106,6 +106,20 @@ def annotate(message, style="info", context="default"):
     )
 
 
+DRIVER_LABELS = {
+    "rust": "Rust Core",
+    "python": "Python",
+    "odbc": "ODBC",
+    "java": "JDBC",
+}
+
+UPLOAD_SNIPPET = """\
+echo "--- :buildkite: Uploading test results"
+buildkite-agent artifact upload "junit-results/*.xml"
+buildkite-agent annotate ":white_check_mark: {label} -- passed" --style "success" --context "{driver}-result"
+"""
+
+
 RUST_COMMAND = """\
 set -euo pipefail
 TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
@@ -134,9 +148,7 @@ else
 fi
 unset RUSTC_BOOTSTRAP
 
-echo "--- :buildkite: Uploading test results"
-buildkite-agent artifact upload "junit-results/*.xml"
-buildkite-agent annotate ":white_check_mark: Rust Core -- passed" --style "success" --context "rust-result"
+{upload}
 """
 
 PYTHON_COMMAND = """\
@@ -162,10 +174,8 @@ else
   hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
 fi
 
-echo "--- :buildkite: Uploading test results"
 cd /workdir
-buildkite-agent artifact upload "junit-results/*.xml"
-buildkite-agent annotate ":white_check_mark: Python -- passed" --style "success" --context "python-result"
+{upload}
 """
 
 ODBC_COMMAND = """\
@@ -200,10 +210,8 @@ else
   ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
 fi
 
-echo "--- :buildkite: Uploading test results"
 cd /workdir
-buildkite-agent artifact upload "junit-results/*.xml"
-buildkite-agent annotate ":white_check_mark: ODBC -- passed" --style "success" --context "odbc-result"
+{upload}
 """
 
 JDBC_COMMAND = """\
@@ -234,12 +242,10 @@ else
   ./gradlew test $$GRADLE_TESTS --stacktrace
 fi
 
-echo "--- :buildkite: Uploading test results"
 mkdir -p /workdir/junit-results
 cp build/test-results/test/*.xml /workdir/junit-results/ 2>/dev/null || true
 cd /workdir
-buildkite-agent artifact upload "junit-results/*.xml"
-buildkite-agent annotate ":white_check_mark: JDBC -- passed" --style "success" --context "jdbc-result"
+{upload}
 """
 
 DRIVER_STEPS = {
@@ -281,6 +287,8 @@ DRIVER_STEPS = {
 def build_step(driver_name):
     """Build a pipeline group dict for a driver."""
     cfg = DRIVER_STEPS[driver_name]
+    upload = UPLOAD_SNIPPET.format(driver=driver_name, label=DRIVER_LABELS[driver_name])
+    command = cfg["command"].replace("{upload}", upload)
     plugins = list(COMMON_STEP["plugins"]) + [{
         "test-collector#v1.10.0": {
             "files": "junit-results/*.xml",
@@ -293,7 +301,7 @@ def build_step(driver_name):
     step["label"] = cfg["step_label"]
     step["key"] = cfg["step_key"]
     step["timeout_in_minutes"] = cfg["timeout"]
-    step["command"] = _LiteralStr(cfg["command"])
+    step["command"] = _LiteralStr(command)
     return {
         "group": cfg["group_label"],
         "key": cfg["group_key"],
