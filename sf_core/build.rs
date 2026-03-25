@@ -64,8 +64,9 @@ fn main() {
     {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
         let def_path = std::path::Path::new(&manifest_dir).join("exports.def");
-        // Quote the path so MSVC link.exe handles workspace paths with spaces.
-        println!("cargo:rustc-link-arg=/DEF:\"{}\"", def_path.display());
+        // No quoting: cargo passes rustc-link-arg as a single OS-level token
+        // (via a response file), so the linker receives the path verbatim.
+        println!("cargo:rustc-link-arg=/DEF:{}", def_path.display());
     }
 
     generate_protobuf();
