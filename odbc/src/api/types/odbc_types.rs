@@ -819,7 +819,7 @@ impl Default for ApdRecord {
 /// `SQLBindParameter` or `SQLSetDescField` on the IPD handle.
 #[derive(Debug)]
 pub struct IpdRecord {
-    pub parameter_type: sql::SqlDataType,
+    pub sql_data_type: sql::SqlDataType,
     pub column_size: sql::ULen,
     pub decimal_digits: sql::SmallInt,
     pub direction: sql::SmallInt,
@@ -829,7 +829,7 @@ pub struct IpdRecord {
 impl Default for IpdRecord {
     fn default() -> Self {
         Self {
-            parameter_type: sql::SqlDataType::VARCHAR,
+            sql_data_type: sql::SqlDataType::VARCHAR,
             column_size: 0,
             decimal_digits: 0,
             direction: sql::ParamType::Input as sql::SmallInt,
@@ -842,7 +842,7 @@ impl Default for IpdRecord {
 /// for consumption by the parameter conversion pipeline.
 #[derive(Debug, Clone)]
 pub struct ParameterBinding {
-    pub parameter_type: sql::SqlDataType,
+    pub sql_data_type: sql::SqlDataType,
     pub value_type: CDataType,
     pub parameter_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
@@ -852,7 +852,7 @@ pub struct ParameterBinding {
 impl ParameterBinding {
     pub fn from_apd_ipd(apd: &ApdRecord, ipd: &IpdRecord) -> Self {
         Self {
-            parameter_type: ipd.parameter_type,
+            sql_data_type: ipd.sql_data_type,
             value_type: apd.value_type,
             parameter_value_ptr: apd.data_ptr,
             buffer_length: apd.buffer_length,

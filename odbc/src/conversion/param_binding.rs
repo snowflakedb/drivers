@@ -214,7 +214,7 @@ pub fn odbc_bindings_to_json(
             if binding.parameter_value_ptr.is_null() {
                 return NullPointerSnafu.fail();
             }
-            let converter = make_converter(&binding.parameter_type)?;
+            let converter = make_converter(&binding.sql_data_type)?;
             converter.convert(&binding)?
         };
 
@@ -387,7 +387,7 @@ mod tests {
         ind_ptr: *mut sql::Len,
     ) -> ParameterBinding {
         ParameterBinding {
-            parameter_type,
+            sql_data_type: parameter_type,
             value_type,
             parameter_value_ptr: ptr,
             buffer_length,
@@ -420,7 +420,7 @@ mod tests {
             ipd.records.insert(
                 num,
                 IpdRecord {
-                    parameter_type,
+                    sql_data_type: parameter_type,
                     ..IpdRecord::default()
                 },
             );
@@ -431,7 +431,7 @@ mod tests {
     fn convert_binding(
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
-        let converter = make_converter(&binding.parameter_type)?;
+        let converter = make_converter(&binding.sql_data_type)?;
         converter.convert(binding)
     }
 
@@ -720,7 +720,7 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(make_converter(&binding.parameter_type).is_err());
+        assert!(make_converter(&binding.sql_data_type).is_err());
     }
 
     // -- end-to-end pipeline tests -------------------------------------------
@@ -800,7 +800,7 @@ mod tests {
         ipd.records.insert(
             3,
             IpdRecord {
-                parameter_type: sql::SqlDataType::INTEGER,
+                sql_data_type: sql::SqlDataType::INTEGER,
                 ..IpdRecord::default()
             },
         );

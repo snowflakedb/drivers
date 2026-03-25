@@ -430,7 +430,7 @@ pub fn bind_parameter(
     stmt.ipd.records.insert(
         parameter_number,
         IpdRecord {
-            parameter_type,
+            sql_data_type: parameter_type,
             column_size,
             decimal_digits,
             direction: raw_input_output_type,
@@ -575,7 +575,7 @@ pub fn describe_param(
 
     if !data_type_ptr.is_null() {
         unsafe {
-            *data_type_ptr = ipd_rec.parameter_type.0;
+            *data_type_ptr = ipd_rec.sql_data_type.0;
         }
     }
     if !parameter_size_ptr.is_null() {
@@ -597,7 +597,7 @@ pub fn describe_param(
     tracing::info!(
         "describe_param: parameter {} type={:?} size={} digits={} nullable={}",
         parameter_number,
-        ipd_rec.parameter_type,
+        ipd_rec.sql_data_type,
         ipd_rec.column_size,
         ipd_rec.decimal_digits,
         ipd_rec.nullable,

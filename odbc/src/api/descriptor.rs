@@ -559,6 +559,18 @@ fn set_apd_field(
 ) -> OdbcResult<()> {
     if rec_number == 0 {
         match field {
+            DescField::Count => {
+                let count = value_ptr as sql::SmallInt;
+                if count < 0 {
+                    return crate::api::error::InvalidDescriptorIndexSnafu { number: count }.fail();
+                }
+                if count == 0 {
+                    desc.clear();
+                } else {
+                    desc.records.retain(|&k, _| k <= count as u16);
+                }
+                Ok(())
+            }
             DescField::ArraySize => {
                 let size = value_ptr as usize;
                 if size == 0 {
@@ -679,7 +691,7 @@ fn get_ipd_field(
                 unsafe {
                     std::ptr::write_unaligned(
                         value_ptr as *mut sql::SmallInt,
-                        record.parameter_type.0,
+                        record.sql_data_type.0,
                     );
                 }
                 Ok(())
@@ -757,7 +769,9 @@ fn set_ipd_field(
 
         match field {
             DescField::Type | DescField::ConciseType => {
-                record.parameter_type = sql::SqlDataType(value_ptr as i16);
+                let raw_type = value_ptr as i16;
+                crate::api::SqlType::try_from(raw_type)?;
+                record.sql_data_type = sql::SqlDataType(raw_type);
                 Ok(())
             }
             DescField::Precision => {
