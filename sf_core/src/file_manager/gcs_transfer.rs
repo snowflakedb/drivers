@@ -816,4 +816,125 @@ mod tests {
         assert_eq!(UploadStatus::Uploaded.to_string(), "UPLOADED");
         assert_eq!(UploadStatus::Skipped.to_string(), "SKIPPED");
     }
+
+    // ---------------------------------------------------------------
+    // 6. Retry policy budget
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn gcs_retry_policy_max_elapsed_exceeds_request_timeout() {
+        let policy = gcs_retry_policy(false);
+        assert_eq!(
+            policy.max_elapsed,
+            Duration::from_secs(600),
+            "max_elapsed must exceed REQUEST_TIMEOUT_SECS (300s)"
+        );
+        assert!(
+            policy.max_elapsed > Duration::from_secs(REQUEST_TIMEOUT_SECS),
+            "retry budget must be larger than a single request timeout"
+        );
+    }
+
+    #[test]
+    fn gcs_retry_policy_max_attempts() {
+        let policy = gcs_retry_policy(false);
+        assert_eq!(policy.max_attempts, 6);
+    }
+
+    // ---------------------------------------------------------------
+    // 7. Percent-encoding edge cases
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn percent_encode_empty_string() {
+        assert_eq!(percent_encode_path(""), "");
+    }
+
+    #[test]
+    fn percent_encode_unreserved_chars_pass_through() {
+        // RFC 3986 unreserved: A-Z a-z 0-9 - _ . ~
+        let unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~/";
+        assert_eq!(percent_encode_path(unreserved), unreserved);
+    }
+
+    #[test]
+    fn percent_encode_special_ascii_chars() {
+        assert_eq!(percent_encode_path("@"), "%40");
+        assert_eq!(percent_encode_path("#"), "%23");
+        assert_eq!(percent_encode_path("!"), "%21");
+        assert_eq!(percent_encode_path("$"), "%24");
+        assert_eq!(percent_encode_path("&"), "%26");
+        assert_eq!(percent_encode_path(" "), "%20");
+        assert_eq!(percent_encode_path("%"), "%25");
+    }
+
+    #[test]
+    fn percent_encode_multibyte_unicode() {
+        // é is U+00E9, encoded as 0xC3 0xA9 in UTF-8
+        assert_eq!(percent_encode_path("café.csv"), "caf%C3%A9.csv");
+        // 日本 is multi-byte CJK
+        assert_eq!(
+            percent_encode_path("日本/data.csv"),
+            "%E6%97%A5%E6%9C%AC/data.csv"
+        );
+    }
+
+    #[test]
+    fn percent_encode_preserves_slashes_in_paths() {
+        assert_eq!(percent_encode_path("a/b/c/d.csv"), "a/b/c/d.csv");
+    }
+
+    // ---------------------------------------------------------------
+    // 8. URL construction with special characters
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn url_default_encodes_special_chars_in_key() {
+        let stage = make_stage_info(StageInfoOverrides::default());
+        let url = build_gcs_url(&stage, "dir/my file (1).csv");
+        assert_eq!(
+            url,
+            "https://storage.googleapis.com/my-bucket/dir/my%20file%20%281%29.csv"
+        );
+    }
+
+    #[test]
+    fn url_virtual_host_encodes_key() {
+        let stage = make_stage_info(StageInfoOverrides {
+            use_virtual_url: true,
+            ..Default::default()
+        });
+        let url = build_gcs_url(&stage, "path/café.csv");
+        assert_eq!(
+            url,
+            "https://my-bucket.storage.googleapis.com/path/caf%C3%A9.csv"
+        );
+    }
+
+    #[test]
+    fn url_regional_encodes_key() {
+        let stage = make_stage_info(StageInfoOverrides {
+            region: Some("us-east1".to_string()),
+            use_regional_url: true,
+            ..Default::default()
+        });
+        let url = build_gcs_url(&stage, "a&b=c.csv");
+        assert_eq!(
+            url,
+            "https://storage.us-east1.rep.googleapis.com/my-bucket/a%26b%3Dc.csv"
+        );
+    }
+
+    #[test]
+    fn url_custom_endpoint_encodes_key() {
+        let stage = make_stage_info(StageInfoOverrides {
+            end_point: Some("custom.example.com".to_string()),
+            ..Default::default()
+        });
+        let url = build_gcs_url(&stage, "dir/file name.csv");
+        assert_eq!(
+            url,
+            "https://custom.example.com/my-bucket/dir/file%20name.csv"
+        );
+    }
 }
