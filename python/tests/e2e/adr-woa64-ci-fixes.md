@@ -11,11 +11,11 @@ review comments addressed or consciously deferred.
 - PRs: #438 (speed-up-woa64-build), #402 (woa64-jdbc), #403 (woa64-odbc)
 - Target: All 6 CI workflows per PR (Pre-commit, Validate, JDBC, ODBC, Python, Rust Core)
 
-## Current state — CI running after /DEF: quoting revert; expect() migrations in place
+## Current state — Retrigger after transient Snowflake failure on woa64-jdbc ODBC CI
 
-- PR #438 commit c3011b65: CI running (reverted /DEF: quoting; vcpkg fix + expect() kept)
-- PR #402 commit 6156fafd: CI running (reverted /DEF: quoting; expect() kept)
-- PR #403 commit d281445f: CI running (reverted /DEF: quoting on all 3 build scripts; expect() kept)
+- PR #438 commit 1b6cbba1: CI running — Validate✓ Pre-commit✓ JDBC✓ ODBC✓; Rust Core+Python in_progress
+- PR #402 commit e5af6483: ODBC CI failed (transient "Invalid Snowflake response"); retriggering
+- PR #403 commit 8275403c: CI running — Validate✓ Pre-commit✓ JDBC✓; Rust Core+ODBC+Python in_progress
 
 ### Honest WoA64 status by component
 
@@ -240,6 +240,26 @@ on current runner environments (no spaces in workspace paths).
 
 **Conclusion**: /DEF: quoting was WRONG — broke CI immediately. Reverted.
 The expect() and vcpkg changes are correct. CI running on fix commits.
+
+### Iteration 6 — Transient Snowflake service failure on woa64-jdbc ODBC CI
+
+**Motivation**: woa64-jdbc commit e5af6483 ODBC CI failed on macOS ARM64 with:
+  test "should select values from table for int and synonyms" (int.cpp:202)
+  SQLSTATE=HY000 NativeError=0
+  "Query execution failed: Invalid Snowflake response"
+  1 test failed out of 1469
+
+**Analysis**:
+- "Invalid Snowflake response" = server returned unexpected/malformed response
+- woa64-jdbc changes only touch test-jdbc.yml, build.gradle, sf_core/build.rs
+  — none affect macOS ODBC test runtime behavior
+- Confirmed transient: speed-up branch commit 1b6cbba1 ran ODBC CI in the same
+  time window and passed (success). Same ODBC code, same runner, different timing.
+- Pattern: consistent with prior 503 transient failure seen in Python CI (earlier iterations)
+
+**Action**: Re-trigger CI by pushing this ADR update. No code changes needed.
+
+**Conclusion**: Transient Snowflake service issue confirmed. Expect ODBC CI to pass on re-run.
 
 ## Confirmed conclusions
 
