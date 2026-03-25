@@ -628,8 +628,8 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
         let location_type = match value.location_type.as_deref() {
             Some("GCS") => file_manager::LocationType::Gcs,
             Some("AZURE") => {
-                return InvalidFormatSnafu {
-                    message: "Azure storage is not yet supported".to_string(),
+                return UnsupportedStorageTypeSnafu {
+                    storage_type: "Azure",
                 }
                 .fail();
             }
@@ -786,6 +786,12 @@ pub enum QueryResponseError {
     #[snafu(display("Invalid Snowflake response: {message}"))]
     InvalidFormat {
         message: String,
+        #[snafu(implicit)]
+        location: snafu::Location,
+    },
+    #[snafu(display("Unsupported storage type: {storage_type}"))]
+    UnsupportedStorageType {
+        storage_type: &'static str,
         #[snafu(implicit)]
         location: snafu::Location,
     },

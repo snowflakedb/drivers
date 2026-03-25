@@ -228,6 +228,9 @@ fn gcs_retry_policy(using_presigned_url: bool) -> RetryPolicy {
             cap: Duration::from_secs(16),
             jitter: Jitter::None,
         },
+        // Must exceed REQUEST_TIMEOUT_SECS (300s) to allow at least one full
+        // request + retries. 600s accommodates ~2 full-timeout attempts plus backoff.
+        max_elapsed: Duration::from_secs(600),
         extra_retryable_statuses: extra,
         ..RetryPolicy::default()
     }
@@ -306,12 +309,18 @@ fn resolve_url_and_token(
         _ => return Err(GcsRequestError::MissingGcsCredentials),
     };
 
+    if token.is_none() {
+        tracing::warn!("GCS request will be unauthenticated: no access token and no presigned URL");
+    }
+
     let url = build_gcs_url(stage_info, key);
     Ok((url, token))
 }
 
 /// Builds the GCS URL based on endpoint/virtual/regional flags.
 fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
+    let encoded_key = percent_encode_path(key);
+
     // Strategy 2: custom endpoint
     if let Some(ref ep) = stage_info.end_point
         && !ep.is_empty()
@@ -321,25 +330,50 @@ fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
         } else {
             format!("https://{ep}")
         };
-        return format!("{base}/{}/{key}", stage_info.bucket);
+        return format!("{base}/{}/{encoded_key}", stage_info.bucket);
     }
 
     // Strategy 3: virtual host
     if stage_info.use_virtual_url {
-        return format!("https://{}.storage.googleapis.com/{key}", stage_info.bucket);
+        return format!(
+            "https://{}.storage.googleapis.com/{encoded_key}",
+            stage_info.bucket
+        );
     }
 
     // Strategy 4: regional
     if stage_info.use_regional_url {
         return format!(
-            "https://storage.{}.rep.googleapis.com/{}/{key}",
+            "https://storage.{}.rep.googleapis.com/{}/{encoded_key}",
             stage_info.region.to_lowercase(),
             stage_info.bucket
         );
     }
 
     // Strategy 5: default
-    format!("https://storage.googleapis.com/{}/{key}", stage_info.bucket)
+    format!(
+        "https://storage.googleapis.com/{}/{encoded_key}",
+        stage_info.bucket
+    )
+}
+
+/// Percent-encode a URL path, preserving `/` separators.
+/// Matches Python `urllib.parse.quote()` / ODBC `encodeUrlName()` behavior:
+/// unreserved chars (RFC 3986) and `/` pass through, everything else is encoded.
+fn percent_encode_path(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                encoded.push(byte as char)
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
 }
 
 fn get_header(
@@ -756,7 +790,25 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // 4. Upload status enum
+    // 4. URL percent-encoding
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn percent_encode_preserves_normal_paths() {
+        assert_eq!(
+            percent_encode_path("prefix/file.csv.gz"),
+            "prefix/file.csv.gz"
+        );
+    }
+
+    #[test]
+    fn percent_encode_encodes_spaces_and_special_chars() {
+        assert_eq!(percent_encode_path("dir/my file.csv"), "dir/my%20file.csv");
+        assert_eq!(percent_encode_path("path/a+b=c"), "path/a%2Bb%3Dc");
+    }
+
+    // ---------------------------------------------------------------
+    // 5. Upload status enum
     // ---------------------------------------------------------------
 
     #[test]
