@@ -4,7 +4,7 @@ use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
     InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
     InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, Required,
+    OdbcRuntimeSnafu, Required, StatementNotExecutedSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -513,21 +513,26 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
 }
 
 /// Return the number of parameters in the statement via the IPD descriptor.
+// TODO: Once auto-IPD is implemented (parsing ? markers during SQLPrepare),
+// this will also work for statements that haven't had SQLBindParameter called.
 pub fn num_params(
     statement_handle: sql::Handle,
     param_count_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("num_params: statement_handle={:?}", statement_handle);
 
-    if param_count_ptr.is_null() {
-        return NullPointerSnafu.fail();
+    let stmt = stmt_from_handle(statement_handle);
+
+    if matches!(stmt.state.as_ref(), StatementState::Created) {
+        return StatementNotExecutedSnafu.fail();
     }
 
-    let stmt = stmt_from_handle(statement_handle);
     let count = stmt.ipd.desc_count();
 
-    unsafe {
-        *param_count_ptr = count as sql::SmallInt;
+    if !param_count_ptr.is_null() {
+        unsafe {
+            *param_count_ptr = count as sql::SmallInt;
+        }
     }
 
     tracing::info!("num_params: {} parameters", count);
@@ -535,6 +540,8 @@ pub fn num_params(
 }
 
 /// Describe a bound parameter via the IPD descriptor.
+// TODO: Once auto-IPD is implemented, this will also work for parameters
+// that were not explicitly bound but inferred from ? markers in SQLPrepare.
 pub fn describe_param(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
@@ -554,6 +561,10 @@ pub fn describe_param(
     }
 
     let stmt = stmt_from_handle(statement_handle);
+
+    if matches!(stmt.state.as_ref(), StatementState::Created) {
+        return StatementNotExecutedSnafu.fail();
+    }
     let ipd_rec = stmt.ipd.records.get(&parameter_number).ok_or_else(|| {
         tracing::error!(
             "describe_param: parameter #{} not found in IPD",

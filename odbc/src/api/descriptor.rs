@@ -769,7 +769,9 @@ fn set_ipd_field(
                 Ok(())
             }
             DescField::ParameterType => {
-                record.direction = value_ptr as sql::SmallInt;
+                let direction = value_ptr as sql::SmallInt;
+                crate::api::ParamDirection::try_from(direction)?;
+                record.direction = direction;
                 Ok(())
             }
             DescField::Nullable => {
