@@ -82,9 +82,9 @@ steps:
         timeout_in_minutes: 30
         command: |
           set -euo pipefail
-          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-rust")
-          echo "Filter: $TEST_FILTER"
-          if [ "$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for rust core, skipping"
             exit 0
           fi
@@ -100,13 +100,13 @@ steps:
           echo "--- :test_tube: Running E2E Tests"
           mkdir -p /workdir/junit-results
           export RUSTC_BOOTSTRAP=1
-          if [ "$TEST_FILTER" = "ALL" ]; then
+          if [ "$$TEST_FILTER" = "ALL" ]; then
             cargo test --package sf_core -- --ignored -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
           else
-            IFS='|' read -ra FILTERS <<< "$TEST_FILTER"
-            for filter in "${FILTERS[@]}"; do
-              echo "Running: cargo test -- --ignored $filter"
-              cargo test --package sf_core -- --ignored "$filter" -Z unstable-options --format json --report-time 2>&1
+            IFS='|' read -ra FILTERS <<< "$$TEST_FILTER"
+            for filter in "$${FILTERS[@]}"; do
+              echo "Running: cargo test -- --ignored $$filter"
+              cargo test --package sf_core -- --ignored "$$filter" -Z unstable-options --format json --report-time 2>&1
             done | cargo2junit > /workdir/junit-results/rust-junit.xml
           fi
           unset RUSTC_BOOTSTRAP
@@ -140,9 +140,9 @@ steps:
         timeout_in_minutes: 45
         command: |
           set -euo pipefail
-          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-python")
-          echo "Filter: $TEST_FILTER"
-          if [ "$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-python")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for python, skipping"
             exit 0
           fi
@@ -159,10 +159,10 @@ steps:
 
           echo "--- :test_tube: Running Integ + E2E Tests"
           mkdir -p /workdir/junit-results
-          if [ "$TEST_FILTER" = "ALL" ]; then
+          if [ "$$TEST_FILTER" = "ALL" ]; then
             hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
           else
-            hatch run test.py3.9:all -- $TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
+            hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
           fi
 
           echo "--- :buildkite: Uploading test results"
@@ -195,9 +195,9 @@ steps:
         timeout_in_minutes: 45
         command: |
           set -euo pipefail
-          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-odbc")
-          echo "Filter: $TEST_FILTER"
-          if [ "$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-odbc")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for odbc, skipping"
             exit 0
           fi
@@ -219,14 +219,14 @@ steps:
               -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=NEW \
               .
-          cmake --build cmake-build -- -j $(nproc)
+          cmake --build cmake-build -- -j $$(nproc)
 
           echo "--- :test_tube: Running Integ + E2E Tests"
           mkdir -p /workdir/junit-results
-          if [ "$TEST_FILTER" = "ALL" ]; then
+          if [ "$$TEST_FILTER" = "ALL" ]; then
             ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit /workdir/junit-results/odbc-junit.xml
           else
-            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
+            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
           fi
 
           echo "--- :buildkite: Uploading test results"
@@ -259,9 +259,9 @@ steps:
         timeout_in_minutes: 45
         command: |
           set -euo pipefail
-          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-java")
-          echo "Filter: $TEST_FILTER"
-          if [ "$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-java")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for jdbc, skipping"
             exit 0
           fi
@@ -278,15 +278,15 @@ steps:
           export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
           chmod +x jdbc/gradlew
           cd jdbc
-          if [ "$TEST_FILTER" = "ALL" ]; then
+          if [ "$$TEST_FILTER" = "ALL" ]; then
             ./gradlew test --stacktrace
           else
             GRADLE_TESTS=""
-            IFS='|' read -ra PATTERNS <<< "$TEST_FILTER"
-            for pattern in "${PATTERNS[@]}"; do
-              GRADLE_TESTS="$GRADLE_TESTS --tests $pattern"
+            IFS='|' read -ra PATTERNS <<< "$$TEST_FILTER"
+            for pattern in "$${PATTERNS[@]}"; do
+              GRADLE_TESTS="$$GRADLE_TESTS --tests $$pattern"
             done
-            ./gradlew test $GRADLE_TESTS --stacktrace
+            ./gradlew test $$GRADLE_TESTS --stacktrace
           fi
 
           echo "--- :buildkite: Uploading test results"
