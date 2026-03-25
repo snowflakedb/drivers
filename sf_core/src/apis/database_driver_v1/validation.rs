@@ -3,8 +3,8 @@ use std::fmt;
 
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::ParamStore;
-use crate::config::param_registry::{self, ValueType};
-use crate::config::settings::Setting;
+use crate::config::param_registry::{self, ValueType, param_names};
+use crate::config::settings::{Setting, Settings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationSeverity {
@@ -174,6 +174,92 @@ pub fn resolve_options(
     (resolved, issues)
 }
 
+/// Underscores are not valid in DNS labels (RFC 952/1123), but Snowflake account
+/// names may contain them. When the host or server_url is derived from such an
+/// account, the underscores must be replaced with hyphens so the hostname
+/// resolves correctly.
+/// Skipped when `preserve_underscores_in_hostname` is `true`.
+///
+/// Called from `connection_init` after all settings (explicit options, TOML
+/// config) have been accumulated, so it always sees the complete picture.
+pub(crate) fn normalize_host_underscores(settings: &mut dyn Settings) {
+    if is_allow_underscores(settings) {
+        return;
+    }
+
+    let account = match settings.get_string(param_names::ACCOUNT.as_str()) {
+        Some(a) if a.contains('_') => a,
+        _ => return,
+    };
+
+    let account_lower = account.to_ascii_lowercase();
+
+    if let Some(host) = settings.get_string(param_names::HOST.as_str())
+        && starts_with_account_label(&host, &account_lower)
+    {
+        let prefix = &host[..account.len()];
+        let new_host = format!("{}{}", prefix.replace('_', "-"), &host[account.len()..]);
+        tracing::debug!(old = %host, new = %new_host, "Replaced underscores with hyphens in host");
+        settings.set(param_names::HOST.as_str(), Setting::String(new_host));
+    }
+
+    if let Some(url) = settings.get_string(param_names::SERVER_URL.as_str())
+        && let Some(after_scheme) = url.find("://").map(|i| i + 3)
+    {
+        let host_part = &url[after_scheme..];
+        if starts_with_account_label(host_part, &account_lower) {
+            let prefix = &host_part[..account.len()];
+            let new_url = format!(
+                "{}{}{}",
+                &url[..after_scheme],
+                prefix.replace('_', "-"),
+                &host_part[account.len()..]
+            );
+            tracing::debug!(old = %url, new = %new_url, "Replaced underscores with hyphens in server_url");
+            settings.set(param_names::SERVER_URL.as_str(), Setting::String(new_url));
+        }
+    }
+}
+
+/// Returns `true` when `value` starts with `account_lower` and the next
+/// character (if any) is a DNS label boundary (`.`, `:`, or end-of-string).
+/// This prevents a prefix-only match from rewriting unrelated hosts (e.g.
+/// account `abc_test` must not match host `abc_test2.example.com`).
+fn starts_with_account_label(value: &str, account_lower: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    if !lower.starts_with(account_lower) {
+        return false;
+    }
+    matches!(
+        lower.as_bytes().get(account_lower.len()),
+        None | Some(b'.') | Some(b':')
+    )
+}
+
+/// Check the opt-out flag across canonical key, all registered aliases, and
+/// string-typed values so the flag works regardless of how the wrapper
+/// delivered it. Aliases are read from the param registry so they stay in sync
+/// automatically.
+fn is_allow_underscores(settings: &dyn Settings) -> bool {
+    let Some(param_def) =
+        param_registry::registry().resolve(param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME)
+    else {
+        tracing::warn!(
+            "Parameter definition for preserve_underscores_in_hostname not found; treating flag as disabled"
+        );
+        return false;
+    };
+
+    std::iter::once(param_def.canonical_name)
+        .chain(param_def.aliases.iter().copied())
+        .any(|key| {
+            settings.get_bool(key).unwrap_or(false)
+                || settings
+                    .get_string(key)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("true"))
+        })
+}
+
 /// Resolve, validate, and apply a batch of options to a settings map.
 ///
 /// Calls [`resolve_options`] internally, rejects the batch if any errors are
@@ -210,6 +296,7 @@ pub fn resolve_and_apply_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_case::test_case;
 
     #[test]
     fn unknown_key_produces_warning() {
@@ -446,5 +533,81 @@ mod tests {
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
         assert_eq!(issues[0].code, ValidationCode::ConflictingParameters);
         assert!(issues[0].message.contains("private_key"));
+    }
+
+    #[test_case("abc_test", "host", "abc_test.us-east-1.snowflakecomputing.com", "abc-test.us-east-1.snowflakecomputing.com" ; "host")]
+    #[test_case("ABC_Test", "host", "abc_test.snowflakecomputing.com", "abc-test.snowflakecomputing.com" ; "host case insensitive")]
+    #[test_case("foo_account_test_1", "host", "foo_account_test_1.snowflakecomputing.com", "foo-account-test-1.snowflakecomputing.com" ; "host multiple underscores")]
+    #[test_case("org-account_test_1", "host", "org-account_test_1.snowflakecomputing.com", "org-account-test-1.snowflakecomputing.com" ; "host org-account regionless")]
+    #[test_case("abc_test", "server_url", "https://abc_test.snowflakecomputing.com", "https://abc-test.snowflakecomputing.com" ; "server_url")]
+    #[test_case("abc_test", "server_url", "https://abc_test.snowflakecomputing.com:443", "https://abc-test.snowflakecomputing.com:443" ; "server_url with port")]
+    fn normalizes_underscores(account: &str, key: &str, input: &str, expected: &str) {
+        let mut settings = HashMap::new();
+        settings.insert("account".to_string(), Setting::String(account.to_string()));
+        settings.insert(key.to_string(), Setting::String(input.to_string()));
+
+        normalize_host_underscores(&mut settings);
+
+        assert_eq!(
+            Settings::get(&settings, key),
+            Some(Setting::String(expected.to_string())),
+        );
+        assert_eq!(
+            Settings::get(&settings, "account"),
+            Some(Setting::String(account.to_string())),
+        );
+    }
+
+    #[test_case("myaccount", Some("myaccount.snowflakecomputing.com"), None ; "no underscore in account")]
+    #[test_case("abc_test", Some("192.168.1.1"), None ; "host not starting with account")]
+    #[test_case("abc_test", None, None ; "no host or server_url set")]
+    #[test_case("abc_test", None, Some("https://custom-host.example.com") ; "server_url not matching account")]
+    #[test_case("abc_test", Some("abc_test2.snowflakecomputing.com"), None ; "account is only a prefix of host label")]
+    #[test_case("abc_test", None, Some("https://abc_test2.snowflakecomputing.com") ; "account is only a prefix of server_url label")]
+    fn skips_normalization(account: &str, host: Option<&str>, server_url: Option<&str>) {
+        let mut settings = HashMap::new();
+        settings.insert("account".to_string(), Setting::String(account.to_string()));
+        if let Some(h) = host {
+            settings.insert("host".to_string(), Setting::String(h.to_string()));
+        }
+        if let Some(u) = server_url {
+            settings.insert("server_url".to_string(), Setting::String(u.to_string()));
+        }
+
+        normalize_host_underscores(&mut settings);
+
+        assert_eq!(
+            Settings::get(&settings, "host"),
+            host.map(|h| Setting::String(h.to_string())),
+        );
+        assert_eq!(
+            Settings::get(&settings, "server_url"),
+            server_url.map(|u| Setting::String(u.to_string())),
+        );
+    }
+
+    #[test_case("preserve_underscores_in_hostname", Setting::Bool(true) ; "bool on canonical key")]
+    #[test_case("preserve_underscores_in_hostname", Setting::String("true".to_string()) ; "string on canonical key")]
+    #[test_case("ALLOWUNDERSCORESINHOST", Setting::Bool(true) ; "bool on alias key")]
+    fn opt_out_skips_normalization(key: &str, value: Setting) {
+        let mut settings = HashMap::new();
+        settings.insert(
+            "account".to_string(),
+            Setting::String("abc_test".to_string()),
+        );
+        settings.insert(
+            "host".to_string(),
+            Setting::String("abc_test.snowflakecomputing.com".to_string()),
+        );
+        settings.insert(key.to_string(), value);
+
+        normalize_host_underscores(&mut settings);
+
+        assert_eq!(
+            Settings::get(&settings, "host"),
+            Some(Setting::String(
+                "abc_test.snowflakecomputing.com".to_string()
+            )),
+        );
     }
 }

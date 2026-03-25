@@ -39,6 +39,26 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-jdbc-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-jdbc-target-
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:

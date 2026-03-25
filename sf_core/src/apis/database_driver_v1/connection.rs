@@ -8,7 +8,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use super::Setting;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
-use super::validation::{ValidationIssue, resolve_and_apply_options};
+use super::validation::{ValidationIssue, normalize_host_underscores, resolve_and_apply_options};
 use crate::config::ParamStore;
 use crate::config::config_manager;
 use crate::config::param_registry::{ParamKey, param_names};
@@ -78,6 +78,8 @@ impl DatabaseDriverV1 {
                     if let Some(name) = connection_name {
                         connection_load_from_config(&mut conn, &name)?;
                     }
+
+                    normalize_host_underscores(&mut conn.settings);
 
                     let login_parameters = LoginParameters::from_settings(&conn.settings)
                         .context(ConfigurationSnafu)?;
