@@ -3,12 +3,13 @@
 # Architecture:
 #   1. Test Selection step runs on bare agent (no Docker), determines which
 #      drivers need testing, stores results in Buildkite meta-data.
-#   2. Driver steps fetch secrets from Vault, then run build+test inside
-#      Docker via `docker run` (no Docker plugin — bypasses plugin gate).
-#   3. JUnit XML results are uploaded as artifacts and to Test Engine.
+#   2. Driver steps run in Docker via local docker-runner plugin, read their
+#      filter from meta-data, and skip (exit 0) if no relevant changes.
+#   3. Test Engine upload via local plugin (pre-exit hook) with per-driver tags.
 #
-# Each driver group runs build + test in a single step because Buildkite steps
-# run on separate agents with no shared filesystem.
+# Local plugins (.buildkite/plugins/) are used instead of external Buildkite
+# plugins because the pipeline-upload-gate only allows local and ${GLOBAL_PLUGIN}
+# plugins.
 
 env:
   DOCKER_IMAGE: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
@@ -24,6 +25,11 @@ common: &common
             env_name: "PARAMETERS_SECRET"
           - path: "secret/jenkins/rt-tests/universal_driver_test_suite_api_token"
             env_name: "BUILDKITE_ANALYTICS_TOKEN"
+    - ./.buildkite/plugins/docker-runner:
+        image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+        environment:
+          - "PARAMETERS_SECRET"
+          - "BUILDKITE_ANALYTICS_TOKEN"
   retry:
     automatic:
       - exit_status: "*"
@@ -61,60 +67,52 @@ steps:
       - label: ":rust: Build + E2E Tests"
         key: "rust-core-e2e"
         <<: *common
+        plugins:
+          - ${GLOBAL_PLUGIN}/vault_secrets:
+              secrets:
+                - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+                  env_name: "PARAMETERS_SECRET"
+                - path: "secret/jenkins/rt-tests/universal_driver_test_suite_api_token"
+                  env_name: "BUILDKITE_ANALYTICS_TOKEN"
+          - ./.buildkite/plugins/docker-runner:
+              image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+              environment:
+                - "PARAMETERS_SECRET"
+                - "BUILDKITE_ANALYTICS_TOKEN"
         timeout_in_minutes: 30
         command: |
           set -euo pipefail
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-rust")
+          echo "Filter: $TEST_FILTER"
+          if [ "$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for rust core, skipping"
             exit 0
           fi
 
-          docker run --rm \
-            -v "$$PWD:/workdir" \
-            -w /workdir \
-            -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
-            "$$DOCKER_IMAGE" \
-            bash -c '
-              set -euo pipefail
-              ./scripts/decode_secrets.sh
-              yum install -y unzip
-              export PARAMETER_PATH=/workdir/parameters.json
+          ./scripts/decode_secrets.sh
+          yum install -y unzip
+          export PARAMETER_PATH=/workdir/parameters.json
 
-              echo "--- Building sf_core"
-              cargo build --package sf_core
-              cargo install cargo2junit 2>/dev/null || true
+          echo "--- :hammer: Building sf_core"
+          cargo build --package sf_core
+          cargo install cargo2junit 2>/dev/null || true
 
-              echo "--- Running E2E Tests"
-              mkdir -p /workdir/junit-results
-              export RUSTC_BOOTSTRAP=1
-              TEST_FILTER="'"$$TEST_FILTER"'"
-              if [ "$$TEST_FILTER" = "ALL" ]; then
-                cargo test --package sf_core -- --ignored -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
-              else
-                IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
-                for filter in "$${FILTERS[@]}"; do
-                  echo "Running: cargo test -- --ignored $$filter"
-                  cargo test --package sf_core -- --ignored "$$filter" -Z unstable-options --format json --report-time 2>&1
-                done | cargo2junit > /workdir/junit-results/rust-junit.xml
-              fi
-            '
+          echo "--- :test_tube: Running E2E Tests"
+          mkdir -p /workdir/junit-results
+          export RUSTC_BOOTSTRAP=1
+          if [ "$TEST_FILTER" = "ALL" ]; then
+            cargo test --package sf_core -- --ignored -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
+          else
+            IFS='|' read -ra FILTERS <<< "$TEST_FILTER"
+            for filter in "${FILTERS[@]}"; do
+              echo "Running: cargo test -- --ignored $filter"
+              cargo test --package sf_core -- --ignored "$filter" -Z unstable-options --format json --report-time 2>&1
+            done | cargo2junit > /workdir/junit-results/rust-junit.xml
+          fi
+          unset RUSTC_BOOTSTRAP
 
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/*.xml"
-          for f in junit-results/*.xml; do
-            [ -f "$$f" ] || continue
-            curl -sS --fail-with-body -X POST \
-              -H "Authorization: Token token=\"$$BUILDKITE_ANALYTICS_TOKEN\"" \
-              -F "data=@$$f" -F "format=junit" -F "tags[]=driver:rust" \
-              -F "run_env[CI]=buildkite" -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
-              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
-              -F "run_env[branch]=$$BUILDKITE_BRANCH" -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
-              -F "run_env[message]=$$BUILDKITE_MESSAGE" -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads && echo " uploaded $$f to Test Engine" || echo " warning: Test Engine upload failed for $$f"
-          done
           buildkite-agent annotate ":white_check_mark: Rust Core -- passed" --style "success" --context "rust-result"
 
   # ==========================================================================
@@ -127,57 +125,49 @@ steps:
       - label: ":python: Build + Integ + E2E Tests"
         key: "python-integ-e2e"
         <<: *common
+        plugins:
+          - ${GLOBAL_PLUGIN}/vault_secrets:
+              secrets:
+                - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+                  env_name: "PARAMETERS_SECRET"
+                - path: "secret/jenkins/rt-tests/universal_driver_test_suite_api_token"
+                  env_name: "BUILDKITE_ANALYTICS_TOKEN"
+          - ./.buildkite/plugins/docker-runner:
+              image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+              environment:
+                - "PARAMETERS_SECRET"
+                - "BUILDKITE_ANALYTICS_TOKEN"
         timeout_in_minutes: 45
         command: |
           set -euo pipefail
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-python")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-python")
+          echo "Filter: $TEST_FILTER"
+          if [ "$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for python, skipping"
             exit 0
           fi
 
-          docker run --rm \
-            -v "$$PWD:/workdir" \
-            -w /workdir \
-            -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
-            "$$DOCKER_IMAGE" \
-            bash -c '
-              set -euo pipefail
-              ./scripts/decode_secrets.sh
-              yum install -y unzip
-              export PARAMETER_PATH=/workdir/parameters.json
+          ./scripts/decode_secrets.sh
+          yum install -y unzip
+          export PARAMETER_PATH=/workdir/parameters.json
 
-              cd python
+          cd python
 
-              echo "--- Building Python Wheel"
-              RUSTFLAGS="" hatch build -t wheel
-              hatch run test.py3.9:install-wheel
+          echo "--- :hammer: Building Python Wheel"
+          RUSTFLAGS="" hatch build -t wheel
+          hatch run test.py3.9:install-wheel
 
-              echo "--- Running Integ + E2E Tests"
-              mkdir -p /workdir/junit-results
-              TEST_FILTER="'"$$TEST_FILTER"'"
-              if [ "$$TEST_FILTER" = "ALL" ]; then
-                hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
-              else
-                hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
-              fi
-            '
+          echo "--- :test_tube: Running Integ + E2E Tests"
+          mkdir -p /workdir/junit-results
+          if [ "$TEST_FILTER" = "ALL" ]; then
+            hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
+          else
+            hatch run test.py3.9:all -- $TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
+          fi
 
           echo "--- :buildkite: Uploading test results"
+          cd /workdir
           buildkite-agent artifact upload "junit-results/*.xml"
-          for f in junit-results/*.xml; do
-            [ -f "$$f" ] || continue
-            curl -sS --fail-with-body -X POST \
-              -H "Authorization: Token token=\"$$BUILDKITE_ANALYTICS_TOKEN\"" \
-              -F "data=@$$f" -F "format=junit" -F "tags[]=driver:python" \
-              -F "run_env[CI]=buildkite" -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
-              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
-              -F "run_env[branch]=$$BUILDKITE_BRANCH" -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
-              -F "run_env[message]=$$BUILDKITE_MESSAGE" -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads && echo " uploaded $$f to Test Engine" || echo " warning: Test Engine upload failed for $$f"
-          done
           buildkite-agent annotate ":white_check_mark: Python -- passed" --style "success" --context "python-result"
 
   # ==========================================================================
@@ -190,66 +180,58 @@ steps:
       - label: ":c: Build + Integ + E2E Tests"
         key: "odbc-integ-e2e"
         <<: *common
+        plugins:
+          - ${GLOBAL_PLUGIN}/vault_secrets:
+              secrets:
+                - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+                  env_name: "PARAMETERS_SECRET"
+                - path: "secret/jenkins/rt-tests/universal_driver_test_suite_api_token"
+                  env_name: "BUILDKITE_ANALYTICS_TOKEN"
+          - ./.buildkite/plugins/docker-runner:
+              image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+              environment:
+                - "PARAMETERS_SECRET"
+                - "BUILDKITE_ANALYTICS_TOKEN"
         timeout_in_minutes: 45
         command: |
           set -euo pipefail
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-odbc")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-odbc")
+          echo "Filter: $TEST_FILTER"
+          if [ "$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for odbc, skipping"
             exit 0
           fi
 
-          docker run --rm \
-            -v "$$PWD:/workdir" \
-            -w /workdir \
-            -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
-            "$$DOCKER_IMAGE" \
-            bash -c '
-              set -euo pipefail
-              ./scripts/decode_secrets.sh
-              yum install -y unzip
-              export PARAMETER_PATH=/workdir/parameters.json
-              export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
+          ./scripts/decode_secrets.sh
+          yum install -y unzip
+          export PARAMETER_PATH=/workdir/parameters.json
+          export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
 
-              echo "--- Building ODBC Driver"
-              cargo build
+          echo "--- :hammer: Building ODBC Driver"
+          cargo build
 
-              echo "--- Building C++ Test Suite"
-              source /opt/rh/gcc-toolset-11/enable
-              cd odbc_tests
-              mkdir -p cmake-build
-              cmake -B cmake-build \
-                  -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                  -D ODBC_INCLUDE_DIR="/usr/include" \
-                  -D DRIVER_TYPE=NEW \
-                  .
-              cmake --build cmake-build -- -j $(nproc)
+          echo "--- :hammer: Building C++ Test Suite"
+          source /opt/rh/gcc-toolset-11/enable
+          cd odbc_tests
+          mkdir -p cmake-build
+          cmake -B cmake-build \
+              -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+              -D ODBC_INCLUDE_DIR="/usr/include" \
+              -D DRIVER_TYPE=NEW \
+              .
+          cmake --build cmake-build -- -j $(nproc)
 
-              echo "--- Running Integ + E2E Tests"
-              mkdir -p /workdir/junit-results
-              TEST_FILTER="'"$$TEST_FILTER"'"
-              if [ "$$TEST_FILTER" = "ALL" ]; then
-                ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit /workdir/junit-results/odbc-junit.xml
-              else
-                ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
-              fi
-            '
+          echo "--- :test_tube: Running Integ + E2E Tests"
+          mkdir -p /workdir/junit-results
+          if [ "$TEST_FILTER" = "ALL" ]; then
+            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit /workdir/junit-results/odbc-junit.xml
+          else
+            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
+          fi
 
           echo "--- :buildkite: Uploading test results"
+          cd /workdir
           buildkite-agent artifact upload "junit-results/*.xml"
-          for f in junit-results/*.xml; do
-            [ -f "$$f" ] || continue
-            curl -sS --fail-with-body -X POST \
-              -H "Authorization: Token token=\"$$BUILDKITE_ANALYTICS_TOKEN\"" \
-              -F "data=@$$f" -F "format=junit" -F "tags[]=driver:odbc" \
-              -F "run_env[CI]=buildkite" -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
-              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
-              -F "run_env[branch]=$$BUILDKITE_BRANCH" -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
-              -F "run_env[message]=$$BUILDKITE_MESSAGE" -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads && echo " uploaded $$f to Test Engine" || echo " warning: Test Engine upload failed for $$f"
-          done
           buildkite-agent annotate ":white_check_mark: ODBC -- passed" --style "success" --context "odbc-result"
 
   # ==========================================================================
@@ -262,63 +244,54 @@ steps:
       - label: ":java: Build + Integ + E2E Tests"
         key: "jdbc-integ-e2e"
         <<: *common
+        plugins:
+          - ${GLOBAL_PLUGIN}/vault_secrets:
+              secrets:
+                - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+                  env_name: "PARAMETERS_SECRET"
+                - path: "secret/jenkins/rt-tests/universal_driver_test_suite_api_token"
+                  env_name: "BUILDKITE_ANALYTICS_TOKEN"
+          - ./.buildkite/plugins/docker-runner:
+              image: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+              environment:
+                - "PARAMETERS_SECRET"
+                - "BUILDKITE_ANALYTICS_TOKEN"
         timeout_in_minutes: 45
         command: |
           set -euo pipefail
-          TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-java")
-          echo "Filter: $$TEST_FILTER"
-          if [ "$$TEST_FILTER" = "SKIP" ]; then
+          TEST_FILTER=$(buildkite-agent meta-data get "test-filter-java")
+          echo "Filter: $TEST_FILTER"
+          if [ "$TEST_FILTER" = "SKIP" ]; then
             echo "No relevant changes for jdbc, skipping"
             exit 0
           fi
 
-          docker run --rm \
-            -v "$$PWD:/workdir" \
-            -w /workdir \
-            -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
-            "$$DOCKER_IMAGE" \
-            bash -c '
-              set -euo pipefail
-              ./scripts/decode_secrets.sh
-              yum install -y unzip
-              export PARAMETER_PATH=/workdir/parameters.json
+          ./scripts/decode_secrets.sh
+          yum install -y unzip
+          export PARAMETER_PATH=/workdir/parameters.json
 
-              echo "--- Building JDBC Bridge"
-              cargo build --package sf_core
-              cargo build --package jdbc_bridge
+          echo "--- :hammer: Building JDBC Bridge"
+          cargo build --package sf_core
+          cargo build --package jdbc_bridge
 
-              echo "--- Running Integ + E2E Tests"
-              export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
-              chmod +x jdbc/gradlew
-              cd jdbc
-              TEST_FILTER="'"$$TEST_FILTER"'"
-              if [ "$$TEST_FILTER" = "ALL" ]; then
-                ./gradlew test --stacktrace
-              else
-                GRADLE_TESTS=""
-                IFS="|" read -ra PATTERNS <<< "$$TEST_FILTER"
-                for pattern in "${PATTERNS[@]}"; do
-                  GRADLE_TESTS="$$GRADLE_TESTS --tests $$pattern"
-                done
-                ./gradlew test $$GRADLE_TESTS --stacktrace
-              fi
-
-              mkdir -p /workdir/junit-results
-              cp build/test-results/test/*.xml /workdir/junit-results/ 2>/dev/null || true
-            '
+          echo "--- :test_tube: Running Integ + E2E Tests"
+          export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
+          chmod +x jdbc/gradlew
+          cd jdbc
+          if [ "$TEST_FILTER" = "ALL" ]; then
+            ./gradlew test --stacktrace
+          else
+            GRADLE_TESTS=""
+            IFS='|' read -ra PATTERNS <<< "$TEST_FILTER"
+            for pattern in "${PATTERNS[@]}"; do
+              GRADLE_TESTS="$GRADLE_TESTS --tests $pattern"
+            done
+            ./gradlew test $GRADLE_TESTS --stacktrace
+          fi
 
           echo "--- :buildkite: Uploading test results"
+          mkdir -p /workdir/junit-results
+          cp build/test-results/test/*.xml /workdir/junit-results/ 2>/dev/null || true
+          cd /workdir
           buildkite-agent artifact upload "junit-results/*.xml"
-          for f in junit-results/*.xml; do
-            [ -f "$$f" ] || continue
-            curl -sS --fail-with-body -X POST \
-              -H "Authorization: Token token=\"$$BUILDKITE_ANALYTICS_TOKEN\"" \
-              -F "data=@$$f" -F "format=junit" -F "tags[]=driver:java" \
-              -F "run_env[CI]=buildkite" -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
-              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
-              -F "run_env[branch]=$$BUILDKITE_BRANCH" -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
-              -F "run_env[message]=$$BUILDKITE_MESSAGE" -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads && echo " uploaded $$f to Test Engine" || echo " warning: Test Engine upload failed for $$f"
-          done
           buildkite-agent annotate ":white_check_mark: JDBC -- passed" --style "success" --context "jdbc-result"
