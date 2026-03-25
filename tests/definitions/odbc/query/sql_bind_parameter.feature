@@ -81,8 +81,12 @@ Feature: ODBC SQLBindParameter spec compliance
     And parameter 1 is rebound to value 222
     Then executing should return the latest bound value
 
-  # TODO: Uncomment in PR #566 once auto-IPD is implemented (BD#29)
-  # Scenario: should fail with 07002 after SQL_RESET_PARAMS clears bindings.
+  @odbc_e2e
+  Scenario: should fail with 07002 after SQL_RESET_PARAMS clears bindings.
+    Given Snowflake client is logged in
+    When a parameterized SELECT is prepared and executed successfully
+    And all parameter bindings are reset
+    Then re-executing should fail with SQLSTATE 07002
 
   @odbc_e2e
   Scenario: should reflect changed bound variable on re-execution.
