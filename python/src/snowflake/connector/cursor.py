@@ -35,6 +35,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     QueryBindings,
     StatementExecuteQueryRequest,
     StatementNewRequest,
+    StatementPrepareRequest,
     StatementReleaseRequest,
     StatementSetSqlQueryRequest,
 )
@@ -785,15 +786,83 @@ class SnowflakeCursorBase(abc.ABC):
         """Execute a query asynchronously without waiting for results."""
         raise NotImplementedError("execute_async is not yet implemented")
 
+    @_requires_not_closed
+    @_requires_open_connection
     def describe(
         self,
         command: str,
         params: Sequence[Any] | dict[str, Any] | None = None,
         timeout: int | None = None,
         **kwargs: Any,
-    ) -> list[ResultMetadata]:
-        """Obtain the schema of the result without executing the query."""
-        raise NotImplementedError("describe is not yet implemented")
+    ) -> list[ResultMetadata] | None:
+        """Obtain the schema of the result without executing the query.
+
+        This method prepares the query on the server with describeOnly=true to obtain
+        column metadata without actually executing the query or returning data rows.
+
+        Args:
+            command: SQL statement to describe
+            params: Parameters for the SQL statement (same as execute())
+            timeout: Currently unused (for future compatibility)
+            **kwargs: Additional keyword arguments (for future compatibility)
+
+        Returns:
+            List of ResultMetadata tuples describing result columns, or None if the
+            statement produces no result set (e.g., INSERT, UPDATE, DELETE, DDL).
+
+        Side effects:
+            - Updates cursor.description with the column metadata
+            - Sets cursor.rowcount to None
+            - Does NOT update cursor.sfqid or cursor.execute_result
+        """
+        # Prepare query and bindings
+        query, bindings = self._prepare_query(command, params)
+
+        # Create statement handle
+        stmt_handle = self._connection.db_api.statement_new(
+            StatementNewRequest(conn_handle=self._connection.conn_handle)
+        ).stmt_handle
+
+        try:
+            # Set SQL query
+            self._connection.db_api.statement_set_sql_query(
+                StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
+            )
+
+            # Call statement_prepare (describe-only, bindings ignored by server)
+            prepare_response = self._connection.db_api.statement_prepare(
+                StatementPrepareRequest(stmt_handle=stmt_handle)
+            )
+
+            result = prepare_response.result
+
+            # Release the Arrow stream pointer to prevent memory leak
+            # The PrepareResult includes an ArrowArrayStreamPtr that must be released
+            # even though we won't consume any data from it.
+            if result.stream and result.stream.value:
+                stream_ptr = int.from_bytes(result.stream.value, byteorder="little", signed=False)
+                if stream_ptr != 0:
+                    # Create ArrowStreamIterator to take ownership of the stream pointer.
+                    # The C++ destructor will handle cleanup when it goes out of scope.
+                    arrow_context = ArrowConverterContext()
+                    _ = ArrowStreamIterator(stream_ptr, arrow_context, use_dict_result=False, use_numpy=False)
+                    # Iterator goes out of scope here, triggering C++ destructor
+
+            # Build ResultMetadata list from columns
+            if result.columns:
+                metadata = [ResultMetadata.from_column(col) for col in result.columns]
+            else:
+                metadata = None
+
+            # Update cursor state (side effects)
+            self._description = metadata
+            self._rowcount = None  # describe() doesn't provide row count
+
+            return metadata
+
+        finally:
+            # Always release statement handle
+            self._connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=stmt_handle))
 
     @pep249
     def scroll(self, value: int, mode: str = "relative") -> None:

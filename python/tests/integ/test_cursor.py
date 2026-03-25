@@ -1650,3 +1650,132 @@ class TestDictCursorMultipleQueries:
 
         remainder = dict_cursor.fetchall()
         assert remainder == [{"N": i} for i in range(6, 20)]
+
+
+class TestCursorDescribe:
+    """Integration tests for Cursor.describe() method."""
+
+    def test_describe_select(self, cursor):
+        """Test describe() on a SELECT statement returns column metadata."""
+        # When describing a SELECT query
+        metadata = cursor.describe("SELECT 1 AS id, 'hello' AS name, 3.14 AS value")
+
+        # Then it should return metadata for all columns
+        assert metadata is not None
+        assert len(metadata) == 3
+
+        # Check column names
+        assert metadata[0].name == "ID"
+        assert metadata[1].name == "NAME"
+        assert metadata[2].name == "VALUE"
+
+        # Check that type codes are populated
+        assert metadata[0].type_code is not None
+        assert metadata[1].type_code is not None
+        assert metadata[2].type_code is not None
+
+    def test_describe_insert(self, cursor, test_table):
+        """Test describe() on an INSERT statement."""
+        # Given a test table
+        cursor.execute(f"CREATE TEMPORARY TABLE {test_table} (id INT, name VARCHAR)")
+
+        # When describing an INSERT query
+        metadata = cursor.describe(f"INSERT INTO {test_table} VALUES (1, 'test')")
+
+        # Then it should return metadata (typically "number of rows inserted")
+        assert metadata is not None
+        assert len(metadata) > 0
+        # The first column is typically "number of rows inserted"
+        assert "inserted" in metadata[0].name.lower() or "rows" in metadata[0].name.lower()
+
+    def test_describe_no_side_effect_on_fetch(self, cursor):
+        """Test that describe() does not affect subsequent execute() and fetch."""
+        # When describing a query
+        cursor.describe("SELECT 1 AS described_col")
+
+        # And then executing a different query
+        cursor.execute("SELECT 42 AS actual_col")
+        result = cursor.fetchone()
+
+        # Then the fetch should return data from the executed query, not the described one
+        assert result == (42,)
+
+        # And the description should be for the executed query
+        assert cursor.description is not None
+        assert cursor.description[0].name == "ACTUAL_COL"
+
+    def test_describe_updates_description_property(self, cursor):
+        """Test that describe() updates the cursor.description property."""
+        # Given a cursor with no prior execution
+        assert cursor.description is None
+
+        # When describing a query
+        metadata = cursor.describe("SELECT 1 AS test_col, 2 AS another_col")
+
+        # Then cursor.description should be updated
+        assert cursor.description is not None
+        assert len(cursor.description) == 2
+        assert cursor.description[0].name == "TEST_COL"
+        assert cursor.description[1].name == "ANOTHER_COL"
+
+        # And it should match the returned metadata
+        assert cursor.description == metadata
+
+    def test_describe_with_parameters(self, cursor):
+        """Test describe() with query parameters."""
+        # When describing a parameterized query (qmark style)
+        cursor.connection.paramstyle = "qmark"
+        metadata = cursor.describe("SELECT ? AS col1, ? AS col2", (1, "test"))
+
+        # Then it should return column metadata
+        assert metadata is not None
+        assert len(metadata) == 2
+        assert metadata[0].name == "COL1"
+        assert metadata[1].name == "COL2"
+
+    def test_describe_updates_rowcount_to_none(self, cursor):
+        """Test that describe() sets rowcount to None."""
+        # Given a cursor that has executed a query
+        cursor.execute("SELECT 1")
+        cursor.fetchall()
+        # rowcount might be set after execute
+
+        # When calling describe
+        cursor.describe("SELECT 1, 2, 3")
+
+        # Then rowcount should be None
+        assert cursor.rowcount is None
+
+    def test_describe_does_not_update_sfqid(self, cursor):
+        """Test that describe() does not update sfqid."""
+        # Given a cursor that has executed a query
+        cursor.execute("SELECT 1")
+        original_sfqid = cursor.sfqid
+
+        # When calling describe
+        cursor.describe("SELECT 1, 2")
+
+        # Then sfqid should remain unchanged
+        assert cursor.sfqid == original_sfqid
+
+    def test_describe_complex_query(self, cursor):
+        """Test describe() with a more complex query."""
+        # When describing a complex query with joins and functions
+        query = """
+        SELECT
+            seq4() AS id,
+            UPPER('test') AS upper_name,
+            CURRENT_TIMESTAMP() AS ts,
+            1.5 * 2 AS calculated
+        FROM TABLE(GENERATOR(ROWCOUNT => 100))
+        LIMIT 10
+        """
+        metadata = cursor.describe(query)
+
+        # Then it should return metadata for all columns
+        assert metadata is not None
+        assert len(metadata) == 4
+        assert metadata[0].name == "ID"
+        assert metadata[1].name == "UPPER_NAME"
+        assert metadata[2].name == "TS"
+        assert metadata[3].name == "CALCULATED"
