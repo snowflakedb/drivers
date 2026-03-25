@@ -2,21 +2,34 @@ use super::types::{
     CloudCredentials, EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
-use bytes::Bytes;
+use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
+use reqwest::{Method, StatusCode};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
+use std::fmt;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
-
-/// Retryable HTTP status codes for GCS operations.
-/// Note: 401 is NOT here — it triggers TokenExpired instead of a retry.
-/// Note: 400 is conditionally retryable (only for presigned URLs) and handled separately.
-const RETRYABLE_STATUS_CODES: &[u16] = &[403, 408, 429, 500, 502, 503, 504];
 
 // GCS metadata header names
 const GCS_META_SFC_DIGEST: &str = "x-goog-meta-sfc-digest";
 const GCS_META_ENCRYPTIONDATA: &str = "x-goog-meta-encryptiondata";
 const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
+
+/// Result of an upload-or-skip operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UploadStatus {
+    Uploaded,
+    Skipped,
+}
+
+impl fmt::Display for UploadStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UploadStatus::Uploaded => f.write_str("UPLOADED"),
+            UploadStatus::Skipped => f.write_str("SKIPPED"),
+        }
+    }
+}
 
 /// Uploads a file to GCS, skipping if it already exists and `overwrite` is false.
 pub async fn upload_to_gcs_or_skip(
@@ -24,18 +37,18 @@ pub async fn upload_to_gcs_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
-) -> Result<String, GcsUploadError> {
+) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
 
     if !overwrite && check_file_exists_gcs(&client, &url, token.as_deref()).await {
         tracing::info!("File already exists in GCS: {}", key);
-        return Ok("SKIPPED".to_string());
+        return Ok(UploadStatus::Skipped);
     }
 
     upload_to_gcs(&client, &url, token.as_deref(), encryption_result).await?;
-    Ok("UPLOADED".to_string())
+    Ok(UploadStatus::Uploaded)
 }
 
 /// Downloads a file from GCS and returns encrypted data with metadata.
@@ -48,7 +61,7 @@ pub async fn download_from_gcs(
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
     let using_presigned_url = stage_info.presigned_url.is_some();
 
-    let response = execute_with_retry(
+    let response = gcs_request_with_retry(
         || {
             let mut req = client.get(&url);
             if let Some(ref t) = token {
@@ -56,8 +69,8 @@ pub async fn download_from_gcs(
             }
             req
         },
+        Method::GET,
         using_presigned_url,
-        &gcs_retry_policy(),
     )
     .await?;
 
@@ -112,10 +125,10 @@ async fn check_file_exists_gcs(client: &reqwest::Client, url: &str, token: Optio
     }
 
     match request.send().await {
-        Ok(resp) => match resp.status().as_u16() {
-            200 => true,
-            404 => false,
-            403 => {
+        Ok(resp) => match resp.status() {
+            StatusCode::OK => true,
+            StatusCode::NOT_FOUND => false,
+            StatusCode::FORBIDDEN => {
                 tracing::warn!(
                     "Access denied checking file existence in GCS, proceeding with upload"
                 );
@@ -169,11 +182,10 @@ async fn upload_to_gcs(
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)
         .context(gcs_upload_error::SerializationSnafu)?;
 
-    // Bytes is reference-counted: cloning in the retry closure is O(1), not a full copy.
-    let data = Bytes::from(encryption_result.data);
+    let data = encryption_result.data;
     let digest = encryption_result.metadata.digest;
 
-    execute_with_retry(
+    gcs_request_with_retry(
         || {
             let mut req = client
                 .put(url)
@@ -188,8 +200,8 @@ async fn upload_to_gcs(
             }
             req
         },
+        Method::PUT,
         false,
-        &gcs_retry_policy(),
     )
     .await?;
 
@@ -197,10 +209,17 @@ async fn upload_to_gcs(
     Ok(())
 }
 
-// --- Retry logic (shared between upload and download) ---
+// --- Retry logic (delegates to http::retry) ---
 
 /// Returns a retry policy tuned for GCS file-transfer operations.
-fn gcs_retry_policy() -> RetryPolicy {
+///
+/// GCS treats 403 as retryable (temporary credential issues), and 400 is
+/// retryable when using presigned URLs (URL may have expired).
+fn gcs_retry_policy(using_presigned_url: bool) -> RetryPolicy {
+    let mut extra = vec![403];
+    if using_presigned_url {
+        extra.push(400);
+    }
     RetryPolicy {
         max_attempts: 6,
         backoff: BackoffConfig {
@@ -209,94 +228,47 @@ fn gcs_retry_policy() -> RetryPolicy {
             cap: Duration::from_secs(16),
             jitter: Jitter::None,
         },
+        extra_retryable_statuses: extra,
         ..RetryPolicy::default()
     }
 }
 
-/// Executes an HTTP request with retry logic and exponential backoff.
-async fn execute_with_retry<F>(
+/// Executes a GCS HTTP request with retry, then checks for GCS-specific status codes.
+async fn gcs_request_with_retry<F>(
     build_request: F,
+    method: Method,
     using_presigned_url: bool,
-    policy: &RetryPolicy,
 ) -> Result<reqwest::Response, GcsRequestError>
 where
     F: Fn() -> reqwest::RequestBuilder,
 {
-    let max_retries = policy.max_attempts.saturating_sub(1);
-    let mut attempt = 0u32;
-    let mut sleep_ms = policy.backoff.base.as_millis() as f64;
+    let ctx = HttpContext::new(method, "gcs-transfer");
+    let policy = gcs_retry_policy(using_presigned_url);
 
-    loop {
-        let response = match build_request().send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                if attempt < max_retries {
-                    attempt += 1;
-                    tracing::warn!(
-                        "GCS network error (attempt {}/{}): {}",
-                        attempt,
-                        max_retries,
-                        e
-                    );
-                    sleep_ms = next_backoff_ms(sleep_ms, &policy.backoff);
-                    tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
-                    continue;
-                }
-                return Err(GcsRequestError::Http { source: e });
-            }
-        };
+    let response = http_execute_with_retry(build_request, &ctx, &policy, |r| async move { Ok(r) })
+        .await
+        .map_err(map_http_error)?;
 
-        if response.status().is_success() {
-            return Ok(response);
-        }
+    if response.status().is_success() {
+        return Ok(response);
+    }
 
-        let status_code = response.status().as_u16();
+    // 401: token expired — propagate up so the query layer can re-execute
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return Err(GcsRequestError::TokenExpired);
+    }
 
-        // 401: token expired — propagate up so the query layer can re-execute
-        if status_code == 401 {
-            return Err(GcsRequestError::TokenExpired);
-        }
+    let status_code = response.status().as_u16();
+    let body = read_error_body(response).await;
+    Err(GcsRequestError::GcsHttp { status_code, body })
+}
 
-        // 400: retryable only when using presigned URLs (URL may have expired)
-        if status_code == 400 {
-            if using_presigned_url && attempt < max_retries {
-                attempt += 1;
-                tracing::warn!(
-                    "GCS presigned URL may have expired (HTTP 400, attempt {}/{})",
-                    attempt,
-                    max_retries
-                );
-                sleep_ms = next_backoff_ms(sleep_ms, &policy.backoff);
-                tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
-                continue;
-            }
-            let body = read_error_body(response).await;
-            return Err(GcsRequestError::GcsHttp { status_code, body });
-        }
-
-        // 404: hard failure
-        if status_code == 404 {
-            let body = read_error_body(response).await;
-            return Err(GcsRequestError::GcsHttp { status_code, body });
-        }
-
-        // Retryable errors: backoff and retry
-        if RETRYABLE_STATUS_CODES.contains(&status_code) && attempt < max_retries {
-            attempt += 1;
-            tracing::warn!(
-                "GCS retryable error {} (attempt {}/{})",
-                status_code,
-                attempt,
-                max_retries
-            );
-            sleep_ms = next_backoff_ms(sleep_ms, &policy.backoff);
-            tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
-            continue;
-        }
-
-        // Exhausted retries or non-retryable status
-        let body = read_error_body(response).await;
-        return Err(GcsRequestError::GcsHttp { status_code, body });
+fn map_http_error(e: HttpError) -> GcsRequestError {
+    match e {
+        HttpError::Transport { source, .. } => GcsRequestError::Http { source },
+        other => GcsRequestError::RetryExhausted {
+            detail: other.to_string(),
+        },
     }
 }
 
@@ -370,10 +342,6 @@ fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
     format!("https://storage.googleapis.com/{}/{key}", stage_info.bucket)
 }
 
-fn next_backoff_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
-    (prev_ms * backoff.factor).min(backoff.cap.as_millis() as f64)
-}
-
 fn get_header(
     headers: &reqwest::header::HeaderMap,
     name: &str,
@@ -412,6 +380,8 @@ enum GcsRequestError {
     TokenExpired,
     #[snafu(display("Missing GCS credentials"))]
     MissingGcsCredentials,
+    #[snafu(display("GCS retry exhausted: {detail}"))]
+    RetryExhausted { detail: String },
 }
 
 impl From<GcsRequestError> for GcsUploadError {
@@ -430,6 +400,10 @@ impl From<GcsRequestError> for GcsUploadError {
                 location: Location::default(),
             },
             GcsRequestError::MissingGcsCredentials => GcsUploadError::MissingGcsCredentials {
+                location: Location::default(),
+            },
+            GcsRequestError::RetryExhausted { detail } => GcsUploadError::RetryExhausted {
+                detail,
                 location: Location::default(),
             },
         }
@@ -452,6 +426,10 @@ impl From<GcsRequestError> for GcsDownloadError {
                 location: Location::default(),
             },
             GcsRequestError::MissingGcsCredentials => GcsDownloadError::MissingGcsCredentials {
+                location: Location::default(),
+            },
+            GcsRequestError::RetryExhausted { detail } => GcsDownloadError::RetryExhausted {
+                detail,
                 location: Location::default(),
             },
         }
@@ -487,6 +465,12 @@ pub enum GcsUploadError {
     },
     #[snafu(display("Missing GCS credentials"))]
     MissingGcsCredentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS retry exhausted: {detail}"))]
+    RetryExhausted {
+        detail: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -533,6 +517,12 @@ pub enum GcsDownloadError {
     },
     #[snafu(display("Missing GCS credentials"))]
     MissingGcsCredentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("GCS retry exhausted: {detail}"))]
+    RetryExhausted {
+        detail: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -735,69 +725,43 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // 3. Retryable status codes
-    //    (matches ODBC test_retryable_http_code, JDBC RestRequestTest)
+    // 3. Retry policy configuration
     // ---------------------------------------------------------------
 
     #[test]
-    fn retryable_status_codes_include_403() {
+    fn gcs_retry_policy_includes_403() {
+        let policy = gcs_retry_policy(false);
         assert!(
-            RETRYABLE_STATUS_CODES.contains(&403),
-            "403 should be retryable (matches JDBC/ODBC)"
+            policy.extra_retryable_statuses.contains(&403),
+            "403 should be retryable for GCS (matches JDBC/ODBC)"
         );
     }
 
     #[test]
-    fn retryable_status_codes_include_standard_set() {
-        for code in &[408, 429, 500, 502, 503, 504] {
-            assert!(
-                RETRYABLE_STATUS_CODES.contains(code),
-                "{code} should be retryable"
-            );
-        }
-    }
-
-    #[test]
-    fn retryable_status_codes_exclude_401() {
+    fn gcs_retry_policy_includes_400_for_presigned_urls() {
+        let policy = gcs_retry_policy(true);
         assert!(
-            !RETRYABLE_STATUS_CODES.contains(&401),
-            "401 must NOT be in retryable set — it triggers TokenExpired"
+            policy.extra_retryable_statuses.contains(&400),
+            "400 should be retryable when using presigned URLs"
         );
     }
 
     #[test]
-    fn retryable_status_codes_exclude_400() {
+    fn gcs_retry_policy_excludes_400_without_presigned_urls() {
+        let policy = gcs_retry_policy(false);
         assert!(
-            !RETRYABLE_STATUS_CODES.contains(&400),
-            "400 is only retryable for presigned URLs (handled separately)"
-        );
-    }
-
-    #[test]
-    fn retryable_status_codes_exclude_404() {
-        assert!(
-            !RETRYABLE_STATUS_CODES.contains(&404),
-            "404 should be a hard failure"
+            !policy.extra_retryable_statuses.contains(&400),
+            "400 should not be retryable without presigned URLs"
         );
     }
 
     // ---------------------------------------------------------------
-    // 4. Backoff delay calculation
+    // 4. Upload status enum
     // ---------------------------------------------------------------
 
     #[test]
-    fn backoff_delay_values() {
-        let backoff = &gcs_retry_policy().backoff;
-        // base=1s, factor=2, cap=16s
-        let d1 = next_backoff_ms(1000.0, backoff);
-        assert_eq!(d1, 2000.0); // 1s * 2
-        let d2 = next_backoff_ms(d1, backoff);
-        assert_eq!(d2, 4000.0); // 2s * 2
-        let d3 = next_backoff_ms(d2, backoff);
-        assert_eq!(d3, 8000.0); // 4s * 2
-        let d4 = next_backoff_ms(d3, backoff);
-        assert_eq!(d4, 16000.0); // 8s * 2 = 16s (cap)
-        let d5 = next_backoff_ms(d4, backoff);
-        assert_eq!(d5, 16000.0); // capped at 16s
+    fn upload_status_display() {
+        assert_eq!(UploadStatus::Uploaded.to_string(), "UPLOADED");
+        assert_eq!(UploadStatus::Skipped.to_string(), "SKIPPED");
     }
 }
