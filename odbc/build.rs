@@ -10,8 +10,12 @@ fn main() {
     // This avoids the PE/COFF 65535 export symbol limit.
     #[cfg(target_os = "windows")]
     {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
         let def_path = std::path::Path::new(&manifest_dir).join("exports.def");
-        println!("cargo:rustc-cdylib-link-arg=/DEF:{}", def_path.display());
+        // Quote the path so MSVC link.exe handles workspace paths with spaces.
+        println!(
+            "cargo:rustc-cdylib-link-arg=/DEF:\"{}\"",
+            def_path.display()
+        );
     }
 }
