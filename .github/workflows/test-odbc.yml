@@ -324,11 +324,15 @@ jobs:
       - name: Rerun failed ODBC tests (Windows)
         if: steps.run_odbc_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
         shell: pwsh
-        run: ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
-        env:
-          DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
-          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
-          DRIVER_TYPE: NEW
+        run: |
+          if ('${{ matrix.os }}' -eq 'windows-11-arm') {
+            $env:DRIVER_PATH = Join-Path "${{ github.workspace }}" "target\aarch64-pc-windows-msvc\debug\${{ matrix.driver_lib }}"
+          } else {
+            $env:DRIVER_PATH = Join-Path "${{ github.workspace }}" "target\debug\${{ matrix.driver_lib }}"
+          }
+          $env:PARAMETER_PATH = Join-Path "${{ github.workspace }}" "parameters.json"
+          $env:DRIVER_TYPE = "NEW"
+          ctest --rerun-failed -C Debug --test-dir odbc_tests/cmake-build --output-on-failure
 
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests]
