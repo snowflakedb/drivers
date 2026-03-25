@@ -223,8 +223,7 @@ pipeline {
                                             export PARAMETER_PATH=$(pwd)/../parameters.json
                                             export PYTHONPATH=$(pwd)/src:$PYTHONPATH
                                             mkdir -p reports
-                                            hatch run test.py3.9:all -- \
-                                                --cov=src/snowflake \
+                                            hatch run test.py3.9:cov -- \
                                                 --cov-report=term \
                                                 --cov-report=xml:reports/coverage-python.xml
                                         ''')
