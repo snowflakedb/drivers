@@ -17,9 +17,10 @@ where
 // TODO: Delete all unused fields when we are sure they are not needed
 
 // Runtime fields are serialized with PYTHON_* keys for backward compatibility with
-// the Snowflake server. They are only populated when the wrapper provides them
-// (e.g. the Python wrapper sets runtime_name="CPython", runtime_version="3.11.6").
-// Non-Python wrappers simply omit these fields.
+// the Snowflake server. They are populated when the wrapper provides runtime
+// metadata (e.g. Python may set runtime_name="CPython", runtime_version="3.11.6",
+// and other wrappers such as JDBC may set appropriate values as well). Wrappers
+// that do not provide runtime metadata simply omit these optional fields.
 #[derive(Debug, Serialize, Default)]
 pub struct AuthRequestClientEnvironment {
     #[serde(rename = "APPLICATION")]

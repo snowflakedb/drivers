@@ -111,11 +111,18 @@ fn detect_os() -> String {
 
 #[cfg(unix)]
 fn detect_os_version() -> String {
-    let mut buf: libc::utsname = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::uname(&mut buf) };
+    let mut buf = std::mem::MaybeUninit::<libc::utsname>::uninit();
+    // SAFETY: `buf` points to writable memory for a `libc::utsname` value.
+    // `libc::uname` initializes the entire struct on success (rc == 0).
+    let rc = unsafe { libc::uname(buf.as_mut_ptr()) };
     if rc != 0 {
         return "unknown".to_string();
     }
+    // SAFETY: `libc::uname` returned success, so all fields are fully initialized.
+    let buf = unsafe { buf.assume_init() };
+    // SAFETY: On success, `uname` writes NUL-terminated strings into these arrays.
+    // `buf` is stack-allocated and lives for the duration of this function,
+    // so the pointers remain valid for `CStr::from_ptr`.
     let sysname = unsafe { std::ffi::CStr::from_ptr(buf.sysname.as_ptr()) }.to_string_lossy();
     let release = unsafe { std::ffi::CStr::from_ptr(buf.release.as_ptr()) }.to_string_lossy();
     let machine = unsafe { std::ffi::CStr::from_ptr(buf.machine.as_ptr()) }.to_string_lossy();
