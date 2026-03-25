@@ -68,8 +68,7 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
             data.overwrite,
         )
         .await
-        .context(GcsUploadSnafu)?
-        .to_string(),
+        .context(GcsUploadSnafu)?,
         LocationType::Azure => {
             return UnsupportedStorageTypeSnafu {
                 storage_type: "Azure",
@@ -94,7 +93,7 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
             .target_compression
             .get_snowflake_representation()
             .to_string(),
-        status,
+        status: status.to_string(),
         message: "".to_string(),
     })
 }

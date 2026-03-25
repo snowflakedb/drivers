@@ -1,4 +1,6 @@
-use super::types::{EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo};
+use super::types::{
+    EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo, UploadStatus,
+};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 
 // AWS SDK imports
@@ -19,19 +21,19 @@ pub async fn upload_to_s3_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
-) -> Result<String, UploadFileError> {
+) -> Result<UploadStatus, UploadFileError> {
     // Check if the file already exists in S3
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
     if !overwrite && check_if_file_exists(&s3_client, stage_info, &s3_key).await? {
         tracing::info!("File already exists in S3: {}", s3_key);
-        return Ok("SKIPPED".to_string());
+        return Ok(UploadStatus::Skipped);
     }
 
     // Proceed with upload if the file does not exist or overwrite is true
     upload_to_s3(encryption_result, &s3_client, stage_info, &s3_key).await?;
-    Ok("UPLOADED".to_string())
+    Ok(UploadStatus::Uploaded)
 }
 
 /// Returns true if the file exists in S3, false if it does not.

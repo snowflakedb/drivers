@@ -1,11 +1,11 @@
 use super::types::{
     CloudCredentials, EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo,
+    UploadStatus,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
 use reqwest::{Method, StatusCode};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
-use std::fmt;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECS: u64 = 300;
@@ -14,22 +14,6 @@ const REQUEST_TIMEOUT_SECS: u64 = 300;
 const GCS_META_SFC_DIGEST: &str = "x-goog-meta-sfc-digest";
 const GCS_META_ENCRYPTIONDATA: &str = "x-goog-meta-encryptiondata";
 const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
-
-/// Result of an upload-or-skip operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum UploadStatus {
-    Uploaded,
-    Skipped,
-}
-
-impl fmt::Display for UploadStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            UploadStatus::Uploaded => f.write_str("UPLOADED"),
-            UploadStatus::Skipped => f.write_str("SKIPPED"),
-        }
-    }
-}
 
 /// Uploads a file to GCS, skipping if it already exists and `overwrite` is false.
 pub async fn upload_to_gcs_or_skip(
@@ -40,14 +24,15 @@ pub async fn upload_to_gcs_or_skip(
 ) -> Result<UploadStatus, GcsUploadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
+    let using_presigned_url = stage_info.presigned_url.is_some();
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
 
-    if !overwrite && check_file_exists_gcs(&client, &url, token.as_deref()).await {
+    if !overwrite && check_file_exists_gcs(&client, &url, token).await {
         tracing::info!("File already exists in GCS: {}", key);
         return Ok(UploadStatus::Skipped);
     }
 
-    upload_to_gcs(&client, &url, token.as_deref(), encryption_result).await?;
+    upload_to_gcs(&client, &url, token, encryption_result, using_presigned_url).await?;
     Ok(UploadStatus::Uploaded)
 }
 
@@ -158,6 +143,7 @@ async fn upload_to_gcs(
     url: &str,
     token: Option<&str>,
     encryption_result: EncryptionResult,
+    using_presigned_url: bool,
 ) -> Result<(), GcsUploadError> {
     // Build encryption metadata JSON (matching JDBC/Python format)
     let encryption_data = serde_json::json!({
@@ -201,7 +187,7 @@ async fn upload_to_gcs(
             req
         },
         Method::PUT,
-        false,
+        using_presigned_url,
     )
     .await?;
 
@@ -292,25 +278,25 @@ fn create_gcs_client() -> Result<reqwest::Client, GcsRequestError> {
 /// 3. Virtual host — `https://{bucket}.storage.googleapis.com/{key}`
 /// 4. Regional — `https://storage.{region}.rep.googleapis.com/{bucket}/{key}`
 /// 5. Default — `https://storage.googleapis.com/{bucket}/{key}`
-fn resolve_url_and_token(
-    stage_info: &StageInfo,
+fn resolve_url_and_token<'a>(
+    stage_info: &'a StageInfo,
     key: &str,
-) -> Result<(String, Option<String>), GcsRequestError> {
+) -> Result<(String, Option<&'a str>), GcsRequestError> {
     // Strategy 1: presigned URL
     if let Some(presigned) = &stage_info.presigned_url {
         return Ok((presigned.clone(), None));
     }
 
-    // Extract token (may be None in presigned-URL-only mode, but we already checked above)
+    // Extract token reference — avoids copying into a non-zeroized String
     let token = match &stage_info.creds {
         CloudCredentials::Gcs { gcs_access_token } => {
-            gcs_access_token.as_ref().map(|t| t.reveal().to_string())
+            gcs_access_token.as_ref().map(|t| t.reveal().as_str())
         }
         _ => return Err(GcsRequestError::MissingGcsCredentials),
     };
 
     if token.is_none() {
-        tracing::warn!("GCS request will be unauthenticated: no access token and no presigned URL");
+        return Err(GcsRequestError::MissingGcsCredentials);
     }
 
     let url = build_gcs_url(stage_info, key);
@@ -712,7 +698,7 @@ mod tests {
         let stage = make_stage_info(StageInfoOverrides::default());
         let (url, token) = resolve_url_and_token(&stage, "file.csv.gz").unwrap();
         assert_eq!(url, "https://storage.googleapis.com/my-bucket/file.csv.gz");
-        assert_eq!(token, Some("fake-token".to_string()));
+        assert_eq!(token, Some("fake-token"));
     }
 
     #[test]
@@ -728,17 +714,19 @@ mod tests {
     }
 
     #[test]
-    fn resolve_with_no_token_and_no_presigned_url() {
-        // When GCS_ACCESS_TOKEN is absent and no presigned URL, token should be None
+    fn resolve_with_no_token_and_no_presigned_url_returns_error() {
+        // When GCS_ACCESS_TOKEN is absent and no presigned URL, should error
         let stage = make_stage_info(StageInfoOverrides {
             creds: Some(CloudCredentials::Gcs {
                 gcs_access_token: None,
             }),
             ..Default::default()
         });
-        let (url, token) = resolve_url_and_token(&stage, "file.csv.gz").unwrap();
-        assert_eq!(url, "https://storage.googleapis.com/my-bucket/file.csv.gz");
-        assert!(token.is_none());
+        let result = resolve_url_and_token(&stage, "file.csv.gz");
+        assert!(matches!(
+            result,
+            Err(GcsRequestError::MissingGcsCredentials)
+        ));
     }
 
     #[test]

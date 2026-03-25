@@ -1,6 +1,23 @@
 use crate::compression_types::CompressionType;
 use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Result of an upload-or-skip operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadStatus {
+    Uploaded,
+    Skipped,
+}
+
+impl fmt::Display for UploadStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UploadStatus::Uploaded => f.write_str("UPLOADED"),
+            UploadStatus::Skipped => f.write_str("SKIPPED"),
+        }
+    }
+}
 
 // Dedicated file transfer types
 #[derive(Debug)]
