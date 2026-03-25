@@ -167,6 +167,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("COUNT field incorrect: {reason}"))]
+    CountFieldIncorrect {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid cursor state: no result set associated with the statement"))]
     InvalidCursorState {
         #[snafu(implicit)]
@@ -434,6 +441,7 @@ impl OdbcError {
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
             OdbcError::InvalidParameterNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
+            OdbcError::CountFieldIncorrect { .. } => SqlState::CountFieldIncorrect,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,

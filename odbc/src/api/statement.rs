@@ -133,6 +133,29 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
     Ok(reader)
 }
 
+/// Count `?` parameter markers in a SQL string, ignoring markers
+/// inside single-quoted string literals and `--` line comments.
+fn count_parameter_markers(sql: &str) -> usize {
+    let mut count = 0;
+    let mut in_single_quote = false;
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => in_single_quote = !in_single_quote,
+            '-' if !in_single_quote && chars.peek() == Some(&'-') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                }
+            }
+            '?' if !in_single_quote => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
 fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     if statement_handle.is_null() {
         return InvalidHandleSnafu.fail();
@@ -179,6 +202,17 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             let reader = reader_from_protobuf_stream(stream_ptr)?;
             let schema = reader.schema();
             stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
+
+            let param_count = count_parameter_markers(query);
+            stmt.ipd.clear();
+            for i in 1..=param_count {
+                stmt.ipd.records.insert(i as u16, IpdRecord::default());
+            }
+            tracing::info!(
+                "prepare: auto-IPD populated {} parameter markers",
+                param_count
+            );
+
             stmt.state.set(StatementState::Prepared { schema });
             tracing::info!("prepare: Successfully prepared statement");
             Ok(())
@@ -328,6 +362,18 @@ fn apply_parameter_bindings(
     apd: &crate::api::ApdDescriptor,
     ipd: &crate::api::IpdDescriptor,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
+    let ipd_count = ipd.desc_count() as usize;
+    let apd_count = apd.desc_count() as usize;
+
+    if ipd_count > 0 && apd_count < ipd_count {
+        return crate::api::error::CountFieldIncorrectSnafu {
+            reason: format!(
+                "statement has {ipd_count} parameter markers but only {apd_count} are bound"
+            ),
+        }
+        .fail();
+    }
+
     if apd.records.is_empty() {
         return Ok((None, None));
     }
@@ -508,9 +554,8 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
             stmt.ard.unbind_all();
         }
         FreeStmtOption::ResetParams => {
-            tracing::info!("free_stmt: Resetting all parameters");
+            tracing::info!("free_stmt: Resetting all parameter bindings (APD)");
             stmt.apd.clear();
-            stmt.ipd.clear();
         }
     }
 
@@ -518,8 +563,9 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
 }
 
 /// Return the number of parameters in the statement via the IPD descriptor.
-// TODO: Once auto-IPD is implemented (parsing ? markers during SQLPrepare),
-// this will also work for statements that haven't had SQLBindParameter called.
+///
+/// After `SQLPrepare`, auto-IPD populates the IPD with one record per `?`
+/// marker, so this works even without prior `SQLBindParameter` calls.
 pub fn num_params(
     statement_handle: sql::Handle,
     param_count_ptr: *mut sql::SmallInt,
@@ -544,9 +590,10 @@ pub fn num_params(
     Ok(())
 }
 
-/// Describe a bound parameter via the IPD descriptor.
-// TODO: Once auto-IPD is implemented, this will also work for parameters
-// that were not explicitly bound but inferred from ? markers in SQLPrepare.
+/// Describe a parameter via the IPD descriptor.
+///
+/// Works for both explicitly bound parameters and auto-IPD markers
+/// populated during `SQLPrepare`.
 pub fn describe_param(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
@@ -867,5 +914,69 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnknownAttributeSnafu { attribute }.fail()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_parameter_markers;
+
+    #[test]
+    fn no_markers() {
+        assert_eq!(count_parameter_markers("SELECT 1"), 0);
+    }
+
+    #[test]
+    fn single_marker() {
+        assert_eq!(count_parameter_markers("SELECT ?"), 1);
+    }
+
+    #[test]
+    fn multiple_markers() {
+        assert_eq!(count_parameter_markers("SELECT ?, ?, ?"), 3);
+    }
+
+    #[test]
+    fn marker_inside_single_quoted_literal_is_ignored() {
+        assert_eq!(count_parameter_markers("SELECT '?' FROM t WHERE c = ?"), 1);
+    }
+
+    #[test]
+    fn marker_inside_line_comment_is_ignored() {
+        assert_eq!(
+            count_parameter_markers("SELECT ? -- is this a param?\nFROM t"),
+            1
+        );
+    }
+
+    #[test]
+    fn escaped_single_quote_in_literal() {
+        assert_eq!(
+            count_parameter_markers("SELECT 'it''s a ?', ?"),
+            1
+        );
+    }
+
+    #[test]
+    fn comment_at_end_without_newline() {
+        assert_eq!(count_parameter_markers("SELECT ? -- trailing"), 1);
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(count_parameter_markers(""), 0);
+    }
+
+    #[test]
+    fn only_comment() {
+        assert_eq!(count_parameter_markers("-- SELECT ?"), 0);
+    }
+
+    #[test]
+    fn marker_in_insert() {
+        assert_eq!(
+            count_parameter_markers("INSERT INTO t(a, b) VALUES(?, ?)"),
+            2
+        );
     }
 }

@@ -835,11 +835,16 @@ pub struct IpdRecord {
     pub nullable: sql::SmallInt,
 }
 
+/// Snowflake maximum VARCHAR column size used as the auto-IPD default.
+/// Matches the reference (old) driver's behavior for `SQLDescribeParam`
+/// on untyped `?` markers.
+pub const SNOWFLAKE_MAX_VARCHAR_SIZE: sql::ULen = 134_217_728;
+
 impl Default for IpdRecord {
     fn default() -> Self {
         Self {
             sql_data_type: sql::SqlDataType::VARCHAR,
-            column_size: 0,
+            column_size: SNOWFLAKE_MAX_VARCHAR_SIZE,
             decimal_digits: 0,
             direction: sql::ParamType::Input as sql::SmallInt,
             nullable: 1, // SQL_NULLABLE — per ODBC spec: "dynamic parameters are always nullable"
