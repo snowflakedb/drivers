@@ -11,11 +11,11 @@ review comments addressed or consciously deferred.
 - PRs: #438 (speed-up-woa64-build), #402 (woa64-jdbc), #403 (woa64-odbc)
 - Target: All 6 CI workflows per PR (Pre-commit, Validate, JDBC, ODBC, Python, Rust Core)
 
-## Current state — Retrigger after transient Snowflake failure on woa64-jdbc ODBC CI
+## Current state — ALL THREE PRs GREEN
 
-- PR #438 commit 1b6cbba1: CI running — Validate✓ Pre-commit✓ JDBC✓ ODBC✓; Rust Core+Python in_progress
-- PR #402 commit e5af6483: ODBC CI failed (transient "Invalid Snowflake response"); retriggering
-- PR #403 commit 8275403c: CI running — Validate✓ Pre-commit✓ JDBC✓; Rust Core+ODBC+Python in_progress
+- PR #438 commit 1b6cbba1: 6/6 GREEN (Pre-commit✓ Validate✓ JDBC✓ ODBC✓ Python✓ Rust Core✓)
+- PR #402 commit 733338f6: 6/6 GREEN (Pre-commit✓ Validate✓ JDBC✓ ODBC✓ Python✓ Rust Core✓)
+- PR #403 commit f79e4d17: 6/6 GREEN (Pre-commit✓ Validate✓ JDBC✓ ODBC✓ Python✓ Rust Core✓)
 
 ### Honest WoA64 status by component
 
@@ -240,6 +240,30 @@ on current runner environments (no spaces in workspace paths).
 
 **Conclusion**: /DEF: quoting was WRONG — broke CI immediately. Reverted.
 The expect() and vcpkg changes are correct. CI running on fix commits.
+
+### Iteration 7 — Human reviewer CHANGES_REQUESTED: merge ARM64/x64 Windows steps in test-odbc.yml
+
+**Motivation**: Human reviewer `sfc-gh-jszczerbinski` submitted CHANGES_REQUESTED on PR #403
+(2026-03-09): "Let's not add separate steps for Windows arm64, merge them with x64 steps"
+
+**Observation**:
+- test-odbc.yml had 7 separate Windows steps (4× `if: matrix.os == 'windows-latest'` + 3× `if: matrix.os == 'windows-11-arm'`)
+- Reviewer wants the platform-specific logic consolidated within unified steps via in-step conditionals
+- Prior commit a3d2f4b5 also fixed unquoted `Join-Path ${{ github.workspace }}` on lines 336/342
+
+**Hypothesis**: Use `if: runner.os == 'Windows'` on 3 unified steps with
+`if ('${{ matrix.os }}' -eq 'windows-11-arm') { ... } else { ... }` inside
+
+**Change** (commit f79e4d17):
+- "Install dependencies (Windows)": unified pip/cmake install + ARM64 (vcpkg arm64, openssl arm64,
+  set env vars) vs x64 (choco openssl, vcpkg zlib x64, set env vars) in single step
+- "Build Rust ODBC driver (Windows)": cmd-shell step — ARM64 calls vcvarsall.bat arm64 + cross-compiles
+  `--target aarch64-pc-windows-msvc`; x64 does `cargo build` directly; both use RUSTFLAGS rust-lld
+- "Build and run ODBC tests (Windows)": ARM64 sets targetDir to aarch64 target, copies OpenSSL DLLs,
+  sets CTEST_FILTER smoke test; x64 uses default debug target; both call run_tests_windows.ps1
+
+**Conclusion**: confirmed — CI f79e4d17: 6/6 GREEN on woa64-odbc. Human reviewer comment addressed.
+ARM64 vcvarsall.bat correctness confirmed empirically (CI builds and runs on native windows-11-arm runner).
 
 ### Iteration 6 — Transient Snowflake service failure on woa64-jdbc ODBC CI
 
