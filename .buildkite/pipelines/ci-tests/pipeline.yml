@@ -5,8 +5,8 @@
 #      drivers need testing, stores results in Buildkite meta-data.
 #   2. Driver steps read their filter from meta-data, skip if no relevant
 #      changes, otherwise run build+test inside Docker via `docker run`.
-#   3. JUnit XML results are written to the mounted workspace and uploaded
-#      as artifacts from the host after Docker exits.
+#   3. JUnit XML results are written to the mounted workspace, uploaded as
+#      build artifacts, and POSTed to Test Analytics via the REST API.
 
 env:
   DOCKER_IMAGE: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
@@ -104,6 +104,23 @@ steps:
 
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/*.xml"
+          for xml in junit-results/*.xml; do
+            [ -f "$$xml" ] || continue
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@$$xml" \
+              -F "format=junit" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded $$xml to Test Analytics"
+          done
           buildkite-agent annotate ":white_check_mark: Rust Core -- passed" --style "success" --context "rust-result"
 
   # ==========================================================================
@@ -157,6 +174,23 @@ steps:
 
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/*.xml"
+          for xml in junit-results/*.xml; do
+            [ -f "$$xml" ] || continue
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@$$xml" \
+              -F "format=junit" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded $$xml to Test Analytics"
+          done
           buildkite-agent annotate ":white_check_mark: Python -- passed" --style "success" --context "python-result"
 
   # ==========================================================================
@@ -219,6 +253,23 @@ steps:
 
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/*.xml"
+          for xml in junit-results/*.xml; do
+            [ -f "$$xml" ] || continue
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@$$xml" \
+              -F "format=junit" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded $$xml to Test Analytics"
+          done
           buildkite-agent annotate ":white_check_mark: ODBC -- passed" --style "success" --context "odbc-result"
 
   # ==========================================================================
@@ -280,4 +331,21 @@ steps:
 
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/*.xml"
+          for xml in junit-results/*.xml; do
+            [ -f "$$xml" ] || continue
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@$$xml" \
+              -F "format=junit" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded $$xml to Test Analytics"
+          done
           buildkite-agent annotate ":white_check_mark: JDBC -- passed" --style "success" --context "jdbc-result"
