@@ -185,7 +185,9 @@ fn assert_ext_authn_error_evicts_cached_mfa_token(
 
     let cache = KeyringTokenCache::new().expect("token cache should be available");
     let host = url::Url::parse(&fixture.mock.http_url())
-        .expect("failed to parse mock http_url for MFA cached token test")
+        .expect("mock URL should be valid")
+        .host_str()
+        .expect("mock URL should have a host")
         .to_string();
     cache
         .add_token(&host, user, TokenType::MfaToken, "cached_mfa_token")
