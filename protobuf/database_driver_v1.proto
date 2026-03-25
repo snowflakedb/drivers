@@ -136,6 +136,14 @@ message ColumnMetadata {
   bool nullable = 7;
 }
 
+// DML operation statistics
+message QueryStats {
+  optional int64 num_rows_inserted = 1;
+  optional int64 num_rows_updated = 2;
+  optional int64 num_rows_deleted = 3;
+  optional int64 num_dml_duplicates = 4;
+}
+
 // Execute result
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
@@ -145,6 +153,7 @@ message ExecuteResult {
   optional int64 statement_type_id = 5;
   string query = 6;
   optional string sql_state = 7;
+  optional QueryStats stats = 8;
 }
 
 // Partitioned result

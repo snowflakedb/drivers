@@ -18,7 +18,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     StatementHandle,
 )
-from snowflake.connector.cursor import FetchMode, SnowflakeCursor, SnowflakeCursorBase
+from snowflake.connector.cursor import FetchMode, QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
 from snowflake.connector.errors import ProgrammingError
 
 
@@ -612,6 +612,246 @@ class TestSqlstate:
         mock_connection.db_api.statement_execute_query.return_value.result = success_result
         cursor.execute("SELECT 2")
         assert cursor.sqlstate is None
+
+
+class TestQueryResultStats:
+    """Unit tests for QueryResultStats NamedTuple."""
+
+    def test_default_all_none(self):
+        """All fields default to None."""
+        stats = QueryResultStats()
+        assert stats.num_rows_inserted is None
+        assert stats.num_rows_deleted is None
+        assert stats.num_rows_updated is None
+        assert stats.num_dml_duplicates is None
+
+    def test_positional_construction(self):
+        """Fields can be set by position."""
+        stats = QueryResultStats(10, 20, 30, 5)
+        assert stats.num_rows_inserted == 10
+        assert stats.num_rows_deleted == 20
+        assert stats.num_rows_updated == 30
+        assert stats.num_dml_duplicates == 5
+
+    def test_keyword_construction(self):
+        """Fields can be set by keyword."""
+        stats = QueryResultStats(num_rows_inserted=1, num_rows_updated=2)
+        assert stats.num_rows_inserted == 1
+        assert stats.num_rows_deleted is None
+        assert stats.num_rows_updated == 2
+        assert stats.num_dml_duplicates is None
+
+    def test_is_named_tuple(self):
+        """QueryResultStats is a proper NamedTuple with tuple semantics."""
+        stats = QueryResultStats(1, 2, 3, 4)
+        assert isinstance(stats, tuple)
+        assert len(stats) == 4
+        assert stats[0] == 1
+        assert stats._fields == ("num_rows_inserted", "num_rows_deleted", "num_rows_updated", "num_dml_duplicates")
+
+    def test_equality(self):
+        """Two instances with identical values are equal."""
+        a = QueryResultStats(1, 2, 3, 4)
+        b = QueryResultStats(1, 2, 3, 4)
+        assert a == b
+
+    def test_all_none_equality(self):
+        """Default instance equals explicit all-None instance."""
+        assert QueryResultStats() == QueryResultStats(None, None, None, None)
+
+    def test_from_query_stats_all_fields_present(self):
+        """from_query_stats maps all present protobuf fields."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 10
+        mock_stats.num_rows_deleted = 5
+        mock_stats.num_rows_updated = 3
+        mock_stats.num_dml_duplicates = 1
+        mock_stats.HasField.return_value = True
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats(10, 5, 3, 1)
+
+    def test_from_query_stats_partial_fields(self):
+        """from_query_stats returns None for absent protobuf fields."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 42
+        mock_stats.HasField.side_effect = lambda name: name == "num_rows_inserted"
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats(
+            num_rows_inserted=42, num_rows_deleted=None, num_rows_updated=None, num_dml_duplicates=None
+        )
+
+    def test_from_query_stats_no_fields_present(self):
+        """from_query_stats returns all None when no fields are set."""
+        mock_stats = MagicMock()
+        mock_stats.HasField.return_value = False
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats()
+
+    def test_from_query_stats_zero_values(self):
+        """from_query_stats preserves zero values (distinct from absent)."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 0
+        mock_stats.num_rows_deleted = 0
+        mock_stats.num_rows_updated = 0
+        mock_stats.num_dml_duplicates = 0
+        mock_stats.HasField.return_value = True
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats(0, 0, 0, 0)
+
+
+class TestStats:
+    """Unit tests for Cursor.stats property."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_stats_returns_all_none_before_execute(self, cursor):
+        """stats returns QueryResultStats with all None fields on a fresh cursor."""
+        result = cursor.stats
+        assert result == QueryResultStats(None, None, None, None)
+
+    def test_stats_returns_all_none_when_no_stats_field(self, cursor):
+        """stats returns all-None when execute_result has no stats field."""
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = False
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result == QueryResultStats(None, None, None, None)
+        mock_result.HasField.assert_called_with("stats")
+
+    def test_stats_returns_all_fields_when_present(self, cursor):
+        """stats returns all populated fields from execute_result."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 10
+        mock_stats.num_rows_deleted = 5
+        mock_stats.num_rows_updated = 3
+        mock_stats.num_dml_duplicates = 1
+        mock_stats.HasField.return_value = True
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result == QueryResultStats(
+            num_rows_inserted=10,
+            num_rows_deleted=5,
+            num_rows_updated=3,
+            num_dml_duplicates=1,
+        )
+
+    def test_stats_returns_partial_fields(self, cursor):
+        """stats returns None for fields not present in the protobuf."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 10
+        mock_stats.num_rows_deleted = 0
+        mock_stats.num_rows_updated = 0
+        mock_stats.num_dml_duplicates = 0
+
+        def has_field(name):
+            return name == "num_rows_inserted"
+
+        mock_stats.HasField.side_effect = has_field
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result.num_rows_inserted == 10
+        assert result.num_rows_deleted is None
+        assert result.num_rows_updated is None
+        assert result.num_dml_duplicates is None
+
+    def test_stats_distinguishes_zero_from_absent(self, cursor):
+        """A field present with value 0 is returned as 0, not None."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 0
+        mock_stats.num_rows_deleted = 0
+        mock_stats.num_rows_updated = 0
+        mock_stats.num_dml_duplicates = 0
+        mock_stats.HasField.return_value = True
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result == QueryResultStats(0, 0, 0, 0)
+
+    def test_stats_returns_query_result_stats_type(self, cursor):
+        """stats always returns a QueryResultStats instance."""
+        assert isinstance(cursor.stats, QueryResultStats)
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = False
+        cursor.execute_result = mock_result
+        assert isinstance(cursor.stats, QueryResultStats)
+
+    def test_stats_updates_on_subsequent_execute(self, cursor):
+        """stats reflects the most recent execute_result."""
+        first_stats = MagicMock()
+        first_stats.num_rows_inserted = 5
+        first_stats.HasField.return_value = True
+
+        first_result = MagicMock()
+        first_result.HasField.return_value = True
+        first_result.stats = first_stats
+        cursor.execute_result = first_result
+
+        assert cursor.stats.num_rows_inserted == 5
+
+        second_stats = MagicMock()
+        second_stats.num_rows_inserted = 20
+        second_stats.HasField.return_value = True
+
+        second_result = MagicMock()
+        second_result.HasField.return_value = True
+        second_result.stats = second_stats
+        cursor.execute_result = second_result
+
+        assert cursor.stats.num_rows_inserted == 20
+
+    def test_stats_only_insert_field(self, cursor):
+        """stats correctly returns only num_rows_inserted when only that field is present."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 42
+
+        def has_field(name):
+            return name == "num_rows_inserted"
+
+        mock_stats.HasField.side_effect = has_field
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+        assert result == QueryResultStats(
+            num_rows_inserted=42, num_rows_deleted=None, num_rows_updated=None, num_dml_duplicates=None
+        )
 
 
 class TestFetchmanyArraysizeAttribute:

@@ -1239,6 +1239,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 statement_type_id: result.statement_type_id,
                 query: result.query,
                 sql_state: result.sql_state,
+                stats: result.stats.map(|s| QueryStats {
+                    num_rows_inserted: s.num_rows_inserted,
+                    num_rows_updated: s.num_rows_updated,
+                    num_rows_deleted: s.num_rows_deleted,
+                    num_dml_duplicates: s.num_dml_duplicates,
+                }),
             }),
         })
     }

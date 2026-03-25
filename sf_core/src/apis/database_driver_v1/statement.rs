@@ -12,7 +12,7 @@ use crate::config::param_registry::param_names;
 use crate::config::rest_parameters::QueryParameters;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::query_response::Data;
+use crate::rest::snowflake::query_response::{Data, Stats};
 use crate::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
 
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -265,6 +265,7 @@ pub struct ExecuteResult {
     pub statement_type_id: Option<i64>,
     pub query: String,
     pub sql_state: Option<String>,
+    pub stats: Option<Stats>,
 }
 
 impl DatabaseDriverV1 {
@@ -412,8 +413,9 @@ impl DatabaseDriverV1 {
                 .collect()
         });
 
-        // Extract sql_state from response
+        // Extract sql_state and stats from response
         let sql_state = response.data.sql_state;
+        let stats = response.data.stats;
 
         let result = ExecuteResult {
             stream: rowset_stream,
@@ -423,6 +425,7 @@ impl DatabaseDriverV1 {
             statement_type_id,
             query,
             sql_state,
+            stats,
         };
         stmt.state = StatementState::Executed;
         Ok(result)

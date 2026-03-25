@@ -34,6 +34,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
     QueryBindings,
+    QueryStats,
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementReleaseRequest,
@@ -96,6 +97,29 @@ class ResultMetadata(NamedTuple):
 
 # Backward compatibility alias
 ResultMetadataV2 = ResultMetadata
+
+
+class QueryResultStats(NamedTuple):
+    """DML operation statistics returned by Snowflake.
+
+    Exposes per-operation row counts for INSERT, UPDATE, DELETE,
+    and the number of duplicate rows skipped during DML.
+    """
+
+    num_rows_inserted: int | None = None
+    num_rows_deleted: int | None = None
+    num_rows_updated: int | None = None
+    num_dml_duplicates: int | None = None
+
+    @classmethod
+    def from_query_stats(cls, s: QueryStats) -> QueryResultStats:
+        """Create a ``QueryResultStats`` from a protobuf ``QueryStats``."""
+        return cls(
+            num_rows_inserted=s.num_rows_inserted if s.HasField("num_rows_inserted") else None,
+            num_rows_deleted=s.num_rows_deleted if s.HasField("num_rows_deleted") else None,
+            num_rows_updated=s.num_rows_updated if s.HasField("num_rows_updated") else None,
+            num_dml_duplicates=s.num_dml_duplicates if s.HasField("num_dml_duplicates") else None,
+        )
 
 
 class FetchMode(enum.Enum):
@@ -285,6 +309,13 @@ class SnowflakeCursorBase(abc.ABC):
         if self.execute_result is None:
             return None
         return self.execute_result.query_id if self.execute_result.query_id else None
+
+    @property
+    def stats(self) -> QueryResultStats | None:
+        """Returns detailed row-level statistics for DML operations."""
+        if self.execute_result is None or not self.execute_result.HasField("stats"):
+            return QueryResultStats()
+        return QueryResultStats.from_query_stats(self.execute_result.stats)
 
     @pep249
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> Sequence[Any]:
@@ -1047,4 +1078,4 @@ CursorType = Union[type[SnowflakeCursor], type[DictCursor]]
 CursorInstance = Union[SnowflakeCursor, DictCursor]
 
 
-__all__ = ["SnowflakeCursor", "SnowflakeCursorBase", "DictCursor"]
+__all__ = ["SnowflakeCursor", "SnowflakeCursorBase", "DictCursor", "QueryResultStats"]
