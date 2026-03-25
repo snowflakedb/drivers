@@ -248,6 +248,13 @@ fn connect_with_params(
             })
             .await?;
 
+            c.connection_set_option_string(ConnectionSetOptionStringRequest {
+                conn_handle: Some(conn_handle),
+                key: "client_app_version".to_owned(),
+                value: env!("CARGO_PKG_VERSION").to_owned(),
+            })
+            .await?;
+
             c.connection_init(ConnectionInitRequest {
                 conn_handle: Some(conn_handle),
                 db_handle: Some(db_handle),

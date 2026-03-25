@@ -132,12 +132,14 @@ pub struct QueryInput<'a> {
 }
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
-    format!(
-        "{}/{} ({}) CPython/3.11.6",
-        client_info.application,
-        client_info.version.clone(),
-        client_info.os.clone()
-    )
+    let base = format!(
+        "{}/{} ({})",
+        client_info.application, client_info.version, client_info.os
+    );
+    match (&client_info.runtime_name, &client_info.runtime_version) {
+        (Some(name), Some(ver)) => format!("{base} {name}/{ver}"),
+        _ => base,
+    }
 }
 
 fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
@@ -150,9 +152,9 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
-            python_version: Some("3.11.6".to_string()),
-            python_runtime: Some("CPython".to_string()),
-            python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
+            runtime_version: login_parameters.client_info.runtime_version.clone(),
+            runtime_name: login_parameters.client_info.runtime_name.clone(),
+            compiler: login_parameters.client_info.compiler.clone(),
         },
         ..Default::default()
     }
@@ -365,15 +367,7 @@ async fn send_login_request(
         ])
         .json(login_request)
         .header("accept", "application/snowflake")
-        .header(
-            "User-Agent",
-            format!(
-                "{}/{} ({}) CPython/3.11.6",
-                login_parameters.client_info.application,
-                login_parameters.client_info.version.clone(),
-                login_parameters.client_info.os.clone()
-            ),
-        )
+        .header("User-Agent", user_agent(&login_parameters.client_info))
         .header("Authorization", "Snowflake Token=\"None\"")
         .build()
         .context(RequestConstructionSnafu { request: "login" })?;

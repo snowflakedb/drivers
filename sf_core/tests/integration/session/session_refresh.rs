@@ -21,6 +21,9 @@ fn test_client_info() -> ClientInfo {
         os: "test-os".to_string(),
         os_version: "1.0".to_string(),
         ocsp_mode: None,
+        runtime_name: None,
+        runtime_version: None,
+        compiler: None,
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::insecure(),
     }

@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import logging
+import platform
 
 from collections.abc import Generator, Iterable
 from io import StringIO
@@ -84,6 +85,8 @@ class Connection:
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
+        self._set_client_identity()
+
         # Extract session_parameters before processing other kwargs
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
@@ -142,6 +145,26 @@ class Connection:
 
         # other connection properties
         self._arrow_number_to_decimal: bool = False
+
+    def _set_client_identity(self) -> None:
+        """Pass Python wrapper identity to the Rust core."""
+        from snowflake.connector.version import __version__
+
+        _set = self.db_api.connection_set_option_string
+        h = self.conn_handle
+        _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_app_id", value="PythonConnector"))
+        _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_app_version", value=__version__))
+        _set(
+            ConnectionSetOptionStringRequest(
+                conn_handle=h, key="client_runtime_name", value=platform.python_implementation()
+            )
+        )
+        _set(
+            ConnectionSetOptionStringRequest(
+                conn_handle=h, key="client_runtime_version", value=platform.python_version()
+            )
+        )
+        _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_compiler", value=platform.python_compiler()))
 
     @pep249
     def close(self) -> None:

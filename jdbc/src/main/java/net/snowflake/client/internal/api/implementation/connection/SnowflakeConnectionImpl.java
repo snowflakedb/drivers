@@ -105,6 +105,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
               }
             }
           });
+      setClientIdentity();
       ConnectionInitRequest connectionInitRequest =
           ConnectionInitRequest.newBuilder()
               .setDbHandle(databaseHandle)
@@ -114,6 +115,27 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
     } catch (DatabaseDriverService.ServiceException e) {
       throw new SQLException(e);
     }
+  }
+
+  private void setClientIdentity() throws DatabaseDriverService.ServiceException {
+    setStringOption("client_app_id", "JDBC");
+    setStringOption(
+        "client_app_version",
+        getClass().getPackage().getImplementationVersion() != null
+            ? getClass().getPackage().getImplementationVersion()
+            : "0.1.0");
+    setStringOption("client_runtime_name", System.getProperty("java.vm.name", ""));
+    setStringOption("client_runtime_version", System.getProperty("java.version", ""));
+  }
+
+  private void setStringOption(String key, String value)
+      throws DatabaseDriverService.ServiceException {
+    ProtobufApis.databaseDriverV1.connectionSetOptionString(
+        ConnectionSetOptionStringRequest.newBuilder()
+            .setConnHandle(connectionHandle)
+            .setKey(key)
+            .setValue(value)
+            .build());
   }
 
   @Override

@@ -159,7 +159,25 @@ mod integration_tests {
 
         assert!(user_agent.contains("PythonConnector"));
         assert!(user_agent.contains("3.15.0"));
-        assert!(user_agent.contains("Darwin"));
+        // OS is now auto-detected; runtime suffix only appears when wrapper provides it
+        assert!(!user_agent.contains("CPython"));
+    }
+
+    #[test]
+    fn test_user_agent_with_runtime_info() {
+        let mut settings = MockSettings::new();
+        settings.set(
+            "client_runtime_name",
+            Setting::String("CPython".to_string()),
+        );
+        settings.set(
+            "client_runtime_version",
+            Setting::String("3.11.6".to_string()),
+        );
+        let client_info = ClientInfo::from_settings(&settings).unwrap();
+        let user_agent = snowflake::user_agent(&client_info);
+
+        assert!(user_agent.contains("CPython/3.11.6"));
     }
 
     /// Test that demonstrates how CRL settings would be used in a real connection

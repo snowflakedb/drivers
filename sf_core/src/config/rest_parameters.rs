@@ -62,6 +62,12 @@ pub struct ClientInfo {
     pub os: String,
     pub os_version: String,
     pub ocsp_mode: Option<String>,
+    /// Wrapper runtime name (e.g. "CPython", "OpenJDK"). Only set by language wrappers.
+    pub runtime_name: Option<String>,
+    /// Wrapper runtime version (e.g. "3.11.6", "21.0.1"). Only set by language wrappers.
+    pub runtime_version: Option<String>,
+    /// Wrapper compiler info (e.g. "Clang 13.0.0 ..."). Only set by language wrappers.
+    pub compiler: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
 }
@@ -71,21 +77,54 @@ impl ClientInfo {
         let crl_config = CrlConfig::from_settings(settings)?;
         let tls_config = TlsConfig::from_settings(settings)?;
 
-        // TODO: ClientInfo should be dynamically created based on the real hardware and
-        // the wrapper client type
+        // TODO: The default "PythonConnector" should be replaced once the Snowflake server
+        // registers new CLIENT_APP_ID values for each wrapper (ODBC, JDBC, etc.).
+        // Until then, wrappers must pass their own client_app_id via settings.
         let client_info = ClientInfo {
             application: settings
                 .get_string("client_app_id")
                 .unwrap_or_else(|| "PythonConnector".to_string()),
-            version: "3.15.0".to_string(),
-            os: "Darwin".to_string(),
-            os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+            version: settings
+                .get_string("client_app_version")
+                .unwrap_or_else(|| "3.15.0".to_string()),
+            os: detect_os(),
+            os_version: detect_os_version(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),
+            runtime_name: settings.get_string("client_runtime_name"),
+            runtime_version: settings.get_string("client_runtime_version"),
+            compiler: settings.get_string("client_compiler"),
             crl_config,
             tls_config,
         };
         Ok(client_info)
     }
+}
+
+fn detect_os() -> String {
+    match std::env::consts::OS {
+        "macos" => "Darwin".to_string(),
+        "linux" => "Linux".to_string(),
+        "windows" => "Windows".to_string(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(unix)]
+fn detect_os_version() -> String {
+    let mut buf: libc::utsname = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::uname(&mut buf) };
+    if rc != 0 {
+        return "unknown".to_string();
+    }
+    let sysname = unsafe { std::ffi::CStr::from_ptr(buf.sysname.as_ptr()) }.to_string_lossy();
+    let release = unsafe { std::ffi::CStr::from_ptr(buf.release.as_ptr()) }.to_string_lossy();
+    let machine = unsafe { std::ffi::CStr::from_ptr(buf.machine.as_ptr()) }.to_string_lossy();
+    format!("{sysname}-{release}-{machine}-64bit")
+}
+
+#[cfg(not(unix))]
+fn detect_os_version() -> String {
+    "unknown".to_string()
 }
 
 pub struct LoginParameters {
