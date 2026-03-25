@@ -327,6 +327,8 @@ TEST_CASE("should truncate binary hex with one-byte-short buffer for SQL_C_CHAR"
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
   REQUIRE(get_sqlstate(stmt) == "01004");
   REQUIRE(indicator == 6);
+  REQUIRE(std::string(buffer, 5) == "ABCDE");
+  REQUIRE(buffer[5] == '\0');
 }
 
 // ============================================================================
