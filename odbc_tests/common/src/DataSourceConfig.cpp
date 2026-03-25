@@ -63,6 +63,9 @@ static std::string get_or_create_private_key_file(const picojson::object& params
   std::filesystem::rename(staging, shared_path, ec);
   if (ec) {
     std::filesystem::remove(staging, ec);
+    if (!std::filesystem::exists(shared_path, ec) || ec || std::filesystem::file_size(shared_path, ec) == 0 || ec) {
+      throw std::runtime_error("Failed to create shared key file: " + shared_path);
+    }
   }
   return shared_path;
 }
