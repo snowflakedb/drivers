@@ -113,8 +113,11 @@ async fn check_blob_exists(client: &reqwest::Client, url: &str, sas_token: &str)
                 false
             }
         },
-        Err(_) => {
-            tracing::warn!("Error checking Azure blob existence, proceeding with upload");
+        Err(e) => {
+            tracing::warn!(
+                "Error checking Azure blob existence, proceeding with upload: {}",
+                sanitize_sas(e.to_string())
+            );
             false
         }
     }
@@ -586,6 +589,19 @@ mod tests {
         assert_eq!(
             url,
             "https://mystorageaccount.blob.core.chinacloudapi.cn/my-container/prefix/file.csv.gz"
+        );
+    }
+
+    #[test]
+    fn url_endpoint_without_trailing_slash() {
+        let stage = make_stage_info(StageInfoOverrides {
+            end_point: Some("core.windows.net".to_string()),
+            ..Default::default()
+        });
+        let url = build_azure_url(&stage, "prefix/file.csv.gz").unwrap();
+        assert_eq!(
+            url,
+            "https://mystorageaccount.blob.core.windows.net/my-container/prefix/file.csv.gz"
         );
     }
 
