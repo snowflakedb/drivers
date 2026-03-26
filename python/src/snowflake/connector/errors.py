@@ -143,5 +143,29 @@ class ForbiddenError(Error):
     """Exception for 403 HTTP error for retry."""
 
 
+class InternalServerError(Error):
+    """Exception for 500 HTTP error for retry."""
+
+
+class ServiceUnavailableError(Error):
+    """Exception for 503 HTTP error for retry."""
+
+
+class GatewayTimeoutError(Error):
+    """Exception for 504 HTTP error for retry."""
+
+
+class RequestTimeoutError(Error):
+    """Exception for 408 HTTP error for retry."""
+
+
 class BadGatewayError(Error):
     """Exception for 502 HTTP error for retry."""
+
+
+class OtherHTTPRetryableError(Error):
+    """Exception for other retryable HTTP errors."""
+
+
+class BindUploadError(Error):
+    """Exception for bind upload failures."""
