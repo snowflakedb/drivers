@@ -1011,6 +1011,74 @@ pub unsafe extern "C" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::R
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLNativeSql(
+    connection_handle: sql::Handle,
+    in_statement_text: *const sql::Char,
+    text_length1: sql::Integer,
+    out_statement_text: *mut sql::Char,
+    buffer_length: sql::Integer,
+    text_length2_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    if connection_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
+    let result = api::connection::native_sql::<Narrow>(
+        connection_handle,
+        in_statement_text,
+        text_length1,
+        out_statement_text,
+        buffer_length,
+        text_length2_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLNativeSqlW(
+    connection_handle: sql::Handle,
+    in_statement_text: *const sql::WChar,
+    text_length1: sql::Integer,
+    out_statement_text: *mut sql::WChar,
+    buffer_length: sql::Integer,
+    text_length2_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    if connection_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
+    let result = api::connection::native_sql::<Wide>(
+        connection_handle,
+        in_statement_text,
+        text_length1,
+        out_statement_text,
+        buffer_length,
+        text_length2_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLGetDescField(
     descriptor_handle: sql::Handle,
     rec_number: sql::SmallInt,
