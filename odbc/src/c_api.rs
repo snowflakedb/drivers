@@ -110,6 +110,7 @@ pub unsafe extern "C" fn SQLConnect(
     authentication: *const sql::Char,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Narrow>(
         connection_handle,
         server_name,
@@ -135,6 +136,7 @@ pub unsafe extern "C" fn SQLConnectW(
     authentication: *const sql::WChar,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Wide>(
         connection_handle,
         server_name,
@@ -155,9 +157,16 @@ pub unsafe extern "C" fn SQLSetEnvAttr(
     environment_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
-    _string_length: sql::SmallInt,
+    string_length: sql::Integer,
 ) -> sql::RetCode {
-    api::environment::set_env_attribute(environment_handle, attribute, value).to_sql_code()
+    if environment_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Env, environment_handle);
+    let result =
+        api::environment::set_env_attribute(environment_handle, attribute, value, string_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Env, environment_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -167,9 +176,22 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
     environment_handle: sql::Handle,
     attribute: sql::Integer,
     value: sql::Pointer,
-    _string_length: sql::SmallInt,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::environment::get_env_attribute(environment_handle, attribute, value).to_sql_code()
+    if environment_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Env, environment_handle);
+    let result = api::environment::get_env_attribute(
+        environment_handle,
+        attribute,
+        value,
+        buffer_length,
+        string_length_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Env, environment_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -603,6 +625,43 @@ pub unsafe extern "C" fn SQLNumResultCols(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLNumParams(
+    statement_handle: sql::Handle,
+    param_count_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::num_params(statement_handle, param_count_ptr);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLDescribeParam(
+    statement_handle: sql::Handle,
+    parameter_number: sql::USmallInt,
+    data_type_ptr: *mut sql::SmallInt,
+    parameter_size_ptr: *mut sql::ULen,
+    decimal_digits_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::describe_param(
+        statement_handle,
+        parameter_number,
+        data_type_ptr,
+        parameter_size_ptr,
+        decimal_digits_ptr,
+        nullable_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLRowCount(
     statement_handle: sql::Handle,
     row_count_ptr: *mut sql::Len,
@@ -877,14 +936,26 @@ pub unsafe extern "C" fn SQLGetStmtAttr(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::statement::get_stmt_attr(
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_stmt_attr::<Narrow>(
         statement_handle,
         attribute,
         value_ptr,
         buffer_length,
         string_length_ptr,
-    )
-    .to_sql_code()
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -897,14 +968,44 @@ pub unsafe extern "C" fn SQLGetStmtAttrW(
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
-    api::statement::get_stmt_attr(
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::get_stmt_attr::<Wide>(
         statement_handle,
         attribute,
         value_ptr,
         buffer_length,
         string_length_ptr,
-    )
-    .to_sql_code()
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::RetCode {
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    // TODO: Implement proper SQLMoreResults functionality (multiple result sets).
+    // For now, close the cursor as if SQLFreeStmt(SQL_CLOSE) was called, per ODBC spec.
+    let result = api::statement::free_stmt(statement_handle, api::FreeStmtOption::Close);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    if result.is_err() {
+        return result.to_sql_code();
+    }
+    sql::SqlReturn::NO_DATA.0
 }
 
 /// # Safety

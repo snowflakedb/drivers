@@ -8,6 +8,7 @@
 - [Architecture](#architecture)
 - [Driver Containers](#driver-containers)
 - [Results](#results)
+- [Metrics Reference](#metrics-reference)
 - [Docker Builds Approach](#docker-builds-approach)
 
 ---
@@ -284,9 +285,11 @@ hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_sel
 │  - Connects to Snowflake                                        │
 │  - Executes setup queries                                       │
 │  - Runs warmup iterations                                       │
+│  - Starts memory timeline monitor (background thread, 100ms)    │
 │  - Executes test iterations                                     │
-│  - Measures query and fetch times                               │
-│  - Writes results to CSV files                                  │
+│  - Measures query/fetch times, CPU time, and peak RSS           │
+│  - Stops memory timeline monitor                                │
+│  - Writes per-iteration results CSV and memory timeline CSV     │
 │  - Writes run metadata                                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -374,44 +377,132 @@ Each driver container must generate:
 ```
 results/
 └── run_20251030_113045/
-    ├── select_string_1000000_rows_python_universal_1761734615.csv
-    ├── select_string_1000000_rows_python_old_1761734627.csv
-    ├── select_number_1000000_rows_python_universal_1761734660.csv
-    ├── select_number_1000000_rows_python_old_1761734671.csv
+    ├── select_string_1M_arrow_python_universal_1761734615.csv
+    ├── select_string_1M_arrow_python_old_1761734627.csv
+    ├── memory_timeline_select_string_1M_arrow_python_universal_1761734615.csv
+    ├── memory_timeline_select_string_1M_arrow_python_old_1761734627.csv
+    ├── select_number_1M_arrow_python_universal_1761734660.csv
+    ├── select_number_1M_arrow_python_old_1761734671.csv
+    ├── memory_timeline_select_number_1M_arrow_python_universal_1761734660.csv
+    ├── memory_timeline_select_number_1M_arrow_python_old_1761734671.csv
     ├── run_metadata_python_universal.json
     └── run_metadata_python_old.json
 ```
 
 ### CSV Format
 
-Results CSV files contain per-iteration timing data with actual execution timestamps.
+Results CSV files contain per-iteration timing, CPU, and memory data with actual execution timestamps.
 
 **For SELECT tests:**
 ```csv
-timestamp,query_s,fetch_s
-1762522370,1.583121,21.441600
-1762522392,1.812228,20.262202
-1762522414,1.799454,20.156388
+timestamp,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb
+1762522370,0.005432,1.583121,1000000,1.571032,236.2
+1762522372,0.005118,1.812228,1000000,1.798445,237.4
+1762522374,0.004987,1.799454,1000000,1.785123,236.1
 ```
 
 **For PUT/GET tests:**
 ```csv
-timestamp,query_s
-1762522254,6.595445
-1762522271,4.385419
-1762522288,5.123456
+timestamp,query_s,cpu_time_s,peak_rss_mb
+1762522254,6.595445,0.312456,85.3
+1762522271,4.385419,0.298234,85.1
+1762522288,5.123456,0.305678,85.2
 ```
 
 **Columns**:
-- `timestamp`: Unix timestamp (seconds since epoch) when the iteration was executed
-- `query_s`: Time to execute query and get initial response (seconds, 6 decimal places)
-- `fetch_s`: Time to fetch all result data (seconds, 6 decimal places) - **only for SELECT tests**
+- `timestamp`: Unix timestamp (seconds since epoch) when the iteration completed
+- `query_s`: Wall-clock time to execute the query (`cursor.execute()`) and get initial response (seconds)
+- `fetch_s`: Wall-clock time to fetch all result rows via `fetchmany()` (seconds) — **SELECT tests only**
+- `row_count`: Number of rows fetched — **SELECT tests only**
+- `cpu_time_s`: CPU time consumed during the fetch phase (seconds, via `time.process_time()`) — see [Metrics Reference](#metrics-reference)
+- `peak_rss_mb`: Process-wide peak Resident Set Size (MB, via `getrusage(RUSAGE_SELF).ru_maxrss`)
 
 **Notes**:
 - Each row represents one test iteration (warmup iterations are not included)
-- PUT/GET tests only measure `query_s` since file operations don't have a separate fetch phase
-- Timestamps are captured at the end of each iteration and uploaded to Benchstore for accurate time-series analysis
-- Total time for SELECT tests can be calculated as `query_s + fetch_s`
+- PUT/GET tests have no separate fetch phase — `query_s` covers the entire file operation
+- Timestamps are captured at the end of each iteration and uploaded to Benchstore for time-series analysis
+- Total wall-clock time for SELECT tests = `query_s + fetch_s`
+
+### Memory Timeline Files
+
+In addition to per-iteration CSVs, a separate memory timeline CSV is generated per test. A background thread samples process memory at ~100ms intervals across all test iterations (excluding warmup).
+
+**Filename pattern:** `memory_timeline_{test_name}_{driver}_{driver_type}_{timestamp}.csv`
+
+```csv
+timestamp_ms,rss_bytes,vm_bytes
+1773060664000,175636480,536870912
+1773060664100,196083712,536870912
+1773060664200,247463936,536870912
+```
+
+**Columns**:
+- `timestamp_ms`: Epoch time in milliseconds when the sample was taken
+- `rss_bytes`: Resident Set Size — physical memory currently used by the process
+- `vm_bytes`: Virtual Memory Size — total virtual address space of the process
+
+---
+
+## Metrics Reference
+
+### Per-Iteration Metrics (Time Series)
+
+These are recorded once per test iteration and uploaded to Benchstore as time-series sample points.
+
+| Metric | Scope | Measures | Unit | Purpose |
+|--------|-------|----------|------|---------|
+| `query_s` | `cursor.execute()` | Wall-clock time for query submission and server response | seconds | Network latency + server processing time |
+| `fetch_s` | `cursor.fetchmany()` loop | Wall-clock time to fetch and deserialize all rows | seconds | Data transfer + deserialization throughput |
+| `cpu_time_s` | Fetch phase only (SELECT) / Execute phase (PUT/GET) | CPU time (user + system) consumed by the process | seconds | CPU efficiency of deserialization; excludes I/O waits and GIL-released time |
+| `peak_rss_mb` | Entire process lifetime | Maximum physical memory (Resident Set Size) ever used | MB | Absolute memory ceiling; useful for memory budget tracking |
+
+**`cpu_time_s` details:**
+- Python: measured via `time.process_time()` (user + system CPU, all threads)
+- ODBC/C++: measured via `getrusage(RUSAGE_SELF)` delta (user + system CPU, all threads)
+- For SELECT tests: wraps only the fetch loop, excluding the query phase. This means `cpu_time_s` directly corresponds to `fetch_s` — the ratio `cpu_time_s / fetch_s` indicates CPU saturation during deserialization (1.0 = fully CPU-bound, <1.0 = some I/O waits)
+- For PUT/GET tests: wraps the execute call since there is no separate fetch phase
+- Both methods report process-wide CPU across all threads. For multi-threaded drivers, `cpu_time_s` may exceed `fetch_s` (the excess reflects work done by background threads)
+
+**`peak_rss_mb` details:**
+- Read from `getrusage(RUSAGE_SELF).ru_maxrss` (kernel-tracked `VmHWM`)
+- This is the process-wide peak — it captures all memory from both the language wrapper and the Rust `sf_core` library (they share the same process)
+- The value is monotonically non-decreasing across iterations (it's a lifetime high-water mark). To see per-iteration memory behavior, use the memory timeline
+
+**Platform note:** `cpu_time_s` and `peak_rss_mb` work on both Linux and macOS. Memory timeline sampling (`/proc/self/statm`) is Linux-only — on macOS, the timeline is silently empty. All metrics are available on any Linux distribution (the APIs are kernel-level, not distro-specific).
+
+### Memory Timeline Metrics (Time Series)
+
+Sampled at ~100ms intervals by a background monitoring thread. Uploaded to Benchstore as time-series sample points. **Linux only** — relies on `/proc/self/statm` which is part of the Linux kernel's procfs (available on all distributions and architectures). On non-Linux platforms the monitor is silently disabled.
+
+| Metric | Source | Unit | Purpose |
+|--------|--------|------|---------|
+| `rss_memory_mb` | `/proc/self/statm` (RSS pages × page size) | MB | Instantaneous physical memory at each sample point; shows memory shape across iterations |
+| `vm_memory_mb` | `/proc/self/statm` (VM pages × page size) | MB | Virtual memory size; useful for detecting address space growth independent of physical memory |
+
+**Timeline scope:** The monitor starts after warmup and stops after the last test iteration. Setup queries, connection setup, and result writing are excluded.
+
+### Aggregate Metrics (Single Value per Run)
+
+Computed from memory timeline data and uploaded to Benchstore as run aggregates.
+
+| Metric | Computation | Unit | Detects |
+|--------|-------------|------|---------|
+| `rss_memory_delta_mb` | `max(rss) - min(rss)` across all timeline samples | MB | Working memory regression |
+| `rss_memory_growth_mb` | `min(rss in last iteration) - min(rss in first iteration)` | MB | Memory leaks |
+
+**`rss_memory_delta_mb`** measures the working memory swing during test execution — how much memory the driver allocates on top of its idle baseline to process results. Compare this value across builds to detect regressions: if a code change causes the driver to allocate more memory during query processing, this number increases.
+
+**`rss_memory_growth_mb`** measures whether memory is being freed between iterations. It compares the idle (resting) RSS of the first iteration to the idle RSS of the last iteration. A value near 0 means memory is fully released. A positive value means memory is accumulating across iterations (potential leak). Requires at least 2 iterations (skipped for single-iteration runs).
+
+The metric uses `min()` within each iteration's timeline segment to extract the idle baseline, rather than comparing the raw first and last RSS samples. This matters because the monitor can start or stop mid-iteration when RSS is at its peak (~152 MB instead of ~103 MB idle). A raw `end - start` comparison would be timing-dependent and could falsely report ~48 MB of "growth" when the driver actually freed all working memory. The `min()` approach reliably finds the idle baseline regardless of timing.
+
+**How the three memory metrics work together:**
+
+| Metric | What it guards | Example alert |
+|--------|----------------|---------------|
+| `peak_rss_mb` | Absolute memory ceiling | "Process exceeded 256 MB budget" |
+| `rss_memory_delta_mb` | Per-test working memory | "Decoding now uses 80 MB instead of 48 MB" |
+| `rss_memory_growth_mb` | Memory leak across iterations | "Idle RSS grew by 10 MB over 5 iterations" |
 
 ### Benchstore Metrics
 
@@ -420,13 +511,25 @@ When uploading to Benchstore (with `--upload-to-benchstore`), each test uploads 
 - **Consistent metric names**: All drivers use identical metric names for the same test (e.g., `select_string_1000000_rows_query_s`)
 - **Tag-based separation**: Results are distinguished by tags (driver, version, cloud provider, architecture, etc.)
 
-**Example**: The test `test_select_string_1000000_rows` uploads:
-- Metric names: 
-  - `select_string_1000000_rows_query_s` (query execution time)
-  - `select_string_1000000_rows_fetch_s` (data fetching time)
+**Example**: The test `test_select_string_1000000_rows` uploads these time-series metrics per iteration:
+- `select_string_1000000_rows_query_s` — query execution time
+- `select_string_1000000_rows_fetch_s` — data fetching time
+- `select_string_1000000_rows_cpu_time_s` — CPU time during fetch
+- `select_string_1000000_rows_peak_rss_mb` — peak process memory
 
-**PUT/GET Tests**: Tests like `test_put_files_12mx100` only upload:
-- Metric name: `put_files_12mx100_query_s` (query execution time)
+And these memory timeline metrics (sampled at ~100ms):
+- `select_string_1000000_rows_rss_memory_mb` — RSS at each sample point
+- `select_string_1000000_rows_vm_memory_mb` — virtual memory at each sample point
+
+And these run aggregates:
+- `select_string_1000000_rows_rss_memory_delta_mb` — max-min RSS delta (working memory swing)
+- `select_string_1000000_rows_rss_memory_growth_mb` — idle RSS growth between first and last iteration (leak indicator)
+
+**PUT/GET Tests**: Tests like `test_put_files_12mx100` upload:
+- `put_files_12mx100_query_s` — file operation time
+- `put_files_12mx100_cpu_time_s` — CPU time during operation
+- `put_files_12mx100_peak_rss_mb` — peak process memory
+- Plus memory timeline, delta, and growth metrics (same as above)
 
 #### Benchstore Tags
 

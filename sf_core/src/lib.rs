@@ -11,7 +11,8 @@ mod compression;
 mod compression_types;
 pub mod config;
 pub mod crl;
-mod file_manager;
+// Public for integration tests; only `types` and specific transfer functions are re-exported.
+pub mod file_manager;
 pub mod handle_manager;
 pub mod http;
 pub mod logging;

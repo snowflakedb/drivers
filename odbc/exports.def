@@ -29,7 +29,10 @@ EXPORTS
     SQLGetEnvAttr
     SQLGetInfoW
     SQLGetStmtAttrW
+    SQLMoreResults
+    SQLNumParams
     SQLNumResultCols
+    SQLDescribeParam
     SQLPrepareW
     SQLRowCount
     SQLSetConnectAttrW

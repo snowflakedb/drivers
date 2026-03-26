@@ -6,6 +6,7 @@ use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::query::process_query_response;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
+use crate::chunks::ChunkDownloadData;
 use crate::config::ParamStore;
 use crate::config::param_registry::param_names;
 use crate::config::rest_parameters::QueryParameters;
@@ -290,7 +291,7 @@ impl DatabaseDriverV1 {
         })?;
 
         let mut stmt = stmt_ptr.lock().await;
-        let query = stmt.query.as_deref().ok_or_else(|| {
+        let query = stmt.query.clone().ok_or_else(|| {
             InvalidArgumentSnafu {
                 argument: "Query not found".to_string(),
             }
@@ -308,7 +309,7 @@ impl DatabaseDriverV1 {
             )
         };
 
-        let execution_mode = stmt.execution_mode(Some(query));
+        let execution_mode = stmt.execution_mode(Some(&query));
 
         // Get bindings from request.
         // JSON path: zero-copy — borrows directly from wrapper memory.
@@ -329,7 +330,7 @@ impl DatabaseDriverV1 {
         };
 
         let query_input = QueryInput {
-            sql: query.to_string(),
+            sql: query.clone(),
             bindings: query_bindings,
             describe_only,
         };
@@ -358,7 +359,7 @@ impl DatabaseDriverV1 {
         if response.success {
             let conn = stmt.conn.lock().await;
             conn.update_session_params_cache(
-                query,
+                &query,
                 response.data.parameters.as_ref(),
                 &super::connection::FinalSessionNames {
                     database: response.data.final_database_name.clone(),
@@ -369,6 +370,11 @@ impl DatabaseDriverV1 {
             )
             .await;
         }
+
+        stmt.chunk_info = Some(StoredChunkInfo {
+            initial_chunk_base64: response.data.to_initial_base64_opt().map(String::from),
+            chunks: response.data.to_chunk_download_data().unwrap_or_default(),
+        });
 
         let query_result = process_query_response(&response.data, &http_client)
             .await
@@ -415,12 +421,46 @@ impl DatabaseDriverV1 {
             query_id,
             columns,
             statement_type_id,
-            query: query.to_string(),
+            query,
             sql_state,
         };
         stmt.state = StatementState::Executed;
         Ok(result)
     }
+
+    pub async fn statement_result_chunks(
+        &self,
+        stmt_handle: Handle,
+    ) -> Result<StoredChunkInfo, ApiError> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let stmt = stmt_ptr.lock().await;
+        let chunk_info = stmt.chunk_info.as_ref().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "No chunk info available; execute a query first".to_string(),
+            }
+            .build()
+        })?;
+
+        Ok(StoredChunkInfo {
+            initial_chunk_base64: chunk_info.initial_chunk_base64.clone(),
+            chunks: chunk_info
+                .chunks
+                .iter()
+                .map(|c| ChunkDownloadData::new(&c.url, &c.headers))
+                .collect(),
+        })
+    }
+}
+
+pub struct StoredChunkInfo {
+    pub initial_chunk_base64: Option<String>,
+    pub chunks: Vec<ChunkDownloadData>,
 }
 
 pub struct Statement {
@@ -428,6 +468,7 @@ pub struct Statement {
     pub(crate) settings: ParamStore,
     pub query: Option<String>,
     pub conn: Arc<Mutex<Connection>>,
+    pub(crate) chunk_info: Option<StoredChunkInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -443,6 +484,7 @@ impl Statement {
             state: StatementState::Initialized,
             query: None,
             conn,
+            chunk_info: None,
         }
     }
 

@@ -33,4 +33,11 @@
 /* Private key as base64-encoded string */
 #define SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 (SQL_SF_CONN_ATTR_BASE + 5)
 
+/* Statement attribute base for Snowflake-specific statement attributes. */
+#define SQL_SF_STMT_ATTR_BASE 2000100
+
+/* Last query ID — the ID of the most recently executed query on the statement.
+ * Read-only string attribute. */
+#define SQL_SF_STMT_ATTR_LAST_QUERY_ID SQL_SF_STMT_ATTR_BASE
+
 #endif /* SF_ODBC_H */

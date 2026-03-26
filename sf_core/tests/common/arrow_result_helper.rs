@@ -5,6 +5,7 @@ extern crate tracing_subscriber;
 use super::arrow_deserialize::ArrowDeserialize;
 use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
 use arrow::array::{Array, ArrayRef, AsArray};
+use arrow::buffer::NullBuffer;
 use arrow::compute::kernels::cmp::not_distinct;
 use arrow::datatypes::{DataType, FieldRef, Schema};
 use arrow::ffi_stream::ArrowArrayStreamReader;
@@ -124,23 +125,44 @@ fn metadata_keys_to_exclude(logical_type: &str) -> &'static [&'static str] {
     match logical_type {
         "TEXT" => &["finalType", "precision", "scale"],
         "FIXED" => &["finalType", "charLength", "byteLength"],
-        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" => &[
+        "BOOLEAN" => &[
+            "byteLength",
+            "charLength",
+            "finalType",
+            "precision",
+            "scale",
+        ],
+        "REAL" => &[
+            "byteLength",
+            "charLength",
+            "finalType",
+            "precision",
+            "scale",
+        ],
+        "TIMESTAMP_NTZ" | "TIMESTAMP_LTZ" | "TIMESTAMP_TZ" | "TIME" => &[
             "finalType",
             "charLength",
             "byteLength",
-            "scale",
             "precision",
             "physicalType",
         ],
-        "TIME" => &[
+        "DATE" => &[
             "finalType",
             "charLength",
             "byteLength",
             "precision",
+            "scale",
             "physicalType",
         ],
         "BINARY" => &["finalType", "precision", "scale", "physicalType"],
-        "DECFLOAT" => &["finalType", "precision", "scale", "physicalType"],
+        "DECFLOAT" => &[
+            "finalType",
+            "precision",
+            "scale",
+            "physicalType",
+            "byteLength",
+            "charLength",
+        ],
         "ARRAY" | "OBJECT" | "VARIANT" => &[
             "finalType",
             "byteLength",
@@ -273,7 +295,11 @@ fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
             );
             for (i, name) in left_struct.column_names().iter().enumerate() {
                 let child_name = format!("{field_path}.{name}");
-                assert_arrays_match(left_struct.column(i), right_struct.column(i), &child_name);
+                // Propagate parent null bitmap into children so we don't compare
+                // filler values at positions where the parent struct is null
+                let left_child = nullify_child(left_struct.nulls(), left_struct.column(i));
+                let right_child = nullify_child(right_struct.nulls(), right_struct.column(i));
+                assert_arrays_match(&left_child, &right_child, &child_name);
             }
         }
         _ => {
@@ -289,7 +315,8 @@ fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
 
             for idx in mismatches.iter().take(5) {
                 println!(
-                    "Mismatch at idx {:?}, left: {:?}, right: {:?}",
+                    "Mismatch in {:?} at idx {:?}, left: {:?}, right: {:?}",
+                    field_path,
                     idx,
                     extract_arrow_value::<String>(left, *idx),
                     extract_arrow_value::<String>(right, *idx)
@@ -302,4 +329,23 @@ fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
             );
         }
     }
+}
+
+/// Returns a new array with the parent's null bitmap merged into the child array,
+/// so that positions where the parent struct is null also appear null in the child.
+fn nullify_child(parent_nulls: Option<&NullBuffer>, child: &ArrayRef) -> ArrayRef {
+    let Some(parent_nulls) = parent_nulls else {
+        return Arc::clone(child);
+    };
+    let child_data = child.to_data();
+    let merged_nulls = match child_data.nulls() {
+        Some(child_nulls) => NullBuffer::new(parent_nulls.inner() & child_nulls.inner()),
+        None => parent_nulls.clone(),
+    };
+    let new_data = child_data
+        .into_builder()
+        .null_bit_buffer(Some(merged_nulls.into_inner().into_inner()))
+        .build()
+        .unwrap();
+    arrow::array::make_array(new_data)
 }

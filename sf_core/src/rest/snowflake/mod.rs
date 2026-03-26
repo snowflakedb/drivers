@@ -20,6 +20,7 @@ use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
+use crate::token_cache::{TokenCache, TokenType};
 use reqwest::{self, header};
 use serde_json;
 use serde_json::value::RawValue;
@@ -157,10 +158,87 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
+const EXT_AUTHN_ERROR_CODES: [i32; 5] = [
+    390120, // EXT_AUTHN_DENIED
+    390123, // EXT_AUTHN_LOCKED
+    390126, // EXT_AUTHN_TIMEOUT
+    390127, // EXT_AUTHN_INVALID
+    390129, // EXT_AUTHN_EXCEPTION
+];
+
+fn extract_host_from_url(server_url: &str) -> Option<String> {
+    Url::parse(server_url)
+        .ok()?
+        .host_str()
+        .map(|h| h.to_string())
+}
+
+fn try_get_cached_mfa_token(
+    server_url: &str,
+    username: &str,
+    token_cache: Option<&dyn TokenCache>,
+) -> Option<SensitiveString> {
+    let host = extract_host_from_url(server_url)?;
+    let cache = token_cache?;
+    match cache.get_token(&host, username, TokenType::MfaToken) {
+        Ok(Some(token)) if !token.is_empty() => {
+            tracing::info!("Found cached MFA token");
+            Some(token.into())
+        }
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to retrieve cached MFA token");
+            None
+        }
+    }
+}
+
+fn store_mfa_token_in_cache(
+    server_url: &str,
+    username: &str,
+    mfa_token: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let Some(host) = extract_host_from_url(server_url) else {
+        tracing::warn!("Cannot cache MFA token: unable to extract host from server URL");
+        return;
+    };
+    let Some(cache) = token_cache else {
+        tracing::debug!("No token cache available for MFA token storage");
+        return;
+    };
+    if let Err(e) = cache.add_token(&host, username, TokenType::MfaToken, mfa_token) {
+        tracing::warn!(error = %e, "Failed to cache MFA token");
+    } else {
+        tracing::info!("Cached MFA token for future use");
+    }
+}
+
+fn remove_mfa_token_from_cache(
+    server_url: &str,
+    username: &str,
+    token_cache: Option<&dyn TokenCache>,
+) {
+    let Some(host) = extract_host_from_url(server_url) else {
+        tracing::warn!("Cannot remove cached MFA token: unable to extract host from server URL");
+        return;
+    };
+    let Some(cache) = token_cache else {
+        tracing::debug!("No token cache available for MFA token removal");
+        return;
+    };
+    if let Err(e) = cache.remove_token(&host, username, TokenType::MfaToken) {
+        tracing::warn!(error = %e, "Failed to remove cached MFA token");
+    } else {
+        tracing::info!("Removed cached MFA token due to authentication error");
+    }
+}
+
 pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
+    token_cache: Option<&dyn TokenCache>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
 
@@ -200,6 +278,47 @@ pub async fn auth_request_data(
                 data.token = Some(token);
                 data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
             }
+            Credentials::UserPasswordMfa {
+                username,
+                password,
+                passcode_in_password,
+                passcode,
+            } => {
+                let store_temp_cred = matches!(
+                    &login_parameters.login_method,
+                    LoginMethod::UserPasswordMfa {
+                        client_store_temporary_credential: true,
+                        ..
+                    }
+                );
+
+                let cached_mfa_token = if store_temp_cred {
+                    try_get_cached_mfa_token(&login_parameters.server_url, &username, token_cache)
+                } else {
+                    None
+                };
+
+                data.login_name = Some(username);
+                data.password = Some(password);
+                data.authenticator = Some("USERNAME_PASSWORD_MFA".to_string());
+
+                if let Some(cached_token) = cached_mfa_token {
+                    data.token = Some(cached_token);
+                } else {
+                    data.ext_authn_duo_method =
+                        Some(if passcode.is_some() || passcode_in_password {
+                            "passcode".to_string()
+                        } else {
+                            "push".to_string()
+                        });
+                    if !passcode_in_password {
+                        data.passcode = passcode.clone();
+                    }
+                    if store_temp_cred {
+                        data.client_request_mfa_token = Some(store_temp_cred);
+                    }
+                }
+            }
         },
     }
     Ok(data)
@@ -214,46 +333,14 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters, session_parameters).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters, None).await
 }
 
-#[tracing::instrument(
-    skip(client, login_parameters, session_parameters),
-    fields(account_name, login_name)
-)]
-pub async fn snowflake_login_with_client(
+async fn send_login_request(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
-    session_parameters: Option<&HashMap<String, String>>,
-) -> Result<LoginResult, RestError> {
-    tracing::info!("Starting Snowflake login process");
-
-    // Record key fields in the span
-    tracing::Span::current().record("account_name", &login_parameters.account_name);
-
-    // Optional settings
-    tracing::debug!(
-        account_name = %login_parameters.account_name,
-        server_url = %login_parameters.server_url,
-        database = ?login_parameters.database,
-        schema = ?login_parameters.schema,
-        warehouse = ?login_parameters.warehouse,
-        "Extracted connection settings"
-    );
-
-    // Build the login request data (handles all auth methods including Okta SAML exchange)
-    let auth_request_data = auth_request_data(client, login_parameters, session_parameters).await?;
-    tracing::Span::current().record("login_name", &auth_request_data.login_name);
-    let login_request = AuthRequest {
-        data: auth_request_data,
-    };
-
-    tracing::debug!(
-        authenticator = ?login_request.data.authenticator,
-        login_name = ?login_request.data.login_name,
-        "Login request prepared (secrets redacted)"
-    );
-
+    login_request: &AuthRequest,
+) -> Result<AuthResponse, RestError> {
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
     let request = client
@@ -276,7 +363,7 @@ pub async fn snowflake_login_with_client(
                 login_parameters.role.as_deref().unwrap_or_default(),
             ),
         ])
-        .json(&login_request)
+        .json(login_request)
         .header("accept", "application/snowflake")
         .header(
             "User-Agent",
@@ -295,9 +382,80 @@ pub async fn snowflake_login_with_client(
         context: "Failed to execute login request",
     })?;
 
-    let auth_response = read_response_json::<AuthResponse>(response)
+    read_response_json::<AuthResponse>(response)
         .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+        .context(InvalidSnowflakeResponseSnafu)
+}
+
+#[tracing::instrument(
+    skip(client, login_parameters, session_parameters, token_cache),
+    fields(account_name, login_name)
+)]
+pub async fn snowflake_login_with_client(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    session_parameters: Option<&HashMap<String, String>>,
+    token_cache: Option<&dyn TokenCache>,
+) -> Result<LoginResult, RestError> {
+    tracing::info!("Starting Snowflake login process");
+
+    // Record key fields in the span
+    tracing::Span::current().record("account_name", &login_parameters.account_name);
+
+    // Optional settings
+    tracing::debug!(
+        account_name = %login_parameters.account_name,
+        server_url = %login_parameters.server_url,
+        database = ?login_parameters.database,
+        schema = ?login_parameters.schema,
+        warehouse = ?login_parameters.warehouse,
+        "Extracted connection settings"
+    );
+
+    // Build the login request data (handles all auth methods including Okta SAML exchange)
+    let login_request_data =
+        auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
+    tracing::Span::current().record("login_name", &login_request_data.login_name);
+    let used_cached_mfa_token = matches!(
+        &login_parameters.login_method,
+        LoginMethod::UserPasswordMfa { .. }
+    ) && login_request_data.token.is_some();
+    let login_request = AuthRequest {
+        data: login_request_data,
+    };
+
+    tracing::debug!(
+        authenticator = ?login_request.data.authenticator,
+        login_name = ?login_request.data.login_name,
+        "Login request prepared (secrets redacted)"
+    );
+
+    let mut auth_response = send_login_request(client, login_parameters, &login_request).await?;
+
+    // When a cached MFA token caused an EXT_AUTHN error, evict it and retry
+    // via the normal DUO push/passcode flow.
+    if !auth_response.success && used_cached_mfa_token {
+        let code = auth_response
+            ._code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        if EXT_AUTHN_ERROR_CODES.contains(&code)
+            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
+        {
+            tracing::warn!(
+                code = code,
+                "MFA authentication error detected, removing cached MFA token"
+            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+            tracing::info!("Retrying login without cached MFA token");
+            let retry_data =
+                auth_request_data(client, login_parameters, session_parameters, token_cache)
+                    .await?;
+            let retry_request = AuthRequest { data: retry_data };
+            auth_response = send_login_request(client, login_parameters, &retry_request).await?;
+        }
+    }
 
     if !auth_response.success {
         let message = auth_response
@@ -309,10 +467,35 @@ pub async fn snowflake_login_with_client(
             .as_deref()
             .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
+        if EXT_AUTHN_ERROR_CODES.contains(&code)
+            && let LoginMethod::UserPasswordMfa { username, .. } = &login_parameters.login_method
+        {
+            tracing::warn!(
+                code = code,
+                "MFA authentication error detected, removing cached MFA token"
+            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
+        }
         LoginSnafu { message, code }.fail()?;
     }
 
     tracing::debug!("Login successful, extracting session tokens");
+
+    // Cache MFA token from response if caching is enabled
+    if let LoginMethod::UserPasswordMfa {
+        username,
+        client_store_temporary_credential: true,
+        ..
+    } = &login_parameters.login_method
+        && let Some(mfa_token) = &auth_response.data.mfa_token
+    {
+        store_mfa_token_in_cache(
+            &login_parameters.server_url,
+            username,
+            mfa_token,
+            token_cache,
+        );
+    }
 
     let session_token = auth_response
         .data
@@ -1033,4 +1216,181 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::token_cache::{TokenCache, TokenCacheError, TokenType};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct StubTokenCache {
+        store: Mutex<HashMap<String, String>>,
+    }
+
+    impl StubTokenCache {
+        fn new() -> Self {
+            Self {
+                store: Mutex::new(HashMap::new()),
+            }
+        }
+
+        fn with_token(host: &str, username: &str, token_type: TokenType, value: &str) -> Self {
+            let cache = Self::new();
+            cache
+                .add_token(host, username, token_type, value)
+                .expect("test: add_token should succeed");
+            cache
+        }
+
+        fn key(host: &str, username: &str, token_type: TokenType) -> String {
+            format!("{host};{username};{}", token_type.as_str())
+        }
+    }
+
+    impl TokenCache for StubTokenCache {
+        fn add_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+            token_value: &str,
+        ) -> Result<(), TokenCacheError> {
+            self.store.lock().expect("test: lock poisoned").insert(
+                Self::key(host, username, token_type),
+                token_value.to_string(),
+            );
+            Ok(())
+        }
+
+        fn remove_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+        ) -> Result<(), TokenCacheError> {
+            self.store
+                .lock()
+                .expect("test: lock poisoned")
+                .remove(&Self::key(host, username, token_type));
+            Ok(())
+        }
+
+        fn get_token(
+            &self,
+            host: &str,
+            username: &str,
+            token_type: TokenType,
+        ) -> Result<Option<String>, TokenCacheError> {
+            Ok(self
+                .store
+                .lock()
+                .expect("test: lock poisoned")
+                .get(&Self::key(host, username, token_type))
+                .cloned())
+        }
+    }
+
+    mod try_get_cached_mfa_token_tests {
+        use super::*;
+
+        #[test]
+        fn returns_cached_token_on_hit() {
+            let cache = StubTokenCache::with_token(
+                "host.example.com",
+                "alice",
+                TokenType::MfaToken,
+                "tok123",
+            );
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert_eq!(result.unwrap().reveal(), "tok123");
+        }
+
+        #[test]
+        fn returns_none_on_cache_miss() {
+            let cache = StubTokenCache::new();
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_no_cache_provided() {
+            let result = try_get_cached_mfa_token("https://host.example.com", "alice", None);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            let result = try_get_cached_mfa_token("not-a-url", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_empty_cached_token() {
+            let cache =
+                StubTokenCache::with_token("host.example.com", "alice", TokenType::MfaToken, "");
+            let result =
+                try_get_cached_mfa_token("https://host.example.com", "alice", Some(&cache));
+            assert!(result.is_none());
+        }
+    }
+
+    mod store_mfa_token_in_cache_tests {
+        use super::*;
+
+        #[test]
+        fn stores_token_successfully() {
+            let cache = StubTokenCache::new();
+            store_mfa_token_in_cache("https://host.example.com", "alice", "new_tok", Some(&cache));
+            let stored = cache
+                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .unwrap();
+            assert_eq!(stored.as_deref(), Some("new_tok"));
+        }
+
+        #[test]
+        fn no_panic_when_no_cache() {
+            store_mfa_token_in_cache("https://host.example.com", "alice", "tok", None);
+        }
+
+        #[test]
+        fn no_panic_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            store_mfa_token_in_cache("not-a-url", "alice", "tok", Some(&cache));
+        }
+    }
+
+    mod remove_mfa_token_from_cache_tests {
+        use super::*;
+
+        #[test]
+        fn removes_existing_token() {
+            let cache = StubTokenCache::with_token(
+                "host.example.com",
+                "alice",
+                TokenType::MfaToken,
+                "tok_to_remove",
+            );
+            remove_mfa_token_from_cache("https://host.example.com", "alice", Some(&cache));
+            let stored = cache
+                .get_token("host.example.com", "alice", TokenType::MfaToken)
+                .unwrap();
+            assert!(stored.is_none());
+        }
+
+        #[test]
+        fn no_panic_when_no_cache() {
+            remove_mfa_token_from_cache("https://host.example.com", "alice", None);
+        }
+
+        #[test]
+        fn no_panic_for_invalid_url() {
+            let cache = StubTokenCache::new();
+            remove_mfa_token_from_cache("not-a-url", "alice", Some(&cache));
+        }
+    }
 }

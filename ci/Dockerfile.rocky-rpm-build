@@ -1,0 +1,36 @@
+# Docker image for CI (and optional local use): build the Snowflake ODBC driver
+# (`cargo build -p odbc`) and package it as an RPM via `scripts/odbc/rpm/package.sh`
+# and fpm. Keeps the linked glibc and OpenSSL in line with a single EL generation.
+#
+# Compatibility / follow-ups (TODO):
+# - Base is Rocky Linux 9, so the driver links against this distro's glibc and
+#   OpenSSL 3.x. Resulting RPMs are appropriate for RHEL/Rocky/Alma 9 and other
+#   distros with compatible glibc + OpenSSL 3; they are not intended for EL8
+#   (older glibc, OpenSSL 1.1) without a separate build or static OpenSSL.
+# - To support EL8 from the same driver codebase, consider a rockylinux:8-based
+#   image and/or static OpenSSL linking so the binary does not require EL9's
+#   libssl — tradeoffs with support matrix and CI matrix size.
+
+FROM rockylinux:9
+
+# --enablerepo=crb: unixODBC-devel is in crb and that repo is disabled by default.
+RUN dnf install -y --enablerepo=crb \
+        gcc \
+        gcc-c++ \
+        cmake \
+        lld \
+        perl \
+        openssl-devel \
+        unixODBC-devel \
+        ruby \
+        ruby-devel \
+        rpm-build && \
+    dnf clean all
+
+RUN gem install fpm
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

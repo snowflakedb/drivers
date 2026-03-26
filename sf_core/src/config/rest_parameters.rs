@@ -157,6 +157,13 @@ pub enum LoginMethod {
         username: String,
         token: SensitiveString,
     },
+    UserPasswordMfa {
+        username: String,
+        password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
+        client_store_temporary_credential: bool,
+    },
 }
 
 impl LoginMethod {
@@ -262,6 +269,10 @@ impl LoginMethod {
         settings.get("private_key").is_some() || settings.get_string("private_key_file").is_some()
     }
 
+    fn non_empty_string(settings: &dyn Settings, key: &str) -> Option<String> {
+        settings.get_string(key).filter(|s| !s.is_empty())
+    }
+
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
 
@@ -272,8 +283,7 @@ impl LoginMethod {
 
         if use_jwt {
             return Ok(Self::PrivateKey {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 private_key: Self::read_private_key(settings)?.into(),
                 passphrase: settings
@@ -284,8 +294,7 @@ impl LoginMethod {
 
         match authenticator.as_str() {
             "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 password: settings
                     .get_string("password")
@@ -295,8 +304,7 @@ impl LoginMethod {
                     .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 token: settings
                     .get_string("token")
@@ -316,8 +324,7 @@ impl LoginMethod {
                     .build()
                 })?;
 
-                let username = settings
-                    .get_string("user")
+                let username = Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?;
                 let okta_username = settings.get_string("okta_username");
                 let password = settings
@@ -345,10 +352,41 @@ impl LoginMethod {
                     authentication_timeout_secs,
                 }))
             }
+            "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {
+                username: Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                password: settings
+                    .get_string("password")
+                    .context(MissingParameterSnafu { parameter: "password" })?
+                    .into(),
+                passcode_in_password: settings
+                    .get_bool("passcodeInPassword")
+                    .or_else(|| {
+                        settings
+                            .get_string("passcodeInPassword")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
+                    .unwrap_or(false),
+                passcode: settings.get_string("passcode").map(SensitiveString::from),
+                client_store_temporary_credential: settings
+                    .get_bool("client_store_temporary_credential")
+                    .or_else(|| {
+                        settings
+                            .get_string("client_store_temporary_credential")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| {
+                        settings
+                            .get_int("client_store_temporary_credential")
+                            .map(|v| v != 0)
+                    })
+                    .unwrap_or(false),
+            }),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, or an https:// URL for native Okta SSO",
+                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA, or an https:// URL for native Okta SSO",
             }
             .fail()?,
         }
@@ -570,5 +608,21 @@ mod tests {
             Setting::String("true".to_string()),
         )]);
         assert!(cfg.disable_saml_url_check);
+    }
+
+    #[test]
+    fn test_empty_user_returns_missing_parameter_error() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Missing required parameter") && err_msg.contains("user"),
+            "Expected MissingParameter error for empty user, got: {err_msg}"
+        );
     }
 }

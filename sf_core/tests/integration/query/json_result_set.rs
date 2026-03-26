@@ -5,10 +5,10 @@ use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
 
 #[test]
-fn should_return_arrow_even_if_json_result_set_is_returned_for_all_types() {
+fn should_return_arrow_even_if_json_result_set_is_returned_for_various_types() {
     run_arrow_and_json_and_match(
-        "CREATE OR REPLACE TABLE json_result_set_simple_types (str_col STRING, tinyint_col TINYINT, smallint_col SMALLINT, int_col INT, bigint_col BIGINT, number_scale_0_col NUMBER(38, 0), number_scale_2_col NUMBER(38, 2), ntz TIMESTAMP_NTZ)",
-        "INSERT INTO json_result_set_simple_types VALUES ('abc', 123, 12345, 1234567, 12345678901234567890, 12345678901234567890123456789012345678, 123.45, '2026-01-01 13:13:13')",
+        "CREATE OR REPLACE TABLE json_result_set_simple_types (str_col STRING, tinyint_col TINYINT, smallint_col SMALLINT, int_col INT, bigint_col BIGINT, number_scale_0_col NUMBER(38, 0), number_scale_2_col NUMBER(38, 2), bool BOOLEAN, dbl DOUBLE, date DATE)",
+        "INSERT INTO json_result_set_simple_types VALUES ('abc', 123, 12345, 1234567, 12345678901234567890, 12345678901234567890123456789012345678, 123.45, true, 321.54, '2026-03-04')",
         "SELECT * FROM json_result_set_simple_types",
     );
 }
@@ -156,6 +156,53 @@ fn should_return_array_as_arrow_even_if_json_result_set_is_returned() {
         "INSERT INTO json_result_set_array SELECT PARSE_JSON('[1, \"two\", 3.0, null]')",
         "SELECT * FROM json_result_set_array",
     )
+}
+
+#[test]
+fn should_handle_empty_result_set_for_arrow_and_json() {
+    let client = SnowflakeTestClient::connect_with_default_auth();
+    let stmt = client.new_statement();
+
+    let select_query = "SELECT 1 WHERE 1 = 2";
+
+    client.set_sql_query(&stmt, select_query);
+    let arrow_result = client.execute_statement_query(&stmt);
+
+    client.set_sql_query(
+        &stmt,
+        "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = JSON",
+    );
+    let result = client.execute_statement_query(&stmt);
+    assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
+
+    client.set_sql_query(&stmt, select_query);
+    let json_result = client.execute_statement_query(&stmt);
+
+    let mut arrow_helper = ArrowResultHelper::from_result(arrow_result);
+    let mut json_helper = ArrowResultHelper::from_result(json_result);
+
+    let arrow_schema = arrow_helper.schema();
+    let json_schema = json_helper.schema();
+    assert_schemas_match(&arrow_schema, &json_schema);
+
+    let arrow_batch = arrow_helper.next_batch();
+    let json_batch = json_helper.next_batch();
+
+    match (arrow_batch, json_batch) {
+        (None, None) => {
+            // Both result sets are empty, which is expected for this query.
+        }
+        (Some(arrow_batch), Some(json_batch)) => {
+            assert_record_batches_match(&arrow_batch, &json_batch);
+        }
+        (arrow_batch, json_batch) => {
+            panic!(
+                "Arrow and JSON result batches differ: arrow={:?}, json={:?}",
+                arrow_batch, json_batch
+            );
+        }
+    }
+    client.release_statement(&stmt);
 }
 
 fn run_arrow_and_json_and_match(create_table_query: &str, insert_query: &str, select_query: &str) {

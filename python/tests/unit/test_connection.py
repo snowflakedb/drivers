@@ -11,6 +11,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
 )
+from snowflake.connector.constants import QueryStatus
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
@@ -358,3 +359,84 @@ class TestConnectionInfoDelegation:
         )
         assert connection.database == "DB_V2"
         assert connection.role == "ROLE_V2"
+
+
+class TestIsStillRunning:
+    """Unit tests for Connection.is_still_running."""
+
+    @pytest.mark.parametrize(
+        "status, expected",
+        [
+            (QueryStatus.RUNNING, True),
+            (QueryStatus.ABORTING, False),
+            (QueryStatus.SUCCESS, False),
+            (QueryStatus.FAILED_WITH_ERROR, False),
+            (QueryStatus.ABORTED, False),
+            (QueryStatus.QUEUED, True),
+            (QueryStatus.FAILED_WITH_INCIDENT, False),
+            (QueryStatus.DISCONNECTED, False),
+            (QueryStatus.RESUMING_WAREHOUSE, True),
+            (QueryStatus.QUEUED_REPARING_WAREHOUSE, True),
+            (QueryStatus.RESTARTED, False),
+            (QueryStatus.BLOCKED, True),
+            (QueryStatus.NO_DATA, True),
+        ],
+    )
+    def test_is_still_running(self, status, expected):
+        from snowflake.connector.connection import Connection
+
+        assert Connection.is_still_running(status) == expected
+
+
+class TestIsAnError:
+    """Unit tests for Connection.is_an_error."""
+
+    @pytest.mark.parametrize(
+        "status, expected",
+        [
+            (QueryStatus.RUNNING, False),
+            (QueryStatus.ABORTING, True),
+            (QueryStatus.SUCCESS, False),
+            (QueryStatus.FAILED_WITH_ERROR, True),
+            (QueryStatus.ABORTED, True),
+            (QueryStatus.QUEUED, False),
+            (QueryStatus.FAILED_WITH_INCIDENT, True),
+            (QueryStatus.DISCONNECTED, True),
+            (QueryStatus.RESUMING_WAREHOUSE, False),
+            (QueryStatus.QUEUED_REPARING_WAREHOUSE, False),
+            (QueryStatus.RESTARTED, False),
+            (QueryStatus.BLOCKED, False),
+            (QueryStatus.NO_DATA, False),
+        ],
+    )
+    def test_is_an_error(self, status, expected):
+        from snowflake.connector.connection import Connection
+
+        assert Connection.is_an_error(status) == expected
+
+
+class TestConnectionArrowProperties:
+    """Unit tests for Connection properties (getters/setters)."""
+
+    def test_arrow_number_to_decimal_default_is_false(self, connection):
+        assert connection.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_setter_enables(self, connection):
+        connection.arrow_number_to_decimal = True
+        assert connection.arrow_number_to_decimal is True
+
+    def test_arrow_number_to_decimal_setter_enables_backward_compatible(self, connection):
+        connection.arrow_number_to_decimal_setter = True
+        assert connection.arrow_number_to_decimal is True
+
+    def test_arrow_number_to_decimal_setter_disables(self, connection):
+        connection.arrow_number_to_decimal = True
+        connection.arrow_number_to_decimal = False
+        assert connection.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_setter_coerces_to_bool(self, connection):
+        connection.arrow_number_to_decimal = 1
+        assert connection.arrow_number_to_decimal is True
+
+        connection.arrow_number_to_decimal = 0
+        assert connection.arrow_number_to_decimal is False

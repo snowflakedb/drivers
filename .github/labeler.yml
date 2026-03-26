@@ -1,0 +1,59 @@
+sf_core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - sf_core/**
+          - sf_mini_core/**
+          - sf_mini_core_static/**
+
+python:
+  - changed-files:
+      - any-glob-to-any-file:
+          - python/**
+          - pep249_dbapi/**
+
+odbc:
+  - changed-files:
+      - any-glob-to-any-file:
+          - odbc/**
+          - odbc_tests/**
+
+jdbc:
+  - changed-files:
+      - any-glob-to-any-file:
+          - jdbc/**
+          - jdbc_bridge/**
+
+protobuf:
+  - changed-files:
+      - any-glob-to-any-file:
+          - protobuf/**
+          - proto_utils/**
+          - proto_generator/**
+
+shared:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Cargo.toml
+          - Cargo.lock
+          - build_common.rs
+          - rust-toolchain.toml
+          - scripts/**
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - tests/**
+          - odbc_tests/**
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/**
+          - .github/actions/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - LICENSE
+          - .github/CODEOWNERS

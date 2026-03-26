@@ -2,12 +2,13 @@ use crate::api::CDataType;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu, JsonBindingSnafu,
-    NoMoreDataSnafu, NullPointerSnafu, OdbcRuntimeSnafu, Required,
+    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
+    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, FreeStmtOption, OdbcResult, ParamDirection, ParameterBinding, SqlType,
+    ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, SqlType,
     Statement, StatementState, stmt_from_handle,
 };
 use crate::conversion::Binding;
@@ -42,7 +43,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
             let stmt_handle = stmt.stmt_handle;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -62,8 +63,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             tracing::info!("exec_direct: response={:?}", response);
             let response = response?;
 
+            let query_id = response.result.as_ref().map(|r| r.query_id.clone());
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
             set_state(stmt, create_execute_state(response, false)?);
+            stmt.last_query_id = query_id.filter(|s| !s.is_empty());
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -213,7 +216,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.parameter_bindings)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_execute_query(StatementExecuteQueryRequest {
@@ -228,8 +231,11 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
             let statement_type_id = response.result.as_ref().and_then(|r| r.statement_type_id);
             let rows_affected = response.result.as_ref().and_then(|r| r.rows_affected);
+            let query_id = response.result.as_ref().map(|r| r.query_id.clone());
 
             let execute_state = create_execute_state(response, prepared)?;
+
+            stmt.last_query_id = query_id.filter(|s| !s.is_empty());
 
             if is_dml_statement_type(statement_type_id) && Some(0) == rows_affected {
                 let StatementState::Executed {
@@ -319,17 +325,18 @@ fn create_execute_state(
 /// until after the bindings have been consumed by `statement_execute_query`,
 /// because `BinaryDataPtr` holds a raw pointer into the owned `String`.
 fn apply_parameter_bindings(
-    parameter_bindings: &std::collections::HashMap<u16, ParameterBinding>,
+    apd: &crate::api::ApdDescriptor,
+    ipd: &crate::api::IpdDescriptor,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
-    if parameter_bindings.is_empty() {
+    if apd.records.is_empty() {
         return Ok((None, None));
     }
     tracing::info!(
         "apply_parameter_bindings: Found {} bound parameters",
-        parameter_bindings.len()
+        apd.records.len()
     );
 
-    let json_string = odbc_bindings_to_json(parameter_bindings).context(JsonBindingSnafu {})?;
+    let json_string = odbc_bindings_to_json(apd, ipd).context(JsonBindingSnafu {})?;
 
     let json_data_ptr = json_string.as_bytes().as_ptr() as u64;
     let json_data_len = json_string.len();
@@ -356,8 +363,8 @@ pub fn bind_parameter(
     raw_input_output_type: sql::SmallInt,
     raw_value_type: sql::SmallInt,
     raw_parameter_type: sql::SmallInt,
-    _column_size: sql::ULen,
-    _decimal_digits: sql::SmallInt,
+    column_size: sql::ULen,
+    decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
@@ -396,17 +403,45 @@ pub fn bind_parameter(
         return NullPointerSnafu.fail();
     }
 
+    if buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
+    if decimal_digits < 0 {
+        return InvalidPrecisionOrScaleSnafu {
+            reason: format!("decimal_digits ({decimal_digits}) must not be negative"),
+        }
+        .fail();
+    }
+
+    // TODO: validate that (value_type, sql_type) is a supported conversion,
+    // returning UnsupportedFeatureSnafu (HYC00) if not.
+
     let stmt = stmt_from_handle(statement_handle);
 
-    let binding = ParameterBinding {
-        parameter_type,
-        value_type,
-        parameter_value_ptr,
-        buffer_length,
-        str_len_or_ind_ptr,
-    };
+    stmt.apd.records.insert(
+        parameter_number,
+        ApdRecord {
+            value_type,
+            data_ptr: parameter_value_ptr,
+            buffer_length,
+            str_len_or_ind_ptr,
+        },
+    );
 
-    stmt.parameter_bindings.insert(parameter_number, binding);
+    stmt.ipd.records.insert(
+        parameter_number,
+        IpdRecord {
+            sql_data_type: parameter_type,
+            column_size,
+            decimal_digits,
+            direction: raw_input_output_type,
+            ..IpdRecord::default()
+        },
+    );
 
     tracing::info!(
         "bind_parameter: Successfully bound parameter {}",
@@ -474,10 +509,104 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
         }
         FreeStmtOption::ResetParams => {
             tracing::info!("free_stmt: Resetting all parameters");
-            stmt.parameter_bindings.clear();
+            stmt.apd.clear();
+            stmt.ipd.clear();
         }
     }
 
+    Ok(())
+}
+
+/// Return the number of parameters in the statement via the IPD descriptor.
+// TODO: Once auto-IPD is implemented (parsing ? markers during SQLPrepare),
+// this will also work for statements that haven't had SQLBindParameter called.
+pub fn num_params(
+    statement_handle: sql::Handle,
+    param_count_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("num_params: statement_handle={:?}", statement_handle);
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    if matches!(stmt.state.as_ref(), StatementState::Created) {
+        return StatementNotExecutedSnafu.fail();
+    }
+
+    let count = stmt.ipd.desc_count();
+
+    if !param_count_ptr.is_null() {
+        unsafe {
+            *param_count_ptr = count as sql::SmallInt;
+        }
+    }
+
+    tracing::info!("num_params: {} parameters", count);
+    Ok(())
+}
+
+/// Describe a bound parameter via the IPD descriptor.
+// TODO: Once auto-IPD is implemented, this will also work for parameters
+// that were not explicitly bound but inferred from ? markers in SQLPrepare.
+pub fn describe_param(
+    statement_handle: sql::Handle,
+    parameter_number: sql::USmallInt,
+    data_type_ptr: *mut sql::SmallInt,
+    parameter_size_ptr: *mut sql::ULen,
+    decimal_digits_ptr: *mut sql::SmallInt,
+    nullable_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!(
+        "describe_param: statement_handle={:?}, parameter_number={}",
+        statement_handle,
+        parameter_number
+    );
+
+    if parameter_number == 0 {
+        return InvalidParameterNumberSnafu.fail();
+    }
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    if matches!(stmt.state.as_ref(), StatementState::Created) {
+        return StatementNotExecutedSnafu.fail();
+    }
+    let ipd_rec = stmt.ipd.records.get(&parameter_number).ok_or_else(|| {
+        tracing::error!(
+            "describe_param: parameter #{} not found in IPD",
+            parameter_number
+        );
+        InvalidParameterNumberSnafu.build()
+    })?;
+
+    if !data_type_ptr.is_null() {
+        unsafe {
+            *data_type_ptr = ipd_rec.sql_data_type.0;
+        }
+    }
+    if !parameter_size_ptr.is_null() {
+        unsafe {
+            *parameter_size_ptr = ipd_rec.column_size;
+        }
+    }
+    if !decimal_digits_ptr.is_null() {
+        unsafe {
+            *decimal_digits_ptr = ipd_rec.decimal_digits;
+        }
+    }
+    if !nullable_ptr.is_null() {
+        unsafe {
+            *nullable_ptr = ipd_rec.nullable;
+        }
+    }
+
+    tracing::info!(
+        "describe_param: parameter {} type={:?} size={} digits={} nullable={}",
+        parameter_number,
+        ipd_rec.sql_data_type,
+        ipd_rec.column_size,
+        ipd_rec.decimal_digits,
+        ipd_rec.nullable,
+    );
     Ok(())
 }
 
@@ -601,6 +730,10 @@ pub fn set_stmt_attr(
             stmt.ard.bind_offset_ptr = ptr;
             Ok(())
         }
+        StmtAttr::SnowflakeLastQueryId => {
+            tracing::warn!("set_stmt_attr: SnowflakeLastQueryId is read-only");
+            ReadOnlyAttributeSnafu { attribute }.fail()
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
@@ -609,12 +742,13 @@ pub fn set_stmt_attr(
 }
 
 /// Get a statement attribute value
-pub fn get_stmt_attr(
+pub fn get_stmt_attr<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
-    _buffer_length: sql::Integer,
+    buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
+    warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
@@ -663,14 +797,14 @@ pub fn get_stmt_attr(
             Ok(())
         }
         StmtAttr::AppParamDesc => {
-            let apd_ptr = &mut stmt.apd as *mut crate::api::ArdDescriptor as sql::Handle;
+            let apd_ptr = &mut stmt.apd as *mut crate::api::ApdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = apd_ptr;
             }
             Ok(())
         }
         StmtAttr::ImpParamDesc => {
-            let ipd_ptr = &mut stmt.ipd as *mut crate::api::IrdDescriptor as sql::Handle;
+            let ipd_ptr = &mut stmt.ipd as *mut crate::api::IpdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = ipd_ptr;
             }
@@ -710,6 +844,23 @@ pub fn get_stmt_attr(
             unsafe {
                 *(value_ptr as *mut *mut sql::Len) = stmt.ard.bind_offset_ptr;
             }
+            Ok(())
+        }
+        StmtAttr::SnowflakeLastQueryId => {
+            if buffer_length < 0 {
+                return InvalidBufferLengthSnafu {
+                    length: buffer_length as i64,
+                }
+                .fail();
+            }
+            let query_id = stmt.last_query_id.as_deref().unwrap_or("");
+            crate::api::encoding::write_string_bytes_i32::<E>(
+                query_id,
+                value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
+            );
             Ok(())
         }
         _ => {

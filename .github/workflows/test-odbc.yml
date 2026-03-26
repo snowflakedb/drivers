@@ -29,6 +29,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-odbc-unit-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-odbc-unit-target-
+
       - name: Install dependencies
         run: |
           set -euxo pipefail
@@ -186,6 +206,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+
+          path: target
+          key: ${{ runner.os }}-rust-odbc-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-odbc-target-
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -294,6 +334,48 @@ jobs:
           DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: NEW
+          
+  build_rpm:
+    needs: [detect-changes, odbc_unit_tests, odbc_tests]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64-glibc
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64-glibc
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    name: build_rpm (${{ matrix.name }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
+
+      - name: Build ODBC driver and package RPM
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e PLATFORM=${{ matrix.platform }} \
+            -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \
+            rpm-build \
+            bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./scripts/odbc/rpm/package.sh"
+
+      - name: Upload RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-odbc-rpm-${{ matrix.arch }}
+          path: build/snowflake-odbc-*.rpm
 
   odbc-status:
     needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests]

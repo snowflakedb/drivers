@@ -16,5 +16,6 @@ arrow = { version = "56.0.0", features = ["ffi"] }
 arrow-array = "56.0.0"
 regex = "1.10"
 tokio = { version = "1", features = ["rt-multi-thread"] }
+libc = "0.2"
 
 sf_core = { path = "../../../../../sf_core" }

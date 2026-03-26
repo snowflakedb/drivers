@@ -33,12 +33,88 @@ jobs:
       - name: Dummy step
         run: echo 'Dummy step to pass required check'
 
-  # Build Python wheel with compiled extensions for each OS/Python version
+  # Build sf_core once per platform and share via artifact.
+  build_sf_core:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            lib_name: libsf_core.so
+          - os: windows-11-arm
+            lib_name: sf_core.dll
+    runs-on: ${{ matrix.os }}
+    name: build_sf_core (${{ matrix.os }})
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust target
+        uses: actions/cache@v5
+        with:
+          path: target
+          key: ${{ runner.os }}-rust-sf-core-release-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-sf-core-release-target-
+
+      - name: Cache vcpkg packages
+        if: matrix.os == 'windows-11-arm'
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-arm64-windows-static-md-openssl
+
+      - name: Install ARM64 OpenSSL (static) via vcpkg
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          vcpkg install openssl:arm64-windows-static-md
+
+      - name: Configure ARM64 OpenSSL (static)
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      - name: Build sf_core (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build --release --package sf_core
+
+      - name: Build sf_core (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
+          cargo build --release --package sf_core --config profile.release.strip=false
+
+      - name: Upload sf_core library
+        uses: actions/upload-artifact@v4
+        with:
+          name: sf-core-${{ matrix.os }}
+          path: target/release/${{ matrix.lib_name }}
+
+  # Build Python wheel with compiled extensions for each OS/Python version.
+  # sf_core is pre-built by build_sf_core and downloaded as an artifact.
   # NOTE: All Windows runners in this matrix are ARM64 (windows-11-arm).
   # Steps conditioned on runner.os=='Windows' assume ARM64 semantics.
   # If a non-ARM64 Windows runner is added, review all runner.os=='Windows' steps.
   build_wheel:
-    needs: detect-changes
+    needs: [detect-changes, build_sf_core]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
@@ -60,9 +136,16 @@ jobs:
     env:
       # Configure CMake for ARM64 on Windows ARM64 runners
       CMAKE_GENERATOR_PLATFORM: ${{ matrix.os == 'windows-11-arm' && 'ARM64' || '' }}
+      SKIP_CORE_BUILD: "true"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Download pre-built sf_core
+        uses: actions/download-artifact@v4
+        with:
+          name: sf-core-${{ matrix.os }}
+          path: python/src/snowflake/connector/_core
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -80,10 +163,29 @@ jobs:
         # explicitly as uv suggests: cpython-X.Y-windows-aarch64-none
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
+      - name: Cache proto generator target
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-proto-target-
+
       - name: Build python wheel (Linux)
         if: runner.os == 'Linux'
         working-directory: ./python
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
+      # source via maturin. OpenSSL is needed for this dependency build.
+      - name: Cache vcpkg packages
+        if: matrix.os == 'windows-11-arm'
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-arm64-windows-static-md-openssl
 
       - name: Install ARM64 OpenSSL (static) via vcpkg
         if: matrix.os == 'windows-11-arm'
@@ -107,6 +209,8 @@ jobs:
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
+        env:
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}\proto-target
 
       - name: Inspect wheel (Linux)
         if: runner.os == 'Linux'
@@ -134,6 +238,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache Rust core target
+        uses: actions/cache@v5
+        with:
+          path: core-target
+          key: ${{ runner.os }}-rust-sf-core-packaging-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-sf-core-packaging-target-
+
+      - name: Cache proto generator target
+        uses: actions/cache@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-proto-target-
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
         with:
@@ -148,6 +278,9 @@ jobs:
       - name: Run packaging tests
         working-directory: ./python
         run: hatch run packaging.py3.13:test -v --timeout=900
+        env:
+          CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/core-target
+          PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
 
   # Combined unit + integration tests with universal connector
   python_tests:
@@ -211,7 +344,7 @@ jobs:
 
       - name: Restore uv cache (Linux)
         if: runner.os == 'Linux'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/.uv-cache
           key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -222,7 +355,7 @@ jobs:
 
       - name: Restore uv cache (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
           key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -251,6 +384,13 @@ jobs:
       # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
       # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
       # the same reason we use static OpenSSL for sf_core in the build_wheel job.
+      - name: Cache vcpkg packages
+        if: matrix.os == 'windows-11-arm'
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-arm64-windows-static-md-openssl
+
       - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
         if: matrix.os == 'windows-11-arm'
         shell: cmd
@@ -366,7 +506,7 @@ jobs:
           version: "0.9.28"
 
       - name: Restore uv cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/.uv-cache
           # Key uses REFERENCE_OS_VERSION (= "ubuntu-latest") to match the matrix.os-based
@@ -470,7 +610,7 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 
   python-status:
-    needs: [detect-changes, build_wheel, packaging_tests, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_sf_core, build_wheel, packaging_tests, python_tests, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -487,11 +627,13 @@ jobs:
 
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
-          if [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
+          if [[ "${{ needs.build_sf_core.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.packaging_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
+            echo "  - build_sf_core: ${{ needs.build_sf_core.result }}"
             echo "  - build_wheel: ${{ needs.build_wheel.result }}"
             echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
@@ -502,6 +644,7 @@ jobs:
 
           # Tests ran and passed
           echo "✓ Python CI PASSED"
+          echo "  - build_sf_core: ${{ needs.build_sf_core.result }}"
           echo "  - build_wheel: ${{ needs.build_wheel.result }}"
           echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"

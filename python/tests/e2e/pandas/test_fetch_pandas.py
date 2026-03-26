@@ -22,49 +22,88 @@ from tests.e2e.types.utils import assert_connection_is_open
 LARGE_RESULT_SET_ROW_COUNT = 100_000
 
 PANDAS_TYPE_CASES = [
-    ("number", "1::NUMBER", "NULL::NUMBER", lambda v: v == 1),
-    ("scaled_number", "3.14::NUMBER(10,2)", "NULL::NUMBER(10,2)", lambda v: abs(v - 3.14) < 0.01),
-    ("varchar", "'hello'::VARCHAR", "NULL::VARCHAR", lambda v: v == "hello"),
-    ("float", "1.5::FLOAT", "NULL::FLOAT", lambda v: abs(v - 1.5) < 0.01),
-    ("boolean", "TRUE::BOOLEAN", "NULL::BOOLEAN", lambda v: v),
-    ("date", "'2026-03-23'::DATE", "NULL::DATE", lambda v: (v.year, v.month, v.day) == (2026, 3, 23)),
-    ("time", "'12:30:00'::TIME", "NULL::TIME", lambda v: isinstance(v, time) and v == time(12, 30, 0)),
+    # (type_name, value_expr, null_expr, value_check, empty_column_dtype_check)
+    ("number", "1::NUMBER", "NULL::NUMBER", lambda v: v == 1, pd.api.types.is_int64_dtype),
+    (
+        "scaled_number",
+        "3.14::NUMBER(10,2)",
+        "NULL::NUMBER(10,2)",
+        lambda v: abs(v - 3.14) < 0.01,
+        pd.api.types.is_int64_dtype,
+    ),
+    ("varchar", "'hello'::VARCHAR", "NULL::VARCHAR", lambda v: v == "hello", pd.api.types.is_string_dtype),
+    ("float", "1.5::FLOAT", "NULL::FLOAT", lambda v: abs(v - 1.5) < 0.01, pd.api.types.is_float_dtype),
+    ("boolean", "TRUE::BOOLEAN", "NULL::BOOLEAN", lambda v: v, pd.api.types.is_bool_dtype),
+    (
+        "date",
+        "'2026-03-23'::DATE",
+        "NULL::DATE",
+        lambda v: (v.year, v.month, v.day) == (2026, 3, 23),
+        pd.api.types.is_object_dtype,
+    ),
+    (
+        "time",
+        "'12:30:00'::TIME",
+        "NULL::TIME",
+        lambda v: isinstance(v, time) and v == time(12, 30, 0),
+        pd.api.types.is_object_dtype,
+    ),
     (
         "timestamp_ntz",
         "'2026-03-23 10:30:00'::TIMESTAMP_NTZ",
         "NULL::TIMESTAMP_NTZ",
         lambda v: isinstance(v, pd.Timestamp) and (v.year, v.month, v.day, v.hour, v.minute) == (2026, 3, 23, 10, 30),
+        pd.api.types.is_datetime64_any_dtype,
     ),
     (
         "timestamp_ltz",
         "'2026-03-23 10:30:00'::TIMESTAMP_LTZ",
         "NULL::TIMESTAMP_LTZ",
         lambda v: isinstance(v, pd.Timestamp) and (v.year, v.month, v.day, v.hour, v.minute) == (2026, 3, 23, 10, 30),
+        pd.api.types.is_datetime64_any_dtype,
     ),
     (
         "timestamp_tz",
         "'2026-03-23 10:30:00 +0530'::TIMESTAMP_TZ",
         "NULL::TIMESTAMP_TZ",
         lambda v: isinstance(v, pd.Timestamp) and (v.year, v.month, v.day, v.hour, v.minute) == (2026, 3, 23, 5, 0),
+        pd.api.types.is_datetime64_any_dtype,
     ),
-    ("binary", "TO_BINARY('ABCD','HEX')::BINARY", "NULL::BINARY", lambda v: v == b"\xab\xcd"),
-    ("variant", "TO_VARIANT(42)", "NULL::VARIANT", lambda v: json.loads(v) == 42),
-    ("array", "ARRAY_CONSTRUCT(1,2,3)::ARRAY", "NULL::ARRAY", lambda v: json.loads(v) == [1, 2, 3]),
-    ("object", "OBJECT_CONSTRUCT('key','value')::OBJECT", "NULL::OBJECT", lambda v: json.loads(v) == {"key": "value"}),
+    (
+        "binary",
+        "TO_BINARY('ABCD','HEX')::BINARY",
+        "NULL::BINARY",
+        lambda v: v == b"\xab\xcd",
+        pd.api.types.is_string_dtype,
+    ),
+    ("variant", "TO_VARIANT(42)", "NULL::VARIANT", lambda v: json.loads(v) == 42, pd.api.types.is_string_dtype),
+    (
+        "array",
+        "ARRAY_CONSTRUCT(1,2,3)::ARRAY",
+        "NULL::ARRAY",
+        lambda v: json.loads(v) == [1, 2, 3],
+        pd.api.types.is_string_dtype,
+    ),
+    (
+        "object",
+        "OBJECT_CONSTRUCT('key','value')::OBJECT",
+        "NULL::OBJECT",
+        lambda v: json.loads(v) == {"key": "value"},
+        pd.api.types.is_string_dtype,
+    ),
 ]
 
 
-@pytest.mark.skip_universal("SNOW-3243341 - not implemented yet")
 class TestFetchPandasAll:
     """Tests for fetch_pandas_all cursor method."""
 
     @pytest.mark.parametrize(
-        "type_name,value_expr,null_expr,check",
+        "type_name,value_expr,null_expr,check,_empty_column_dtype_check",
         PANDAS_TYPE_CASES,
         ids=[c[0] for c in PANDAS_TYPE_CASES],
     )
     def test_should_fetch_type_name_with_null_as_pandas_dataframe(
-        self, execute_query, cursor, type_name, value_expr, null_expr, check
+        self, execute_query, cursor, type_name, value_expr, null_expr, check, _empty_column_dtype_check
     ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
@@ -89,12 +128,19 @@ class TestFetchPandasAll:
         # And Column VAL should have the correct value for <type_name>
         assert check(result["VAL"].iloc[0])
 
-    def test_should_return_empty_pandas_dataframe_for_empty_result_set(self, execute_query, cursor):
+    @pytest.mark.parametrize(
+        "type_name,value_expr,_null_expr,_check,empty_column_dtype_check",
+        PANDAS_TYPE_CASES,
+        ids=[c[0] for c in PANDAS_TYPE_CASES],
+    )
+    def test_should_return_empty_type_name_column_with_correct_pandas_dtype(
+        self, execute_query, cursor, type_name, value_expr, _null_expr, _check, empty_column_dtype_check
+    ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # When Query "SELECT 1 AS id WHERE 1=0" is executed
-        cursor.execute("SELECT 1 AS id WHERE 1=0")
+        # When Query "SELECT <value_expr> AS col WHERE 1=0" is executed
+        cursor.execute(f"SELECT {value_expr} AS col WHERE 1=0")
 
         # And fetch_pandas_all is called
         result: pd.DataFrame = cursor.fetch_pandas_all()
@@ -102,6 +148,9 @@ class TestFetchPandasAll:
         # Then The result should be a pandas.DataFrame with 0 rows
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 0
+
+        # And Column COL should have <pandas_dtype> pandas dtype
+        assert empty_column_dtype_check(result["COL"].dtype)
 
     def test_should_convert_scaled_fixed_number_to_decimal_via_fetch_pandas_all(self, execute_query, cursor):
         # Given Snowflake client is logged in
@@ -145,7 +194,6 @@ class TestFetchPandasAll:
         assert ts_val.microsecond == 123456
 
 
-@pytest.mark.skip_universal("SNOW-3243341 - not implemented yet")
 class TestFetchPandasBatches:
     """Tests for fetch_pandas_batches cursor method."""
 

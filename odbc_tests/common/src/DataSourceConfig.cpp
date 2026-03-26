@@ -1,15 +1,74 @@
 #include <picojson.h>
 
+#include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "ODBCConfig.hpp"
+#include "utils.hpp"
+
+static int current_pid() {
+#ifdef _WIN32
+  return _getpid();
+#else
+  return getpid();
+#endif
+}
 
 // ============================================================================
 // DataSourceConfig
 // ============================================================================
+
+static std::string read_private_key_pem(const picojson::object& params) {
+  const auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS");
+  if (it == params.end() || !it->second.is<picojson::array>()) {
+    throw std::runtime_error("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found or not an array");
+  }
+  std::stringstream ss;
+  for (const auto& line : it->second.get<picojson::array>()) {
+    ss << line.get<std::string>() << "\n";
+  }
+  return ss.str();
+}
+
+static std::string get_or_create_private_key_file(const picojson::object& params) {
+  if (const auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_FILE");
+      it != params.end() && it->second.is<std::string>() && !it->second.get<std::string>().empty()) {
+    return it->second.get<std::string>();
+  }
+  static const std::string shared_path = (std::filesystem::temp_directory_path() / "odbc_test_rsa_key.p8").string();
+
+  std::error_code ec;
+  if (std::filesystem::exists(shared_path, ec) && !ec && std::filesystem::file_size(shared_path, ec) > 0 && !ec) {
+    return shared_path;
+  }
+
+  std::string pem = read_private_key_pem(params);
+  std::string staging = shared_path + "." + std::to_string(current_pid());
+  std::ofstream f(staging, std::ios::out | std::ios::trunc);
+  if (!f.is_open()) {
+    throw std::runtime_error("Cannot create temp key file: " + staging);
+  }
+  f << pem;
+  f.close();
+
+  std::filesystem::rename(staging, shared_path, ec);
+  if (ec) {
+    std::filesystem::remove(staging, ec);
+    if (!std::filesystem::exists(shared_path, ec) || ec || std::filesystem::file_size(shared_path, ec) == 0 || ec) {
+      throw std::runtime_error("Failed to create shared key file: " + shared_path);
+    }
+  }
+  return shared_path;
+}
 
 DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name) {
   const auto params = load_parameters(connection_name);
@@ -35,8 +94,19 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   config.parameters_["PORT"] = "443";
   config.parameters_["SSL"] = "on";
   config.parameters_["UID"] = get_string(params, "SNOWFLAKE_TEST_USER", "");
-  config.parameters_["PWD"] = get_string(params, "SNOWFLAKE_TEST_PASSWORD", "");
   config.parameters_["ACCOUNT"] = get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "");
+  config.parameters_["AUTHENTICATOR"] = "SNOWFLAKE_JWT";
+#ifdef SNOWFLAKE_OLD_DRIVER
+  config.parameters_["PRIV_KEY_FILE"] = get_or_create_private_key_file(params);
+  if (auto pwd = get_string(params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", ""); !pwd.empty()) {
+    config.parameters_["PRIV_KEY_FILE_PWD"] = pwd;
+  }
+#else
+  config.parameters_["PRIV_KEY_BASE64"] = test_utils::base64_encode(read_private_key_pem(params));
+  if (auto pwd = get_string(params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", ""); !pwd.empty()) {
+    config.parameters_["PRIV_KEY_PWD"] = pwd;
+  }
+#endif
 
   // Optional parameters
   if (auto db = get_string(params, "SNOWFLAKE_TEST_DATABASE", ""); !db.empty()) {
@@ -61,7 +131,14 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
 }
 
 DataSourceConfig DataSourceConfig::SnowflakeNoAuth(const std::string& connection_name) {
-  return Snowflake(connection_name).remove("UID").remove("PWD");
+  return Snowflake(connection_name)
+      .remove("UID")
+      .remove("PWD")
+      .remove("AUTHENTICATOR")
+      .remove("PRIV_KEY_BASE64")
+      .remove("PRIV_KEY_FILE")
+      .remove("PRIV_KEY_PWD")
+      .remove("PRIV_KEY_FILE_PWD");
 }
 
 DataSourceConfig& DataSourceConfig::set(const std::string& key, const std::string& value) {

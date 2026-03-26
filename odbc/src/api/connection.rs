@@ -5,8 +5,8 @@ use crate::api::encoding::{
 };
 use crate::api::error::Required;
 use crate::api::error::{
-    AttributeCannotBeSetNowSnafu, InvalidPortSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu,
-    UnsupportedAttributeSnafu,
+    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, InvalidBufferLengthSnafu,
+    InvalidPortSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -29,7 +29,7 @@ const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
 /// Maps ODBC connection string parameter names to their sf_core equivalents.
 /// Parameters listed here are forwarded as-is via `connection_set_option_string`.
 /// Parameters that need special handling (type conversion, conditional skipping,
-/// side-effects) are handled separately in `driver_connect`.
+/// side-effects) are handled separately in `connect_with_params`.
 const PARAM_MAPPINGS: &[(&str, &str)] = &[
     ("ACCOUNT", "account"),
     ("SERVER", "host"),
@@ -55,7 +55,7 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     for pair in connection_string.split(';') {
         let parts: Vec<&str> = pair.splitn(2, '=').collect();
         if parts.len() == 2 {
-            map.insert(parts[0].to_string(), parts[1].to_string());
+            map.insert(parts[0].trim().to_uppercase(), parts[1].trim().to_string());
         }
     }
     map
@@ -68,11 +68,19 @@ pub fn driver_connect<E: OdbcEncoding>(
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
-    driver_connect_impl(connection_handle, &connection_string)
+    let params = parse_connection_string(&connection_string);
+    connect_with_params(connection_handle, params)
 }
 
-fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) -> OdbcResult<()> {
-    let connection_string_map = parse_connection_string(connection_string);
+/// Core connection logic shared by `driver_connect` and `connect`.
+///
+/// Takes the already-parsed parameter map, applies it to a new sf_core connection,
+/// respects pre-connection attributes set via `SQLSetConnectAttr`, and transitions
+/// the handle to `Connected`.
+fn connect_with_params(
+    connection_handle: sql::Handle,
+    params: HashMap<String, String>,
+) -> OdbcResult<()> {
     {
         const REDACTED_KEYS: &[&str] = &[
             "PWD",
@@ -81,7 +89,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
             "PRIV_KEY_PWD",
             "PRIV_KEY_BASE64",
         ];
-        let redacted_map: HashMap<&String, &str> = connection_string_map
+        let redacted_map: HashMap<&String, &str> = params
             .iter()
             .map(|(k, v)| {
                 let is_sensitive = REDACTED_KEYS.iter().any(|r| k.eq_ignore_ascii_case(r));
@@ -89,7 +97,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                 (k, v)
             })
             .collect();
-        tracing::info!("driver_connect: connection_string={:?}", redacted_map);
+        tracing::info!("connect_with_params: params={:?}", redacted_map);
     }
 
     let connection = conn_from_handle(connection_handle);
@@ -125,7 +133,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
 
             let mut login_timeout_set = false;
 
-            for (key, value) in connection_string_map {
+            for (key, value) in params {
                 if key == "DRIVER" {
                     continue;
                 }
@@ -176,7 +184,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                     "PRIV_KEY_FILE" => {
                         if attr_key_set {
                             tracing::debug!(
-                                "driver_connect: skipping PRIV_KEY_FILE — attribute-based key takes priority"
+                                "connect_with_params: skipping PRIV_KEY_FILE — attribute-based key takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
@@ -190,7 +198,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                     "PRIV_KEY_BASE64" => {
                         if attr_key_set {
                             tracing::debug!(
-                                "driver_connect: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
+                                "connect_with_params: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
@@ -204,7 +212,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                     "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
                         if attr_has_priv_key_password {
                             tracing::debug!(
-                                "driver_connect: skipping {key} — attribute-based password takes priority"
+                                "connect_with_params: skipping {key} — attribute-based password takes priority"
                             );
                         } else {
                             c.connection_set_option_string(ConnectionSetOptionStringRequest {
@@ -216,7 +224,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
                         }
                     }
                     _ => {
-                        tracing::warn!("driver_connect: unknown connection string key: {key:?}");
+                        tracing::warn!("connect_with_params: unknown connection string key: {key:?}");
                     }
                 }
             }
@@ -249,7 +257,7 @@ fn driver_connect_impl(connection_handle: sql::Handle, connection_string: &str) 
             Ok::<_, crate::api::error::OdbcError>((db_handle, conn_handle))
         })?;
 
-    tracing::info!("driver_connect: connection_init completed");
+    tracing::info!("connect_with_params: connection_init completed");
 
     connection.state = ConnectionState::Connected {
         db_handle,
@@ -321,19 +329,157 @@ async fn apply_pre_connection_attrs_async(
     Ok(false)
 }
 
-/// Connect function (SQLConnect / SQLConnectW) - currently a placeholder.
+/// Connect using DSN (SQLConnect / SQLConnectW).
+///
+/// Reads DSN configuration from odbc.ini (ODBCINI env var, ~/.odbc.ini, or /etc/odbc.ini),
+/// merges caller-supplied UID/PWD overrides, then delegates to `connect_with_params` to perform
+/// the actual connection.
 pub fn connect<E: OdbcEncoding>(
-    _connection_handle: sql::Handle,
-    _server_name: *const E::Char,
-    _name_length1: sql::SmallInt,
-    _user_name: *const E::Char,
-    _name_length2: sql::SmallInt,
-    _authentication: *const E::Char,
-    _name_length3: sql::SmallInt,
+    connection_handle: sql::Handle,
+    server_name: *const E::Char,
+    name_length1: sql::SmallInt,
+    user_name: *const E::Char,
+    name_length2: sql::SmallInt,
+    authentication: *const E::Char,
+    name_length3: sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::debug!("connect: currently a placeholder implementation");
-    // TODO: Implement proper SQLConnect functionality
-    Ok(())
+    let dsn = E::read_string(server_name, name_length1 as i32)?;
+
+    let uid = if user_name.is_null() {
+        None
+    } else {
+        let s = E::read_string(user_name, name_length2 as i32)?;
+        if s.is_empty() { None } else { Some(s) }
+    };
+
+    let pwd = if authentication.is_null() {
+        None
+    } else {
+        let s = E::read_string(authentication, name_length3 as i32)?;
+        if s.is_empty() { None } else { Some(s) }
+    };
+
+    tracing::debug!("connect: dsn={:?}", dsn);
+
+    let mut params = read_dsn_config(&dsn)?;
+
+    // Caller-supplied UID/PWD override whatever is in the DSN.
+    if let Some(uid) = uid {
+        params.insert("UID".to_string(), uid);
+    }
+    if let Some(pwd) = pwd {
+        params.insert("PWD".to_string(), pwd);
+    }
+
+    // Drop DSN metadata keys that have no meaning as connection parameters.
+    params
+        .retain(|k, _| !k.eq_ignore_ascii_case("Driver") && !k.eq_ignore_ascii_case("Description"));
+
+    connect_with_params(connection_handle, params)
+}
+
+/// Look up DSN parameters.
+///
+/// On Unix: searches odbc.ini files (ODBCINI env var, ~/.odbc.ini, ODBCSYSINI/odbc.ini, /etc/odbc.ini).
+/// On Windows: reads from the registry under HKCU then HKLM SOFTWARE\ODBC\ODBC.INI\<DSN>.
+#[cfg(not(windows))]
+fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
+    let mut paths = Vec::new();
+    if let Ok(p) = std::env::var("ODBCINI") {
+        paths.push(p);
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        paths.push(format!("{}/.odbc.ini", home));
+    }
+    if let Ok(p) = std::env::var("ODBCSYSINI") {
+        paths.push(format!("{}/odbc.ini", p));
+    }
+    paths.push("/etc/odbc.ini".to_string());
+
+    for path in &paths {
+        if let Ok(content) = std::fs::read_to_string(path)
+            && let Some(params) = parse_ini_section(&content, dsn)
+        {
+            tracing::debug!("connect: found DSN {:?} in {:?}", dsn, path);
+            return Ok(params);
+        }
+    }
+    tracing::warn!("connect: DSN {:?} not found in any odbc.ini", dsn);
+    DataSourceNotFoundSnafu {
+        dsn: dsn.to_string(),
+    }
+    .fail()
+}
+
+/// Parse an INI-format string and return the key/value pairs from `section`.
+#[cfg(not(windows))]
+fn parse_ini_section(content: &str, section: &str) -> Option<HashMap<String, String>> {
+    let mut in_section = false;
+    let mut params = HashMap::new();
+    let mut found = false;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            let s = &line[1..line.len() - 1];
+            in_section = s.eq_ignore_ascii_case(section);
+            if in_section {
+                found = true;
+            }
+            continue;
+        }
+        if !in_section || line.starts_with('#') || line.starts_with(';') || line.is_empty() {
+            continue;
+        }
+        if let Some(eq_pos) = line.find('=') {
+            let key = line[..eq_pos].trim().to_uppercase();
+            let value = line[eq_pos + 1..].trim().to_string();
+            params.insert(key, value);
+        }
+    }
+
+    if found { Some(params) } else { None }
+}
+
+/// Look up DSN parameters from the Windows registry.
+///
+/// Checks HKEY_CURRENT_USER first (user DSNs), then HKEY_LOCAL_MACHINE (system DSNs),
+/// mirroring the priority order used by the Windows ODBC Driver Manager.
+#[cfg(windows)]
+fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::types::FromRegValue;
+
+    const ODBC_INI: &str = "SOFTWARE\\ODBC\\ODBC.INI";
+
+    for hive in [
+        RegKey::predef(HKEY_CURRENT_USER),
+        RegKey::predef(HKEY_LOCAL_MACHINE),
+    ] {
+        let path = format!("{}\\{}", ODBC_INI, dsn);
+        if let Ok(key) = hive.open_subkey(&path) {
+            let mut params = HashMap::new();
+            for result in key.enum_values() {
+                if let Ok((name, value)) = result {
+                    if !name.is_empty() {
+                        if let Ok(s) = String::from_reg_value(&value) {
+                            params.insert(name.to_uppercase(), s);
+                        }
+                    }
+                }
+            }
+            if !params.is_empty() {
+                tracing::debug!("connect: found DSN {:?} in registry", dsn);
+                return Ok(params);
+            }
+        }
+    }
+    tracing::warn!("connect: DSN {:?} not found in registry", dsn);
+    DataSourceNotFoundSnafu {
+        dsn: dsn.to_string(),
+    }
+    .fail()
 }
 
 /// Disconnect from the database
@@ -413,6 +559,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
         ConnectionAttribute::Autocommit => {
             tracing::debug!("set_connect_attr: Autocommit (ignored)");
             Ok(())
+        }
+        ConnectionAttribute::CurrentCatalog => {
+            tracing::warn!("set_connect_attr: CurrentCatalog is not yet implemented");
+            crate::api::error::UnsupportedAttributeSnafu {
+                attribute: attr.as_raw(),
+            }
+            .fail()
         }
         ConnectionAttribute::PrivKey => {
             tracing::warn!(
@@ -520,6 +673,22 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             }
             Ok(())
         }
+        ConnectionAttribute::CurrentCatalog => {
+            if buffer_length < 0 {
+                return InvalidBufferLengthSnafu {
+                    length: buffer_length as i64,
+                }
+                .fail();
+            }
+            write_string_bytes_i32::<E>(
+                "",
+                value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
+            );
+            Ok(())
+        }
         ConnectionAttribute::PrivKey => UnsupportedAttributeSnafu {
             attribute: attr.as_raw(),
         }
@@ -585,6 +754,80 @@ pub fn get_info<E: OdbcEncoding>(
                 }
             }
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case("UID=admin;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "basic")]
+    #[test_case("UID=admin; AUTHENTICATOR=SNOWFLAKE_JWT", &[("UID", "admin"), ("AUTHENTICATOR", "SNOWFLAKE_JWT")] ; "trims keys")]
+    #[test_case("UID= admin ", &[("UID", "admin")] ; "trims values")]
+    #[test_case(" UID = admin ; SERVER = foo ", &[("UID", "admin"), ("SERVER", "foo")] ; "trims both")]
+    #[test_case("PRIV_KEY_FILE=abc=def", &[("PRIV_KEY_FILE", "abc=def")] ; "preserves equals in value")]
+    #[test_case("UID=admin;  ;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "skips blank segments")]
+    #[test_case("UID=admin;", &[("UID", "admin")] ; "trailing semicolon")]
+    #[test_case("uid=admin;Server=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "normalizes mixed case keys")]
+    fn parse_connection_string_cases(input: &str, expected: &[(&str, &str)]) {
+        let map = parse_connection_string(input);
+        assert_eq!(map.len(), expected.len());
+        for (key, value) in expected {
+            assert_eq!(map.get(*key).unwrap(), value);
+        }
+    }
+
+    #[cfg(not(windows))]
+    mod ini_tests {
+        use super::*;
+
+        #[test]
+        fn parse_ini_section_normalizes_keys_to_uppercase() {
+            let ini = "\
+[MyDSN]
+Server = myserver.snowflakecomputing.com
+Uid = myuser
+pwd = mypass
+Account = myaccount
+";
+            let params = parse_ini_section(ini, "MyDSN").unwrap();
+            assert_eq!(
+                params.get("SERVER").unwrap(),
+                "myserver.snowflakecomputing.com"
+            );
+            assert_eq!(params.get("UID").unwrap(), "myuser");
+            assert_eq!(params.get("PWD").unwrap(), "mypass");
+            assert_eq!(params.get("ACCOUNT").unwrap(), "myaccount");
+            assert!(!params.contains_key("Server"));
+        }
+
+        #[test]
+        fn parse_ini_section_not_found() {
+            let ini = "[OtherDSN]\nServer = foo\n";
+            assert!(parse_ini_section(ini, "MyDSN").is_none());
+        }
+
+        #[test]
+        fn parse_ini_section_skips_comments_and_empty_lines() {
+            let ini = "\
+[MyDSN]
+# this is a comment
+; this is also a comment
+
+Server = myserver
+";
+            let params = parse_ini_section(ini, "MyDSN").unwrap();
+            assert_eq!(params.len(), 1);
+            assert_eq!(params.get("SERVER").unwrap(), "myserver");
+        }
+
+        #[test]
+        fn parse_ini_section_case_insensitive_section_name() {
+            let ini = "[mydsn]\nServer = foo\n";
+            let params = parse_ini_section(ini, "MyDSN").unwrap();
+            assert_eq!(params.get("SERVER").unwrap(), "foo");
         }
     }
 }

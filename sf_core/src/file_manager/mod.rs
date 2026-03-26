@@ -1,16 +1,19 @@
 mod encryption;
-mod file_transfer;
+mod gcs_transfer;
+mod s3_transfer;
 
 mod path_expansion;
 pub mod types;
 
 pub use self::types::*;
+pub use gcs_transfer::download_from_gcs;
 
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
-use file_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
+use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
 use path_expansion::{PathExpansionError, expand_filenames};
+use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -58,12 +61,14 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
         )
         .await
         .context(S3UploadSnafu)?,
-        LocationType::Gcs => {
-            return UnsupportedStorageTypeSnafu {
-                storage_type: "GCS",
-            }
-            .fail();
-        }
+        LocationType::Gcs => upload_to_gcs_or_skip(
+            encryption_result,
+            &data.stage_info,
+            file_metadata.target.as_str(),
+            data.overwrite,
+        )
+        .await
+        .context(GcsUploadSnafu)?,
         LocationType::Azure => {
             return UnsupportedStorageTypeSnafu {
                 storage_type: "Azure",
@@ -88,7 +93,7 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
             .target_compression
             .get_snowflake_representation()
             .to_string(),
-        status,
+        status: status.to_string(),
         message: "".to_string(),
     })
 }
@@ -188,12 +193,9 @@ pub async fn download_single_file(
         LocationType::S3 => download_from_s3(&data.stage_info, data.src_location.as_str())
             .await
             .context(S3DownloadSnafu)?,
-        LocationType::Gcs => {
-            return UnsupportedStorageTypeSnafu {
-                storage_type: "GCS",
-            }
-            .fail();
-        }
+        LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
+            .await
+            .context(GcsDownloadSnafu)?,
         LocationType::Azure => {
             return UnsupportedStorageTypeSnafu {
                 storage_type: "Azure",
@@ -270,6 +272,18 @@ pub enum FileManagerError {
     #[snafu(display("Failed to download file from S3"))]
     S3Download {
         source: DownloadFileError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to upload file to GCS"))]
+    GcsUpload {
+        source: GcsUploadError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to download file from GCS"))]
+    GcsDownload {
+        source: GcsDownloadError,
         #[snafu(implicit)]
         location: Location,
     },

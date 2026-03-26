@@ -112,9 +112,24 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Attribute {attribute} is read-only and cannot be set"))]
+    ReadOnlyAttribute {
+        attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Unsupported attribute: {attribute}"))]
     UnsupportedAttribute {
         attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid attribute value {value} for attribute {attribute}"))]
+    InvalidAttributeValue {
+        attribute: i32,
+        value: i64,
         #[snafu(implicit)]
         location: Location,
     },
@@ -333,6 +348,13 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Data source name not found: {dsn}"))]
+    DataSourceNotFound {
+        dsn: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -404,7 +426,9 @@ impl OdbcError {
             OdbcError::InvalidDescriptorIndex { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidPrecisionOrScale { .. } => SqlState::InvalidPrecisionOrScaleValue,
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::ReadOnlyAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::InvalidAttributeValue { .. } => SqlState::InvalidAttributeValue,
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::UnknownInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
@@ -498,6 +522,9 @@ impl OdbcError {
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
             OdbcError::InvalidFreeStmtOption { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::OdbcRuntime { .. } => SqlState::FunctionSequenceError,
+            OdbcError::DataSourceNotFound { .. } => {
+                SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
+            }
         }
     }
 
