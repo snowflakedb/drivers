@@ -70,6 +70,7 @@ steps:
           fi
 
           echo "--- :docker: Running in $$DOCKER_IMAGE"
+          DOCKER_EXIT=0
           docker run --rm \
             -v "$$PWD:/workdir" \
             -w /workdir \
@@ -89,20 +90,24 @@ steps:
               echo "--- :test_tube: Running E2E Tests"
               mkdir -p /workdir/junit-results
               export RUSTC_BOOTSTRAP=1
+              set +o pipefail
               if [ "$$TEST_FILTER" = "ALL" ]; then
                 cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
+                TEST_EXIT=$${PIPESTATUS[0]}
               else
                 IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
                 for filter in "$${FILTERS[@]}"; do
                   echo "Running: cargo test -- $$filter"
                   cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1
                 done | cargo2junit > /workdir/junit-results/rust-junit.xml
+                TEST_EXIT=$${PIPESTATUS[0]}
               fi
               unset RUSTC_BOOTSTRAP
-            '
+              exit $$TEST_EXIT
+            ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml"
+          buildkite-agent artifact upload "junit-results/*.xml" || true
           for xml in junit-results/*.xml; do
             [ -f "$$xml" ] || continue
             curl -X POST --silent --show-error --fail \
@@ -121,6 +126,10 @@ steps:
               https://analytics-api.buildkite.com/v1/uploads
             echo "Uploaded $$xml to Test Analytics"
           done
+          if [ "$$DOCKER_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: Rust Core -- tests failed" --style "error" --context "rust-result"
+            exit "$$DOCKER_EXIT"
+          fi
           buildkite-agent annotate ":white_check_mark: Rust Core -- passed" --style "success" --context "rust-result"
 
   # ==========================================================================
@@ -144,6 +153,7 @@ steps:
           fi
 
           echo "--- :docker: Running in $$DOCKER_IMAGE"
+          DOCKER_EXIT=0
           docker run --rm \
             -v "$$PWD:/workdir" \
             -w /workdir \
@@ -164,15 +174,18 @@ steps:
 
               echo "--- :test_tube: Running Integ + E2E Tests"
               mkdir -p /workdir/junit-results
+              set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
                 hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
               else
                 hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
               fi
-            '
+              TEST_EXIT=$$?
+              exit $$TEST_EXIT
+            ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml"
+          buildkite-agent artifact upload "junit-results/*.xml" || true
           for xml in junit-results/*.xml; do
             [ -f "$$xml" ] || continue
             curl -X POST --silent --show-error --fail \
@@ -191,6 +204,10 @@ steps:
               https://analytics-api.buildkite.com/v1/uploads
             echo "Uploaded $$xml to Test Analytics"
           done
+          if [ "$$DOCKER_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: Python -- tests failed" --style "error" --context "python-result"
+            exit "$$DOCKER_EXIT"
+          fi
           buildkite-agent annotate ":white_check_mark: Python -- passed" --style "success" --context "python-result"
 
   # ==========================================================================
@@ -214,6 +231,7 @@ steps:
           fi
 
           echo "--- :docker: Running in $$DOCKER_IMAGE"
+          DOCKER_EXIT=0
           docker run --rm \
             -v "$$PWD:/workdir" \
             -w /workdir \
@@ -243,15 +261,18 @@ steps:
 
               echo "--- :test_tube: Running Integ + E2E Tests"
               mkdir -p /workdir/junit-results
+              set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
                 ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit /workdir/junit-results/odbc-junit.xml
               else
                 ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
               fi
-            '
+              TEST_EXIT=$$?
+              exit $$TEST_EXIT
+            ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml"
+          buildkite-agent artifact upload "junit-results/*.xml" || true
           for xml in junit-results/*.xml; do
             [ -f "$$xml" ] || continue
             curl -X POST --silent --show-error --fail \
@@ -270,6 +291,10 @@ steps:
               https://analytics-api.buildkite.com/v1/uploads
             echo "Uploaded $$xml to Test Analytics"
           done
+          if [ "$$DOCKER_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: ODBC -- tests failed" --style "error" --context "odbc-result"
+            exit "$$DOCKER_EXIT"
+          fi
           buildkite-agent annotate ":white_check_mark: ODBC -- passed" --style "success" --context "odbc-result"
 
   # ==========================================================================
@@ -293,6 +318,7 @@ steps:
           fi
 
           echo "--- :docker: Running in $$DOCKER_IMAGE"
+          DOCKER_EXIT=0
           docker run --rm \
             -v "$$PWD:/workdir" \
             -w /workdir \
@@ -313,6 +339,7 @@ steps:
               export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
               chmod +x jdbc/gradlew
               cd jdbc
+              set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
                 ./gradlew test --stacktrace
               else
@@ -323,13 +350,16 @@ steps:
                 done
                 ./gradlew test $$GRADLE_TESTS --stacktrace
               fi
+              TEST_EXIT=$$?
+              set -e
 
               mkdir -p /workdir/junit-results
               cp build/test-results/test/*.xml /workdir/junit-results/ 2>/dev/null || true
-            '
+              exit $$TEST_EXIT
+            ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml"
+          buildkite-agent artifact upload "junit-results/*.xml" || true
           for xml in junit-results/*.xml; do
             [ -f "$$xml" ] || continue
             curl -X POST --silent --show-error --fail \
@@ -348,4 +378,8 @@ steps:
               https://analytics-api.buildkite.com/v1/uploads
             echo "Uploaded $$xml to Test Analytics"
           done
+          if [ "$$DOCKER_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: JDBC -- tests failed" --style "error" --context "jdbc-result"
+            exit "$$DOCKER_EXIT"
+          fi
           buildkite-agent annotate ":white_check_mark: JDBC -- passed" --style "success" --context "jdbc-result"
