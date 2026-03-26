@@ -24,6 +24,7 @@
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set has correct number of columns",
                  "[odbc-api][catalog][statistics]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -36,6 +37,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set has correct n
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][statistics]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -65,6 +67,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Result set column names 
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Returns empty result set for table with primary key",
                  "[odbc-api][catalog][statistics]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Snowflake does not expose index/statistics metadata through ODBC.
   // SQLStatistics always returns an empty result set.
 
@@ -78,6 +81,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Returns empty result set
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: SQL_INDEX_UNIQUE returns empty",
                  "[odbc-api][catalog][statistics]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_UNIQUE, SQL_ENSURE);
   REQUIRE(ret == SQL_SUCCESS);
@@ -92,6 +96,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: SQL_INDEX_UNIQUE returns
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Can call multiple times after close cursor",
                  "[odbc-api][catalog][statistics]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -107,6 +112,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: Can call multiple times 
 }
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: SQLRowCount returns -1", "[odbc-api][catalog][statistics]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);
@@ -136,6 +142,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLStatistics: HY090 - Negative TableNa
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLStatistics: 24000 - Cursor already open",
                  "[odbc-api][catalog][statistics][error]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLStatistics(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                 sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_INDEX_ALL, SQL_QUICK);
   REQUIRE(ret == SQL_SUCCESS);

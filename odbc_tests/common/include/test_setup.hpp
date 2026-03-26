@@ -3,14 +3,24 @@
 
 #include <picojson.h>
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
 
+#ifdef _WIN32
+#include <process.h>
+inline int current_pid() { return _getpid(); }
+#else
+#include <unistd.h>
+inline int current_pid() { return getpid(); }
+#endif
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "ODBCConfig.hpp"
+#include "utils.hpp"
 
 inline picojson::object get_test_parameters(const std::string& connection_name) {
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");
@@ -62,7 +72,7 @@ inline void add_param_optional(std::stringstream& ss, const picojson::object& pa
 
 inline std::string get_private_key_file_path(const picojson::object& params) {
   auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_FILE");
-  if (it != params.end() && it->second.is<std::string>()) {
+  if (it != params.end() && it->second.is<std::string>() && !it->second.get<std::string>().empty()) {
     return it->second.get<std::string>();
   }
   return "";
@@ -86,6 +96,32 @@ inline std::string read_private_key(const picojson::object& params) {
     private_key_stream << line.get<std::string>() << "\n";
   }
   return private_key_stream.str();
+}
+
+inline std::string get_or_create_private_key_file(const picojson::object& params) {
+  auto path = get_private_key_file_path(params);
+  if (!path.empty()) {
+    return path;
+  }
+  static const std::string shared_path = (std::filesystem::temp_directory_path() / "odbc_test_rsa_key.p8").string();
+
+  std::error_code ec;
+  if (std::filesystem::exists(shared_path, ec) && !ec && std::filesystem::file_size(shared_path, ec) > 0 && !ec) {
+    return shared_path;
+  }
+
+  std::string pem = read_private_key(params);
+  std::string staging = shared_path + "." + std::to_string(current_pid());
+  std::ofstream f(staging, std::ios::out | std::ios::trunc);
+  REQUIRE(f.is_open());
+  f << pem;
+  f.close();
+
+  std::filesystem::rename(staging, shared_path, ec);
+  if (ec) {
+    std::filesystem::remove(staging, ec);
+  }
+  return shared_path;
 }
 
 inline void configure_driver_string(std::stringstream& ss) {
@@ -129,7 +165,14 @@ inline std::string get_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+#ifdef SNOWFLAKE_OLD_DRIVER
+  ss << "PRIV_KEY_FILE=" << get_or_create_private_key_file(params) << ";";
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
+#else
+  ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
+#endif
   return ss.str();
 }
 

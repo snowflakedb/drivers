@@ -221,7 +221,7 @@ test_windows_arm64:
   steps:
     - uses: actions/checkout@v4
     - name: Cache Rust dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       ...
     - name: Configure OpenSSL
       shell: pwsh

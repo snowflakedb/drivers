@@ -305,6 +305,23 @@ class WiremockManager:
         logger.info("Transforming mappings...")
         MappingTransformer.transform_mappings_directory(mappings_path)
     
+    def get_docker_container(self):
+        """Return the underlying Docker SDK container object (for monitoring)."""
+        if not self.container:
+            return None
+        return self.container.get_wrapped_container()
+
+    def get_logs(self) -> str:
+        """Capture and return the full container log output."""
+        if not self.container:
+            return ""
+        try:
+            wrapped = self.container.get_wrapped_container()
+            return wrapped.logs().decode("utf-8", errors="replace")
+        except Exception as e:
+            logger.warning(f"Failed to capture WireMock logs: {e}")
+            return ""
+
     def stop(self):
         """Stop WireMock container"""
         if self.container:

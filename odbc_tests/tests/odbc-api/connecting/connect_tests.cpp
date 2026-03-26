@@ -304,8 +304,6 @@ TEST_CASE("SQLConnect: DSN configuration check", "[odbc-api][connect][dsn][integ
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeeds",
                  "[odbc-api][connect][dsn][integration]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const std::string dsn = dsn_name();
 
   // Credentials are in odbc.ini, pass NULL for UID/PWD
@@ -349,8 +347,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: 08002 - Connection already o
 
 TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLConnect: 28000 - Invalid authorization specification",
                  "[odbc-api][connect][dsn][integration][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Use DSN without credentials and provide invalid ones
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
@@ -384,8 +380,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: SQL_SUCCESS_WITH_INFO has re
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cycle",
                  "[odbc-api][connect][dsn][integration][lifecycle]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const std::string dsn = dsn_name();
 
   constexpr int CYCLES = 3;
@@ -410,8 +404,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cyc
 
 TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connections",
                  "[odbc-api][connect][dsn][integration][concurrent]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   constexpr int NUM_CONNECTIONS = 3;
   SQLHDBC connections[NUM_CONNECTIONS];
 

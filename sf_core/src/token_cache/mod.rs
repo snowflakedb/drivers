@@ -54,7 +54,7 @@ impl std::fmt::Display for TokenType {
 ///
 /// The key is constructed by concatenating host, username, and token type with semicolons:
 /// `"{host};{username};{token_type}"`
-pub trait TokenCache {
+pub trait TokenCache: Send + Sync {
     /// Adds a token to the keystore.
     ///
     /// # Arguments

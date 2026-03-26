@@ -40,6 +40,16 @@ Feature: ODBC binary to SQL_C_BINARY type conversions
     Then SQL_C_BINARY should return indicator 0
 
   # ============================================================================
+  # VARBINARY SYNONYM
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should convert VARBINARY to SQL_C_BINARY same as BINARY
+    Given Snowflake client is logged in
+    When Query "SELECT X'CAFE'::VARBINARY" is executed
+    Then SQL_C_BINARY should return raw bytes [0xCA, 0xFE]
+
+  # ============================================================================
   # UNSUPPORTED TARGET TYPE
   # ============================================================================
 
@@ -84,3 +94,35 @@ Feature: ODBC binary to SQL_C_BINARY type conversions
     When Query selecting a binary value larger than the buffer is executed
     Then First SQLGetData call should return SQL_SUCCESS_WITH_INFO with partial data
     And Second SQLGetData call should return SQL_SUCCESS with remaining data
+
+  # ============================================================================
+  # EXACT-FIT BUFFER
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should succeed with exact-fit buffer for SQL_C_BINARY
+    Given Snowflake client is logged in
+    When Query "SELECT X'ABCDEF'::BINARY" is executed
+    Then SQL_C_BINARY with buffer exactly matching data length should return SQL_SUCCESS
+
+  # ============================================================================
+  # 3-CHUNK RETRIEVAL
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should retrieve binary in three chunks via SQLGetData
+    Given Snowflake client is logged in
+    When Query selecting a 9-byte binary value is executed
+    Then First SQLGetData call should return first 3 bytes with 01004
+    And Second SQLGetData call should return next 3 bytes with 01004
+    And Third SQLGetData call should return final 3 bytes with SQL_SUCCESS
+
+  # ============================================================================
+  # ZERO-LENGTH BUFFER — LENGTH-ONLY QUERY
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should report full length with zero-length buffer for SQL_C_BINARY
+    Given Snowflake client is logged in
+    When Query "SELECT X'ABCDEF'::BINARY" is executed
+    Then SQLGetData with BufferLength=0 should return 01004 with indicator reporting full data length

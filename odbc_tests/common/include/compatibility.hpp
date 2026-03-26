@@ -49,7 +49,7 @@ extern DRIVER_TYPE get_driver_type();
     SKIP("Skipping for new driver: " << bd << ": " << message); \
   }
 
-#ifdef FORCE_RUN_NOT_IMPLEMENTED
+#ifdef ENABLE_PROGRESS_REPORT
 #define SKIP_NEW_DRIVER_NOT_IMPLEMENTED() ((void)0)
 #else
 #define SKIP_NEW_DRIVER_NOT_IMPLEMENTED()        \

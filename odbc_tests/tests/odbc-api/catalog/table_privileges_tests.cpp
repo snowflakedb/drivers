@@ -24,6 +24,7 @@
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Result set has correct number of columns",
                  "[odbc-api][catalog][tableprivileges]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTablePrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                      sqlchar(readonly_db::BASIC_TABLE), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -36,6 +37,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Result set has corr
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][tableprivileges]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTablePrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                      sqlchar(readonly_db::BASIC_TABLE), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -64,6 +66,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Result set column n
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Returns empty result set for existing table",
                  "[odbc-api][catalog][tableprivileges]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Snowflake does not expose table-level privilege metadata through ODBC.
   // SQLTablePrivileges always returns an empty result set.
 
@@ -77,6 +80,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Returns empty resul
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: Wildcard and NULL parameters return empty",
                  "[odbc-api][catalog][tableprivileges]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   const SQLRETURN ret = SQLTablePrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -90,6 +94,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: Wildcard and NULL p
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Can call multiple times after close cursor",
                  "[odbc-api][catalog][tableprivileges]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTablePrivileges(stmt_handle(), sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()), SQL_NTS,
                                      sqlchar(readonly_db::BASIC_TABLE), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -106,6 +111,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLTablePrivileges: Can call multiple t
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: SQLRowCount returns -1",
                  "[odbc-api][catalog][tableprivileges]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   const SQLRETURN ret = SQLTablePrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("ANYTABLE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -140,6 +146,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: HY090 - Negative Sc
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTablePrivileges: 24000 - Cursor already open",
                  "[odbc-api][catalog][tableprivileges][error]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLTablePrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("ANYTABLE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

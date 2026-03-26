@@ -33,11 +33,29 @@ Feature: Pandas fetch methods (Python-specific)
       | object        | OBJECT_CONSTRUCT('key','value')::OBJECT      | NULL::OBJECT        |
 
   @python_e2e
-  Scenario: should return empty pandas DataFrame for empty result set
+  Scenario Outline: should return empty <type_name> column with correct pandas dtype
     Given Snowflake client is logged in
-    When Query "SELECT 1 AS id WHERE 1=0" is executed
+    When Query "SELECT <value_expr> AS col WHERE 1=0" is executed
     And fetch_pandas_all is called
     Then The result should be a pandas.DataFrame with 0 rows
+    And Column COL should have <pandas_dtype> pandas dtype
+
+    Examples:
+      | type_name     | value_expr                                   | pandas_dtype |
+      | number        | 1::NUMBER                                    | integer      |
+      | scaled_number | 3.14::NUMBER(10,2)                           | float        |
+      | varchar       | 'hello'::VARCHAR                             | object       |
+      | float         | 1.5::FLOAT                                   | float        |
+      | boolean       | TRUE::BOOLEAN                                | bool         |
+      | date          | '2026-03-23'::DATE                           | object       |
+      | time          | '12:30:00'::TIME                             | object       |
+      | timestamp_ntz | '2026-03-23 10:30:00'::TIMESTAMP_NTZ         | datetime64   |
+      | timestamp_ltz | '2026-03-23 10:30:00'::TIMESTAMP_LTZ         | datetime64   |
+      | timestamp_tz  | '2026-03-23 10:30:00 +0530'::TIMESTAMP_TZ    | datetime64   |
+      | binary        | TO_BINARY('ABCD','HEX')::BINARY              | object       |
+      | variant       | TO_VARIANT(42)                               | object       |
+      | array         | ARRAY_CONSTRUCT(1,2,3)::ARRAY                | object       |
+      | object        | OBJECT_CONSTRUCT('key','value')::OBJECT      | object       |
 
   @python_e2e
   Scenario: should convert scaled fixed number to decimal via fetch_pandas_all

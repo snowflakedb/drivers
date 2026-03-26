@@ -105,6 +105,27 @@ TEST_CASE("should convert empty binary to SQL_C_BINARY returning zero-length dat
 }
 
 // ============================================================================
+// VARBINARY synonym — SQL_C_BINARY
+// ============================================================================
+
+TEST_CASE("should convert VARBINARY to SQL_C_BINARY same as BINARY", "[datatype][binary][conversion][binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT X'CAFE'::VARBINARY" is executed
+  const auto stmt = conn.execute_fetch("SELECT X'CAFE'::VARBINARY");
+
+  // Then SQL_C_BINARY should return raw bytes [0xCA, 0xFE]
+  SQLCHAR buffer[64] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE_ODBC(ret, stmt);
+  REQUIRE(indicator == 2);
+  REQUIRE(buffer[0] == 0xCA);
+  REQUIRE(buffer[1] == 0xFE);
+}
+
+// ============================================================================
 // Unsupported target type
 // ============================================================================
 
@@ -183,4 +204,90 @@ TEST_CASE("should retrieve large binary in chunks via SQLGetData", "[datatype][b
   REQUIRE(buffer[1] == 0x06);
   REQUIRE(buffer[2] == 0x07);
   REQUIRE(buffer[3] == 0x08);
+}
+
+// ============================================================================
+// Exact-fit buffer for SQL_C_BINARY
+// ============================================================================
+
+TEST_CASE("should succeed with exact-fit buffer for SQL_C_BINARY", "[datatype][binary][conversion][binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT X'ABCDEF'::BINARY" is executed
+  const auto stmt = conn.execute_fetch("SELECT X'ABCDEF'::BINARY");
+
+  // Then SQL_C_BINARY with buffer exactly matching data length should return SQL_SUCCESS
+  SQLCHAR buffer[3] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, 3, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(indicator == 3);
+  REQUIRE(buffer[0] == 0xAB);
+  REQUIRE(buffer[1] == 0xCD);
+  REQUIRE(buffer[2] == 0xEF);
+}
+
+// ============================================================================
+// 3-chunk retrieval for SQL_C_BINARY
+// ============================================================================
+
+TEST_CASE("should retrieve binary in three chunks via SQLGetData", "[datatype][binary][conversion][binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query selecting a 9-byte binary value is executed
+  const auto stmt = conn.execute_fetch("SELECT X'010203040506070809'::BINARY");
+
+  SQLCHAR buffer[3] = {};
+  SQLLEN indicator = 0;
+
+  // Then First SQLGetData call should return first 3 bytes with 01004
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, 3, &indicator);
+  REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  REQUIRE(get_sqlstate(stmt) == "01004");
+  REQUIRE(indicator == 9);
+  REQUIRE(buffer[0] == 0x01);
+  REQUIRE(buffer[1] == 0x02);
+  REQUIRE(buffer[2] == 0x03);
+
+  // And Second SQLGetData call should return next 3 bytes with 01004
+  memset(buffer, 0, sizeof(buffer));
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, 3, &indicator);
+  REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  REQUIRE(get_sqlstate(stmt) == "01004");
+  REQUIRE(indicator == 6);
+  REQUIRE(buffer[0] == 0x04);
+  REQUIRE(buffer[1] == 0x05);
+  REQUIRE(buffer[2] == 0x06);
+
+  // And Third SQLGetData call should return final 3 bytes with SQL_SUCCESS
+  memset(buffer, 0, sizeof(buffer));
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, 3, &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(indicator == 3);
+  REQUIRE(buffer[0] == 0x07);
+  REQUIRE(buffer[1] == 0x08);
+  REQUIRE(buffer[2] == 0x09);
+}
+
+// ============================================================================
+// Zero-length buffer for SQL_C_BINARY — length-only query
+// ============================================================================
+
+TEST_CASE("should report full length with zero-length buffer for SQL_C_BINARY",
+          "[datatype][binary][conversion][binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT X'ABCDEF'::BINARY" is executed
+  const auto stmt = conn.execute_fetch("SELECT X'ABCDEF'::BINARY");
+
+  // Then SQLGetData with BufferLength=0 should return 01004 with indicator reporting full data length
+  SQLCHAR dummy = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, &dummy, 0, &indicator);
+  REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
+  REQUIRE(get_sqlstate(stmt) == "01004");
+  REQUIRE(indicator == 3);
 }

@@ -107,7 +107,9 @@ where
                 if resp.status().is_success() {
                     return on_response(resp).await;
                 }
-                if !should_retry_status(resp.status()) || !allow_retry(ctx, &policy.http) {
+                if !should_retry_status(resp.status(), &policy.extra_retryable_statuses)
+                    || !allow_retry(ctx, &policy.http)
+                {
                     // Non-retryable status: surface response to caller
                     return on_response(resp).await;
                 }
@@ -157,8 +159,9 @@ where
     }
 }
 
-fn should_retry_status(status: StatusCode) -> bool {
-    status == StatusCode::REQUEST_TIMEOUT
+fn should_retry_status(status: StatusCode, extra: &[u16]) -> bool {
+    extra.contains(&status.as_u16())
+        || status == StatusCode::REQUEST_TIMEOUT
         || status == StatusCode::TOO_MANY_REQUESTS
         || status == StatusCode::TEMPORARY_REDIRECT
         || status == StatusCode::PERMANENT_REDIRECT

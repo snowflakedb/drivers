@@ -24,6 +24,7 @@
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set has correct number of columns",
                  "[odbc-api][catalog][specialcolumns]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret =
       SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
                         SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
@@ -37,6 +38,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set has corre
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set column names match ODBC 3.x spec",
                  "[odbc-api][catalog][specialcolumns]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret =
       SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
                         SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
@@ -66,6 +68,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Result set column na
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQL_BEST_ROWID returns empty result set",
                  "[odbc-api][catalog][specialcolumns]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Snowflake does not support row identifiers, so SQLSpecialColumns
   // always returns an empty result set for SQL_BEST_ROWID.
 
@@ -80,6 +83,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQL_BEST_ROWID retur
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQL_ROWVER returns empty result set",
                  "[odbc-api][catalog][specialcolumns]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Note: Snowflake does not have auto-updated version columns, so
   // SQLSpecialColumns always returns an empty result set for SQL_ROWVER.
 
@@ -94,6 +98,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQL_ROWVER returns e
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Various scope and nullable combinations return empty",
                  "[odbc-api][catalog][specialcolumns]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // SQL_SCOPE_CURROW + SQL_NO_NULLS
   SQLRETURN ret =
       SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
@@ -117,6 +122,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Various scope and nu
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Can call multiple times after close cursor",
                  "[odbc-api][catalog][specialcolumns]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret =
       SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
                         SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
@@ -134,6 +140,7 @@ TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: Can call multiple ti
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: SQLRowCount returns -1",
                  "[odbc-api][catalog][specialcolumns]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret =
       SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
                         SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
@@ -165,6 +172,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: HY090 - Negative Tab
 
 TEST_CASE_METHOD(ReadOnlyDbStmtFixture, "SQLSpecialColumns: 24000 - Cursor already open",
                  "[odbc-api][catalog][specialcolumns][error]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret =
       SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(database_name()), SQL_NTS, sqlchar(schema_name()),
                         SQL_NTS, sqlchar(readonly_db::SINGLE_PK_TABLE), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);

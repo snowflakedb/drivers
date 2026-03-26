@@ -20,7 +20,7 @@ from tests.e2e.types.utils import assert_connection_is_open
 LARGE_RESULT_SET_ROW_COUNT = 100_000
 
 ARROW_TYPE_CASES = [
-    # (type_name, value_expr, null_expr, value_check, arrow_type_check)
+    # (type_name, value_expr, null_expr, value_check, empty_column_arrow_type_check)
     ("number", "1::NUMBER", "NULL::NUMBER", lambda v: v == 1, pa.types.is_int64),
     ("scaled_number", "3.14::NUMBER(10,2)", "NULL::NUMBER(10,2)", lambda v: abs(v - 3.14) < 0.01, pa.types.is_int64),
     ("varchar", "'hello'::VARCHAR", "NULL::VARCHAR", lambda v: v == "hello", pa.types.is_string),
@@ -62,17 +62,16 @@ ARROW_TYPE_CASES = [
 ]
 
 
-@pytest.mark.skip_universal("SNOW-3243341 - not implemented yet")
 class TestFetchArrowAll:
     """Tests for fetch_arrow_all cursor method."""
 
     @pytest.mark.parametrize(
-        "type_name,value_expr,null_expr,check,_arrow_type_check",
+        "type_name,value_expr,null_expr,check,_empty_column_arrow_type_check",
         ARROW_TYPE_CASES,
         ids=[c[0] for c in ARROW_TYPE_CASES],
     )
     def test_should_fetch_type_name_with_null_as_pyarrow_table(
-        self, execute_query, cursor, type_name, value_expr, null_expr, check, _arrow_type_check
+        self, execute_query, cursor, type_name, value_expr, null_expr, check, _empty_column_arrow_type_check
     ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
@@ -110,12 +109,12 @@ class TestFetchArrowAll:
         assert result is None
 
     @pytest.mark.parametrize(
-        "type_name,value_expr,_null_expr,_check,type_check",
+        "type_name,value_expr,_null_expr,_check,empty_column_arrow_type_check",
         ARROW_TYPE_CASES,
         ids=[c[0] for c in ARROW_TYPE_CASES],
     )
     def test_should_return_empty_type_name_column_with_correct_arrow_type_when_force_return_table_is_true(
-        self, execute_query, cursor, type_name, value_expr, _null_expr, _check, type_check
+        self, execute_query, cursor, type_name, value_expr, _null_expr, _check, empty_column_arrow_type_check
     ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
@@ -131,7 +130,7 @@ class TestFetchArrowAll:
         assert result.num_rows == 0
 
         # And Column COL should have <arrow_type> Arrow type
-        assert type_check(result.schema.field("COL").type)
+        assert empty_column_arrow_type_check(result.schema.field("COL").type)
 
     def test_should_convert_scaled_fixed_number_to_decimal_via_fetch_arrow_all(self, execute_query, cursor):
         # Given Snowflake client is logged in
@@ -174,7 +173,6 @@ class TestFetchArrowAll:
         assert ts_val.microsecond == 123456
 
 
-@pytest.mark.skip_universal("SNOW-3243341 - not implemented yet")
 class TestFetchArrowBatches:
     """Tests for fetch_arrow_batches cursor method."""
 

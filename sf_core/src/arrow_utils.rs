@@ -3,9 +3,11 @@ use arrow::array::{
     Array, BinaryArray, BooleanArray, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
     StringArray,
 };
+use arrow::datatypes;
 use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
+use datatypes::{Int8Type, Int16Type};
 use hex::FromHexError;
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
@@ -220,31 +222,13 @@ pub fn create_field_with_type(
     }
 }
 
-/// Maps a FIXED column's precision to the narrowest integer Arrow type that can
-/// hold all possible values for that precision. Used as a precision-based
-/// fallback for all-null columns (the non-null path instead infers the type
-/// from the observed min/max values, which may select a different width).
-fn integer_type_for_precision(precision: u64) -> DataType {
-    if precision <= 2 {
-        DataType::Int8
-    } else if precision <= 4 {
-        DataType::Int16
-    } else if precision <= 9 {
-        DataType::Int32
-    } else if precision <= 18 {
-        DataType::Int64
-    } else {
-        DataType::Decimal128(precision as u8, 0)
-    }
-}
-
 fn cast_fixed_to_arrow<T>(
     row_type: &RowType,
     data_type: DataType,
     parsed: Vec<Option<i128>>,
 ) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError>
 where
-    T: arrow::datatypes::ArrowPrimitiveType,
+    T: datatypes::ArrowPrimitiveType,
     T::Native: TryFrom<i128>,
     arrow::array::PrimitiveArray<T>: From<Vec<Option<T::Native>>>,
 {
@@ -405,75 +389,26 @@ fn create_column_array(
             if min_value.is_none() {
                 if *scale > 0 {
                     return Ok((
-                        create_field_with_type(
-                            row_type,
-                            Some(DataType::Decimal128(*precision as u8, *scale as i8)),
-                        )?,
-                        Arc::new(
-                            arrow::array::Decimal128Array::new_null(len)
-                                .with_precision_and_scale(*precision as u8, *scale as i8)
-                                .context(ArrowSnafu {})?,
-                        ),
-                    ));
-                }
-                let inferred = integer_type_for_precision(*precision);
-                return match inferred {
-                    DataType::Int8 => Ok((
                         create_field_with_type(row_type, Some(DataType::Int8))?,
                         Arc::new(Int8Array::new_null(len)),
-                    )),
-                    DataType::Int16 => Ok((
-                        create_field_with_type(row_type, Some(DataType::Int16))?,
-                        Arc::new(Int16Array::new_null(len)),
-                    )),
-                    DataType::Int32 => Ok((
-                        create_field_with_type(row_type, Some(DataType::Int32))?,
-                        Arc::new(Int32Array::new_null(len)),
-                    )),
-                    DataType::Int64 => Ok((
-                        create_field_with_type(row_type, Some(DataType::Int64))?,
-                        Arc::new(Int64Array::new_null(len)),
-                    )),
-                    dt @ DataType::Decimal128(p, s) => Ok((
-                        create_field_with_type(row_type, Some(dt))?,
-                        Arc::new(
-                            arrow::array::Decimal128Array::new_null(len)
-                                .with_precision_and_scale(p, s)
-                                .context(ArrowSnafu {})?,
-                        ),
-                    )),
-                    _ => unreachable!(
-                        "integer_type_for_precision only returns Int8/16/32/64 or Decimal128"
-                    ),
-                };
+                    ));
+                }
+                return Ok((
+                    create_field_with_type(row_type, Some(DataType::Int8))?,
+                    Arc::new(Int8Array::new_null(len)),
+                ));
             }
             let min_value = min_value.unwrap();
             let max_value = max_value.unwrap();
 
             if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
-                cast_fixed_to_arrow::<arrow::datatypes::Int8Type>(
-                    row_type,
-                    DataType::Int8,
-                    decimal_values,
-                )
+                cast_fixed_to_arrow::<Int8Type>(row_type, DataType::Int8, decimal_values)
             } else if min_value >= i16::MIN as i128 && max_value <= i16::MAX as i128 {
-                cast_fixed_to_arrow::<arrow::datatypes::Int16Type>(
-                    row_type,
-                    DataType::Int16,
-                    decimal_values,
-                )
+                cast_fixed_to_arrow::<Int16Type>(row_type, DataType::Int16, decimal_values)
             } else if min_value >= i32::MIN as i128 && max_value <= i32::MAX as i128 {
-                cast_fixed_to_arrow::<arrow::datatypes::Int32Type>(
-                    row_type,
-                    DataType::Int32,
-                    decimal_values,
-                )
+                cast_fixed_to_arrow::<Int32Type>(row_type, DataType::Int32, decimal_values)
             } else if min_value >= i64::MIN as i128 && max_value <= i64::MAX as i128 {
-                cast_fixed_to_arrow::<arrow::datatypes::Int64Type>(
-                    row_type,
-                    DataType::Int64,
-                    decimal_values,
-                )
+                cast_fixed_to_arrow::<Int64Type>(row_type, DataType::Int64, decimal_values)
             } else {
                 Ok((
                     create_field_with_type(
@@ -1192,7 +1127,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Int64);
+        assert_eq!(*col.data_type(), DataType::Int8);
     }
 
     #[test]
@@ -1210,34 +1145,6 @@ mod tests {
     }
 
     #[test]
-    fn test_all_null_fixed_column_int16() {
-        let rowset = vec![vec![None], vec![None]];
-        let row_types = vec![RowType::fixed("col", true, 4, 0)];
-
-        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
-        let batch = reader.next().unwrap().unwrap();
-
-        assert_eq!(batch.num_rows(), 2);
-        let col = batch.column(0);
-        assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Int16);
-    }
-
-    #[test]
-    fn test_all_null_fixed_column_int32() {
-        let rowset = vec![vec![None], vec![None]];
-        let row_types = vec![RowType::fixed("col", true, 9, 0)];
-
-        let mut reader = convert_string_rowset_to_arrow_reader(&rowset, &row_types).unwrap();
-        let batch = reader.next().unwrap().unwrap();
-
-        assert_eq!(batch.num_rows(), 2);
-        let col = batch.column(0);
-        assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Int32);
-    }
-
-    #[test]
     fn test_all_null_fixed_column_with_scale() {
         let rowset = vec![vec![None], vec![None]];
         let row_types = vec![RowType::fixed("col", true, 10, 2)];
@@ -1248,7 +1155,10 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Decimal128(10, 2));
+        assert_eq!(*col.data_type(), DataType::Int8);
+        let schema = batch.schema();
+        let field = schema.field(0);
+        assert_eq!(field.metadata().get("scale").unwrap(), "2");
     }
 
     #[test]
@@ -1343,7 +1253,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Decimal128(20, 0));
+        assert_eq!(*col.data_type(), DataType::Int8);
     }
 
     #[test]

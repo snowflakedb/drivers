@@ -1,9 +1,16 @@
 use std::collections::HashMap;
+use std::io;
 use tokio::sync::Mutex;
+
+use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow_ipc::reader::StreamReader;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use snafu::ResultExt;
 
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
+use crate::chunks::{ChunkDownloadData, get_chunk_data};
 use crate::config::ParamStore;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
@@ -68,6 +75,34 @@ impl DatabaseDriverV1 {
             .fail(),
         }
     }
+
+    pub async fn database_fetch_chunk(
+        &self,
+        db_handle: Handle,
+        input: FetchChunkInput,
+    ) -> Result<Box<FFI_ArrowArrayStream>, ApiError> {
+        if self.databases.get_obj(db_handle).is_none() {
+            return InvalidArgumentSnafu {
+                argument: "Database handle not found".to_string(),
+            }
+            .fail();
+        }
+
+        let bytes = match input {
+            FetchChunkInput::Inline(data) => BASE64.decode(&data).context(Base64DecodingSnafu)?,
+            FetchChunkInput::Remote(chunk) => {
+                // TODO Configure the client properly here
+                let client = reqwest::Client::new();
+                get_chunk_data(&client, &chunk)
+                    .await
+                    .context(ChunkFetchSnafu)?
+            }
+        };
+
+        let cursor = io::Cursor::new(bytes);
+        let reader = StreamReader::try_new(cursor, None).context(ArrowParsingSnafu)?;
+        Ok(Box::new(FFI_ArrowArrayStream::new(Box::new(reader))))
+    }
 }
 
 pub struct Database {
@@ -86,4 +121,9 @@ impl Database {
             settings: ParamStore::new(),
         }
     }
+}
+
+pub enum FetchChunkInput {
+    Inline(String),
+    Remote(ChunkDownloadData),
 }

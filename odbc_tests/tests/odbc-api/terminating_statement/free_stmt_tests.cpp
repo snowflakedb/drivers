@@ -160,6 +160,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_UNBIND preserves prepa
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_RESET_PARAMS resets bound parameters",
                  "[odbc-api][freestmt][terminating_statement]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -573,6 +574,7 @@ TEST_CASE_METHOD(TwoStmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE from Error st
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: prepared flag preserved through re-execute from NoResultSet",
                  "[odbc-api][freestmt][terminating_statement]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLExecDirect(
       stmt_handle(), sqlchar("CREATE OR REPLACE TEMPORARY TABLE test_freestmt_reexec (id INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);

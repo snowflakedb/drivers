@@ -1,7 +1,19 @@
 """Common utilities for performance testing."""
 
+import resource
 import statistics
+import sys
 from typing import List, Dict, Callable, Any
+
+
+def get_peak_rss_mb() -> float:
+    """Return process peak RSS in MB (Linux, macOS). Returns 0 on unsupported platforms."""
+    if sys.platform == "win32":
+        return 0.0
+    ru_maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform == "darwin":
+        return ru_maxrss / (1024 * 1024)  # bytes -> MB on macOS
+    return ru_maxrss / 1024  # KB -> MB on Linux
 
 
 def run_warmup(execute_fn: Callable, cursor, sql: str, warmup_iterations: int) -> None:

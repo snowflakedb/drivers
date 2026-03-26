@@ -68,6 +68,17 @@ Feature: ODBC binary to character type conversions
     And SQL_C_WCHAR should return SQL_NULL_DATA indicator
 
   # ============================================================================
+  # VARBINARY SYNONYM
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should convert VARBINARY to SQL_C_CHAR and SQL_C_WCHAR same as BINARY
+    Given Snowflake client is logged in
+    When Query "SELECT X'ABCDEF'::VARBINARY" is executed
+    Then SQL_C_CHAR should return uppercase hex "ABCDEF"
+    And SQL_C_WCHAR should return uppercase hex u"ABCDEF"
+
+  # ============================================================================
   # CHUNKED SQLGetData FOR LARGE HEX OUTPUT
   # ============================================================================
 
@@ -84,3 +95,50 @@ Feature: ODBC binary to character type conversions
     When Query selecting a binary value whose hex representation exceeds wide buffer size is executed
     Then First SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS_WITH_INFO with truncated data
     And Second SQLGetData call with SQL_C_WCHAR should return SQL_SUCCESS with remaining wide hex
+
+  # ============================================================================
+  # EXACT-FIT BUFFER
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should succeed with exact-fit buffer for SQL_C_CHAR
+    Given Snowflake client is logged in
+    When Query "SELECT X'ABCDEF'::BINARY" is executed (3 bytes -> hex "ABCDEF" = 6 chars)
+    Then SQL_C_CHAR with buffer = 7 (6 hex chars + null) should return SQL_SUCCESS
+
+  @odbc_e2e
+  Scenario: should succeed with exact-fit buffer for SQL_C_WCHAR
+    Given Snowflake client is logged in
+    When Query "SELECT X'CAFE'::BINARY" is executed (2 bytes -> hex "CAFE" = 4 wide chars)
+    Then SQL_C_WCHAR with buffer = 5 * sizeof(SQLWCHAR) (4 chars + null) should return SQL_SUCCESS
+
+  # ============================================================================
+  # TRUNCATION EDGE CASES
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should truncate binary hex with one-byte-short buffer for SQL_C_CHAR
+    # BD#30: Old driver writes only complete hex pairs on even BufferLength
+    # ("ABCD\0", last byte unused). New driver fills all available space ("ABCDE\0").
+    Given Snowflake client is logged in
+    When Query "SELECT X'ABCDEF'::BINARY" is executed (3 bytes -> hex "ABCDEF" = 6 chars, needs 7)
+    Then SQL_C_CHAR with buffer = 6 (one short of the 7 needed) should return 01004
+    And Truncated output should be null-terminated with valid hex prefix
+
+  @odbc_e2e
+  Scenario: should handle buffer size 1 for SQL_C_CHAR with binary
+    Given Snowflake client is logged in
+    When Query "SELECT X'ABCDEF'::BINARY" is executed
+    Then SQL_C_CHAR with buffer = 1 should return 01004 with indicator = 6 and only null terminator
+
+  # ============================================================================
+  # 3-CHUNK RETRIEVAL FOR SQL_C_CHAR
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should retrieve binary hex in three chunks via SQLGetData with SQL_C_CHAR
+    Given Snowflake client is logged in
+    When Query selecting a 6-byte binary value (hex = 12 chars) is executed
+    Then First SQLGetData call should return first 4 hex chars with 01004
+    And Second SQLGetData call should return next 4 hex chars with 01004
+    And Third SQLGetData call should return final 4 hex chars with SQL_SUCCESS

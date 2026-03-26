@@ -169,9 +169,7 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
 }
 
 TEST_CASE("should authenticate using private_key as base64 string", "[private_key_auth]") {
-  // Old driver requires PRIV_KEY_FILE even when PRIV_KEY_BASE64 is provided.
-  // TODO: Re-enable once DSN support is implemented (provide PRIV_KEY_FILE via DSN).
-  SKIP_OLD_DRIVER("", "Old driver requires PRIV_KEY_FILE even when PRIV_KEY_BASE64 is set");
+  SKIP_OLD_DRIVER("", "Old driver does not support PRIV_KEY_BASE64 in connection strings");
 
   // Given Authentication is set to JWT and private key is provided as base64-encoded string
   auto params = get_test_parameters("testconnection");

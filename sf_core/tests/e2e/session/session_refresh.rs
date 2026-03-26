@@ -111,7 +111,7 @@ fn should_refresh_session_proactively() {
             .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
-        let login_result = snowflake_login_with_client(&http_client, &login_parameters, None)
+        let login_result = snowflake_login_with_client(&http_client, &login_parameters, None, None)
             .await
             .expect("Login should succeed");
 

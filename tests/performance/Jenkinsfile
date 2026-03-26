@@ -225,9 +225,9 @@ pipeline {
 def getAgentLabel(architecture) {
     switch (architecture) {
         case 'x86_64':
-            return 'regular-memory-node-snowos'
+            return 'drivers-perf-regular-memory-node-snowos'
         case 'arm64':
-            return 'regular-memory-node-snowosarm'
+            return 'drivers-perf-regular-memory-node-snowosarm'
         default:
             error "Unsupported architecture: ${architecture}. Use 'x86_64' or 'arm64'."
     }

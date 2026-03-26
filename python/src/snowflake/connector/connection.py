@@ -34,6 +34,7 @@ from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.text_utils import split_statements
+from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, SnowflakeCursor
 from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
@@ -138,6 +139,9 @@ class Connection:
         self._closed = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
+
+        # other connection properties
+        self._arrow_number_to_decimal: bool = False
 
     @pep249
     def close(self) -> None:
@@ -522,11 +526,21 @@ class Connection:
     @property
     def arrow_number_to_decimal(self) -> bool:
         """Whether to convert Arrow numeric types to Python ``Decimal`` instead of ``float``."""
-        raise NotImplementedError("arrow_number_to_decimal is not yet implemented")
+        return self._arrow_number_to_decimal
 
     @arrow_number_to_decimal.setter
     def arrow_number_to_decimal(self, value: bool) -> None:
-        raise NotImplementedError("arrow_number_to_decimal is not yet implemented")
+        self._arrow_number_to_decimal = bool(value)
+
+    @backward_compatibility
+    @arrow_number_to_decimal.setter  # type: ignore[attr-defined, untyped-decorator]
+    def arrow_number_to_decimal_setter(self, value: bool) -> None:
+        """Set arrow_number_to_decimal field. Deprecated.
+
+        Allows setting this field through `cursor.connection.arrow_number_to_decimal_setter = True`.
+        Added only because of backwards compatibility, correct setter should be used.
+        """
+        self.arrow_number_to_decimal = value
 
     @property
     def validate_default_parameters(self) -> bool:
@@ -557,14 +571,27 @@ class Connection:
         raise NotImplementedError("get_query_status_throw_if_error is not yet implemented")
 
     @staticmethod
-    def is_still_running(status: Any) -> bool:
+    def is_still_running(status: QueryStatus) -> bool:
         """Check whether given status is currently running."""
-        raise NotImplementedError("is_still_running is not yet implemented")
+        return status in (
+            QueryStatus.RUNNING,
+            QueryStatus.QUEUED,
+            QueryStatus.RESUMING_WAREHOUSE,
+            QueryStatus.QUEUED_REPARING_WAREHOUSE,
+            QueryStatus.BLOCKED,
+            QueryStatus.NO_DATA,
+        )
 
     @staticmethod
-    def is_an_error(status: Any) -> bool:
+    def is_an_error(status: QueryStatus) -> bool:
         """Check whether given status means that there has been an error."""
-        raise NotImplementedError("is_an_error is not yet implemented")
+        return status in (
+            QueryStatus.ABORTING,
+            QueryStatus.FAILED_WITH_ERROR,
+            QueryStatus.ABORTED,
+            QueryStatus.FAILED_WITH_INCIDENT,
+            QueryStatus.DISCONNECTED,
+        )
 
 
 # Backward compatibility alias

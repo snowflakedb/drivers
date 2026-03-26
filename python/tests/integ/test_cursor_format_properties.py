@@ -1,29 +1,53 @@
 """
-Integration tests for cursor timestamp format properties.
+Integration tests for cursor session format properties.
 
-These properties expose session-level TIMESTAMP_*_OUTPUT_FORMAT parameters
-as read-only metadata on the cursor. Type-specific formats (LTZ, TZ, NTZ)
-fall back to TIMESTAMP_OUTPUT_FORMAT when not set explicitly.
+These properties expose session-level output format parameters
+as read-only metadata on the cursor.
 """
 
 import pytest
 
 
-class TestTimestampOutputFormat:
-    """Tests for cursor.timestamp_output_format property."""
+SIMPLE_PROPERTIES = [
+    ("timestamp_output_format", "YYYY-MM-DD", "MM/DD/YYYY HH24:MI"),
+    ("date_output_format", "YYYY-MM-DD", "DD/MM/YYYY"),
+    ("time_output_format", "HH24:MI:SS", "HH12:MI:SS"),
+    ("timezone", "America/New_York", "Europe/Berlin"),
+    ("binary_output_format", "HEX", "BASE64"),
+]
 
-    def test_set_at_connect_time(self, connection_factory):
-        with connection_factory(session_parameters={"TIMESTAMP_OUTPUT_FORMAT": "YYYY-MM-DD"}) as conn:
+
+class TestSessionFormatProperties:
+    """Tests for simple session format properties (no fallback logic).
+
+    Covers: timestamp_output_format, date_output_format, time_output_format,
+    timezone, and binary_output_format.
+    """
+
+    @pytest.mark.parametrize("prop,val1,val2", SIMPLE_PROPERTIES)
+    def test_set_at_connect_time(self, connection_factory, prop, val1, val2):
+        with connection_factory(session_parameters={prop.upper(): val1}) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
-            assert cursor.timestamp_output_format == "YYYY-MM-DD"
+            assert getattr(cursor, prop) == val1
 
-    def test_reflects_alter_session_change(self, cursor):
-        cursor.execute("ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS'")
-        assert cursor.timestamp_output_format == "YYYY-MM-DD HH24:MI:SS"
+    @pytest.mark.parametrize("prop,val1,val2", SIMPLE_PROPERTIES)
+    def test_reflects_alter_session_change(self, cursor, prop, val1, val2):
+        cursor.execute(f"ALTER SESSION SET {prop.upper()} = '{val1}'")
+        assert getattr(cursor, prop) == val1
 
-        cursor.execute("ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'MM/DD/YYYY HH24:MI'")
-        assert cursor.timestamp_output_format == "MM/DD/YYYY HH24:MI"
+        cursor.execute(f"ALTER SESSION SET {prop.upper()} = '{val2}'")
+        assert getattr(cursor, prop) == val2
+
+    @pytest.mark.parametrize("prop,val1,val2", SIMPLE_PROPERTIES)
+    def test_alter_session_overrides_connect_time_value(self, connection_factory, prop, val1, val2):
+        with connection_factory(session_parameters={prop.upper(): val1}) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            assert getattr(cursor, prop) == val1
+
+            cursor.execute(f"ALTER SESSION SET {prop.upper()} = '{val2}'")
+            assert getattr(cursor, prop) == val2
 
     @pytest.mark.skip_reference(
         reason="UD uses shared connection cache; cursor_b sees update without executing a query"
@@ -45,15 +69,6 @@ class TestTimestampOutputFormat:
         assert cursor_a.timestamp_output_format == "YYYY/MM/DD"
         assert cursor_b.timestamp_output_format == "YYYY/MM/DD"
 
-    def test_alter_session_overrides_connect_time_value(self, connection_factory):
-        with connection_factory(session_parameters={"TIMESTAMP_OUTPUT_FORMAT": "YYYY-MM-DD"}) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            assert cursor.timestamp_output_format == "YYYY-MM-DD"
-
-            cursor.execute("ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'MM/DD/YYYY HH24:MI'")
-            assert cursor.timestamp_output_format == "MM/DD/YYYY HH24:MI"
-
     def test_independent_connections_have_independent_formats(self, connection_factory):
         with (
             connection_factory(session_parameters={"TIMESTAMP_OUTPUT_FORMAT": "YYYY-MM-DD"}) as conn_a,
@@ -67,43 +82,44 @@ class TestTimestampOutputFormat:
             assert cursor_b.timestamp_output_format == "MM/DD/YYYY"
 
 
+TIMESTAMP_FALLBACK_PROPERTIES = [
+    "timestamp_ltz_output_format",
+    "timestamp_tz_output_format",
+    "timestamp_ntz_output_format",
+]
+
+
 class TestTimestampTypeSpecificOutputFormats:
     """Tests for cursor.timestamp_{ltz,tz,ntz}_output_format properties.
 
     These properties fall back to timestamp_output_format when not set explicitly.
     """
 
-    PARAM_PROP_PAIRS = [
-        ("TIMESTAMP_LTZ_OUTPUT_FORMAT", "timestamp_ltz_output_format"),
-        ("TIMESTAMP_TZ_OUTPUT_FORMAT", "timestamp_tz_output_format"),
-        ("TIMESTAMP_NTZ_OUTPUT_FORMAT", "timestamp_ntz_output_format"),
-    ]
-
-    @pytest.mark.parametrize("param,prop", PARAM_PROP_PAIRS)
-    def test_falls_back_to_timestamp_output_format(self, cursor, param, prop):
-        cursor.execute(f"ALTER SESSION SET {param} = ''")
+    @pytest.mark.parametrize("prop", TIMESTAMP_FALLBACK_PROPERTIES)
+    def test_falls_back_to_timestamp_output_format(self, cursor, prop):
+        cursor.execute(f"ALTER SESSION SET {prop.upper()} = ''")
         cursor.execute("ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS'")
         assert getattr(cursor, prop) == "YYYY-MM-DD HH24:MI:SS"
 
-    @pytest.mark.parametrize("param,prop", PARAM_PROP_PAIRS)
-    def test_explicit_value_overrides_fallback(self, cursor, param, prop):
+    @pytest.mark.parametrize("prop", TIMESTAMP_FALLBACK_PROPERTIES)
+    def test_explicit_value_overrides_fallback(self, cursor, prop):
         cursor.execute("ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS'")
-        cursor.execute(f"ALTER SESSION SET {param} = 'DD/MM/YYYY'")
+        cursor.execute(f"ALTER SESSION SET {prop.upper()} = 'DD/MM/YYYY'")
         assert getattr(cursor, prop) == "DD/MM/YYYY"
 
-    @pytest.mark.parametrize("param,prop", PARAM_PROP_PAIRS)
-    def test_set_at_connect_time(self, connection_factory, param, prop):
-        with connection_factory(session_parameters={param: "YYYY/MM/DD HH24:MI"}) as conn:
+    @pytest.mark.parametrize("prop", TIMESTAMP_FALLBACK_PROPERTIES)
+    def test_set_at_connect_time(self, connection_factory, prop):
+        with connection_factory(session_parameters={prop.upper(): "YYYY/MM/DD HH24:MI"}) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             assert getattr(cursor, prop) == "YYYY/MM/DD HH24:MI"
 
-    @pytest.mark.parametrize("param,prop", PARAM_PROP_PAIRS)
-    def test_alter_session_overrides_connect_time_value(self, connection_factory, param, prop):
-        with connection_factory(session_parameters={param: "YYYY-MM-DD"}) as conn:
+    @pytest.mark.parametrize("prop", TIMESTAMP_FALLBACK_PROPERTIES)
+    def test_alter_session_overrides_connect_time_value(self, connection_factory, prop):
+        with connection_factory(session_parameters={prop.upper(): "YYYY-MM-DD"}) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             assert getattr(cursor, prop) == "YYYY-MM-DD"
 
-            cursor.execute(f"ALTER SESSION SET {param} = 'DD.MM.YYYY HH24:MI'")
+            cursor.execute(f"ALTER SESSION SET {prop.upper()} = 'DD.MM.YYYY HH24:MI'")
             assert getattr(cursor, prop) == "DD.MM.YYYY HH24:MI"

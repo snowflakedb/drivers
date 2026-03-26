@@ -34,6 +34,12 @@ pub enum Credentials {
         username: String,
         token: SensitiveString,
     },
+    UserPasswordMfa {
+        username: String,
+        password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +153,18 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
         LoginMethod::Pat { username, token } => Ok(Credentials::Pat {
             username: username.clone(),
             token: token.clone(),
+        }),
+        LoginMethod::UserPasswordMfa {
+            username,
+            password,
+            passcode_in_password,
+            passcode,
+            ..
+        } => Ok(Credentials::UserPasswordMfa {
+            username: username.clone(),
+            password: password.clone(),
+            passcode: passcode.clone(),
+            passcode_in_password: *passcode_in_password,
         }),
     }
 }

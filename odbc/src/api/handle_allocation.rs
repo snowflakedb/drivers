@@ -1,7 +1,7 @@
 use crate::api::error::{DisconnectedSnafu, InvalidHandleSnafu, OdbcRuntimeSnafu, Required};
 use crate::api::{
-    ArdDescriptor, Connection, ConnectionState, Environment, IrdDescriptor, OdbcResult, Statement,
-    StatementState, conn_from_handle,
+    ApdDescriptor, ArdDescriptor, Connection, ConnectionState, Environment, IpdDescriptor,
+    IrdDescriptor, OdbcResult, Statement, StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
     runtime::{env_allocated, env_freed, global},
 };
@@ -18,6 +18,8 @@ pub fn alloc_environment() -> OdbcResult<*mut Environment> {
     env_allocated().context(OdbcRuntimeSnafu)?;
     let env = Box::new(Environment {
         odbc_version: 3,
+        connection_pooling: sql::AttrConnectionPooling::Off,
+        connection_pool_match: sql::AttrCpMatch::Strict,
         diagnostic_info: DiagnosticInfo::default(),
     });
     Ok(Box::into_raw(env))
@@ -58,16 +60,16 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 conn,
                 stmt_handle,
                 state: StatementState::Created.into(),
-                parameter_bindings: std::collections::HashMap::new(),
                 ard: ArdDescriptor::new(),
                 ird: IrdDescriptor::new(),
-                apd: ArdDescriptor::new_apd(),
-                ipd: IrdDescriptor::new_ipd(),
+                apd: ApdDescriptor::new(),
+                ipd: IpdDescriptor::new(),
                 diagnostic_info: DiagnosticInfo::default(),
                 get_data_state: None,
                 cursor_type: crate::api::CursorType::ForwardOnly,
                 max_length: 0,
                 used_extended_fetch: false,
+                last_query_id: None,
             });
             Ok(Box::into_raw(stmt))
         }

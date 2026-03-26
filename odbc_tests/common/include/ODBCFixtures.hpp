@@ -107,9 +107,6 @@ class StmtFixture : public DbcFixture {
 
  public:
   explicit StmtFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) : DbcFixture(std::move(dsn_config)) {
-    // SQLConnect is not yet implemented in the new driver
-    SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
     const std::string dsn = dsn_name();
     SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
     REQUIRE(ret == SQL_SUCCESS);

@@ -1,4 +1,6 @@
-use super::types::{EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo};
+use super::types::{
+    EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo, UploadStatus,
+};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 
 // AWS SDK imports
@@ -19,19 +21,19 @@ pub async fn upload_to_s3_or_skip(
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
-) -> Result<String, UploadFileError> {
+) -> Result<UploadStatus, UploadFileError> {
     // Check if the file already exists in S3
-    let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await;
+    let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
     if !overwrite && check_if_file_exists(&s3_client, stage_info, &s3_key).await? {
         tracing::info!("File already exists in S3: {}", s3_key);
-        return Ok("SKIPPED".to_string());
+        return Ok(UploadStatus::Skipped);
     }
 
     // Proceed with upload if the file does not exist or overwrite is true
     upload_to_s3(encryption_result, &s3_client, stage_info, &s3_key).await?;
-    Ok("UPLOADED".to_string())
+    Ok(UploadStatus::Uploaded)
 }
 
 /// Returns true if the file exists in S3, false if it does not.
@@ -58,7 +60,7 @@ async fn check_if_file_exists(
             );
             Ok(false)
         }
-        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(S3HeadSnafu),
+        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(upload_file_error::S3HeadSnafu),
     }
 }
 
@@ -70,7 +72,7 @@ async fn upload_to_s3(
 ) -> Result<(), UploadFileError> {
     // Serialize encryption metadata
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)
-        .context(SerializationSnafu)?;
+        .context(upload_file_error::SerializationSnafu)?;
 
     let put_object_request = s3_client
         .put_object()
@@ -90,7 +92,7 @@ async fn upload_to_s3(
         .send()
         .await
         .map_err(aws_sdk_s3::Error::from)
-        .context(S3UploadSnafu)?;
+        .context(upload_file_error::S3UploadSnafu)?;
 
     tracing::debug!("S3 upload result: {:?}", result);
 
@@ -101,7 +103,7 @@ pub async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
 ) -> Result<(Vec<u8>, EncryptedFileMetadata), DownloadFileError> {
-    let s3_client = create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await;
+    let s3_client = create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
     // Download from S3
@@ -112,40 +114,43 @@ pub async fn download_from_s3(
         .send()
         .await
         .map_err(aws_sdk_s3::Error::from)
-        .context(S3DownloadSnafu)?;
+        .context(download_file_error::S3DownloadSnafu)?;
 
     // Extract metadata from S3 response and construct the metadata structure directly
-    let metadata_map = response.metadata().context(MissingFileMetadataSnafu {
-        field: "All fields".to_string(),
-    })?;
+    let metadata_map =
+        response
+            .metadata()
+            .context(download_file_error::MissingFileMetadataSnafu {
+                field: "All fields".to_string(),
+            })?;
 
-    let mat_desc_str = metadata_map
-        .get("x-amz-matdesc")
-        .context(MissingFileMetadataSnafu {
+    let mat_desc_str = metadata_map.get("x-amz-matdesc").context(
+        download_file_error::MissingFileMetadataSnafu {
             field: "x-amz-matdesc".to_string(),
-        })?;
+        },
+    )?;
 
     let material_desc: MaterialDescription =
-        serde_json::from_str(mat_desc_str).context(DeserializationSnafu)?;
+        serde_json::from_str(mat_desc_str).context(download_file_error::DeserializationSnafu)?;
 
     // Construct the metadata structure directly without intermediate variables
     let file_metadata = EncryptedFileMetadata {
         encrypted_key: metadata_map
             .get("x-amz-key")
-            .context(MissingFileMetadataSnafu {
+            .context(download_file_error::MissingFileMetadataSnafu {
                 field: "x-amz-key".to_string(),
             })?
             .to_owned(),
         iv: metadata_map
             .get("x-amz-iv")
-            .context(MissingFileMetadataSnafu {
+            .context(download_file_error::MissingFileMetadataSnafu {
                 field: "x-amz-iv".to_string(),
             })?
             .to_owned(),
         material_desc,
         digest: metadata_map
             .get("sfc-digest")
-            .context(MissingFileMetadataSnafu {
+            .context(download_file_error::MissingFileMetadataSnafu {
                 field: "sfc-digest".to_string(),
             })?
             .to_owned(),
@@ -156,21 +161,24 @@ pub async fn download_from_s3(
         .body
         .collect()
         .await
-        .context(ByteStreamSnafu)?
+        .context(download_file_error::ByteStreamSnafu)?
         .into_bytes()
         .to_vec();
 
     Ok((encrypted_data, file_metadata))
 }
 
-async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -> S3Client {
+async fn create_s3_client(
+    stage_info: &StageInfo,
+    provider_name: &'static str,
+) -> Result<S3Client, S3CredentialError> {
     let super::types::CloudCredentials::S3 {
         ref aws_key_id,
         ref aws_secret_key,
         ref aws_token,
     } = stage_info.creds
     else {
-        panic!("S3 client requires S3 credentials");
+        return Err(S3CredentialError);
     };
 
     let credentials = Credentials::new(
@@ -199,10 +207,31 @@ async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -
         s3_config = s3_config.endpoint_url(endpoint_url);
     }
 
-    S3Client::from_conf(s3_config.build())
+    Ok(S3Client::from_conf(s3_config.build()))
+}
+
+/// Error returned when `create_s3_client` is called with non-S3 credentials.
+#[derive(Debug)]
+struct S3CredentialError;
+
+impl From<S3CredentialError> for UploadFileError {
+    fn from(_: S3CredentialError) -> Self {
+        UploadFileError::MissingS3Credentials {
+            location: Location::default(),
+        }
+    }
+}
+
+impl From<S3CredentialError> for DownloadFileError {
+    fn from(_: S3CredentialError) -> Self {
+        DownloadFileError::MissingS3Credentials {
+            location: Location::default(),
+        }
+    }
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
+#[snafu(module)]
 pub enum UploadFileError {
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
@@ -224,9 +253,15 @@ pub enum UploadFileError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Missing S3 credentials"))]
+    MissingS3Credentials {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
+#[snafu(module)]
 pub enum DownloadFileError {
     #[snafu(display("Failed to download file from S3"))]
     S3Download {
@@ -250,6 +285,11 @@ pub enum DownloadFileError {
     #[snafu(display("Failed to read byte stream from S3"))]
     ByteStream {
         source: aws_sdk_s3::primitives::ByteStreamError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Missing S3 credentials"))]
+    MissingS3Credentials {
         #[snafu(implicit)]
         location: Location,
     },

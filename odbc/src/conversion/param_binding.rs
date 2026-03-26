@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     ffi::{CStr, c_char},
     mem, slice, str,
 };
@@ -8,7 +7,7 @@ use serde_json::{Map, Value};
 use snafu::ResultExt;
 
 use crate::api::CDataType;
-use crate::api::ParameterBinding;
+use crate::api::{ApdDescriptor, IpdDescriptor, ParameterBinding};
 use odbc_sys as sql;
 
 use super::binary::SnowflakeBinary;
@@ -168,14 +167,13 @@ fn make_converter(
 // Pipeline
 // =============================================================================
 
-/// Convert ODBC parameter bindings to JSON string format for server-side binding.
+/// Convert ODBC parameter bindings (from APD + IPD descriptors) to JSON
+/// string format for server-side binding.
 ///
 /// # Safety contract
-/// The `bindings` map must contain `ParameterBinding` instances whose
-/// `parameter_value_ptr` pointers remain valid for the duration of this call.
-/// If `str_len_or_ind_ptr` is non-null, it must also point to valid memory
-/// for reads, as it is dereferenced to check for null indicators and
-/// determine buffer data lengths.
+/// The APD records' `data_ptr` pointers must remain valid for the duration
+/// of this call. If `str_len_or_ind_ptr` is non-null, it must also point to
+/// valid memory for reads.
 ///
 /// Returns a JSON string in the format:
 /// ```json
@@ -185,29 +183,39 @@ fn make_converter(
 /// }
 /// ```
 pub fn odbc_bindings_to_json(
-    bindings: &HashMap<u16, ParameterBinding>,
+    apd: &ApdDescriptor,
+    ipd: &IpdDescriptor,
 ) -> Result<String, JsonBindingError> {
     let mut json_bindings = Map::new();
 
-    let max_key = bindings.keys().copied().max().unwrap_or(0);
+    let max_key = apd.desc_count().max(ipd.desc_count());
 
     for param_num in 1..=max_key {
-        let binding = bindings.get(&param_num).ok_or_else(|| {
+        let apd_rec = apd.records.get(&param_num).ok_or_else(|| {
             tracing::error!(
-                "odbc_bindings_to_json: parameter #{param_num} not found. \
+                "odbc_bindings_to_json: APD record #{param_num} not found. \
+                 Parameter bindings must be contiguous and start at 1.",
+            );
+            InvalidParameterIndicesSnafu.build()
+        })?;
+        let ipd_rec = ipd.records.get(&param_num).ok_or_else(|| {
+            tracing::error!(
+                "odbc_bindings_to_json: IPD record #{param_num} not found. \
                  Parameter bindings must be contiguous and start at 1.",
             );
             InvalidParameterIndicesSnafu.build()
         })?;
 
-        let (snowflake_type, json_value) = if is_null_indicator(binding) {
+        let binding = ParameterBinding::from_apd_ipd(apd_rec, ipd_rec);
+
+        let (snowflake_type, json_value) = if is_null_indicator(&binding) {
             (SnowflakeLogicalType::Any, Value::Null)
         } else {
             if binding.parameter_value_ptr.is_null() {
                 return NullPointerSnafu.fail();
             }
-            let converter = make_converter(&binding.parameter_type)?;
-            converter.convert(binding)?
+            let converter = make_converter(&binding.sql_data_type)?;
+            converter.convert(&binding)?
         };
 
         let mut binding_obj = Map::new();
@@ -367,6 +375,7 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
 mod tests {
     use super::*;
     use crate::api::CDataType;
+    use crate::api::{ApdRecord, IpdRecord};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -378,7 +387,7 @@ mod tests {
         ind_ptr: *mut sql::Len,
     ) -> ParameterBinding {
         ParameterBinding {
-            parameter_type,
+            sql_data_type: parameter_type,
             value_type,
             parameter_value_ptr: ptr,
             buffer_length,
@@ -386,10 +395,43 @@ mod tests {
         }
     }
 
+    fn make_descriptors(
+        params: Vec<(
+            u16,
+            CDataType,
+            sql::SqlDataType,
+            sql::Pointer,
+            sql::Len,
+            *mut sql::Len,
+        )>,
+    ) -> (ApdDescriptor, IpdDescriptor) {
+        let mut apd = ApdDescriptor::new();
+        let mut ipd = IpdDescriptor::new();
+        for (num, value_type, parameter_type, ptr, buf_len, ind_ptr) in params {
+            apd.records.insert(
+                num,
+                ApdRecord {
+                    value_type,
+                    data_ptr: ptr,
+                    buffer_length: buf_len,
+                    str_len_or_ind_ptr: ind_ptr,
+                },
+            );
+            ipd.records.insert(
+                num,
+                IpdRecord {
+                    sql_data_type: parameter_type,
+                    ..IpdRecord::default()
+                },
+            );
+        }
+        (apd, ipd)
+    }
+
     fn convert_binding(
         binding: &ParameterBinding,
     ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
-        let converter = make_converter(&binding.parameter_type)?;
+        let converter = make_converter(&binding.sql_data_type)?;
         converter.convert(binding)
     }
 
@@ -640,18 +682,15 @@ mod tests {
     #[test]
     fn convert_null_data() -> TestResult {
         let mut ind: sql::Len = sql::NULL_DATA;
-        let mut bindings = HashMap::new();
-        bindings.insert(
-            1u16,
-            make_binding(
-                CDataType::Long,
-                sql::SqlDataType::INTEGER,
-                std::ptr::null_mut(),
-                0,
-                &mut ind,
-            ),
-        );
-        let json = odbc_bindings_to_json(&bindings)?;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            std::ptr::null_mut(),
+            0,
+            &mut ind,
+        )]);
+        let json = odbc_bindings_to_json(&apd, &ipd)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "ANY");
         assert!(parsed["1"]["value"].is_null());
@@ -660,18 +699,15 @@ mod tests {
 
     #[test]
     fn convert_null_pointer_without_indicator_fails() {
-        let mut bindings = HashMap::new();
-        bindings.insert(
-            1u16,
-            make_binding(
-                CDataType::Long,
-                sql::SqlDataType::INTEGER,
-                std::ptr::null_mut(),
-                0,
-                std::ptr::null_mut(),
-            ),
-        );
-        assert!(odbc_bindings_to_json(&bindings).is_err());
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+        )]);
+        assert!(odbc_bindings_to_json(&apd, &ipd).is_err());
     }
 
     #[test]
@@ -684,7 +720,7 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        assert!(make_converter(&binding.parameter_type).is_err());
+        assert!(make_converter(&binding.sql_data_type).is_err());
     }
 
     // -- end-to-end pipeline tests -------------------------------------------
@@ -708,18 +744,15 @@ mod tests {
     #[test]
     fn pipeline_full_json_output() -> TestResult {
         let val: i32 = 7;
-        let mut bindings = HashMap::new();
-        bindings.insert(
-            1u16,
-            make_binding(
-                CDataType::Long,
-                sql::SqlDataType::INTEGER,
-                &val as *const i32 as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-            ),
-        );
-        let json = odbc_bindings_to_json(&bindings)?;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        let json = odbc_bindings_to_json(&apd, &ipd)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "FIXED");
         assert_eq!(parsed["1"]["value"], "7");
@@ -729,18 +762,15 @@ mod tests {
     #[test]
     fn pipeline_null_json_output() -> TestResult {
         let mut ind: sql::Len = sql::NULL_DATA;
-        let mut bindings = HashMap::new();
-        bindings.insert(
-            1u16,
-            make_binding(
-                CDataType::Long,
-                sql::SqlDataType::INTEGER,
-                std::ptr::null_mut(),
-                0,
-                &mut ind,
-            ),
-        );
-        let json = odbc_bindings_to_json(&bindings)?;
+        let (apd, ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            std::ptr::null_mut(),
+            0,
+            &mut ind,
+        )]);
+        let json = odbc_bindings_to_json(&apd, &ipd)?;
         let parsed: serde_json::Value = serde_json::from_str(&json)?;
         assert_eq!(parsed["1"]["type"], "ANY");
         assert!(parsed["1"]["value"].is_null());
@@ -750,28 +780,31 @@ mod tests {
     #[test]
     fn pipeline_non_contiguous_params_error() {
         let val: i32 = 1;
-        let mut bindings = HashMap::new();
-        bindings.insert(
-            1u16,
-            make_binding(
-                CDataType::Long,
-                sql::SqlDataType::INTEGER,
-                &val as *const i32 as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-            ),
+        let (mut apd, mut ipd) = make_descriptors(vec![(
+            1,
+            CDataType::Long,
+            sql::SqlDataType::INTEGER,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        )]);
+        apd.records.insert(
+            3,
+            ApdRecord {
+                value_type: CDataType::Long,
+                data_ptr: &val as *const i32 as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+            },
         );
-        bindings.insert(
-            3u16,
-            make_binding(
-                CDataType::Long,
-                sql::SqlDataType::INTEGER,
-                &val as *const i32 as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-            ),
+        ipd.records.insert(
+            3,
+            IpdRecord {
+                sql_data_type: sql::SqlDataType::INTEGER,
+                ..IpdRecord::default()
+            },
         );
-        assert!(odbc_bindings_to_json(&bindings).is_err());
+        assert!(odbc_bindings_to_json(&apd, &ipd).is_err());
     }
 
     #[test]
