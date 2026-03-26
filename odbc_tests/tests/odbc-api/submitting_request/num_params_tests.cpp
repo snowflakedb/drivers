@@ -12,6 +12,26 @@
 #include "test_setup.hpp"
 
 // ============================================================================
+// SQLNumParams Tests
+//
+// Tested SQLSTATEs (from Microsoft ODBC spec):
+//   SQL_INVALID_HANDLE — null statement handle
+//   HY010             — function sequence error (before prepare, during NEED_DATA)
+//
+// Not tested (Driver Manager or infrastructure responsibility):
+//   01000 (General warning)     — driver-specific, no reliable trigger
+//   08S01 (Communication link)  — requires network fault injection
+//   HY000 (General error)       — catch-all, not directly provokable
+//   HY001 (Memory allocation)   — requires OOM simulation
+//   HY008 (Operation canceled)  — requires async + cancel timing
+//   HY013 (Memory management)   — requires low-memory conditions
+//   HY117 (Suspended connection)— requires unknown transaction state
+//   HYT01 (Connection timeout)  — requires timeout simulation
+//   IM001 (Not supported)       — we support it, so N/A
+//   IM017/IM018 (Async notify)  — notification mode not implemented
+// ============================================================================
+
+// ============================================================================
 // SQLNumParams - Basic Functionality
 // ============================================================================
 
@@ -76,6 +96,49 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: Succeeds with NULL Parame
 
   ret = SQLNumParams(stmt_handle(), nullptr);
   REQUIRE(ret == SQL_SUCCESS);
+}
+
+// ============================================================================
+// SQLNumParams - Parser Edge Cases
+// ============================================================================
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: Ignores ? inside single-quoted string literal",
+                 "[odbc-api][numparams][submitting_request]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT '?', ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT count = -1;
+  ret = SQLNumParams(stmt_handle(), &count);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 1);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: Ignores ? inside line comment",
+                 "[odbc-api][numparams][submitting_request]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? -- is this counted?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT count = -1;
+  ret = SQLNumParams(stmt_handle(), &count);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 1);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLNumParams: Handles escaped quotes in literal",
+                 "[odbc-api][numparams][submitting_request]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 'it''s a ?', ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLSMALLINT count = -1;
+  ret = SQLNumParams(stmt_handle(), &count);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(count == 1);
 }
 
 // ============================================================================
