@@ -100,7 +100,7 @@ pub(crate) fn format_decfloat(sig: i128, exp: i16, max_plain_digits: usize) -> S
     let mut exp = exp as i64;
 
     // Normalize: strip trailing zeros from significand
-    while abs_sig % 10 == 0 {
+    while abs_sig.is_multiple_of(10) {
         abs_sig /= 10;
         exp += 1;
     }
