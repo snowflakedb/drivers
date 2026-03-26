@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::connection::{DriverRuntime, reset_statement_query};
 use crate::resource_monitor::ResourceMonitor;
 use crate::results::{
-    current_unix_timestamp, print_statistics_put_get, write_csv_results_put_get,
+    current_unix_timestamp_ms, print_statistics_put_get, write_csv_results_put_get,
     write_memory_timeline, write_metadata_if_not_replay,
 };
 use crate::types::PutGetResult;
@@ -97,7 +97,7 @@ pub fn run_test_iterations_put_get(
             execute_put_get_iteration(rt, stmt_handle, sql)?;
 
         results.push(PutGetResult {
-            timestamp: current_unix_timestamp(),
+            timestamp: current_unix_timestamp_ms(),
             query_time_s: query_time,
             cpu_time_s,
             peak_rss_mb,

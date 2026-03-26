@@ -24,10 +24,10 @@ void write_csv_results(const std::vector<TestResult>& results, const std::string
   auto csv = open_csv_file(filename);
   if (!csv) return;
 
-  *csv << "timestamp,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb\n";
+  *csv << "timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb\n";
   for (const auto& r : results) {
-    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.fetch_time_s << ","
-         << r.row_count << "," << r.cpu_time_s << "," << std::setprecision(1) << r.peak_rss_mb << "\n";
+    *csv << r.timestamp_ms << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.fetch_time_s
+         << "," << r.row_count << "," << r.cpu_time_s << "," << std::setprecision(1) << r.peak_rss_mb << "\n";
   }
   csv->close();
 }
@@ -36,9 +36,9 @@ void write_csv_results_put_get(const std::vector<PutGetResult>& results, const s
   auto csv = open_csv_file(filename);
   if (!csv) return;
 
-  *csv << "timestamp,query_s,cpu_time_s,peak_rss_mb\n";
+  *csv << "timestamp_ms,query_s,cpu_time_s,peak_rss_mb\n";
   for (const auto& r : results) {
-    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.cpu_time_s << ","
+    *csv << r.timestamp_ms << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.cpu_time_s << ","
          << std::setprecision(1) << r.peak_rss_mb << "\n";
   }
   csv->close();

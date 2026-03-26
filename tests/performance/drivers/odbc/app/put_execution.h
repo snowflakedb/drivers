@@ -3,6 +3,8 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include <cstdint>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -11,7 +13,7 @@
 
 struct PutGetResult {
   int iteration;
-  time_t timestamp;
+  int64_t timestamp_ms;
   double query_time_s;
   double cpu_time_s;
   double peak_rss_mb;

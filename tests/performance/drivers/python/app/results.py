@@ -30,24 +30,24 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
     with open(filename, 'w', newline='') as f:
         if test_type == TestType.PUT_GET:
             writer = csv.DictWriter(f, fieldnames=[
-                "timestamp", "query_s", "cpu_time_s", "peak_rss_mb",
+                "timestamp_ms", "query_s", "cpu_time_s", "peak_rss_mb",
             ])
             writer.writeheader()
             for result in results:
                 writer.writerow({
-                    "timestamp": result['timestamp'],
+                    "timestamp_ms": result['timestamp'],
                     "query_s": f"{result['query_time_s']:.6f}",
                     "cpu_time_s": f"{result['cpu_time_s']:.6f}",
                     "peak_rss_mb": f"{result['peak_rss_mb']:.1f}",
                 })
         else:
             writer = csv.DictWriter(f, fieldnames=[
-                "timestamp", "query_s", "fetch_s", "row_count", "cpu_time_s", "peak_rss_mb",
+                "timestamp_ms", "query_s", "fetch_s", "row_count", "cpu_time_s", "peak_rss_mb",
             ])
             writer.writeheader()
             for result in results:
                 writer.writerow({
-                    "timestamp": result['timestamp'],
+                    "timestamp_ms": result['timestamp'],
                     "query_s": f"{result['query_time_s']:.6f}",
                     "fetch_s": f"{result['fetch_time_s']:.6f}",
                     "row_count": result.get('row_count', 0),

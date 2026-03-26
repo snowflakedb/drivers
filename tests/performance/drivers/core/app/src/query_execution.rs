@@ -8,7 +8,7 @@ use crate::arrow::fetch_result_rows;
 use crate::connection::{DriverRuntime, reset_statement_query};
 use crate::resource_monitor::ResourceMonitor;
 use crate::results::{
-    current_unix_timestamp, print_statistics, write_csv_results, write_memory_timeline,
+    current_unix_timestamp_ms, print_statistics, write_csv_results, write_memory_timeline,
     write_metadata_if_not_replay,
 };
 use crate::types::IterationResult;
@@ -98,7 +98,7 @@ pub fn run_test_iterations(
         expected_row_count = validate_row_count(row_count, expected_row_count, i)?;
 
         results.push(IterationResult {
-            timestamp: current_unix_timestamp(),
+            timestamp: current_unix_timestamp_ms(),
             query_time_s: query_time,
             fetch_time_s: fetch_time,
             row_count,

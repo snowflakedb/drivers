@@ -59,7 +59,7 @@ def _execute_put_get(cursor, sql):
     cpu_time_s = time.process_time() - cpu_start
     peak_rss_mb = get_peak_rss_mb()
 
-    timestamp = int(time.time())
+    timestamp = int(time.time() * 1000)
     
     return {
         "timestamp": timestamp,

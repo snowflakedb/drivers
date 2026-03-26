@@ -309,7 +309,7 @@ def read_csv_results(csv_path: Path) -> List[Dict]:
         reader = csv.DictReader(f)
         for row in reader:
             result = {
-                'timestamp': int(row['timestamp']),
+                'timestamp': int(row['timestamp_ms']),
                 'query_s': float(row['query_s'])
             }
             
@@ -607,7 +607,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                             metrics[f"{test_name}_peak_rss_mb"] = result['peak_rss_mb']
                         
                         timestamp = Timestamp()
-                        timestamp.FromSeconds(result['timestamp'])
+                        timestamp.FromMilliseconds(result['timestamp'])
                         
                         quickstore.add_sample_point_from_input(
                             benchstore_pb2.AddSamplePointInput(
@@ -670,12 +670,12 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                         if test_name in results_by_test:
                             iteration_results = results_by_test[test_name]
                             if len(iteration_results) >= 2:
-                                iter_end_times_ms = [r['timestamp'] * 1000 for r in iteration_results]
+                                iter_end_times_ms = [r['timestamp'] for r in iteration_results]
                                 first_iter_rss = [s['rss_bytes'] for s in samples if s['timestamp_ms'] <= iter_end_times_ms[0]]
                                 last_iter_rss = [s['rss_bytes'] for s in samples if s['timestamp_ms'] > iter_end_times_ms[-2]]
                                 
                                 if first_iter_rss and last_iter_rss:
-                                    growth_mb = bytes_to_mb(min(last_iter_rss) - min(first_iter_rss))
+                                    growth_mb = max(0.0, bytes_to_mb(min(last_iter_rss) - min(first_iter_rss)))
                                     quickstore.add_run_aggregate(
                                         benchstore_pb2.AddRunAggregateInput(
                                             custom_aggregate_label=f"{test_name}_rss_memory_growth_mb",

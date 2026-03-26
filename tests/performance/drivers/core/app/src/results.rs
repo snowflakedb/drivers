@@ -14,7 +14,7 @@ pub fn write_csv_results(results: &[IterationResult], test_name: &str) -> Result
     write_csv_file(test_name, |file| {
         writeln!(
             file,
-            "timestamp,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb"
+            "timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb"
         )
         .map_err(|e| format!("Failed to write: {e:?}"))?;
         for r in results {
@@ -49,7 +49,7 @@ pub fn print_statistics(results: &[IterationResult]) {
 
 pub fn write_csv_results_put_get(results: &[PutGetResult], test_name: &str) -> Result<String> {
     write_csv_file(test_name, |file| {
-        writeln!(file, "timestamp,query_s,cpu_time_s,peak_rss_mb")
+        writeln!(file, "timestamp_ms,query_s,cpu_time_s,peak_rss_mb")
             .map_err(|e| format!("Failed to write: {e:?}"))?;
         for r in results {
             writeln!(
@@ -68,7 +68,7 @@ pub fn write_memory_timeline(samples: &[MemorySample], test_name: &str) {
         return;
     }
 
-    let timestamp = current_unix_timestamp();
+    let timestamp = current_unix_timestamp_ms();
     let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
     let results_path = PathBuf::from(&results_dir);
     let filename = results_path.join(format!("memory_timeline_{test_name}_core_{timestamp}.csv"));
@@ -111,7 +111,7 @@ pub fn write_run_metadata_json(server_version: &str) -> Result<String> {
         return Ok(metadata_filename.display().to_string());
     }
 
-    let timestamp = current_unix_timestamp();
+    let timestamp = current_unix_timestamp_ms();
 
     // Get driver version from env (set at compile time in Cargo.toml)
     let driver_version = env!("CARGO_PKG_VERSION");
@@ -203,11 +203,11 @@ fn get_os_version() -> String {
     }
 }
 
-pub fn current_unix_timestamp() -> i64 {
+pub fn current_unix_timestamp_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 /// Common CSV file creation logic.
@@ -217,7 +217,7 @@ fn write_csv_file<F>(test_name: &str, write_content: F) -> Result<String>
 where
     F: FnOnce(&mut fs::File) -> Result<()>,
 {
-    let timestamp = current_unix_timestamp();
+    let timestamp = current_unix_timestamp_ms();
 
     // Use RESULTS_DIR env var if set (for local execution), otherwise use /results (Docker)
     let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());

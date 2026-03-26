@@ -101,7 +101,9 @@ PutGetResult run_put_get_query(SQLHDBC dbc, const std::string& sql_command, int 
   result.query_time_s = std::chrono::duration<double>(query_end - query_start).count();
   result.cpu_time_s = cpu_seconds(usage_after) - cpu_seconds(usage_before);
   result.peak_rss_mb = get_peak_rss_mb();
-  result.timestamp = std::time(nullptr);
+  result.timestamp_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+          .count();
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
 

@@ -1,11 +1,11 @@
 #pragma once
 
 #include <cstddef>
-#include <ctime>
+#include <cstdint>
 
 struct TestResult {
   int iteration;
-  time_t timestamp;
+  int64_t timestamp_ms;
   double query_time_s;
   double fetch_time_s;
   std::size_t row_count;
