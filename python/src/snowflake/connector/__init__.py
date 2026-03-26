@@ -7,6 +7,7 @@ as defined in PEP 249.
 
 from typing import Any
 
+from . import util_text  # noqa: F401 - accessed as snowflake.connector.util_text
 from ._internal.api_client.c_api import register_default_logger_callback
 from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
