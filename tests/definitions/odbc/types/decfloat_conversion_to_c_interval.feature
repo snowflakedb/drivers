@@ -27,6 +27,56 @@ Feature: ODBC DECFLOAT to interval type conversions
     Then The fractional part is truncated and SQLSTATE 01S07 is returned
 
   # ============================================================================
+  # SUB-MICROSECOND TRUNCATION (SQLSTATE 01S07)
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: DECFLOAT sub-microsecond truncation to interval second
+    Given Snowflake client is logged in
+    When DECFLOAT values with more than 6 decimal places are fetched as SQL_C_INTERVAL_SECOND
+    Then Sub-microsecond digits are truncated and SQLSTATE 01S07 is returned
+
+  # ============================================================================
+  # EDGE CASES - No negative zero
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: DECFLOAT to interval - no negative zero
+    Given Snowflake client is logged in
+    When Negative fractional DECFLOAT values truncate to zero for non-second intervals
+    Then Interval sign is positive when the integer part truncates to zero
+
+  # ============================================================================
+  # EDGE CASES - Positive exponent
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: DECFLOAT with positive exponent to interval
+    Given Snowflake client is logged in
+    When DECFLOAT values with positive exponents are fetched as interval types
+    Then The exponent is applied correctly to produce the interval value
+
+  # ============================================================================
+  # LEADING FIELD PRECISION - Default precision (SQLSTATE 22015)
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: DECFLOAT to interval - default precision rejects values >= 100
+    Given Snowflake client is logged in
+    When DECFLOAT values at and beyond the default 2-digit precision are fetched as intervals
+    Then Value 99 succeeds and value 100 fails with SQLSTATE 22015
+
+  # ============================================================================
+  # LEADING FIELD PRECISION - Custom precision via SQLSetDescField
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: DECFLOAT to interval - custom precision via SQLSetDescField
+    Given Snowflake client is logged in
+    When SQL_DESC_DATETIME_INTERVAL_PRECISION is set on the ARD
+    Then Values within custom precision succeed and values beyond it fail
+
+  # ============================================================================
   # ILLEGAL CONVERSIONS - Multi-field interval types (SQLSTATE 22015)
   # ============================================================================
 

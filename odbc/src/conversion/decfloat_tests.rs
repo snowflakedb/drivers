@@ -5,7 +5,7 @@ mod tests {
     use crate::conversion::decfloat::{
         SnowflakeDecfloat, format_decfloat, i128_from_big_endian_signed,
     };
-    use crate::conversion::error::ReadArrowError;
+    use crate::conversion::error::{ReadArrowError, WriteOdbcError};
     use crate::conversion::test_utils::helpers::binding_for_wchar_buffer;
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::Warning;
@@ -538,6 +538,168 @@ mod tests {
 
         assert_eq!(value, 0);
         assert!(warnings.is_empty());
+    }
+
+    // ======================================================================
+    // WriteODBCType — interval types
+    // ======================================================================
+
+    fn binding_for_interval(
+        target_type: CDataType,
+        value: &mut sql::IntervalStruct,
+        str_len: &mut sql::Len,
+    ) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
+            buffer_length: 0,
+            octet_length_ptr: str_len as *mut sql::Len,
+            indicator_ptr: str_len as *mut sql::Len,
+            ..Default::default()
+        }
+    }
+
+    fn zero_interval() -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0,
+            interval_sign: 0,
+            interval_value: sql::IntervalUnion {
+                day_second: sql::DaySecond::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn write_interval_year_positive() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((5, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn write_interval_year_negative() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((-3, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 1);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 3);
+    }
+
+    #[test]
+    fn write_interval_month() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalMonth, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((10, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Month as i32);
+        assert_eq!(unsafe { interval.interval_value.year_month.month }, 10);
+    }
+
+    #[test]
+    fn write_interval_day() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalDay, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((15, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Day as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.day }, 15);
+    }
+
+    #[test]
+    fn write_interval_second_integer() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((45, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Second as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { interval.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn write_interval_year_fractional_truncation() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((57, -1), &binding, &mut None).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn write_interval_second_with_fraction() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = df
+            .write_odbc_type((45500, -3), &binding, &mut None)
+            .unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 45);
+        assert_eq!(
+            unsafe { interval.interval_value.day_second.fraction },
+            500000
+        );
+    }
+
+    #[test]
+    fn write_interval_multi_field_returns_error() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+
+        for target_type in [
+            CDataType::IntervalYearToMonth,
+            CDataType::IntervalDayToHour,
+            CDataType::IntervalDayToMinute,
+            CDataType::IntervalDayToSecond,
+            CDataType::IntervalHourToMinute,
+            CDataType::IntervalHourToSecond,
+            CDataType::IntervalMinuteToSecond,
+        ] {
+            let binding = binding_for_interval(target_type, &mut interval, &mut str_len);
+            let result = df.write_odbc_type((42, 0), &binding, &mut None);
+            assert!(matches!(
+                result,
+                Err(WriteOdbcError::IntervalFieldOverflow { .. })
+            ));
+        }
     }
 
     // ======================================================================

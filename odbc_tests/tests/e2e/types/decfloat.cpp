@@ -4,9 +4,7 @@
 // Snowflake DECFLOAT: 38-digit precision with extreme exponents (up to E+16384).
 // No numeric C type can represent this, so values are read as SQL_C_CHAR strings.
 //
-// NOTE: Parameter binding for DECFLOAT is not yet supported in the core driver.
-// SELECT tests that use bound parameters are skipped via SKIP_NEW_DRIVER_NOT_IMPLEMENTED().
-// INSERT tests work because parameters are bound as SQL_VARCHAR strings (server-side conversion).
+// Parameter binding uses SQL_VARCHAR strings with server-side DECFLOAT conversion.
 #include <sql.h>
 #include <sqlext.h>
 #include <sqltypes.h>
@@ -377,8 +375,6 @@ TEST_CASE("should download large result set with multiple chunks from table", "[
 // ============================================================================
 
 TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -431,8 +427,6 @@ TEST_CASE("should select decfloat using parameter binding", "[decfloat]") {
 }
 
 TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Given Snowflake client is logged in
   Connection conn;
 
