@@ -7,13 +7,12 @@ mod path_expansion;
 pub mod types;
 
 pub use self::types::*;
+pub use azure_transfer::download_from_azure;
 pub use gcs_transfer::download_from_gcs;
 
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
-use azure_transfer::{
-    AzureDownloadError, AzureUploadError, download_from_azure, upload_to_azure_or_skip,
-};
+use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
 use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
 use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
 use path_expansion::{PathExpansionError, expand_filenames};
