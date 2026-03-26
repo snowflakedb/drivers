@@ -69,7 +69,6 @@ steps:
             exit 0
           fi
 
-          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
@@ -80,6 +79,7 @@ steps:
             "$$DOCKER_IMAGE" \
             bash -c '
               set -euo pipefail
+              rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
               yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
@@ -153,7 +153,6 @@ steps:
             exit 0
           fi
 
-          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
@@ -164,6 +163,7 @@ steps:
             "$$DOCKER_IMAGE" \
             bash -c '
               set -euo pipefail
+              rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
               yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
@@ -232,7 +232,6 @@ steps:
             exit 0
           fi
 
-          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
@@ -243,6 +242,7 @@ steps:
             "$$DOCKER_IMAGE" \
             bash -c '
               set -euo pipefail
+              rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
               yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
@@ -320,7 +320,6 @@ steps:
             exit 0
           fi
 
-          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
@@ -331,6 +330,7 @@ steps:
             "$$DOCKER_IMAGE" \
             bash -c '
               set -euo pipefail
+              rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
               yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
