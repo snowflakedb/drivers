@@ -74,7 +74,6 @@ steps:
             -v "$$PWD:/workdir" \
             -w /workdir \
             -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
             -e TEST_FILTER \
             "$$DOCKER_IMAGE" \
             bash -c '
@@ -91,12 +90,12 @@ steps:
               mkdir -p /workdir/junit-results
               export RUSTC_BOOTSTRAP=1
               if [ "$$TEST_FILTER" = "ALL" ]; then
-                cargo test --package sf_core -- --ignored -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
+                cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
               else
                 IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
                 for filter in "$${FILTERS[@]}"; do
-                  echo "Running: cargo test -- --ignored $$filter"
-                  cargo test --package sf_core -- --ignored "$$filter" -Z unstable-options --format json --report-time 2>&1
+                  echo "Running: cargo test -- $$filter"
+                  cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1
                 done | cargo2junit > /workdir/junit-results/rust-junit.xml
               fi
               unset RUSTC_BOOTSTRAP
@@ -149,7 +148,6 @@ steps:
             -v "$$PWD:/workdir" \
             -w /workdir \
             -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
             -e TEST_FILTER \
             "$$DOCKER_IMAGE" \
             bash -c '
@@ -220,7 +218,6 @@ steps:
             -v "$$PWD:/workdir" \
             -w /workdir \
             -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
             -e TEST_FILTER \
             "$$DOCKER_IMAGE" \
             bash -c '
@@ -300,7 +297,6 @@ steps:
             -v "$$PWD:/workdir" \
             -w /workdir \
             -e PARAMETERS_SECRET \
-            -e BUILDKITE_ANALYTICS_TOKEN \
             -e TEST_FILTER \
             "$$DOCKER_IMAGE" \
             bash -c '
