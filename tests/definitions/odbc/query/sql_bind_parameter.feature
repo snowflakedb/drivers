@@ -135,14 +135,16 @@ Feature: ODBC SQLBindParameter spec compliance
   @odbc_e2e
   Scenario: should populate APD descriptor fields after SQLBindParameter.
     Given Snowflake client is logged in
-    When an integer parameter is bound
-    Then the APD should reflect the bound C type and data pointer
+    When a char parameter is bound with explicit buffer length and indicator
+    Then the APD record should reflect all bound fields
+    And the APD header should report the correct count
 
   @odbc_e2e
   Scenario: should populate IPD descriptor fields after SQLBindParameter.
     Given Snowflake client is logged in
-    When an integer parameter is bound as SQL_PARAM_INPUT
-    Then the IPD should reflect the SQL type and parameter direction
+    When a decimal parameter is bound with precision and scale
+    Then the IPD record should reflect all bound fields
+    And the IPD header should report the correct count
 
   @odbc_e2e
   Scenario: should report parameter count via SQLNumParams after binding.

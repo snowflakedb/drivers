@@ -414,14 +414,14 @@ TEST_CASE("should populate APD descriptor fields after SQLBindParameter.", "[que
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When an integer parameter is bound
-  SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
-  SQLRETURN ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  // When a char parameter is bound with explicit buffer length and indicator
+  char param[] = "hello";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, strlen(param), 0,
+                                   param, sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
 
-  // Then the APD should reflect the bound C type and data pointer
+  // Then the APD record should reflect all bound fields
   SQLHDESC apd = SQL_NULL_HDESC;
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
   REQUIRE_ODBC(ret, stmt);
@@ -429,12 +429,33 @@ TEST_CASE("should populate APD descriptor fields after SQLBindParameter.", "[que
   SQLSMALLINT concise_type = 0;
   ret = SQLGetDescField(apd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-  CHECK(concise_type == SQL_C_SLONG);
+  CHECK(concise_type == SQL_C_CHAR);
 
   SQLPOINTER data_ptr = nullptr;
   ret = SQLGetDescField(apd, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, nullptr);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-  CHECK(data_ptr == &param);
+  CHECK(data_ptr == param);
+
+  SQLLEN octet_length = -1;
+  ret = SQLGetDescField(apd, 1, SQL_DESC_OCTET_LENGTH, &octet_length, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(octet_length == sizeof(param));
+
+  SQLLEN* ind_ptr = nullptr;
+  ret = SQLGetDescField(apd, 1, SQL_DESC_INDICATOR_PTR, &ind_ptr, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(ind_ptr == &indicator);
+
+  SQLLEN* octet_len_ptr = nullptr;
+  ret = SQLGetDescField(apd, 1, SQL_DESC_OCTET_LENGTH_PTR, &octet_len_ptr, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(octet_len_ptr == &indicator);
+
+  // And the APD header should report the correct count
+  SQLSMALLINT count = -1;
+  ret = SQLGetDescField(apd, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(count == 1);
 }
 
 TEST_CASE("should populate IPD descriptor fields after SQLBindParameter.", "[query][bind_parameter][descriptor]") {
@@ -442,27 +463,48 @@ TEST_CASE("should populate IPD descriptor fields after SQLBindParameter.", "[que
   Connection conn;
   auto stmt = conn.createStatement();
 
-  // When an integer parameter is bound as SQL_PARAM_INPUT
-  SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
-  SQLRETURN ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  // When a decimal parameter is bound with precision and scale
+  char param[] = "123.45";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DECIMAL, 10, 2, param,
+                                   sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
 
-  // Then the IPD should reflect the SQL type and parameter direction
+  // Then the IPD record should reflect all bound fields
   SQLHDESC ipd = SQL_NULL_HDESC;
   ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_PARAM_DESC, &ipd, 0, nullptr);
   REQUIRE_ODBC(ret, stmt);
+
+  SQLSMALLINT concise_type = 0;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(concise_type == SQL_DECIMAL);
 
   SQLSMALLINT param_type = 0;
   ret = SQLGetDescField(ipd, 1, SQL_DESC_PARAMETER_TYPE, &param_type, 0, nullptr);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   CHECK(param_type == SQL_PARAM_INPUT);
 
-  SQLSMALLINT concise_type = 0;
-  ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, nullptr);
+  SQLSMALLINT precision = -1;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_PRECISION, &precision, 0, nullptr);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-  CHECK(concise_type == SQL_INTEGER);
+  CHECK(precision == 10);
+
+  SQLSMALLINT scale = -1;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_SCALE, &scale, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(scale == 2);
+
+  SQLSMALLINT nullable = -1;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_NULLABLE, &nullable, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(nullable == SQL_NULLABLE_UNKNOWN);
+
+  // And the IPD header should report the correct count
+  SQLSMALLINT count = -1;
+  ret = SQLGetDescField(ipd, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(count == 1);
 }
 
 TEST_CASE("should report parameter count via SQLNumParams after binding.", "[query][bind_parameter][descriptor]") {
