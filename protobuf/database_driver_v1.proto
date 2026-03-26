@@ -552,6 +552,52 @@ message StatementReadPartitionResponse {
   int64 partition_stream = 1;
 }
 
+// Distributed fetch types
+
+enum ChunkFormat {
+  CHUNK_FORMAT_UNSPECIFIED = 0;
+  CHUNK_FORMAT_ARROW_IPC = 1;
+  CHUNK_FORMAT_JSON = 2;
+}
+
+message RemoteChunk {
+  string url = 1;
+  map<string, string> headers = 2;
+}
+
+message ResultChunk {
+  // Format of the decoded payload (after base64 decoding when using `inline`).
+  ChunkFormat format = 1;
+  oneof data {
+    // Inline payload: the UTF-8 bytes of a base64-encoded string.
+    // Clients must base64-decode this field, then interpret the resulting
+    // bytes according to `format` (e.g. Arrow IPC or JSON).
+    string inline = 2;
+    RemoteChunk remote = 3;
+  }
+}
+
+message ResultChunksResult {
+  repeated ResultChunk chunks = 1;
+}
+
+message StatementResultChunksRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementResultChunksResponse {
+  ResultChunksResult result = 1;
+}
+
+message DatabaseFetchChunkRequest {
+  DatabaseHandle db_handle = 1;
+  ResultChunk chunk = 2;
+}
+
+message DatabaseFetchChunkResponse {
+  ArrowArrayStreamPtr stream = 1;
+}
+
 // Validation issue reported during set or validate operations.
 message ValidationIssue {
   ValidationSeverity severity = 1;
@@ -651,6 +697,7 @@ service DatabaseDriver {
   rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
   rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
   rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
+  rpc DatabaseFetchChunk(DatabaseFetchChunkRequest) returns (DatabaseFetchChunkResponse);
 
   // Connection operations
   rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);
@@ -691,6 +738,7 @@ service DatabaseDriver {
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
+  rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);

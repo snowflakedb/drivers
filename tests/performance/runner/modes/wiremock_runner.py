@@ -2,6 +2,7 @@ import csv
 import logging
 import shutil
 import statistics
+import time
 from pathlib import Path
 
 from runner.docker_network import DockerNetworkManager
@@ -9,6 +10,7 @@ from runner.modes.common import execute_test, verify_test_results
 from runner.test_types import TestType
 from runner.utils import perf_tests_root
 from wiremock.wiremock_manager import WiremockManager
+from wiremock.wiremock_monitor import WiremockMonitor, MonitorResult
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +99,14 @@ def run_wiremock_performance_test(
             logger.info("")
             logger.info("Step 1: Starting WireMock in RECORD mode...")
             wiremock = WiremockManager(mappings_dir, network_mode=network)
+            wm_monitor = None
             try:
                 wiremock.start_recording()
+
+                docker_container = wiremock.get_docker_container()
+                if docker_container:
+                    wm_monitor = WiremockMonitor(docker_container)
+                    wm_monitor.start()
 
                 # Step 3: Execute test once to record traffic
                 logger.info("")
@@ -127,6 +135,11 @@ def run_wiremock_performance_test(
                 wiremock.create_snapshot()
                 
             finally:
+                if wm_monitor:
+                    monitor_result = wm_monitor.stop()
+                    _write_wiremock_monitor_results(
+                        monitor_result, results_dir, test_name, "record", driver_type,
+                    )
                 # Step 5: Stop recording WireMock
                 logger.info("")
                 logger.info("Step 5: Stopping WireMock (record mode)...")
@@ -157,9 +170,15 @@ def run_wiremock_performance_test(
             logger.info("")
         logger.info(f"Step {replay_step}: Starting WireMock in REPLAY mode...")
         wiremock = WiremockManager(mappings_dir, network_mode=network)
+        wm_monitor = None
         
         try:
             wiremock.start_replay(driver_label=driver_type)
+
+            docker_container = wiremock.get_docker_container()
+            if docker_container:
+                wm_monitor = WiremockMonitor(docker_container)
+                wm_monitor.start()
             
             # Execute test N times with cached responses
             logger.info("")
@@ -191,6 +210,11 @@ def run_wiremock_performance_test(
             _log_wiremock_metrics(metrics, warmup_iterations=warmup_iterations, iterations=iterations)
             
         finally:
+            if wm_monitor:
+                monitor_result = wm_monitor.stop()
+                _write_wiremock_monitor_results(
+                    monitor_result, results_dir, test_name, "replay", driver_type,
+                )
             cleanup_step = 4 if skip_recording else 8
             logger.info("")
             logger.info(f"Step {cleanup_step}: Cleanup...")
@@ -582,3 +606,53 @@ def _run_test_with_proxy(
     )
 
 
+def _write_wiremock_monitor_results(
+    result: MonitorResult,
+    results_dir: Path,
+    test_name: str,
+    phase: str,
+    driver_type: str | None,
+):
+    """Write WireMock monitoring CSV + log file and log a summary to console."""
+    timestamp = int(time.time())
+    driver_suffix = f"_{driver_type}" if driver_type else ""
+
+    # --- CSV stats ---
+    if result.samples:
+        csv_name = f"wiremock_stats_{test_name}_{phase}{driver_suffix}_{timestamp}.csv"
+        csv_path = results_dir / csv_name
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp_ms", "cpu_percent", "memory_usage_mb", "memory_limit_mb"])
+            for s in result.samples:
+                writer.writerow([s.timestamp_ms, s.cpu_percent, s.memory_usage_mb, s.memory_limit_mb])
+        logger.info(f"Wrote WireMock stats: {csv_path.name} ({len(result.samples)} samples)")
+
+    # --- Container logs ---
+    if result.logs:
+        log_name = f"wiremock_logs_{test_name}_{phase}{driver_suffix}_{timestamp}.log"
+        log_path = results_dir / log_name
+        log_path.write_text(result.logs, encoding="utf-8")
+        logger.info(f"Wrote WireMock logs: {log_path.name}")
+
+    # --- Console summary ---
+    _log_wiremock_container_summary(result, phase, driver_type)
+
+
+def _log_wiremock_container_summary(
+    result: MonitorResult, phase: str, driver_type: str | None
+):
+    """Log peak CPU, peak memory, and average memory from WireMock container stats."""
+    if not result.samples:
+        return
+
+    cpus = [s.cpu_percent for s in result.samples]
+    mems = [s.memory_usage_mb for s in result.samples]
+    label = f"{phase}" + (f" ({driver_type})" if driver_type else "")
+
+    logger.info("")
+    logger.info(f"WireMock container stats [{label}]:")
+    logger.info(f"  Peak CPU:       {max(cpus):>8.1f} %")
+    logger.info(f"  Peak Memory:    {max(mems):>8.1f} MB")
+    logger.info(f"  Avg Memory:     {statistics.mean(mems):>8.1f} MB")
+    logger.info(f"  Memory Limit:   {result.samples[0].memory_limit_mb:>8.1f} MB")

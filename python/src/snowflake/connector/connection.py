@@ -34,6 +34,7 @@ from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.text_utils import split_statements
+from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, SnowflakeCursor
 from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
@@ -557,14 +558,27 @@ class Connection:
         raise NotImplementedError("get_query_status_throw_if_error is not yet implemented")
 
     @staticmethod
-    def is_still_running(status: Any) -> bool:
+    def is_still_running(status: QueryStatus) -> bool:
         """Check whether given status is currently running."""
-        raise NotImplementedError("is_still_running is not yet implemented")
+        return status in (
+            QueryStatus.RUNNING,
+            QueryStatus.QUEUED,
+            QueryStatus.RESUMING_WAREHOUSE,
+            QueryStatus.QUEUED_REPARING_WAREHOUSE,
+            QueryStatus.BLOCKED,
+            QueryStatus.NO_DATA,
+        )
 
     @staticmethod
-    def is_an_error(status: Any) -> bool:
+    def is_an_error(status: QueryStatus) -> bool:
         """Check whether given status means that there has been an error."""
-        raise NotImplementedError("is_an_error is not yet implemented")
+        return status in (
+            QueryStatus.ABORTING,
+            QueryStatus.FAILED_WITH_ERROR,
+            QueryStatus.ABORTED,
+            QueryStatus.FAILED_WITH_INCIDENT,
+            QueryStatus.DISCONNECTED,
+        )
 
 
 # Backward compatibility alias

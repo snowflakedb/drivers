@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import abc
 import ctypes
+import functools
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, Union, cast
 
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_CURSOR_IS_CLOSED
 
@@ -27,6 +28,7 @@ from ._internal.binding_converters import (
     ParamStyle,
 )
 from ._internal.decorators import pep249
+from ._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
@@ -41,10 +43,40 @@ from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
+    from pandas import DataFrame
+    from pyarrow import Table
+
     from .connection import Connection
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _requires_not_closed(func: F) -> F:
+
+    @functools.wraps(func)
+    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+        if self._closed:
+            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
+
+
+def _requires_open_connection(func: F) -> F:
+    """Raise InterfaceError if the underlying connection is closed."""
+
+    @functools.wraps(func)
+    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+        if self.connection.is_closed():
+            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
+
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
 
 
 class ResultMetadata(NamedTuple):
@@ -244,14 +276,6 @@ class SnowflakeCursorBase(abc.ABC):
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def _check_not_closed(self) -> None:
-        if self._closed:
-            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
-
-    def _check_connection_open(self) -> None:
-        if self.connection.is_closed():
-            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
-
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
 
@@ -330,6 +354,8 @@ class SnowflakeCursorBase(abc.ABC):
             return operation, bindings
 
     @pep249
+    @_requires_not_closed
+    @_requires_open_connection
     def execute(
         self,
         operation: str,
@@ -347,8 +373,6 @@ class SnowflakeCursorBase(abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
         """
-        self._check_not_closed()
-        self._check_connection_open()
         query, bindings = self._prepare_query(operation, parameters)
         stmt_handle = self._connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self._connection.conn_handle)
@@ -515,13 +539,13 @@ class SnowflakeCursorBase(abc.ABC):
     # Fetch – shared implementation
     # ------------------------------------------------------------------
 
+    @_requires_not_closed
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
 
         Return a dict if ``_use_dict_result`` is True, otherwise a tuple.
         Concrete subclasses expose this through a type-safe ``fetchone``.
         """
-        self._check_not_closed()
         if self._iterator is None:
             self._iterator = self._get_iterator()
         try:
@@ -567,6 +591,7 @@ class SnowflakeCursorBase(abc.ABC):
         return ret
 
     @pep249
+    @_requires_not_closed
     def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
@@ -574,7 +599,6 @@ class SnowflakeCursorBase(abc.ABC):
         Returns:
             sequence: List of all remaining rows
         """
-        self._check_not_closed()
         if self._iterator is None:
             self._iterator = self._get_iterator()
         rows = list(self._iterator)
@@ -711,22 +735,22 @@ class SnowflakeCursorBase(abc.ABC):
     @property
     def date_output_format(self) -> str | None:
         """The session's ``DATE_OUTPUT_FORMAT`` parameter value."""
-        raise NotImplementedError("date_output_format is not yet implemented")
+        return self._connection._get_session_parameter("DATE_OUTPUT_FORMAT")
 
     @property
     def time_output_format(self) -> str | None:
         """The session's ``TIME_OUTPUT_FORMAT`` parameter value."""
-        raise NotImplementedError("time_output_format is not yet implemented")
+        return self._connection._get_session_parameter("TIME_OUTPUT_FORMAT")
 
     @property
     def timezone(self) -> str | None:
         """The session's ``TIMEZONE`` parameter value."""
-        raise NotImplementedError("timezone is not yet implemented")
+        return self._connection._get_session_parameter("TIMEZONE")
 
     @property
     def binary_output_format(self) -> str | None:
         """The session's ``BINARY_OUTPUT_FORMAT`` parameter value (``HEX`` or ``BASE64``)."""
-        raise NotImplementedError("binary_output_format is not yet implemented")
+        return self._connection._get_session_parameter("BINARY_OUTPUT_FORMAT")
 
     @property
     @pep249
@@ -784,19 +808,30 @@ class SnowflakeCursorBase(abc.ABC):
         """Query the result of a previously executed query."""
         raise NotImplementedError("query_result is not yet implemented")
 
-    def fetch_arrow_batches(self, **kwargs: Any) -> Iterator[Any]:
+    @requires_dependency(pyarrow)
+    def fetch_arrow_batches(
+        self,
+        force_microsecond_precision: bool = False,
+    ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
         raise NotImplementedError("fetch_arrow_batches is not yet implemented")
 
-    def fetch_arrow_all(self, **kwargs: Any) -> Any:
+    @requires_dependency(pyarrow)
+    def fetch_arrow_all(
+        self,
+        force_return_table: bool = False,
+        force_microsecond_precision: bool = False,
+    ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
         raise NotImplementedError("fetch_arrow_all is not yet implemented")
 
-    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[Any]:
+    @requires_dependency(pandas)
+    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[DataFrame]:
         """Fetch Pandas DataFrames in batches."""
         raise NotImplementedError("fetch_pandas_batches is not yet implemented")
 
-    def fetch_pandas_all(self, **kwargs: Any) -> Any:
+    @requires_dependency(pandas)
+    def fetch_pandas_all(self, **kwargs: Any) -> DataFrame:
         """Fetch all results as a single Pandas DataFrame."""
         raise NotImplementedError("fetch_pandas_all is not yet implemented")
 
@@ -811,6 +846,12 @@ class SnowflakeCursorBase(abc.ABC):
     def get_result_batches(self) -> list[Any] | None:
         """Get the previously executed query's ResultBatches if available."""
         raise NotImplementedError("get_result_batches is not yet implemented")
+
+    def check_can_use_arrow_resultset(self) -> None:
+        check_dependency(pyarrow)
+
+    def check_can_use_pandas(self) -> None:
+        check_dependency(pandas)
 
 
 # ======================================================================

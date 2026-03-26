@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "resource_monitor.h"
 #include "types.h"
 
 void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_iterations, int iterations,

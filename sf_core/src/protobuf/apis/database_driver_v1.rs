@@ -2,6 +2,7 @@ use crate::apis::database_driver_v1::ApiError;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
+use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
@@ -179,6 +180,17 @@ impl From<Handle> for StatementHandle {
     }
 }
 
+impl From<result_chunk::Data> for FetchChunkInput {
+    fn from(data: result_chunk::Data) -> Self {
+        match data {
+            result_chunk::Data::Inline(bytes) => FetchChunkInput::Inline(bytes),
+            result_chunk::Data::Remote(remote) => FetchChunkInput::Remote(
+                crate::chunks::ChunkDownloadData::new(&remote.url, &remote.headers),
+            ),
+        }
+    }
+}
+
 impl From<NativeColumnMetadata> for ColumnMetadata {
     fn from(meta: NativeColumnMetadata) -> Self {
         ColumnMetadata {
@@ -316,6 +328,15 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::InvalidRefreshState { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::ChunkFetch { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::ArrowParsing { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::Base64Decoding { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
         ApiError::Configuration {
             source: ConfigError::ConfigFileRead { .. },
             ..
@@ -428,6 +449,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::Query { .. } => StatusCode::InternalError,
         ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
+        ApiError::ChunkFetch { .. } => StatusCode::InternalError,
+        ApiError::ArrowParsing { .. } => StatusCode::InternalError,
+        ApiError::Base64Decoding { .. } => StatusCode::InternalError,
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
@@ -698,6 +722,28 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .database_release(db_handle.into())
             .to_protobuf()?;
         Ok(DatabaseReleaseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::database_fetch_chunk", skip(self, input))]
+    async fn database_fetch_chunk(
+        &self,
+        input: DatabaseFetchChunkRequest,
+    ) -> Result<DatabaseFetchChunkResponse, DriverException> {
+        let db_handle = required(input.db_handle, "Database handle is required")?;
+        let chunk = required(input.chunk, "Chunk is required")?;
+        let chunk_data = required(chunk.data, "Chunk data is required")?;
+        let fetch_input: FetchChunkInput = chunk_data.into();
+
+        let stream = self
+            .driver
+            .database_fetch_chunk(db_handle.into(), fetch_input)
+            .await
+            .to_protobuf()?;
+
+        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(stream).into();
+        Ok(DatabaseFetchChunkResponse {
+            stream: Some(stream_ptr),
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_new", skip(self, _input))]
@@ -1215,6 +1261,43 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Err(not_implemented(
             "statement_read_partition is not yet implemented",
         ))
+    }
+
+    #[instrument(name = "DatabaseDriverV1::statement_result_chunks", skip(self, input))]
+    async fn statement_result_chunks(
+        &self,
+        input: StatementResultChunksRequest,
+    ) -> Result<StatementResultChunksResponse, DriverException> {
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+
+        let chunk_info = self
+            .driver
+            .statement_result_chunks(stmt_handle.into())
+            .await
+            .to_protobuf()?;
+
+        let mut chunks = Vec::new();
+
+        if let Some(base64_data) = chunk_info.initial_chunk_base64 {
+            chunks.push(ResultChunk {
+                format: ChunkFormat::ArrowIpc as i32,
+                data: Some(result_chunk::Data::Inline(base64_data)),
+            });
+        }
+
+        for c in &chunk_info.chunks {
+            chunks.push(ResultChunk {
+                format: ChunkFormat::ArrowIpc as i32,
+                data: Some(result_chunk::Data::Remote(RemoteChunk {
+                    url: c.url.clone(),
+                    headers: c.headers.clone(),
+                })),
+            });
+        }
+
+        Ok(StatementResultChunksResponse {
+            result: Some(ResultChunksResult { chunks }),
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(self, input))]

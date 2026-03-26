@@ -32,6 +32,8 @@ pre-install-commands = [
 PIP_EXTRA_INDEX_URL = "https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple"
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["drivers/python/old_driver_src"]
 log_cli = true
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s"

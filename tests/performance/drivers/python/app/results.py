@@ -29,17 +29,21 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
     
     with open(filename, 'w', newline='') as f:
         if test_type == TestType.PUT_GET:
-            # PUT/GET tests: timestamp and query_s
-            writer = csv.DictWriter(f, fieldnames=["timestamp", "query_s"])
+            writer = csv.DictWriter(f, fieldnames=[
+                "timestamp", "query_s", "cpu_time_s", "peak_rss_mb",
+            ])
             writer.writeheader()
             for result in results:
                 writer.writerow({
                     "timestamp": result['timestamp'],
                     "query_s": f"{result['query_time_s']:.6f}",
+                    "cpu_time_s": f"{result['cpu_time_s']:.6f}",
+                    "peak_rss_mb": f"{result['peak_rss_mb']:.1f}",
                 })
         else:
-            # SELECT tests: timestamp, query_s, fetch_s, and row_count
-            writer = csv.DictWriter(f, fieldnames=["timestamp", "query_s", "fetch_s", "row_count"])
+            writer = csv.DictWriter(f, fieldnames=[
+                "timestamp", "query_s", "fetch_s", "row_count", "cpu_time_s", "peak_rss_mb",
+            ])
             writer.writeheader()
             for result in results:
                 writer.writerow({
@@ -47,8 +51,43 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
                     "query_s": f"{result['query_time_s']:.6f}",
                     "fetch_s": f"{result['fetch_time_s']:.6f}",
                     "row_count": result.get('row_count', 0),
+                    "cpu_time_s": f"{result['cpu_time_s']:.6f}",
+                    "peak_rss_mb": f"{result['peak_rss_mb']:.1f}",
                 })
     
+    return filename
+
+
+def write_memory_timeline(memory_timeline, test_name, driver_type):
+    """Write memory timeline samples to a separate CSV file.
+    
+    Args:
+        memory_timeline: List of MemorySample objects from ResourceMonitor
+        test_name: Name of the test
+        driver_type: Driver type (universal or old)
+    
+    Returns:
+        Path: Path to the created CSV file, or None if no samples
+    """
+    if not memory_timeline:
+        return None
+
+    timestamp = int(time.time())
+    results_dir = Path("/results")
+    results_dir.mkdir(exist_ok=True)
+
+    filename = results_dir / f"memory_timeline_{test_name}_python_{driver_type}_{timestamp}.csv"
+
+    with open(filename, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=["timestamp_ms", "rss_bytes", "vm_bytes"])
+        writer.writeheader()
+        for sample in memory_timeline:
+            writer.writerow({
+                "timestamp_ms": sample.timestamp_ms,
+                "rss_bytes": sample.rss_bytes,
+                "vm_bytes": sample.vm_bytes,
+            })
+
     return filename
 
 

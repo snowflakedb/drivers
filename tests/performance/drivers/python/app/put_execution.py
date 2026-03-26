@@ -1,10 +1,11 @@
 """PUT/GET execution and performance measurement."""
 
-import time
 import os
 import re
 import shutil
-from common import run_warmup, run_test_iterations, print_timing_stats
+import time
+from common import run_warmup, run_test_iterations, print_timing_stats, get_peak_rss_mb
+from resource_monitor import ResourceMonitor
 
 
 def execute_put_get_test(cursor, sql_command, warmup_iterations, iterations):
@@ -12,16 +13,24 @@ def execute_put_get_test(cursor, sql_command, warmup_iterations, iterations):
     Execute a complete PUT/GET test: warmup, iterations, and statistics.
     
     Returns:
-        list: Test results for CSV output
+        tuple: (results list, memory_timeline list)
     """
     print("\n=== Executing PUT_GET Test ===")
     print(f"Query: {sql_command}")
     
     run_warmup(_execute_put_get, cursor, sql_command, warmup_iterations)
+
+    monitor = ResourceMonitor(interval_s=0.1)
+    monitor.start()
+
     results = run_test_iterations(_execute_put_get, cursor, sql_command, iterations)
+
+    memory_timeline = monitor.stop()
+
     print_statistics(results)
+    print(f"  Memory timeline: {len(memory_timeline)} samples collected")
     
-    return results
+    return results, memory_timeline
 
 
 def print_statistics(results):
@@ -37,19 +46,26 @@ def _execute_put_get(cursor, sql):
     Execute a PUT or GET command and collect metrics.
     
     Returns:
-        dict: Dictionary with timestamp and query_time_s
+        dict: Dictionary with timestamp, query_time_s, cpu_time_s, and peak_rss_mb
     """
     _create_get_target_directory(sql)
     
+    cpu_start = time.process_time()
+
     query_start = time.time()
     cursor.execute(sql)
     query_time = time.time() - query_start
-    
+
+    cpu_time_s = time.process_time() - cpu_start
+    peak_rss_mb = get_peak_rss_mb()
+
     timestamp = int(time.time())
     
     return {
         "timestamp": timestamp,
         "query_time_s": query_time,
+        "cpu_time_s": cpu_time_s,
+        "peak_rss_mb": peak_rss_mb,
     }
 
 

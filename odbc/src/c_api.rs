@@ -110,6 +110,7 @@ pub unsafe extern "C" fn SQLConnect(
     authentication: *const sql::Char,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Narrow>(
         connection_handle,
         server_name,
@@ -135,6 +136,7 @@ pub unsafe extern "C" fn SQLConnectW(
     authentication: *const sql::WChar,
     name_length3: sql::SmallInt,
 ) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
     let result = api::connection::connect::<Wide>(
         connection_handle,
         server_name,
@@ -905,6 +907,24 @@ pub unsafe extern "C" fn SQLGetStmtAttrW(
         string_length_ptr,
     )
     .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLMoreResults(statement_handle: sql::Handle) -> sql::RetCode {
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    // TODO: Implement proper SQLMoreResults functionality (multiple result sets).
+    // For now, close the cursor as if SQLFreeStmt(SQL_CLOSE) was called, per ODBC spec.
+    let result = api::statement::free_stmt(statement_handle, api::FreeStmtOption::Close);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    if result.is_err() {
+        return result.to_sql_code();
+    }
+    sql::SqlReturn::NO_DATA.0
 }
 
 /// # Safety

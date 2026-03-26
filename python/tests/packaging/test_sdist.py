@@ -76,7 +76,7 @@ class TestSdistPackaging:
         """Build sdist and return the path to the tarball."""
         # Use python -m build to create sdist (standard PEP 517 build)
         result = self._run_command(
-            [sys.executable, "-m", "build", "--sdist", "--outdir", str(output_dir)],
+            [sys.executable, "-m", "build", "--sdist", "--installer", "uv", "--outdir", str(output_dir)],
             cwd=python_dir,
         )
 

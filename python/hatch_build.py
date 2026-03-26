@@ -339,7 +339,17 @@ class BuildHook(BuildHookInterface):
         if sys.platform == "win32" and platform.machine() == "ARM64":
             extra_cargo_args = ["--config", "profile.release.strip=false"]
 
-        with TemporaryDirectory() as temp_dir:
+        # Use a stable target dir when CORE_CARGO_TARGET_DIR is set (enables
+        # incremental Rust compilation and CI caching). Otherwise fall back to a
+        # temporary directory that is cleaned up after the build.
+        stable_target = os.environ.get("CORE_CARGO_TARGET_DIR")
+        if stable_target:
+            Path(stable_target).mkdir(parents=True, exist_ok=True)
+            dir_ctx = nullcontext(stable_target)
+        else:
+            dir_ctx = TemporaryDirectory()
+
+        with dir_ctx as build_dir:
             cargo_args = [
                 "cargo",
                 "build",
@@ -349,7 +359,7 @@ class BuildHook(BuildHookInterface):
                 "--manifest-path",
                 str(cargo_manifest),
                 "--target-dir",
-                str(temp_dir),
+                str(build_dir),
                 *extra_cargo_args,
             ]
 
@@ -368,7 +378,7 @@ class BuildHook(BuildHookInterface):
                 raise
 
             # Copy built artifacts from release directory to _core directory.
-            release_dir = Path(temp_dir) / "release"
+            release_dir = Path(build_dir) / "release"
             if not release_dir.exists():
                 raise Exception("Core binary not present")
             # Use iterdir(), not rglob() — release/deps/ contains proc-macro DLLs
@@ -377,7 +387,10 @@ class BuildHook(BuildHookInterface):
             found_core = False
             for file in release_dir.iterdir():
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
-                    shutil.copy2(file, target_dir)
+                    dest = target_dir / file.name
+                    tmp = target_dir / (file.name + ".tmp")
+                    shutil.copy2(file, tmp)
+                    os.replace(tmp, dest)
                     found_core = True
             if not found_core:
                 raise Exception(

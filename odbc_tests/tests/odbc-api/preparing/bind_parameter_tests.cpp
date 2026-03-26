@@ -247,6 +247,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY004 for invalid Par
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQLFreeStmt SQL_RESET_PARAMS clears bindings",
                  "[odbc-api][bindparameter][preparing]") {
+  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

@@ -24,10 +24,10 @@ void write_csv_results(const std::vector<TestResult>& results, const std::string
   auto csv = open_csv_file(filename);
   if (!csv) return;
 
-  *csv << "timestamp,query_s,fetch_s,row_count\n";
+  *csv << "timestamp,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb\n";
   for (const auto& r : results) {
     *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.fetch_time_s << ","
-         << r.row_count << "\n";
+         << r.row_count << "," << r.cpu_time_s << "," << std::setprecision(1) << r.peak_rss_mb << "\n";
   }
   csv->close();
 }
@@ -36,11 +36,33 @@ void write_csv_results_put_get(const std::vector<PutGetResult>& results, const s
   auto csv = open_csv_file(filename);
   if (!csv) return;
 
-  *csv << "timestamp,query_s\n";
+  *csv << "timestamp,query_s,cpu_time_s,peak_rss_mb\n";
   for (const auto& r : results) {
-    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "\n";
+    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.cpu_time_s << ","
+         << std::setprecision(1) << r.peak_rss_mb << "\n";
   }
   csv->close();
+}
+
+void write_memory_timeline(const std::vector<MemorySample>& samples, const std::string& test_name,
+                           const std::string& driver_type, time_t timestamp) {
+  if (samples.empty()) return;
+
+  std::filesystem::path results_dir("/results");
+  std::stringstream filename_ss;
+  filename_ss << "memory_timeline_" << test_name << "_odbc_" << driver_type << "_" << timestamp << ".csv";
+  std::string filename = (results_dir / filename_ss.str()).string();
+
+  auto csv = open_csv_file(filename);
+  if (!csv) return;
+
+  *csv << "timestamp_ms,rss_bytes,vm_bytes\n";
+  for (const auto& s : samples) {
+    *csv << s.timestamp_ms << "," << s.rss_bytes << "," << s.vm_bytes << "\n";
+  }
+  csv->close();
+
+  std::cout << "✓ Memory timeline → " << filename << " (" << samples.size() << " samples)\n";
 }
 
 std::string generate_results_filename(const std::string& test_name, const std::string& driver_type, time_t timestamp) {

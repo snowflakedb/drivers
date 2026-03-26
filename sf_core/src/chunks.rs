@@ -9,16 +9,18 @@ use arrow::datatypes::{Fields, Schema, SchemaRef};
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 
 const MAX_CHUNK_DECOMPRESSION_RETRIES: u32 = 2;
+pub const DEFAULT_PREFETCH_THREADS: usize = 8;
 
 #[derive(Debug)]
 pub struct ChunkDownloadData {
-    url: String,
-    headers: HashMap<String, String>,
+    pub url: String,
+    pub headers: HashMap<String, String>,
 }
 
 impl ChunkDownloadData {
@@ -29,12 +31,17 @@ impl ChunkDownloadData {
         }
     }
 }
+
 /// Reads Arrow record batches from one or more Snowflake result-set chunks.
+///
+/// For multi-chunk results, a background task downloads chunks in parallel,
+/// parses the Arrow IPC data, and sends ready-to-consume `RecordBatch`es
+/// through a bounded channel. This overlaps downloading, parsing, and
+/// consumption across chunks.
 ///
 /// # Sync iteration constraint
 ///
-/// The `Iterator` implementation for multi-chunk readers calls
-/// `Handle::block_on(get_chunk_data(...))` to download subsequent chunks.
+/// The `Iterator` implementation uses `blocking_recv()` on the prefetch channel.
 /// This **must not** be called from within an active tokio runtime context
 /// (e.g., inside a `Runtime::block_on` or from a spawned task), as doing so
 /// will panic (current-thread runtime) or deadlock (multi-thread runtime).
@@ -42,11 +49,11 @@ impl ChunkDownloadData {
 /// All current consumers (ODBC `fetch`, C API wrappers, tests) iterate the
 /// reader from a plain synchronous context, which is correct.
 pub struct ChunkReader {
-    rest: VecDeque<ChunkDownloadData>,
     schema: SchemaRef,
+    /// Inline stream for single-chunk results (no background task needed).
     current_stream: Option<StreamReader<io::Cursor<Vec<u8>>>>,
-    client: Option<Client>,
-    rt_handle: Option<tokio::runtime::Handle>,
+    /// Pre-parsed batches from the background prefetch pipeline (multi-chunk).
+    batch_rx: Option<tokio::sync::mpsc::Receiver<Result<RecordBatch, ArrowError>>>,
 }
 
 impl ChunkReader {
@@ -54,24 +61,31 @@ impl ChunkReader {
         initial_base64_opt: Option<&str>,
         mut rest: VecDeque<ChunkDownloadData>,
         client: Client,
+        prefetch_concurrency: usize,
     ) -> Result<Self, ChunkError> {
-        let rt_handle = tokio::runtime::Handle::try_current()
-            .ok()
-            .context(MissingRuntimeHandleSnafu)?;
-        let initial = if let Some(initial) = initial_base64_opt {
+        let initial_bytes = if let Some(initial) = initial_base64_opt {
             BASE64.decode(initial).context(Base64DecodingSnafu)?
         } else {
-            get_chunk_data(&client, &rest.pop_front().unwrap()).await?
+            let first = rest.pop_front().context(InitialChunkMissingSnafu)?;
+            get_chunk_data(&client, &first).await?
         };
-        let cursor = io::Cursor::new(initial);
-        let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
-        let schema = reader.schema().clone();
-        Ok(Self {
+        let cursor = io::Cursor::new(initial_bytes.clone());
+        let schema_reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
+        let schema = schema_reader.schema().clone();
+
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        tokio::spawn(prefetch_batches(
+            initial_bytes,
             rest,
+            client,
+            tx,
+            prefetch_concurrency,
+        ));
+
+        Ok(Self {
             schema,
-            current_stream: Some(reader),
-            client: Some(client),
-            rt_handle: Some(rt_handle),
+            current_stream: None,
+            batch_rx: Some(rx),
         })
     }
 
@@ -80,64 +94,73 @@ impl ChunkReader {
         let cursor = io::Cursor::new(bytes);
         let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
         Ok(Self {
-            rest: VecDeque::new(),
             schema: reader.schema().clone(),
             current_stream: Some(reader),
-            client: None,
-            rt_handle: None,
+            batch_rx: None,
         })
     }
 
     pub fn empty() -> Self {
         Self {
-            rest: VecDeque::new(),
             schema: Arc::new(Schema::new(Fields::empty())),
             current_stream: None,
-            client: None,
-            rt_handle: None,
+            batch_rx: None,
         }
     }
+}
+
+/// Background task that downloads, parses, and sends `RecordBatch`es through
+/// `tx`. The first chunk's raw bytes are parsed alongside the remaining chunks,
+/// which are downloaded with up to `concurrency` HTTP requests in flight.
+/// Backpressure is provided by the bounded channel.
+async fn prefetch_batches(
+    first_chunk_bytes: Vec<u8>,
+    rest: VecDeque<ChunkDownloadData>,
+    client: Client,
+    tx: tokio::sync::mpsc::Sender<Result<RecordBatch, ArrowError>>,
+    concurrency: usize,
+) {
+    stream::once(async { Ok(first_chunk_bytes) })
+        .chain(
+            stream::iter(rest)
+                .map(move |chunk| {
+                    let client = client.clone();
+                    async move { get_chunk_data(&client, &chunk).await }
+                })
+                .buffered(concurrency),
+        )
+        .map(|chunk_result| match chunk_result {
+            Ok(data) => {
+                let cursor = io::Cursor::new(data);
+                match StreamReader::try_new(cursor, None) {
+                    Ok(reader) => stream::iter(reader).left_stream(),
+                    Err(e) => stream::iter(vec![Err(e)]).right_stream(),
+                }
+            }
+            Err(e) => stream::iter(vec![Err(ArrowError::IpcError(e.to_string()))]).right_stream(),
+        })
+        .flatten()
+        .for_each(|batch| {
+            let tx = tx.clone();
+            async move {
+                let _ = tx.send(batch).await;
+            }
+        })
+        .await;
 }
 
 impl Iterator for ChunkReader {
     type Item = Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(mut current_stream) = self.current_stream.take() {
-            let next_batch = current_stream.next();
-            if next_batch.is_some() {
-                self.current_stream = Some(current_stream);
-                return next_batch;
+        if let Some(ref mut stream) = self.current_stream {
+            match stream.next() {
+                some @ Some(_) => return some,
+                None => self.current_stream = None,
             }
-            if let Some(chunk) = self.rest.pop_front() {
-                let client = match &self.client {
-                    Some(client) => client,
-                    None => {
-                        return Some(Err(ArrowError::IpcError(
-                            "chunk reader missing HTTP client".to_string(),
-                        )));
-                    }
-                };
-                let handle = match &self.rt_handle {
-                    Some(h) => h,
-                    None => {
-                        return Some(Err(ArrowError::ExternalError(Box::new(
-                            MissingRuntimeHandleSnafu.build(),
-                        ))));
-                    }
-                };
-                let chunk_data_result = handle.block_on(get_chunk_data(client, &chunk));
-                if let Err(e) = chunk_data_result {
-                    return Some(Err(ArrowError::IpcError(e.to_string())));
-                }
-                let data = chunk_data_result.unwrap();
-                let cursor = io::Cursor::new(data);
-                let reader = match StreamReader::try_new(cursor, None) {
-                    Ok(r) => r,
-                    Err(e) => return Some(Err(e)),
-                };
-                self.current_stream = Some(reader);
-            }
+        }
+        if let Some(ref mut rx) = self.batch_rx {
+            return rx.blocking_recv();
         }
         None
     }
@@ -305,14 +328,14 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Tokio runtime handle unavailable for chunk downloads"))]
-    MissingRuntimeHandle {
-        #[snafu(implicit)]
-        location: Location,
-    },
     #[snafu(display("Failed to decode base64 data"))]
     Base64Decoding {
         source: base64::DecodeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("No initial inline data and no remote chunks available to derive schema"))]
+    InitialChunkMissing {
         #[snafu(implicit)]
         location: Location,
     },
