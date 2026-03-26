@@ -180,13 +180,6 @@ jobs:
 
       # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
       # source via maturin. OpenSSL is needed for this dependency build.
-      - name: Cache vcpkg packages
-        if: matrix.os == 'windows-11-arm'
-        uses: actions/cache@v5
-        with:
-          path: C:\vcpkg\installed
-          key: vcpkg-arm64-windows-static-md-openssl
-
       # Cache Cargo registry: avoids re-downloading crate sources on every run.
       - name: Cache Cargo registry (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
@@ -206,10 +199,10 @@ jobs:
         if: matrix.os == 'windows-11-arm'
         uses: actions/cache@v5
         with:
-          path: cargo-target
-          key: ${{ matrix.os }}-cargo-target-release-${{ hashFiles('**/Cargo.lock') }}
+          path: proto-target
+          key: ${{ matrix.os }}-proto-target-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.os }}-cargo-target-release-
+            ${{ matrix.os }}-proto-target-release-
 
       # Capture vcpkg version so the cache key tracks runner image vcpkg baseline.
       # When GitHub updates the runner's vcpkg (new runner image), the key changes
@@ -253,7 +246,7 @@ jobs:
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
           # Point proto_generator at the stable cached target dir so incremental
           # Rust compilation works across runs (hatch_build.py honours this env var).
-          echo "PROTO_CARGO_TARGET_DIR=${{ github.workspace }}\cargo-target" >> $env:GITHUB_ENV
+          echo "PROTO_CARGO_TARGET_DIR=${{ github.workspace }}\proto-target" >> $env:GITHUB_ENV
 
       - name: Build python wheel (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
