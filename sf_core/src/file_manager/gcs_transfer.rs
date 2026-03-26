@@ -1,6 +1,6 @@
 use super::types::{
     CloudCredentials, EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo,
-    UploadStatus,
+    UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -145,23 +145,7 @@ async fn upload_to_gcs(
     encryption_result: EncryptionResult,
     using_presigned_url: bool,
 ) -> Result<(), GcsUploadError> {
-    // Build encryption metadata JSON (matching JDBC/Python format)
-    let encryption_data = serde_json::json!({
-        "EncryptionMode": "FullBlob",
-        "WrappedContentKey": {
-            "KeyId": "symmKey1",
-            "EncryptedKey": encryption_result.metadata.encrypted_key,
-            "Algorithm": "AES_CBC_256"
-        },
-        "EncryptionAgent": {
-            "Protocol": "1.0",
-            "EncryptionAlgorithm": "AES_CBC_256"
-        },
-        "ContentEncryptionIV": encryption_result.metadata.iv,
-        "KeyWrappingMetadata": {
-            "EncryptionLibrary": "Rust(OpenSSL)"
-        }
-    });
+    let encryption_data = build_encryption_metadata_json(&encryption_result.metadata);
     let encryption_data_str =
         serde_json::to_string(&encryption_data).context(gcs_upload_error::SerializationSnafu)?;
 
@@ -341,25 +325,6 @@ fn build_gcs_url(stage_info: &StageInfo, key: &str) -> String {
         "https://storage.googleapis.com/{}/{encoded_key}",
         stage_info.bucket
     )
-}
-
-/// Percent-encode a URL path, preserving `/` separators.
-/// Matches Python `urllib.parse.quote()` / ODBC `encodeUrlName()` behavior:
-/// unreserved chars (RFC 3986) and `/` pass through, everything else is encoded.
-fn percent_encode_path(s: &str) -> String {
-    let mut encoded = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                encoded.push(byte as char)
-            }
-            _ => {
-                use std::fmt::Write;
-                let _ = write!(encoded, "%{byte:02X}");
-            }
-        }
-    }
-    encoded
 }
 
 fn get_header(
@@ -568,6 +533,7 @@ mod tests {
             presigned_url: overrides.presigned_url,
             use_virtual_url: overrides.use_virtual_url,
             use_regional_url: overrides.use_regional_url,
+            storage_account: None,
         }
     }
 
