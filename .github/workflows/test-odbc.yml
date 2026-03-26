@@ -198,11 +198,23 @@ jobs:
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
-            cloud_provider: gcp
+            cloud_provider: aws
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
             cloud_provider: aws
+          - os: ubuntu-latest
+            name: Linux x64
+            driver_lib: libsfodbc.so
+            cloud_provider: gcp
+          - os: macos-latest
+            name: macOS ARM64
+            driver_lib: libsfodbc.dylib
+            cloud_provider: gcp
+          - os: windows-latest
+            name: Windows x64
+            driver_lib: sfodbc.dll
+            cloud_provider: gcp
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }})
     steps:
