@@ -9,8 +9,9 @@ use super::Setting;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::validation::{
-    ValidationIssue, ValidationSeverity, canonicalize_setting_key, normalize_host_underscores,
-    resolve_options, validate_connection_seed_write, validate_session_override_write,
+    ValidationIssue, ValidationSeverity, canonicalize_setting_key, collect_unknown_settings,
+    normalize_host_underscores, resolve_options, validate_connection_seed_write,
+    validate_session_override_write,
 };
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
@@ -47,6 +48,29 @@ impl DatabaseDriverV1 {
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
+
+                    // Forward unrecognized settings as session parameters so
+                    // drivers can set arbitrary Snowflake session params
+                    // via regular connection options.
+                    let unknown_settings = collect_unknown_settings(&conn.connection_seed);
+                    let init_params = match init_params {
+                        Some(explicit) => {
+                            // Normalize explicit keys to uppercase so precedence
+                            // is case-insensitive (unknown settings are uppercased).
+                            let mut merged: HashMap<String, String> = explicit
+                                .into_iter()
+                                .map(|(k, v)| (k.to_uppercase(), v))
+                                .collect();
+                            // Explicit session params take precedence
+                            for (k, v) in unknown_settings {
+                                merged.entry(k).or_insert(v);
+                            }
+                            Some(merged)
+                        }
+                        None if !unknown_settings.is_empty() => Some(unknown_settings),
+                        None => None,
+                    };
+
                     (
                         config,
                         host,

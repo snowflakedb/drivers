@@ -224,7 +224,15 @@ fn connect_with_params(
                         }
                     }
                     _ => {
-                        tracing::warn!("connect_with_params: unknown connection string key: {key:?}");
+                        tracing::info!(
+                            "connect_with_params: forwarding unrecognized key {key:?} to sf_core"
+                        );
+                        c.connection_set_option_string(ConnectionSetOptionStringRequest {
+                            conn_handle: Some(conn_handle),
+                            key,
+                            value,
+                        })
+                        .await?;
                     }
                 }
             }
