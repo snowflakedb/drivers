@@ -60,8 +60,14 @@ Feature: Username Password MFA Authentication
     Then There is error returned
 
   @core_int
-  Scenario: should fail authentication when password is not provided
+  Scenario: should fail authentication when password is implicitly unset
     Given Authentication is set to username_password_mfa and password is not provided
+    When Trying to Connect
+    Then There is error returned
+
+  @core_int
+  Scenario: should fail authentication when password is explicitly empty
+    Given Authentication is set to username_password_mfa and password is explicitly set to empty
     When Trying to Connect
     Then There is error returned
 
