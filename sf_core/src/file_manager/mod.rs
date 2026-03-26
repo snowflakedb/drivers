@@ -7,6 +7,7 @@ mod path_expansion;
 pub mod types;
 
 pub use self::types::*;
+pub use azure_transfer::download_from_azure;
 pub use gcs_transfer::download_from_gcs;
 
 use crate::compression::{CompressionError, compress_data};
