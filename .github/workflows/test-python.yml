@@ -244,9 +244,6 @@ jobs:
           echo "OPENSSL_DIR=C:\vcpkg\installed\arm64-windows-static-md" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\arm64-windows-static-md\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
-          # Point proto_generator at the stable cached target dir so incremental
-          # Rust compilation works across runs (hatch_build.py honours this env var).
-          echo "PROTO_CARGO_TARGET_DIR=${{ github.workspace }}\proto-target" >> $env:GITHUB_ENV
 
       - name: Build python wheel (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
