@@ -498,8 +498,7 @@ TEST_CASE("should populate IPD descriptor fields after SQLBindParameter.", "[que
   SQLSMALLINT nullable = -1;
   ret = SQLGetDescField(ipd, 1, SQL_DESC_NULLABLE, &nullable, 0, nullptr);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-  OLD_DRIVER_ONLY("BD#30") { CHECK(nullable == SQL_NULLABLE); }
-  NEW_DRIVER_ONLY("BD#30") { CHECK(nullable == SQL_NULLABLE_UNKNOWN); }
+  CHECK(nullable == SQL_NULLABLE);
 
   // And the IPD header should report the correct count
   SQLSMALLINT count = -1;
@@ -649,9 +648,9 @@ TEST_CASE("should return error for header-only field on record index greater tha
   SQLULEN array_size = 0;
   ret = SQLGetDescField(apd, 1, SQL_DESC_ARRAY_SIZE, &array_size, 0, nullptr);
 
-  // Then new driver rejects, old driver silently accepts
-  NEW_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_ERROR); }
-  OLD_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_SUCCESS); }
+  // Then SQL_SUCCESS — per ODBC spec, header fields ignore RecNumber
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(array_size == 1);
 }
 
 TEST_CASE("should report correct APD and IPD count for multiple parameters.", "[query][bind_parameter][descriptor]") {

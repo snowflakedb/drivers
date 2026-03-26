@@ -190,7 +190,7 @@ Feature: ODBC SQLBindParameter spec compliance
   Scenario: should return error for header-only field on record index greater than zero.
     Given Snowflake client is logged in and a parameter is bound
     When APD is queried with SQL_DESC_ARRAY_SIZE (header field) on record 1
-    Then new driver rejects, old driver silently accepts
+    Then SQL_SUCCESS — per ODBC spec, header fields ignore RecNumber
 
   @odbc_e2e
   Scenario: should report correct APD and IPD count for multiple parameters.

@@ -458,95 +458,94 @@ fn get_apd_field(
     field: DescField,
     value_ptr: sql::Pointer,
 ) -> OdbcResult<()> {
-    if rec_number == 0 {
-        match field {
-            DescField::Count => {
-                let count = desc.desc_count();
-                unsafe {
-                    std::ptr::write_unaligned(
-                        value_ptr as *mut sql::SmallInt,
-                        count as sql::SmallInt,
-                    );
-                }
-                Ok(())
+    // Per ODBC spec: "If the FieldIdentifier argument indicates a header field,
+    // RecNumber is ignored." Handle header fields first regardless of rec_number.
+    match field {
+        DescField::Count => {
+            let count = desc.desc_count();
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut sql::SmallInt, count as sql::SmallInt);
             }
-            DescField::ArraySize => {
-                unsafe {
-                    std::ptr::write_unaligned(
-                        value_ptr as *mut sql::ULen,
-                        desc.array_size as sql::ULen,
-                    );
-                }
-                Ok(())
-            }
-            DescField::BindType => {
-                unsafe {
-                    std::ptr::write_unaligned(value_ptr as *mut sql::ULen, desc.bind_type);
-                }
-                Ok(())
-            }
-            DescField::BindOffsetPtr => {
-                unsafe {
-                    std::ptr::write_unaligned(
-                        value_ptr as *mut *mut sql::Len,
-                        desc.bind_offset_ptr,
-                    );
-                }
-                Ok(())
-            }
-            _ => {
-                tracing::warn!("get_desc_field: unsupported APD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
-                }
-                .fail()
-            }
+            return Ok(());
         }
-    } else {
-        let param_number = rec_number as u16;
-        let record = match desc.records.get(&param_number) {
-            Some(r) => r,
-            None => return crate::api::error::NoMoreDataSnafu.fail(),
-        };
+        DescField::ArraySize => {
+            unsafe {
+                std::ptr::write_unaligned(
+                    value_ptr as *mut sql::ULen,
+                    desc.array_size as sql::ULen,
+                );
+            }
+            return Ok(());
+        }
+        DescField::BindType => {
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut sql::ULen, desc.bind_type);
+            }
+            return Ok(());
+        }
+        DescField::BindOffsetPtr => {
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut *mut sql::Len, desc.bind_offset_ptr);
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
 
-        match field {
-            DescField::Type | DescField::ConciseType => {
-                unsafe {
-                    std::ptr::write_unaligned(
-                        value_ptr as *mut sql::SmallInt,
-                        record.value_type as sql::SmallInt,
-                    );
-                }
-                Ok(())
+    if rec_number == 0 {
+        tracing::warn!(
+            "get_desc_field: unsupported APD field {:?} for record 0",
+            field
+        );
+        return crate::api::error::UnknownAttributeSnafu {
+            attribute: field as i32,
+        }
+        .fail();
+    }
+
+    let param_number = rec_number as u16;
+    let record = match desc.records.get(&param_number) {
+        Some(r) => r,
+        None => return crate::api::error::NoMoreDataSnafu.fail(),
+    };
+
+    match field {
+        DescField::Type | DescField::ConciseType => {
+            unsafe {
+                std::ptr::write_unaligned(
+                    value_ptr as *mut sql::SmallInt,
+                    record.value_type as sql::SmallInt,
+                );
             }
-            DescField::DataPtr => {
-                unsafe {
-                    std::ptr::write_unaligned(value_ptr as *mut sql::Pointer, record.data_ptr);
-                }
-                Ok(())
+            Ok(())
+        }
+        DescField::DataPtr => {
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut sql::Pointer, record.data_ptr);
             }
-            DescField::OctetLength => {
-                unsafe {
-                    std::ptr::write_unaligned(value_ptr as *mut sql::Len, record.buffer_length);
-                }
-                Ok(())
+            Ok(())
+        }
+        DescField::OctetLength => {
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut sql::Len, record.buffer_length);
             }
-            DescField::IndicatorPtr | DescField::OctetLengthPtr => {
-                unsafe {
-                    std::ptr::write_unaligned(
-                        value_ptr as *mut *mut sql::Len,
-                        record.str_len_or_ind_ptr,
-                    );
-                }
-                Ok(())
+            Ok(())
+        }
+        DescField::IndicatorPtr | DescField::OctetLengthPtr => {
+            unsafe {
+                std::ptr::write_unaligned(
+                    value_ptr as *mut *mut sql::Len,
+                    record.str_len_or_ind_ptr,
+                );
             }
-            _ => {
-                tracing::warn!("get_desc_field: unsupported APD record field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
-                }
-                .fail()
+            Ok(())
+        }
+        _ => {
+            tracing::warn!("get_desc_field: unsupported APD record field {:?}", field);
+            crate::api::error::UnknownAttributeSnafu {
+                attribute: field as i32,
             }
+            .fail()
         }
     }
 }
@@ -644,42 +643,45 @@ fn get_ipd_field(
     field: DescField,
     value_ptr: sql::Pointer,
 ) -> OdbcResult<()> {
-    if rec_number == 0 {
-        match field {
-            DescField::Count => {
-                let count = desc.desc_count();
-                unsafe {
-                    std::ptr::write_unaligned(
-                        value_ptr as *mut sql::SmallInt,
-                        count as sql::SmallInt,
-                    );
-                }
-                Ok(())
+    // Per ODBC spec: header fields ignore RecNumber.
+    match field {
+        DescField::Count => {
+            let count = desc.desc_count();
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut sql::SmallInt, count as sql::SmallInt);
             }
-            DescField::ArrayStatusPtr => {
-                unsafe {
-                    std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
-                }
-                Ok(())
-            }
-            DescField::RowsProcessedPtr => {
-                unsafe {
-                    std::ptr::write_unaligned(
-                        value_ptr as *mut *mut sql::ULen,
-                        desc.rows_processed_ptr,
-                    );
-                }
-                Ok(())
-            }
-            _ => {
-                tracing::warn!("get_desc_field: unsupported IPD header field {:?}", field);
-                crate::api::error::UnknownAttributeSnafu {
-                    attribute: field as i32,
-                }
-                .fail()
-            }
+            return Ok(());
         }
-    } else {
+        DescField::ArrayStatusPtr => {
+            unsafe {
+                std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
+            }
+            return Ok(());
+        }
+        DescField::RowsProcessedPtr => {
+            unsafe {
+                std::ptr::write_unaligned(
+                    value_ptr as *mut *mut sql::ULen,
+                    desc.rows_processed_ptr,
+                );
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    if rec_number == 0 {
+        tracing::warn!(
+            "get_desc_field: unsupported IPD field {:?} for record 0",
+            field
+        );
+        return crate::api::error::UnknownAttributeSnafu {
+            attribute: field as i32,
+        }
+        .fail();
+    }
+
+    {
         let param_number = rec_number as u16;
         let record = match desc.records.get(&param_number) {
             Some(r) => r,

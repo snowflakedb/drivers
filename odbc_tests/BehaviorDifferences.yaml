@@ -312,19 +312,3 @@ behavior_differences:
       field incorrect), caught locally by the driver.
       NEW driver: Sends the query to the server, which returns SQL_ERROR with
       SQLSTATE 42000 (Syntax error: Bind variable ? not set).
-
-  30:
-    name: "IPD SQL_DESC_NULLABLE defaults to SQL_NULLABLE instead of SQL_NULLABLE_UNKNOWN"
-    description: |
-      OLD driver: After SQLBindParameter, SQL_DESC_NULLABLE in the IPD
-      returns SQL_NULLABLE (1).
-      NEW driver: Returns SQL_NULLABLE_UNKNOWN (2), since the driver
-      has no column metadata to determine nullability at bind time.
-
-  31:
-    name: "SQLGetDescField accepts header-only fields on non-zero record number"
-    description: |
-      OLD driver: SQLGetDescField with a header field (e.g. SQL_DESC_ARRAY_SIZE)
-      on RecNumber > 0 returns SQL_SUCCESS and silently reads the header value.
-      NEW driver: Returns SQL_ERROR, since header fields are only valid on
-      RecNumber 0 per the ODBC specification.

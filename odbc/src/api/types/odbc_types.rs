@@ -833,7 +833,7 @@ impl Default for IpdRecord {
             column_size: 0,
             decimal_digits: 0,
             direction: sql::ParamType::Input as sql::SmallInt,
-            nullable: 2, // SQL_NULLABLE_UNKNOWN
+            nullable: 1, // SQL_NULLABLE — per ODBC spec: "dynamic parameters are always nullable"
         }
     }
 }
