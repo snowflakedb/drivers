@@ -26,12 +26,12 @@ pub async fn upload_to_azure_or_skip(
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
 
-    if !overwrite && check_blob_exists(&client, &url, &sas_token).await {
+    if !overwrite && check_blob_exists(&client, &url, sas_token).await {
         tracing::info!("Blob already exists in Azure: {}", key);
         return Ok(UploadStatus::Skipped);
     }
 
-    upload_to_azure(&client, &url, &sas_token, encryption_result).await?;
+    upload_to_azure(&client, &url, sas_token, encryption_result).await?;
     Ok(UploadStatus::Uploaded)
 }
 
@@ -43,7 +43,7 @@ pub async fn download_from_azure(
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-    let full_url = build_sas_url(&url, &sas_token);
+    let full_url = build_sas_url(&url, sas_token);
 
     let response = azure_request_with_retry(|| client.get(&full_url), Method::GET).await?;
 
@@ -84,7 +84,9 @@ pub async fn download_from_azure(
     let encrypted_data = response
         .bytes()
         .await
-        .map_err(|source| AzureRequestError::Http { source })?
+        .map_err(|e| AzureRequestError::Http {
+            detail: sanitize_sas(e.to_string()),
+        })?
         .to_vec();
     Ok((encrypted_data, file_metadata))
 }
@@ -111,11 +113,8 @@ async fn check_blob_exists(client: &reqwest::Client, url: &str, sas_token: &str)
                 false
             }
         },
-        Err(e) => {
-            tracing::warn!(
-                "Error checking Azure blob existence, proceeding with upload: {}",
-                e
-            );
+        Err(_) => {
+            tracing::warn!("Error checking Azure blob existence, proceeding with upload");
             false
         }
     }
@@ -213,9 +212,11 @@ where
 
 fn map_http_error(e: HttpError) -> AzureRequestError {
     match e {
-        HttpError::Transport { source, .. } => AzureRequestError::Http { source },
+        HttpError::Transport { source, .. } => AzureRequestError::Http {
+            detail: sanitize_sas(source.to_string()),
+        },
         other => AzureRequestError::RetryExhausted {
-            detail: other.to_string(),
+            detail: sanitize_sas(other.to_string()),
         },
     }
 }
@@ -226,7 +227,9 @@ fn create_azure_client() -> Result<reqwest::Client, AzureRequestError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .build()
-        .map_err(|source| AzureRequestError::Http { source })
+        .map_err(|e| AzureRequestError::Http {
+            detail: e.to_string(),
+        })
 }
 
 /// Constructs the Azure Blob Storage URL and extracts the SAS token from stage info.
@@ -236,12 +239,12 @@ fn create_azure_client() -> Result<reqwest::Client, AzureRequestError> {
 /// The endpoint value comes from Snowflake and may vary by environment
 /// (commercial, government, China). It is used as-is from the server response,
 /// with a `blob.` prefix prepended only if absent.
-fn resolve_url_and_token(
-    stage_info: &StageInfo,
+fn resolve_url_and_token<'a>(
+    stage_info: &'a StageInfo,
     key: &str,
-) -> Result<(String, String), AzureRequestError> {
+) -> Result<(String, &'a str), AzureRequestError> {
     let sas_token = match &stage_info.creds {
-        CloudCredentials::Azure { sas_token } => sas_token.reveal().to_string(),
+        CloudCredentials::Azure { sas_token } => sas_token.reveal(),
         _ => return Err(AzureRequestError::MissingAzureCredentials),
     };
 
@@ -259,10 +262,23 @@ fn build_azure_url(stage_info: &StageInfo, key: &str) -> Result<String, AzureReq
             field: "storage_account".to_string(),
         })?;
 
-    let endpoint = stage_info
+    let raw_endpoint = stage_info
         .end_point
         .as_deref()
         .unwrap_or("blob.core.windows.net");
+
+    // Normalize the endpoint to a bare hostname (strip any URL scheme or path).
+    let endpoint = {
+        let without_scheme = raw_endpoint
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or(raw_endpoint);
+        without_scheme
+            .trim_start_matches('/')
+            .split('/')
+            .next()
+            .unwrap_or(without_scheme)
+    };
 
     // The Snowflake server may provide the endpoint with or without the "blob." prefix.
     // Azure Government uses "blob.core.usgovcloudapi.net", Azure China uses
@@ -339,8 +355,8 @@ fn sanitize_sas(input: String) -> String {
 /// Converted into `AzureUploadError` or `AzureDownloadError` via `From` impls.
 #[derive(Debug, Snafu)]
 enum AzureRequestError {
-    #[snafu(display("Azure HTTP error"))]
-    Http { source: reqwest::Error },
+    #[snafu(display("Azure HTTP error: {detail}"))]
+    Http { detail: String },
     #[snafu(display("Azure request failed: HTTP {status_code}: {body}"))]
     AzureHttp { status_code: u16, body: String },
     #[snafu(display("Missing Azure credentials"))]
@@ -354,8 +370,8 @@ enum AzureRequestError {
 impl From<AzureRequestError> for AzureUploadError {
     fn from(e: AzureRequestError) -> Self {
         match e {
-            AzureRequestError::Http { source } => AzureUploadError::Http {
-                source,
+            AzureRequestError::Http { detail } => AzureUploadError::Http {
+                detail,
                 location: Location::default(),
             },
             AzureRequestError::AzureHttp { status_code, body } => AzureUploadError::AzureHttp {
@@ -383,8 +399,8 @@ impl From<AzureRequestError> for AzureUploadError {
 impl From<AzureRequestError> for AzureDownloadError {
     fn from(e: AzureRequestError) -> Self {
         match e {
-            AzureRequestError::Http { source } => AzureDownloadError::Http {
-                source,
+            AzureRequestError::Http { detail } => AzureDownloadError::Http {
+                detail,
                 location: Location::default(),
             },
             AzureRequestError::AzureHttp { status_code, body } => AzureDownloadError::AzureHttp {
@@ -412,9 +428,9 @@ impl From<AzureRequestError> for AzureDownloadError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum AzureUploadError {
-    #[snafu(display("Azure HTTP error"))]
+    #[snafu(display("Azure HTTP error: {detail}"))]
     Http {
-        source: reqwest::Error,
+        detail: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -453,9 +469,9 @@ pub enum AzureUploadError {
 #[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(module)]
 pub enum AzureDownloadError {
-    #[snafu(display("Azure HTTP error"))]
+    #[snafu(display("Azure HTTP error: {detail}"))]
     Http {
-        source: reqwest::Error,
+        detail: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -713,6 +729,19 @@ mod tests {
         assert!(!result.contains("secret1"));
         assert!(!result.contains("secret2"));
         assert!(result.contains("sig=REDACTED"));
+    }
+
+    #[test]
+    fn url_endpoint_with_scheme_is_normalized() {
+        let stage = make_stage_info(StageInfoOverrides {
+            end_point: Some("https://blob.core.windows.net/".to_string()),
+            ..Default::default()
+        });
+        let url = build_azure_url(&stage, "prefix/file.csv.gz").unwrap();
+        assert_eq!(
+            url,
+            "https://mystorageaccount.blob.core.windows.net/my-container/prefix/file.csv.gz"
+        );
     }
 
     // ---------------------------------------------------------------
