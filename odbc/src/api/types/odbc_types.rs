@@ -691,10 +691,6 @@ impl IpdDescriptor {
     pub fn desc_count(&self) -> u16 {
         self.records.keys().copied().max().unwrap_or(0)
     }
-
-    pub fn clear(&mut self) {
-        self.records.clear();
-    }
 }
 
 /// A resolved descriptor reference returned by `desc_ref_from_handle`.
@@ -835,16 +831,16 @@ pub struct IpdRecord {
     pub nullable: sql::SmallInt,
 }
 
-/// Snowflake maximum VARCHAR column size used as the auto-IPD default.
-/// Matches the reference (old) driver's behavior for `SQLDescribeParam`
-/// on untyped `?` markers.
-pub const SNOWFLAKE_MAX_VARCHAR_SIZE: sql::ULen = 134_217_728;
+/// Snowflake maximum VARCHAR column size (in characters) used as the
+/// auto-IPD default for `column_size`.  Matches the reference (old)
+/// driver's behavior for `SQLDescribeParam` on untyped `?` markers.
+pub const SNOWFLAKE_MAX_VARCHAR_CHARS: sql::ULen = 134_217_728;
 
 impl Default for IpdRecord {
     fn default() -> Self {
         Self {
             sql_data_type: sql::SqlDataType::VARCHAR,
-            column_size: SNOWFLAKE_MAX_VARCHAR_SIZE,
+            column_size: SNOWFLAKE_MAX_VARCHAR_CHARS,
             decimal_digits: 0,
             direction: sql::ParamType::Input as sql::SmallInt,
             nullable: 1, // SQL_NULLABLE — per ODBC spec: "dynamic parameters are always nullable"

@@ -89,6 +89,13 @@ Feature: ODBC SQLBindParameter spec compliance
     Then re-executing should fail with SQLSTATE 07002
 
   @odbc_e2e
+  Scenario: should fail with 07002 when parameter bindings have a gap.
+    Given Snowflake client is logged in
+    When a query with 3 parameter markers is prepared
+    And only parameters 1 and 3 are bound (gap at parameter 2)
+    Then executing should fail with SQLSTATE 07002
+
+  @odbc_e2e
   Scenario: should reflect changed bound variable on re-execution.
     Given Snowflake client is logged in
     When a parameterized SELECT is prepared and bound to a variable

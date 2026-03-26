@@ -38,6 +38,15 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     let stmt = stmt_from_handle(statement_handle);
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
+    let param_count = count_parameter_markers(statement_text);
+    stmt.ipd.records.retain(|&k, _| k as usize <= param_count);
+    for i in 1..=param_count {
+        stmt.ipd
+            .records
+            .entry(i as u16)
+            .or_insert_with(IpdRecord::default);
+    }
+
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -137,19 +146,48 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
 /// inside single-quoted string literals and `--` line comments.
 fn count_parameter_markers(sql: &str) -> usize {
     let mut count = 0;
-    let mut in_single_quote = false;
     let mut chars = sql.chars().peekable();
     while let Some(ch) = chars.next() {
         match ch {
-            '\'' => in_single_quote = !in_single_quote,
-            '-' if !in_single_quote && chars.peek() == Some(&'-') => {
+            '\'' => {
+                while let Some(c) = chars.next() {
+                    if c == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next(); // escaped ''
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            '"' => {
+                while let Some(c) = chars.next() {
+                    if c == '"' {
+                        if chars.peek() == Some(&'"') {
+                            chars.next(); // escaped ""
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            '-' if chars.peek() == Some(&'-') => {
                 for c in chars.by_ref() {
                     if c == '\n' {
                         break;
                     }
                 }
             }
-            '?' if !in_single_quote => count += 1,
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next(); // consume '*'
+                while let Some(c) = chars.next() {
+                    if c == '*' && chars.peek() == Some(&'/') {
+                        chars.next(); // consume '/'
+                        break;
+                    }
+                }
+            }
+            '?' => count += 1,
             _ => {}
         }
     }
@@ -204,9 +242,12 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
 
             let param_count = count_parameter_markers(query);
-            stmt.ipd.clear();
+            stmt.ipd.records.retain(|&k, _| k as usize <= param_count);
             for i in 1..=param_count {
-                stmt.ipd.records.insert(i as u16, IpdRecord::default());
+                stmt.ipd
+                    .records
+                    .entry(i as u16)
+                    .or_insert_with(IpdRecord::default);
             }
             tracing::info!(
                 "prepare: auto-IPD populated {} parameter markers",
@@ -363,19 +404,20 @@ fn apply_parameter_bindings(
     ipd: &crate::api::IpdDescriptor,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
     let ipd_count = ipd.desc_count() as usize;
-    let apd_count = apd.desc_count() as usize;
 
-    if ipd_count > 0 && apd_count < ipd_count {
-        return crate::api::error::CountFieldIncorrectSnafu {
-            reason: format!(
-                "statement has {ipd_count} parameter markers but only {apd_count} are bound"
-            ),
-        }
-        .fail();
+    if ipd_count == 0 || apd.records.is_empty() {
+        return Ok((None, None));
     }
 
-    if apd.records.is_empty() {
-        return Ok((None, None));
+    for i in 1..=ipd_count {
+        if !apd.records.contains_key(&(i as u16)) {
+            return crate::api::error::CountFieldIncorrectSnafu {
+                reason: format!(
+                    "parameter {i} is not bound (statement has {ipd_count} parameter markers)"
+                ),
+            }
+            .fail();
+        }
     }
     tracing::info!(
         "apply_parameter_bindings: Found {} bound parameters",
@@ -951,10 +993,7 @@ mod tests {
 
     #[test]
     fn escaped_single_quote_in_literal() {
-        assert_eq!(
-            count_parameter_markers("SELECT 'it''s a ?', ?"),
-            1
-        );
+        assert_eq!(count_parameter_markers("SELECT 'it''s a ?', ?"), 1);
     }
 
     #[test]
@@ -977,6 +1016,50 @@ mod tests {
         assert_eq!(
             count_parameter_markers("INSERT INTO t(a, b) VALUES(?, ?)"),
             2
+        );
+    }
+
+    #[test]
+    fn marker_inside_block_comment_is_ignored() {
+        assert_eq!(count_parameter_markers("SELECT /* ? */ ? FROM t"), 1);
+    }
+
+    #[test]
+    fn block_comments_do_not_nest() {
+        // SQL block comments don't nest: first */ closes the comment.
+        // "/* comment ? /* nested */" is the comment, then " ? */ ?" is code.
+        assert_eq!(
+            count_parameter_markers("SELECT /* comment ? /* nested */ ? */ ?"),
+            2
+        );
+    }
+
+    #[test]
+    fn marker_inside_double_quoted_identifier_is_ignored() {
+        assert_eq!(
+            count_parameter_markers(r#"SELECT "col?" FROM t WHERE c = ?"#),
+            1
+        );
+    }
+
+    #[test]
+    fn escaped_double_quote_in_identifier() {
+        assert_eq!(
+            count_parameter_markers(r#"SELECT """col?""" FROM t WHERE c = ?"#),
+            1
+        );
+    }
+
+    #[test]
+    fn block_comment_at_end_without_close() {
+        assert_eq!(count_parameter_markers("SELECT ? /* trailing"), 1);
+    }
+
+    #[test]
+    fn mixed_comments_and_literals() {
+        assert_eq!(
+            count_parameter_markers("SELECT ?, '?', /* ? */ ?, -- ?\n?"),
+            3
         );
     }
 }
