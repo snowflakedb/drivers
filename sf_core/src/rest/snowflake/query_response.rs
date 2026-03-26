@@ -744,11 +744,23 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             value.use_regional_url.unwrap_or(false) || region.eq_ignore_ascii_case("me-central2");
         let use_virtual_url = value.use_virtual_url.unwrap_or(false);
 
-        let storage_account = value
-            .storage_account
-            .as_ref()
-            .filter(|sa| !sa.is_empty())
-            .cloned();
+        let storage_account = match location_type {
+            file_manager::LocationType::Azure => Some(
+                value
+                    .storage_account
+                    .as_ref()
+                    .filter(|sa| !sa.is_empty())
+                    .context(MissingParameterSnafu {
+                        parameter: "stage info -> storageAccount",
+                    })?
+                    .clone(),
+            ),
+            _ => value
+                .storage_account
+                .as_ref()
+                .filter(|sa| !sa.is_empty())
+                .cloned(),
+        };
 
         Ok(file_manager::StageInfo {
             location_type,
