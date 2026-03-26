@@ -283,11 +283,7 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
     checkClosed();
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
         PreparedStatementBindingSerializer.serialize(placeholderMetadata, parameterValues)) {
-      try (ResultSet ignored = executeQueryWithBindings(sql, nativeBindings.bindings())) {
-        // TODO: Align execute() return value and update-count behavior with snowflake-jdbc by using
-        // backend statement-type metadata (true for result sets, false for update counts).
-        return true;
-      }
+      return executeWithBindings(sql, nativeBindings.bindings());
     }
   }
 

@@ -69,12 +69,16 @@ final class PreparedStatementBindingSerializer {
       logger.debug("No parameter placeholders found, skipping bindings serialization.");
       return new NativeBindings(null, null);
     }
-    if (placeholderMetadata.hasMixedPlaceholderStyles()) {
-      throw new SQLException("Mixed positional and numeric placeholders are not supported");
-    }
     logger.debug(
         "Serializing prepared bindings: placeholders={}", placeholderMetadata.placeholderCount());
 
+    byte[] jsonBytes = buildBindingsJson(placeholderMetadata, parameterValues);
+    return allocateNativeBindings(jsonBytes);
+  }
+
+  private static byte[] buildBindingsJson(
+      SqlPlaceholderMetadata placeholderMetadata, Map<Integer, ParameterValue> parameterValues)
+      throws SQLException {
     JSONStringer jsonStringer = new JSONStringer();
     jsonStringer.object();
     for (int parameterIndex : placeholderMetadata.referencedParameterIndexes()) {
@@ -95,8 +99,10 @@ final class PreparedStatementBindingSerializer {
       jsonStringer.endObject();
     }
     jsonStringer.endObject();
+    return jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+  }
 
-    byte[] jsonBytes = jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+  private static NativeBindings allocateNativeBindings(byte[] jsonBytes) throws SQLException {
     NativeBuffer nativeBuffer = NativeBuffer.fromBytes(jsonBytes);
     boolean success = false;
     try {
