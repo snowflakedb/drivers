@@ -180,18 +180,6 @@ jobs:
 
       # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
       # source via maturin. OpenSSL is needed for this dependency build.
-      # Cache Cargo registry: avoids re-downloading crate sources on every run.
-      - name: Cache Cargo registry (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
 
       # Capture vcpkg version so the cache key tracks runner image vcpkg baseline.
       # When GitHub updates the runner's vcpkg (new runner image), the key changes
@@ -416,20 +404,6 @@ jobs:
       # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
       # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
       # the same reason we use static OpenSSL for sf_core in the build_wheel job.
-
-      # Cache Cargo registry: avoids re-downloading crates for the cryptography
-      # maturin build (and any other Rust source builds triggered by uv).
-      - name: Cache Cargo registry (Windows ARM64, dep builds)
-        if: matrix.os == 'windows-11-arm'
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-deps-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-deps-
-            ${{ runner.os }}-cargo-registry-
 
       - name: Capture vcpkg version for cache key (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
