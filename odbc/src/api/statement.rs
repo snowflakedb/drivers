@@ -626,7 +626,13 @@ pub fn describe_param(
 
     let stmt = stmt_from_handle(statement_handle);
 
-    if matches!(stmt.state.as_ref(), StatementState::Created) {
+    let allowed = matches!(
+        stmt.state.as_ref(),
+        StatementState::Prepared { .. }
+            | StatementState::NoResultSet { prepared: true, .. }
+            | StatementState::Done { prepared: true, .. }
+    );
+    if !allowed {
         return StatementNotExecutedSnafu.fail();
     }
     let ipd_rec = stmt.ipd.records.get(&parameter_number).ok_or_else(|| {
