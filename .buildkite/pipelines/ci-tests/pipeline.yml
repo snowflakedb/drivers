@@ -69,6 +69,7 @@ steps:
             exit 0
           fi
 
+          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
@@ -87,22 +88,22 @@ steps:
               cargo build --package sf_core
               cargo install cargo2junit 2>/dev/null || true
 
-              echo "--- :test_tube: Running E2E Tests"
+              echo "--- :test_tube: Running Tests"
               mkdir -p /workdir/junit-results
               export RUSTC_BOOTSTRAP=1
-              set +o pipefail
+              set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
-                cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | cargo2junit > /workdir/junit-results/rust-junit.xml
-                TEST_EXIT=$${PIPESTATUS[0]}
+                cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
               else
                 IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
                 for filter in "$${FILTERS[@]}"; do
                   echo "Running: cargo test -- $$filter"
                   cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1
-                done | cargo2junit > /workdir/junit-results/rust-junit.xml
-                TEST_EXIT=$${PIPESTATUS[0]}
+                done | tee /tmp/rust-test-output.json
               fi
+              TEST_EXIT=$${PIPESTATUS[0]}
               unset RUSTC_BOOTSTRAP
+              cargo2junit < /tmp/rust-test-output.json > /workdir/junit-results/rust-junit.xml || true
               exit $$TEST_EXIT
             ' || DOCKER_EXIT=$$?
 
@@ -152,6 +153,7 @@ steps:
             exit 0
           fi
 
+          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
@@ -230,6 +232,7 @@ steps:
             exit 0
           fi
 
+          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
@@ -317,6 +320,7 @@ steps:
             exit 0
           fi
 
+          rm -rf junit-results
           echo "--- :docker: Running in $$DOCKER_IMAGE"
           DOCKER_EXIT=0
           docker run --rm \
