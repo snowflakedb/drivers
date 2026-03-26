@@ -586,8 +586,9 @@ TEST_CASE("should return SQL_NO_DATA for unbound IPD record.", "[query][bind_par
   SQLSMALLINT type = -1;
   ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
 
-  // Then SQL_NO_DATA should be returned per ODBC spec
-  CHECK(ret == SQL_NO_DATA);
+  // Then the record should not be found (SQL_NO_DATA per spec; old driver returns SQL_ERROR)
+  NEW_DRIVER_ONLY("BD#30") { CHECK(ret == SQL_NO_DATA); }
+  OLD_DRIVER_ONLY("BD#30") { CHECK(ret == SQL_ERROR); }
 }
 
 TEST_CASE("should return error for negative descriptor record number.", "[query][bind_parameter][descriptor]") {

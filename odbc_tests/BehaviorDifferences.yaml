@@ -312,3 +312,12 @@ behavior_differences:
       field incorrect), caught locally by the driver.
       NEW driver: Sends the query to the server, which returns SQL_ERROR with
       SQLSTATE 42000 (Syntax error: Bind variable ? not set).
+
+  30:
+    name: "SQLGetDescField on empty IPD returns SQL_ERROR instead of SQL_NO_DATA"
+    description: |
+      OLD driver: Querying a record field on an empty IPD (no parameters
+      bound, no prepare) returns SQL_ERROR.
+      NEW driver: Returns SQL_NO_DATA per the ODBC spec, which states
+      "SQL_NO_DATA is returned if RecNumber is greater than the current
+      number of descriptor records."

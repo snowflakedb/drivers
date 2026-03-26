@@ -172,7 +172,7 @@ Feature: ODBC SQLBindParameter spec compliance
   Scenario: should return SQL_NO_DATA for unbound IPD record.
     Given Snowflake client is logged in
     When no parameters are bound and IPD record 1 is queried
-    Then SQL_NO_DATA should be returned per ODBC spec
+    Then the record should not be found (SQL_NO_DATA per spec; old driver returns SQL_ERROR)
 
   @odbc_e2e
   Scenario: should return error for negative descriptor record number.
