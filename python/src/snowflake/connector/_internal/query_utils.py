@@ -4,8 +4,11 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from .arrow_context import ArrowConverterContext
+from .arrow_stream_iterator import ArrowStreamIterator
 from .protobuf_gen.database_driver_v1_pb2 import (
     ExecuteResult,
+    PrepareResult,
     StatementHandle,
     StatementNewRequest,
     StatementReleaseRequest,
@@ -85,7 +88,7 @@ def extract_sqlstate(result: ExecuteResult | None) -> str | None:
     return None
 
 
-def get_stream_ptr(result: ExecuteResult | None) -> int:
+def get_stream_ptr(result: ExecuteResult | PrepareResult | None) -> int:
     """Extract a C ArrowArrayStream pointer from an execute result.
 
     The pointer is stored as an 8-byte little-endian value inside
@@ -128,3 +131,14 @@ def get_stream_ptr(result: ExecuteResult | None) -> int:
         raise RuntimeError("Stream pointer is null")
 
     return stream_ptr
+
+
+def release_arrow_stream(stream_ptr: int | None) -> None:
+    # Release the Arrow stream pointer to prevent memory leak
+    # The PrepareResult includes an ArrowArrayStreamPtr that must be released
+    # even though we won't consume any data from it.
+    if stream_ptr:
+        # Create ArrowStreamIterator to take ownership of the stream pointer.
+        # The C++ destructor will handle cleanup when it goes out of scope.
+        _ = ArrowStreamIterator(stream_ptr, ArrowConverterContext())
+        # Iterator goes out of scope here, triggering C++ destructor

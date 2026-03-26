@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
-from snowflake.connector.errors import NotSupportedError, ProgrammingError
+from snowflake.connector.errors import InterfaceError, NotSupportedError, ProgrammingError
 from tests.e2e.types.utils import assert_sequential_values
 
 
@@ -1891,3 +1891,65 @@ class TestDictCursorMultipleQueries:
 
         remainder = dict_cursor.fetchall()
         assert remainder == [{"N": i} for i in range(6, 20)]
+
+
+class TestCursorDescribe:
+    """Integration tests for Cursor.describe method."""
+
+    def test_describe_returns_column_metadata(self, cursor):
+        """describe() returns ResultMetadata with correct names, types, and structure."""
+        result = cursor.describe("""
+            SELECT
+                1::INTEGER AS int_col,
+                'hello'::VARCHAR AS str_col,
+                3.14::FLOAT AS float_col,
+                TRUE::BOOLEAN AS bool_col
+        """)
+
+        assert result is not None
+        assert len(result) == 4
+        assert all(len(col) == 7 for col in result)
+        assert result[0].name == "INT_COL"
+        assert result[0].type_code == 0  # FIXED
+        assert result[1].name == "STR_COL"
+        assert result[1].type_code == 2  # TEXT
+        assert result[2].name == "FLOAT_COL"
+        assert result[2].type_code == 1  # REAL
+        assert result[3].name == "BOOL_COL"
+        assert result[3].type_code == 13  # BOOLEAN
+        assert cursor.description == result
+
+    def test_describe_side_effects(self, cursor):
+        """describe() sets description and row count but not sqlstate."""
+        cursor.describe("SELECT 1 AS col1")
+
+        assert cursor.description is not None
+        assert cursor.rowcount == 0
+        assert cursor.sqlstate is None
+        assert cursor.rownumber is None
+
+    def test_describe_matches_execute_description(self, cursor):
+        """describe() returns the same column metadata as execute()."""
+        sql = "SELECT 1::INTEGER AS a, 'x'::VARCHAR AS b, 3.14::FLOAT AS c"
+        describe_result = cursor.describe(sql)
+
+        cursor.execute(sql)
+
+        assert describe_result is not None
+        assert cursor.description is not None
+        for d, e in zip(describe_result, cursor.description):
+            assert d.name == e.name
+            assert d.type_code == e.type_code
+
+    def test_describe_with_invalid_sql_raises_error(self, cursor):
+        """describe() raises ProgrammingError for invalid SQL."""
+        with pytest.raises(ProgrammingError):
+            cursor.describe("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+
+    def test_describe_raises_when_cursor_closed(self, connection):
+        """describe() raises InterfaceError when cursor is closed."""
+        cur = connection.cursor()
+        cur.close()
+
+        with pytest.raises(InterfaceError):
+            cur.describe("SELECT 1")

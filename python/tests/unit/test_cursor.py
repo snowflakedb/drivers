@@ -20,7 +20,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementHandle,
 )
 from snowflake.connector.cursor import FetchMode, QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
-from snowflake.connector.errors import ProgrammingError
+from snowflake.connector.errors import InterfaceError, ProgrammingError
 
 
 class TestFetchone:
@@ -1649,3 +1649,93 @@ class TestResetIntegration:
         assert cursor._fetch_mode == FetchMode.ARROW
         assert cursor._rowcount == 42
         assert cursor.execute_result is not None
+
+
+class TestDescribe:
+    """Unit tests for Cursor.describe method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def _setup_prepare(self, mock_connection, columns=None):
+        result = MagicMock()
+        result.columns = columns or []
+        result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
+        mock_connection.db_api.statement_prepare.return_value.result = result
+        return result
+
+    def test_describe_returns_column_metadata(self, cursor, mock_connection):
+        """describe() returns ResultMetadata and updates cursor.description."""
+        col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
+        col.name = "COL1"
+        col.HasField = lambda f: f in ("precision", "scale")
+        self._setup_prepare(mock_connection, columns=[col])
+
+        with patch("snowflake.connector.cursor.release_arrow_stream"):
+            result = cursor.describe("SELECT 1 AS COL1")
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].name == "COL1"
+        assert cursor.description == result
+
+    def test_describe_returns_none_for_no_columns(self, cursor, mock_connection):
+        """describe() returns None when the statement produces no result set."""
+        self._setup_prepare(mock_connection, columns=[])
+
+        with patch("snowflake.connector.cursor.release_arrow_stream"):
+            assert cursor.describe("INSERT INTO t VALUES (1)") is None
+
+    def test_describe_side_effects(self, cursor, mock_connection):
+        """describe() resets state, does NOT set execute_result/sfqid, sets rowcount to None."""
+        cursor._rowcount = 42
+        cursor._fetch_mode = FetchMode.ARROW
+        self._setup_prepare(mock_connection)
+
+        with patch("snowflake.connector.cursor.release_arrow_stream"):
+            cursor.describe("SELECT 1")
+
+        assert cursor.execute_result is None
+        assert cursor.sfqid is None
+        assert cursor.rowcount is None
+        assert cursor._fetch_mode is None
+
+    def test_describe_releases_handle_and_stream(self, cursor, mock_connection):
+        """describe() allocates/releases statement handle and releases the arrow stream."""
+        self._setup_prepare(mock_connection)
+
+        with patch("snowflake.connector.cursor.release_arrow_stream") as mock_iter:
+            cursor.describe("SELECT 1")
+
+        mock_connection.db_api.statement_new.assert_called_once()
+        mock_connection.db_api.statement_release.assert_called_once()
+        mock_iter.assert_called_once()
+
+    def test_describe_raises_when_closed(self, cursor, mock_connection):
+        """describe() raises InterfaceError on closed cursor or connection."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor.describe("SELECT 1")
+
+        fresh = SnowflakeCursor(mock_connection)
+        mock_connection.is_closed.return_value = True
+        with pytest.raises(InterfaceError):
+            fresh.describe("SELECT 1")
+
+    def test_describe_propagates_prepare_error(self, cursor, mock_connection):
+        """describe() propagates ProgrammingError and captures sqlstate."""
+        mock_connection.db_api.statement_prepare.side_effect = ProgrammingError("syntax error", sqlstate="42601")
+
+        with pytest.raises(ProgrammingError):
+            cursor.describe("INVALID SQL")
+
+        assert cursor.sqlstate == "42601"

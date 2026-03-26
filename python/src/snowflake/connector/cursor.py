@@ -33,12 +33,20 @@ from ._internal.extras import check_dependency, pandas, pyarrow, requires_depend
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
+    PrepareResult,
     QueryBindings,
     QueryStats,
     StatementExecuteQueryRequest,
     StatementHandle,
+    StatementPrepareRequest,
 )
-from ._internal.query_utils import create_statement, extract_rowcount, extract_sqlstate, get_stream_ptr
+from ._internal.query_utils import (
+    create_statement,
+    extract_rowcount,
+    extract_sqlstate,
+    get_stream_ptr,
+    release_arrow_stream,
+)
 from ._internal.type_codes import FIXED, get_type_code
 from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
@@ -94,7 +102,7 @@ class ResultMetadata(NamedTuple):
         )
 
     @classmethod
-    def create_description(cls, result: ExecuteResult | None) -> list[ResultMetadata] | None:
+    def create_description(cls, result: ExecuteResult | PrepareResult | None) -> list[ResultMetadata] | None:
         """Extract description from execute result column metadata."""
         if result and result.columns:
             return [cls.from_column(col) for col in result.columns]
@@ -490,6 +498,14 @@ class SnowflakeCursorBase(abc.ABC):
             self._sqlstate = exc.sqlstate or None
             raise
 
+    def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult:
+        try:
+            request = StatementPrepareRequest(stmt_handle=stmt_handle)
+            return self._connection.db_api.statement_prepare(request).result
+        except ProgrammingError as exc:
+            self._sqlstate = exc.sqlstate or None
+            raise
+
     @pep249
     @_requires_not_closed
     @_requires_open_connection
@@ -554,6 +570,52 @@ class SnowflakeCursorBase(abc.ABC):
 
         # Execute using array binding (existing path handles list values)
         self.execute(operation, transposed)
+
+    @_requires_not_closed
+    @_requires_open_connection
+    def describe(
+        self,
+        operation: str,
+        parameters: Sequence[Any] | dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[ResultMetadata] | None:
+        """Obtain the schema of the result without executing the query.
+
+        This method prepares the query on the server with describeOnly=true to obtain
+        column metadata without actually executing the query or returning data rows.
+
+        Args:
+            operation: SQL statement to describe
+            parameters: Parameters for the SQL statement (same as execute())
+            **kwargs: Additional keyword arguments (for future compatibility)
+
+        Returns:
+            List of ResultMetadata tuples describing result columns, or None if the
+            statement produces no result set (e.g., INSERT, UPDATE, DELETE, DDL).
+
+        Side effects:
+            - Updates cursor.description with the column metadata
+        """
+        self.reset()
+        query, bindings = self._prepare_query(operation, parameters)
+
+        result: PrepareResult | None = None
+        with create_statement(self.connection, query) as stmt_handle:
+            result = self._prepare(stmt_handle)
+
+        stream_ptr = get_stream_ptr(result)
+        release_arrow_stream(stream_ptr)
+
+        # populate cursor state from the result
+        result_metadata = ResultMetadata.create_description(result)
+        if result_metadata:
+            self._description = result_metadata  # shallow copy
+            self._rowcount = 0
+            self._sqlstate = None
+            # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
+            self._rownumber = -1
+
+        return result_metadata
 
     # ------------------------------------------------------------------
     # Arrow stream helpers
@@ -834,16 +896,6 @@ class SnowflakeCursorBase(abc.ABC):
     ) -> dict[str, Any]:
         """Execute a query asynchronously without waiting for results."""
         raise NotImplementedError("execute_async is not yet implemented")
-
-    def describe(
-        self,
-        command: str,
-        params: Sequence[Any] | dict[str, Any] | None = None,
-        timeout: int | None = None,
-        **kwargs: Any,
-    ) -> list[ResultMetadata]:
-        """Obtain the schema of the result without executing the query."""
-        raise NotImplementedError("describe is not yet implemented")
 
     @pep249
     def scroll(self, value: int, mode: str = "relative") -> None:
