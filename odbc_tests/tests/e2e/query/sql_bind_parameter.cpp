@@ -569,8 +569,8 @@ TEST_CASE("should return SQL_NO_DATA for unbound APD record.", "[query][bind_par
   SQLSMALLINT type = -1;
   ret = SQLGetDescField(apd, 1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
 
-  // Then SQL_NO_DATA or SQL_ERROR should be returned
-  CHECK(ret != SQL_SUCCESS);
+  // Then SQL_NO_DATA should be returned per ODBC spec
+  CHECK(ret == SQL_NO_DATA);
 }
 
 TEST_CASE("should return SQL_NO_DATA for unbound IPD record.", "[query][bind_parameter][descriptor]") {
@@ -586,8 +586,8 @@ TEST_CASE("should return SQL_NO_DATA for unbound IPD record.", "[query][bind_par
   SQLSMALLINT type = -1;
   ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
 
-  // Then SQL_NO_DATA or SQL_ERROR should be returned
-  CHECK(ret != SQL_SUCCESS);
+  // Then SQL_NO_DATA should be returned per ODBC spec
+  CHECK(ret == SQL_NO_DATA);
 }
 
 TEST_CASE("should return error for negative descriptor record number.", "[query][bind_parameter][descriptor]") {
