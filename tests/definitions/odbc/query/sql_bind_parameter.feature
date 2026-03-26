@@ -190,7 +190,19 @@ Feature: ODBC SQLBindParameter spec compliance
   Scenario: should return error for header-only field on record index greater than zero.
     Given Snowflake client is logged in and a parameter is bound
     When APD is queried with SQL_DESC_ARRAY_SIZE (header field) on record 1
-    Then SQL_ERROR should be returned (header fields require RecNumber 0)
+    Then new driver rejects, old driver silently accepts
+
+  @odbc_e2e
+  Scenario: should report correct APD and IPD count for multiple parameters.
+    Given Snowflake client is logged in
+    When three parameters are bound
+    Then APD and IPD should both report count 3
+
+  @odbc_e2e
+  Scenario: should reset APD count to zero after SQL_RESET_PARAMS.
+    Given Snowflake client is logged in
+    When a parameter is bound and then bindings are reset
+    Then APD count should be zero
 
   @odbc_e2e
   Scenario: should report APD count zero when no parameters are bound.

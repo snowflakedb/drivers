@@ -498,7 +498,8 @@ TEST_CASE("should populate IPD descriptor fields after SQLBindParameter.", "[que
   SQLSMALLINT nullable = -1;
   ret = SQLGetDescField(ipd, 1, SQL_DESC_NULLABLE, &nullable, 0, nullptr);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
-  CHECK(nullable == SQL_NULLABLE_UNKNOWN);
+  OLD_DRIVER_ONLY("BD#30") { CHECK(nullable == SQL_NULLABLE); }
+  NEW_DRIVER_ONLY("BD#30") { CHECK(nullable == SQL_NULLABLE_UNKNOWN); }
 
   // And the IPD header should report the correct count
   SQLSMALLINT count = -1;
@@ -648,8 +649,66 @@ TEST_CASE("should return error for header-only field on record index greater tha
   SQLULEN array_size = 0;
   ret = SQLGetDescField(apd, 1, SQL_DESC_ARRAY_SIZE, &array_size, 0, nullptr);
 
-  // Then SQL_ERROR should be returned (header fields require RecNumber 0)
-  CHECK(ret == SQL_ERROR);
+  // Then new driver rejects, old driver silently accepts
+  NEW_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_ERROR); }
+  OLD_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_SUCCESS); }
+}
+
+TEST_CASE("should report correct APD and IPD count for multiple parameters.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When three parameters are bound
+  SQLINTEGER p1 = 1, p2 = 2, p3 = 3;
+  SQLLEN i1 = 0, i2 = 0, i3 = 0;
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p1, 0, &i1);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p2, 0, &i2);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &p3, 0, &i3);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then APD and IPD should both report count 3
+  SQLHDESC apd = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  SQLSMALLINT apd_count = -1;
+  ret = SQLGetDescField(apd, 0, SQL_DESC_COUNT, &apd_count, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(apd_count == 3);
+
+  SQLHDESC ipd = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_PARAM_DESC, &ipd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  SQLSMALLINT ipd_count = -1;
+  ret = SQLGetDescField(ipd, 0, SQL_DESC_COUNT, &ipd_count, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(ipd_count == 3);
+}
+
+TEST_CASE("should reset APD count to zero after SQL_RESET_PARAMS.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a parameter is bound and then bindings are reset
+  SQLINTEGER param = 1;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLFreeStmt(stmt.getHandle(), SQL_RESET_PARAMS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then APD count should be zero
+  SQLHDESC apd = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+  SQLSMALLINT count = -1;
+  ret = SQLGetDescField(apd, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  CHECK(count == 0);
 }
 
 TEST_CASE("should report APD count zero when no parameters are bound.", "[query][bind_parameter][descriptor]") {
