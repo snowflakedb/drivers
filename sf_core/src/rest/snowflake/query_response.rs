@@ -73,7 +73,7 @@ pub struct Data {
     #[serde(rename = "finalRoleName")]
     pub final_role_name: Option<String>,
     #[serde(rename = "numberOfBinds")]
-    _number_of_binds: Option<i32>,
+    pub number_of_binds: Option<i32>,
     #[serde(rename = "statementTypeId")]
     pub statement_type_id: Option<i64>,
     #[serde(rename = "version")]

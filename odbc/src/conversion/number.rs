@@ -18,7 +18,7 @@ use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 /// Controls how FIXED numeric columns are reported to ODBC applications.
 /// These settings match the Snowflake server-side session parameters
 /// `ODBC_TREAT_DECIMAL_AS_INT` and `ODBC_TREAT_BIG_NUMBER_AS_STRING`.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct NumericSettings {
     /// When true, FIXED columns with scale=0 are reported as SQL_BIGINT
     /// instead of SQL_DECIMAL. Default C type becomes SQL_C_SBIGINT.
@@ -27,6 +27,24 @@ pub struct NumericSettings {
     /// When true, FIXED columns with precision > 18 are reported as SQL_VARCHAR.
     /// Takes precedence over `treat_decimal_as_int` for high-precision columns.
     pub treat_big_number_as_string: bool,
+    /// Server-reported maximum VARCHAR size (from session parameter
+    /// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`). Used as the default
+    /// `column_size` in auto-populated IPD records for untyped `?` markers.
+    pub max_varchar_size: u64,
+}
+
+/// Snowflake default max VARCHAR size (16 MB). Overridden by the server's
+/// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT` session parameter after login.
+pub const SF_DEFAULT_VARCHAR_MAX_LEN: u64 = 16_777_216;
+
+impl Default for NumericSettings {
+    fn default() -> Self {
+        Self {
+            treat_decimal_as_int: false,
+            treat_big_number_as_string: false,
+            max_varchar_size: SF_DEFAULT_VARCHAR_MAX_LEN,
+        }
+    }
 }
 
 /// Represents the SQL numeric data types as defined by the ODBC specification.

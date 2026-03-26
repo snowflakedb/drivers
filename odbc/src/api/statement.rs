@@ -43,7 +43,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, false)?;
             let stmt_handle = stmt.stmt_handle;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -109,6 +109,19 @@ fn update_numeric_settings(
             settings.treat_big_number_as_string = bool_value;
             tracing::info!("Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {bool_value}");
         }
+
+        if let Ok(resp) = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: "VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT".to_string(),
+            })
+            .await
+            && let Some(value) = resp.value
+            && let Ok(size) = value.parse::<u64>()
+        {
+            settings.max_varchar_size = size;
+            tracing::info!("Server parameter VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT = {size}");
+        }
     });
     Ok(())
 }
@@ -131,29 +144,6 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
     let reader =
         ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
     Ok(reader)
-}
-
-/// Count `?` parameter markers in a SQL string, ignoring markers
-/// inside single-quoted string literals and `--` line comments.
-fn count_parameter_markers(sql: &str) -> usize {
-    let mut count = 0;
-    let mut in_single_quote = false;
-    let mut chars = sql.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\'' => in_single_quote = !in_single_quote,
-            '-' if !in_single_quote && chars.peek() == Some(&'-') => {
-                for c in chars.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
-                }
-            }
-            '?' if !in_single_quote => count += 1,
-            _ => {}
-        }
-    }
-    count
 }
 
 fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
@@ -203,14 +193,17 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             let schema = reader.schema();
             stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
 
-            let param_count = count_parameter_markers(query);
-            stmt.ipd.clear();
+            let param_count = result.number_of_binds.max(0) as usize;
+            let max_varchar = stmt.conn.numeric_settings.max_varchar_size;
+            stmt.ipd.records.retain(|&k, _| (k as usize) <= param_count);
             for i in 1..=param_count {
-                stmt.ipd.records.insert(i as u16, IpdRecord::default());
+                stmt.ipd
+                    .records
+                    .entry(i as u16)
+                    .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
             }
             tracing::info!(
-                "prepare: auto-IPD populated {} parameter markers",
-                param_count
+                "prepare: auto-IPD populated {param_count} parameter markers (from server)"
             );
 
             stmt.state.set(StatementState::Prepared { schema });
@@ -250,7 +243,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, prepared)?;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_execute_query(StatementExecuteQueryRequest {
@@ -355,27 +348,46 @@ fn create_execute_state(
 
 /// Build JSON query bindings from ODBC parameter bindings.
 ///
-/// Returns `(bindings, json_owner)`. The caller **must** keep `json_owner` alive
-/// until after the bindings have been consumed by `statement_execute_query`,
-/// because `BinaryDataPtr` holds a raw pointer into the owned `String`.
+/// When `prepared` is true (SQLPrepare+SQLExecute flow), the IPD has server-
+/// provided parameter count and we validate that the APD covers every marker.
+/// When `prepared` is false (SQLExecDirect), the IPD only has records from
+/// SQLBindParameter — we send whatever the APD has and let the server validate.
 fn apply_parameter_bindings(
     apd: &crate::api::ApdDescriptor,
     ipd: &crate::api::IpdDescriptor,
+    prepared: bool,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
-    let ipd_count = ipd.desc_count() as usize;
-    let apd_count = apd.desc_count() as usize;
-
-    if ipd_count > 0 && apd_count < ipd_count {
-        return crate::api::error::CountFieldIncorrectSnafu {
-            reason: format!(
-                "statement has {ipd_count} parameter markers but only {apd_count} are bound"
-            ),
+    if apd.records.is_empty() {
+        if prepared {
+            let ipd_count = ipd.desc_count() as usize;
+            if ipd_count > 0 {
+                return crate::api::error::CountFieldIncorrectSnafu {
+                    reason: format!(
+                        "parameter 1 is not bound (statement has {ipd_count} parameter markers)"
+                    ),
+                }
+                .fail();
+            }
         }
-        .fail();
+        return Ok((None, None));
     }
 
-    if apd.records.is_empty() {
+    let ipd_count = ipd.desc_count() as usize;
+    if ipd_count == 0 && !prepared {
         return Ok((None, None));
+    }
+
+    if prepared {
+        for i in 1..=ipd_count {
+            if !apd.records.contains_key(&(i as u16)) {
+                return crate::api::error::CountFieldIncorrectSnafu {
+                    reason: format!(
+                        "parameter {i} is not bound (statement has {ipd_count} parameter markers)"
+                    ),
+                }
+                .fail();
+            }
+        }
     }
     tracing::info!(
         "apply_parameter_bindings: Found {} bound parameters",
@@ -914,69 +926,5 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnknownAttributeSnafu { attribute }.fail()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::count_parameter_markers;
-
-    #[test]
-    fn no_markers() {
-        assert_eq!(count_parameter_markers("SELECT 1"), 0);
-    }
-
-    #[test]
-    fn single_marker() {
-        assert_eq!(count_parameter_markers("SELECT ?"), 1);
-    }
-
-    #[test]
-    fn multiple_markers() {
-        assert_eq!(count_parameter_markers("SELECT ?, ?, ?"), 3);
-    }
-
-    #[test]
-    fn marker_inside_single_quoted_literal_is_ignored() {
-        assert_eq!(count_parameter_markers("SELECT '?' FROM t WHERE c = ?"), 1);
-    }
-
-    #[test]
-    fn marker_inside_line_comment_is_ignored() {
-        assert_eq!(
-            count_parameter_markers("SELECT ? -- is this a param?\nFROM t"),
-            1
-        );
-    }
-
-    #[test]
-    fn escaped_single_quote_in_literal() {
-        assert_eq!(
-            count_parameter_markers("SELECT 'it''s a ?', ?"),
-            1
-        );
-    }
-
-    #[test]
-    fn comment_at_end_without_newline() {
-        assert_eq!(count_parameter_markers("SELECT ? -- trailing"), 1);
-    }
-
-    #[test]
-    fn empty_string() {
-        assert_eq!(count_parameter_markers(""), 0);
-    }
-
-    #[test]
-    fn only_comment() {
-        assert_eq!(count_parameter_markers("-- SELECT ?"), 0);
-    }
-
-    #[test]
-    fn marker_in_insert() {
-        assert_eq!(
-            count_parameter_markers("INSERT INTO t(a, b) VALUES(?, ?)"),
-            2
-        );
     }
 }

@@ -489,6 +489,7 @@ message StatementSetSubstraitPlanResponse {
 message PrepareResult {
   ArrowArrayStreamPtr stream = 1;
   repeated ColumnMetadata columns = 4;
+  int32 number_of_binds = 5;
 }
 
 message StatementPrepareRequest {

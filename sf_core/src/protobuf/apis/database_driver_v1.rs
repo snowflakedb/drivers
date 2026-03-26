@@ -1236,6 +1236,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             result: Some(PrepareResult {
                 stream: Some(result_ptr),
                 columns: result.columns.into_iter().map(|cm| cm.into()).collect(),
+                number_of_binds: result.number_of_binds,
             }),
         })
     }

@@ -260,6 +260,7 @@ impl DatabaseDriverV1 {
 pub struct PrepareResult {
     pub stream: Box<FFI_ArrowArrayStream>,
     pub columns: Vec<ColumnMetadata>,
+    pub number_of_binds: i32,
 }
 
 impl DatabaseDriverV1 {
@@ -270,6 +271,7 @@ impl DatabaseDriverV1 {
         Ok(PrepareResult {
             stream: result.stream,
             columns: result.columns,
+            number_of_binds: result.number_of_binds,
         })
     }
 }
@@ -294,6 +296,7 @@ pub struct ExecuteResult {
     pub query: String,
     pub sql_state: Option<String>,
     pub stats: Option<Stats>,
+    pub number_of_binds: i32,
 }
 
 impl DatabaseDriverV1 {
@@ -536,6 +539,8 @@ async fn response_to_execute_result(
             .collect()
     });
 
+    let number_of_binds = data.number_of_binds.unwrap_or(0);
+
     Ok(ExecuteResult {
         stream,
         rows_affected,
@@ -545,6 +550,7 @@ async fn response_to_execute_result(
         query,
         sql_state: data.sql_state,
         stats: data.stats,
+        number_of_binds,
     })
 }
 

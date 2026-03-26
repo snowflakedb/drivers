@@ -41,7 +41,7 @@ pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCT
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,
 };
-pub use number::NumericSettings;
+pub use number::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN};
 
 use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,
