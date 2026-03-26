@@ -157,3 +157,43 @@ Feature: ODBC SQLBindParameter spec compliance
     Given Snowflake client is logged in
     When a parameterized SELECT is prepared and an integer parameter is bound
     Then SQLDescribeParam should return the SQL type information
+
+  # ============================================================================
+  # Descriptor Error Scenarios
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should return SQL_NO_DATA for unbound APD record.
+    Given Snowflake client is logged in
+    When no parameters are bound and APD record 1 is queried
+    Then SQL_NO_DATA or SQL_ERROR should be returned
+
+  @odbc_e2e
+  Scenario: should return SQL_NO_DATA for unbound IPD record.
+    Given Snowflake client is logged in
+    When no parameters are bound and IPD record 1 is queried
+    Then SQL_NO_DATA or SQL_ERROR should be returned
+
+  @odbc_e2e
+  Scenario: should return error for negative descriptor record number.
+    Given Snowflake client is logged in
+    When APD is queried with negative record number
+    Then SQL_ERROR should be returned
+
+  @odbc_e2e
+  Scenario: should return error for unknown descriptor field identifier.
+    Given Snowflake client is logged in and a parameter is bound
+    When APD is queried with an unknown field identifier
+    Then SQL_ERROR should be returned
+
+  @odbc_e2e
+  Scenario: should return error for header-only field on record index greater than zero.
+    Given Snowflake client is logged in and a parameter is bound
+    When APD is queried with SQL_DESC_ARRAY_SIZE (header field) on record 1
+    Then SQL_ERROR should be returned (header fields require RecNumber 0)
+
+  @odbc_e2e
+  Scenario: should report APD count zero when no parameters are bound.
+    Given Snowflake client is logged in
+    When APD header count is queried before any binding
+    Then count should be 0

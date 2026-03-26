@@ -551,3 +551,121 @@ TEST_CASE("should describe bound parameter via SQLDescribeParam.", "[query][bind
   REQUIRE_ODBC(ret, stmt);
   CHECK(data_type == SQL_INTEGER);
 }
+
+// =============================================================================
+// Descriptor Error Scenarios
+// =============================================================================
+
+TEST_CASE("should return SQL_NO_DATA for unbound APD record.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When no parameters are bound and APD record 1 is queried
+  SQLHDESC apd = SQL_NULL_HDESC;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLSMALLINT type = -1;
+  ret = SQLGetDescField(apd, 1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
+
+  // Then SQL_NO_DATA or SQL_ERROR should be returned
+  CHECK(ret != SQL_SUCCESS);
+}
+
+TEST_CASE("should return SQL_NO_DATA for unbound IPD record.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When no parameters are bound and IPD record 1 is queried
+  SQLHDESC ipd = SQL_NULL_HDESC;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_PARAM_DESC, &ipd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLSMALLINT type = -1;
+  ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
+
+  // Then SQL_NO_DATA or SQL_ERROR should be returned
+  CHECK(ret != SQL_SUCCESS);
+}
+
+TEST_CASE("should return error for negative descriptor record number.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When APD is queried with negative record number
+  SQLHDESC apd = SQL_NULL_HDESC;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLSMALLINT type = -1;
+  ret = SQLGetDescField(apd, -1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
+
+  // Then SQL_ERROR should be returned
+  CHECK(ret == SQL_ERROR);
+}
+
+TEST_CASE("should return error for unknown descriptor field identifier.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in and a parameter is bound
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 1;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // When APD is queried with an unknown field identifier
+  SQLHDESC apd = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLINTEGER dummy = 0;
+  ret = SQLGetDescField(apd, 1, 9999, &dummy, 0, nullptr);
+
+  // Then SQL_ERROR should be returned
+  CHECK(ret == SQL_ERROR);
+}
+
+TEST_CASE("should return error for header-only field on record index greater than zero.",
+          "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in and a parameter is bound
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 1;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // When APD is queried with SQL_DESC_ARRAY_SIZE (header field) on record 1
+  SQLHDESC apd = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLULEN array_size = 0;
+  ret = SQLGetDescField(apd, 1, SQL_DESC_ARRAY_SIZE, &array_size, 0, nullptr);
+
+  // Then SQL_ERROR should be returned (header fields require RecNumber 0)
+  CHECK(ret == SQL_ERROR);
+}
+
+TEST_CASE("should report APD count zero when no parameters are bound.", "[query][bind_parameter][descriptor]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When APD header count is queried before any binding
+  SQLHDESC apd = SQL_NULL_HDESC;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_PARAM_DESC, &apd, 0, nullptr);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLSMALLINT count = -1;
+  ret = SQLGetDescField(apd, 0, SQL_DESC_COUNT, &count, 0, nullptr);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  // Then count should be 0
+  CHECK(count == 0);
+}
