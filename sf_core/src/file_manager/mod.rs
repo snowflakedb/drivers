@@ -1,3 +1,4 @@
+mod azure_transfer;
 mod encryption;
 mod gcs_transfer;
 mod s3_transfer;
@@ -10,6 +11,9 @@ pub use gcs_transfer::download_from_gcs;
 
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
+use azure_transfer::{
+    AzureDownloadError, AzureUploadError, download_from_azure, upload_to_azure_or_skip,
+};
 use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encrypt_file_data};
 use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
 use openssl::error::ErrorStack as OpenSslErrorStack;
@@ -70,12 +74,14 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
         )
         .await
         .context(GcsUploadSnafu)?,
-        LocationType::Azure => {
-            return UnsupportedStorageTypeSnafu {
-                storage_type: "Azure",
-            }
-            .fail();
-        }
+        LocationType::Azure => upload_to_azure_or_skip(
+            prepared,
+            &data.stage_info,
+            file_metadata.target.as_str(),
+            data.overwrite,
+        )
+        .await
+        .context(AzureUploadSnafu)?,
     };
 
     // TODO: Right now empty message is hardcoded, because any error in the upload process will
@@ -206,12 +212,9 @@ pub async fn download_single_file(
         LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
             .await
             .context(GcsDownloadSnafu)?,
-        LocationType::Azure => {
-            return UnsupportedStorageTypeSnafu {
-                storage_type: "Azure",
-            }
-            .fail();
-        }
+        LocationType::Azure => download_from_azure(&data.stage_info, data.src_location.as_str())
+            .await
+            .context(AzureDownloadSnafu)?,
     };
 
     let output_data = match data.encryption_material.as_ref() {
@@ -306,9 +309,15 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Unsupported storage type: {storage_type}"))]
-    UnsupportedStorageType {
-        storage_type: &'static str,
+    #[snafu(display("Failed to upload file to Azure"))]
+    AzureUpload {
+        source: AzureUploadError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to download file from Azure"))]
+    AzureDownload {
+        source: AzureDownloadError,
         #[snafu(implicit)]
         location: Location,
     },
