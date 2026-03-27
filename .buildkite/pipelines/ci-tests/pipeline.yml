@@ -97,6 +97,7 @@ steps:
               chmod -R a+rX /root/.cargo /root/.rustup 2>/dev/null || true
               chmod -R a+rwX /workdir/target /workdir/junit-results
               CARGO_BIN=$$(dirname $$(which cargo))
+              git config --system --add safe.directory /workdir
               set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
                 runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
