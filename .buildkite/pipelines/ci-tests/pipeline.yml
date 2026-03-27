@@ -3,10 +3,10 @@
 # Architecture:
 #   1. Test Selection step runs on bare agent (no Docker), determines which
 #      drivers need testing, stores results in Buildkite meta-data.
-#   2. Driver steps read their filter from meta-data, skip if no relevant
-#      changes, otherwise run build+test inside Docker via `docker run`.
-#   3. JUnit XML results are written to the mounted workspace, uploaded as
-#      build artifacts, and POSTed to Test Analytics via the REST API.
+#   2. x86 steps run build+test inside Docker via `docker run`.
+#   3. ARM steps run on bare snowci agents, installing dependencies inline.
+#   4. JUnit XML results are uploaded as build artifacts and POSTed to
+#      Test Analytics via the REST API with driver + arch tags.
 
 env:
   DOCKER_IMAGE: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
@@ -15,6 +15,24 @@ common: &common
   agents:
     queue: "discovery"
     repo: "snowflakedb/universal-driver"
+  plugins:
+    - ${GLOBAL_PLUGIN}/vault_secrets:
+        secrets:
+          - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+            env_name: "PARAMETERS_SECRET"
+          - path: "secret/jenkins/rt-tests/universal_driver_test_suite_api_token"
+            env_name: "BUILDKITE_ANALYTICS_TOKEN"
+  retry:
+    automatic:
+      - exit_status: "*"
+        limit: 1
+
+common_arm: &common_arm
+  agents:
+    queue: "snowci"
+    repo: "snowflakedb/universal-driver"
+    worker_arch: arm
+    worker_size: m
   plugins:
     - ${GLOBAL_PLUGIN}/vault_secrets:
         secrets:
@@ -56,8 +74,8 @@ steps:
     key: "rust-core"
     depends_on: "test-selection"
     steps:
-      - label: ":rust: Build + E2E Tests"
-        key: "rust-core-e2e"
+      - label: ":rust: Build + Tests (x86)"
+        key: "rust-core-x86"
         <<: *common
         timeout_in_minutes: 30
         command: |
@@ -124,6 +142,7 @@ steps:
               -F "data=@junit-results/rust-junit.xml" \
               -F "format=junit" \
               -F "tags[driver]=rust" \
+              -F "tags[arch]=x86" \
               -F "run_env[CI]=buildkite" \
               -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
               -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
@@ -136,10 +155,82 @@ steps:
             echo "Uploaded rust-junit.xml to Test Analytics"
           fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
-            buildkite-agent annotate ":x: Rust Core -- tests failed" --style "error" --context "rust-result"
+            buildkite-agent annotate ":x: Rust Core x86 -- tests failed" --style "error" --context "rust-x86-result"
             exit "$$DOCKER_EXIT"
           fi
-          buildkite-agent annotate ":white_check_mark: Rust Core -- passed" --style "success" --context "rust-result"
+          buildkite-agent annotate ":white_check_mark: Rust Core x86 -- passed" --style "success" --context "rust-x86-result"
+
+      - label: ":rust: Build + Tests (ARM)"
+        key: "rust-core-arm"
+        <<: *common_arm
+        timeout_in_minutes: 45
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for rust core, skipping"
+            exit 0
+          fi
+
+          echo "--- :gear: Installing dependencies"
+          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          source $$HOME/.cargo/env
+          cargo install cargo2junit 2>/dev/null || true
+
+          echo "--- :key: Decoding secrets"
+          rm -rf junit-results
+          ./scripts/decode_secrets.sh
+          export PARAMETER_PATH=$$(pwd)/parameters.json
+
+          echo "--- :hammer: Building sf_core"
+          cargo build --package sf_core
+
+          echo "--- :test_tube: Running Tests"
+          mkdir -p junit-results
+          export RUSTC_BOOTSTRAP=1
+          set +e
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
+          else
+            IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
+            for filter in "$${FILTERS[@]}"; do
+              echo "Running: cargo test -- $$filter"
+              cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1
+            done | tee /tmp/rust-test-output.json
+          fi
+          TEST_EXIT=$${PIPESTATUS[0]}
+          unset RUSTC_BOOTSTRAP
+          cargo2junit < /tmp/rust-test-output.json > junit-results/rust-junit.xml || true
+
+          echo "--- :buildkite: Uploading test results"
+          buildkite-agent artifact upload "junit-results/rust-junit.xml" || true
+          if [ -f "junit-results/rust-junit.xml" ]; then
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@junit-results/rust-junit.xml" \
+              -F "format=junit" \
+              -F "tags[driver]=rust" \
+              -F "tags[arch]=arm" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded rust-junit.xml to Test Analytics"
+          fi
+          if [ "$$TEST_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: Rust Core ARM -- tests failed" --style "error" --context "rust-arm-result"
+            exit "$$TEST_EXIT"
+          fi
+          buildkite-agent annotate ":white_check_mark: Rust Core ARM -- passed" --style "success" --context "rust-arm-result"
 
   # ==========================================================================
   # Python
@@ -148,8 +239,8 @@ steps:
     key: "python"
     depends_on: "test-selection"
     steps:
-      - label: ":python: Build + Integ + E2E Tests"
-        key: "python-integ-e2e"
+      - label: ":python: Build + Integ + E2E Tests (x86)"
+        key: "python-x86"
         <<: *common
         timeout_in_minutes: 45
         command: |
@@ -202,6 +293,7 @@ steps:
               -F "data=@junit-results/python-junit.xml" \
               -F "format=junit" \
               -F "tags[driver]=python" \
+              -F "tags[arch]=x86" \
               -F "run_env[CI]=buildkite" \
               -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
               -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
@@ -214,10 +306,80 @@ steps:
             echo "Uploaded python-junit.xml to Test Analytics"
           fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
-            buildkite-agent annotate ":x: Python -- tests failed" --style "error" --context "python-result"
+            buildkite-agent annotate ":x: Python x86 -- tests failed" --style "error" --context "python-x86-result"
             exit "$$DOCKER_EXIT"
           fi
-          buildkite-agent annotate ":white_check_mark: Python -- passed" --style "success" --context "python-result"
+          buildkite-agent annotate ":white_check_mark: Python x86 -- passed" --style "success" --context "python-x86-result"
+
+      - label: ":python: Build + Integ + E2E Tests (ARM)"
+        key: "python-arm"
+        <<: *common_arm
+        timeout_in_minutes: 60
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-python")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for python, skipping"
+            exit 0
+          fi
+
+          echo "--- :gear: Installing dependencies"
+          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd python39 python39-pip python39-devel
+          alternatives --set python3 /usr/bin/python3.9 2>/dev/null || true
+          pip3 install --upgrade pip setuptools wheel uv hatch
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          source $$HOME/.cargo/env
+
+          echo "--- :key: Decoding secrets"
+          rm -rf junit-results
+          ./scripts/decode_secrets.sh
+          export PARAMETER_PATH=$$(pwd)/parameters.json
+
+          cd python
+
+          echo "--- :hammer: Building Python Wheel"
+          RUSTFLAGS="" hatch build -t wheel
+          hatch run test.py3.9:install-wheel
+
+          echo "--- :test_tube: Running Integ + E2E Tests"
+          mkdir -p ../junit-results
+          set +e
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=../junit-results/python-junit.xml
+          else
+            hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=../junit-results/python-junit.xml
+          fi
+          TEST_EXIT=$$?
+          cd ..
+
+          echo "--- :buildkite: Uploading test results"
+          buildkite-agent artifact upload "junit-results/python-junit.xml" || true
+          if [ -f "junit-results/python-junit.xml" ]; then
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@junit-results/python-junit.xml" \
+              -F "format=junit" \
+              -F "tags[driver]=python" \
+              -F "tags[arch]=arm" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded python-junit.xml to Test Analytics"
+          fi
+          if [ "$$TEST_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: Python ARM -- tests failed" --style "error" --context "python-arm-result"
+            exit "$$TEST_EXIT"
+          fi
+          buildkite-agent annotate ":white_check_mark: Python ARM -- passed" --style "success" --context "python-arm-result"
 
   # ==========================================================================
   # ODBC
@@ -226,8 +388,8 @@ steps:
     key: "odbc"
     depends_on: "test-selection"
     steps:
-      - label: ":c: Build + Integ + E2E Tests"
-        key: "odbc-integ-e2e"
+      - label: ":c: Build + Integ + E2E Tests (x86)"
+        key: "odbc-x86"
         <<: *common
         timeout_in_minutes: 45
         command: |
@@ -289,6 +451,7 @@ steps:
               -F "data=@junit-results/odbc-junit.xml" \
               -F "format=junit" \
               -F "tags[driver]=odbc" \
+              -F "tags[arch]=x86" \
               -F "run_env[CI]=buildkite" \
               -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
               -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
@@ -301,10 +464,89 @@ steps:
             echo "Uploaded odbc-junit.xml to Test Analytics"
           fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
-            buildkite-agent annotate ":x: ODBC -- tests failed" --style "error" --context "odbc-result"
+            buildkite-agent annotate ":x: ODBC x86 -- tests failed" --style "error" --context "odbc-x86-result"
             exit "$$DOCKER_EXIT"
           fi
-          buildkite-agent annotate ":white_check_mark: ODBC -- passed" --style "success" --context "odbc-result"
+          buildkite-agent annotate ":white_check_mark: ODBC x86 -- passed" --style "success" --context "odbc-x86-result"
+
+      - label: ":c: Build + Integ + E2E Tests (ARM)"
+        key: "odbc-arm"
+        <<: *common_arm
+        timeout_in_minutes: 60
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-odbc")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for odbc, skipping"
+            exit 0
+          fi
+
+          echo "--- :gear: Installing dependencies"
+          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd \
+            cmake unixODBC unixODBC-devel zlib-devel \
+            gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          source $$HOME/.cargo/env
+
+          echo "--- :key: Decoding secrets"
+          rm -rf junit-results
+          ./scripts/decode_secrets.sh
+          export PARAMETER_PATH=$$(pwd)/parameters.json
+          export DRIVER_PATH=$$(pwd)/target/debug/libsfodbc.so
+
+          echo "--- :hammer: Building ODBC Driver"
+          cargo build
+
+          echo "--- :hammer: Building C++ Test Suite"
+          source /opt/rh/gcc-toolset-11/enable
+          cd odbc_tests
+          mkdir -p cmake-build
+          cmake -B cmake-build \
+              -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+              -D ODBC_INCLUDE_DIR="/usr/include" \
+              -D DRIVER_TYPE=NEW \
+              .
+          cmake --build cmake-build -- -j $$(nproc)
+
+          echo "--- :test_tube: Running Integ + E2E Tests"
+          mkdir -p ../junit-results
+          set +e
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit ../junit-results/odbc-junit.xml
+          else
+            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit ../junit-results/odbc-junit.xml
+          fi
+          TEST_EXIT=$$?
+          cd ..
+
+          echo "--- :buildkite: Uploading test results"
+          buildkite-agent artifact upload "junit-results/odbc-junit.xml" || true
+          if [ -f "junit-results/odbc-junit.xml" ]; then
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@junit-results/odbc-junit.xml" \
+              -F "format=junit" \
+              -F "tags[driver]=odbc" \
+              -F "tags[arch]=arm" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded odbc-junit.xml to Test Analytics"
+          fi
+          if [ "$$TEST_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: ODBC ARM -- tests failed" --style "error" --context "odbc-arm-result"
+            exit "$$TEST_EXIT"
+          fi
+          buildkite-agent annotate ":white_check_mark: ODBC ARM -- passed" --style "success" --context "odbc-arm-result"
 
   # ==========================================================================
   # JDBC
@@ -313,8 +555,8 @@ steps:
     key: "jdbc"
     depends_on: "test-selection"
     steps:
-      - label: ":java: Build + Integ + E2E Tests"
-        key: "jdbc-integ-e2e"
+      - label: ":java: Build + Integ + E2E Tests (x86)"
+        key: "jdbc-x86"
         <<: *common
         timeout_in_minutes: 45
         command: |
@@ -377,6 +619,7 @@ steps:
               -F "data=@$$xml" \
               -F "format=junit" \
               -F "tags[driver]=jdbc" \
+              -F "tags[arch]=x86" \
               -F "run_env[CI]=buildkite" \
               -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
               -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
@@ -389,7 +632,87 @@ steps:
             echo "Uploaded $$xml to Test Analytics"
           done
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
-            buildkite-agent annotate ":x: JDBC -- tests failed" --style "error" --context "jdbc-result"
+            buildkite-agent annotate ":x: JDBC x86 -- tests failed" --style "error" --context "jdbc-x86-result"
             exit "$$DOCKER_EXIT"
           fi
-          buildkite-agent annotate ":white_check_mark: JDBC -- passed" --style "success" --context "jdbc-result"
+          buildkite-agent annotate ":white_check_mark: JDBC x86 -- passed" --style "success" --context "jdbc-x86-result"
+
+      - label: ":java: Build + Integ + E2E Tests (ARM)"
+        key: "jdbc-arm"
+        <<: *common_arm
+        timeout_in_minutes: 60
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-java")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for jdbc, skipping"
+            exit 0
+          fi
+
+          echo "--- :gear: Installing dependencies"
+          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd \
+            java-11-openjdk java-11-openjdk-devel
+          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          source $$HOME/.cargo/env
+
+          echo "--- :key: Decoding secrets"
+          rm -rf junit-results
+          ./scripts/decode_secrets.sh
+          export PARAMETER_PATH=$$(pwd)/parameters.json
+
+          echo "--- :hammer: Building JDBC Bridge"
+          cargo build --package sf_core
+          cargo build --package jdbc_bridge
+
+          echo "--- :test_tube: Running Integ + E2E Tests"
+          export CORE_PATH=$$(pwd)/target/debug/libjdbc_bridge.so
+          chmod +x jdbc/gradlew
+          cd jdbc
+          set +e
+          if [ "$$TEST_FILTER" = "ALL" ]; then
+            ./gradlew test --stacktrace
+          else
+            GRADLE_TESTS=""
+            IFS="|" read -ra PATTERNS <<< "$$TEST_FILTER"
+            for pattern in "$${PATTERNS[@]}"; do
+              GRADLE_TESTS="$$GRADLE_TESTS --tests $$pattern"
+            done
+            ./gradlew test $$GRADLE_TESTS --stacktrace
+          fi
+          TEST_EXIT=$$?
+          set -e
+
+          mkdir -p ../junit-results
+          cp build/test-results/test/*.xml ../junit-results/ 2>/dev/null || true
+          cd ..
+
+          echo "--- :buildkite: Uploading test results"
+          buildkite-agent artifact upload "junit-results/TEST-*.xml" || true
+          for xml in junit-results/TEST-*.xml; do
+            [ -f "$$xml" ] || continue
+            curl -X POST --silent --show-error --fail \
+              -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
+              -F "data=@$$xml" \
+              -F "format=junit" \
+              -F "tags[driver]=jdbc" \
+              -F "tags[arch]=arm" \
+              -F "run_env[CI]=buildkite" \
+              -F "run_env[key]=$$BUILDKITE_BUILD_ID" \
+              -F "run_env[number]=$$BUILDKITE_BUILD_NUMBER" \
+              -F "run_env[job_id]=$$BUILDKITE_JOB_ID" \
+              -F "run_env[branch]=$$BUILDKITE_BRANCH" \
+              -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
+              -F "run_env[message]=$$BUILDKITE_MESSAGE" \
+              -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
+              https://analytics-api.buildkite.com/v1/uploads
+            echo "Uploaded $$xml to Test Analytics"
+          done
+          if [ "$$TEST_EXIT" -ne 0 ]; then
+            buildkite-agent annotate ":x: JDBC ARM -- tests failed" --style "error" --context "jdbc-arm-result"
+            exit "$$TEST_EXIT"
+          fi
+          buildkite-agent annotate ":white_check_mark: JDBC ARM -- passed" --style "success" --context "jdbc-arm-result"
