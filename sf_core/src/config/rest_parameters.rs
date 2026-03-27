@@ -84,9 +84,10 @@ impl ClientInfo {
             application: settings
                 .get_string("client_app_id")
                 .unwrap_or_else(|| "PythonConnector".to_string()),
+            // TODO: Replace the default with a proper version once release versioning is established.
             version: settings
                 .get_string("client_app_version")
-                .unwrap_or_else(|| "3.15.0".to_string()),
+                .unwrap_or_else(|| "2026".to_string()),
             os: detect_os(),
             os_version: detect_os_version(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),

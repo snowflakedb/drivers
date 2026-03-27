@@ -248,10 +248,11 @@ fn connect_with_params(
             })
             .await?;
 
+            // TODO: Replace with the real ODBC driver version once the release versioning is established.
             c.connection_set_option_string(ConnectionSetOptionStringRequest {
                 conn_handle: Some(conn_handle),
                 key: "client_app_version".to_owned(),
-                value: env!("CARGO_PKG_VERSION").to_owned(),
+                value: "2026".to_owned(),
             })
             .await?;
 

@@ -119,11 +119,8 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
 
   private void setClientIdentity() throws DatabaseDriverService.ServiceException {
     setStringOption("client_app_id", "JDBC");
-    setStringOption(
-        "client_app_version",
-        getClass().getPackage().getImplementationVersion() != null
-            ? getClass().getPackage().getImplementationVersion()
-            : "0.1.0");
+    // TODO: Replace with the real JDBC driver version once the release versioning is established.
+    setStringOption("client_app_version", "2026");
     setStringOption("client_runtime_name", System.getProperty("java.vm.name", ""));
     setStringOption("client_runtime_version", System.getProperty("java.version", ""));
   }
