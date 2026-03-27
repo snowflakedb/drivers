@@ -2,6 +2,7 @@ use crate::apis::database_driver_v1::ApiError;
 use crate::apis::database_driver_v1::ColumnMetadata as NativeColumnMetadata;
 use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::DatabaseDriverV1;
+use crate::apis::database_driver_v1::ExecuteResult as NativeExecuteResult;
 use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
@@ -202,6 +203,31 @@ impl From<NativeColumnMetadata> for ColumnMetadata {
             length: meta.length,
             byte_length: meta.byte_length,
             nullable: meta.nullable,
+        }
+    }
+}
+
+impl From<NativeExecuteResult> for ExecuteResult {
+    fn from(result: NativeExecuteResult) -> Self {
+        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
+        ExecuteResult {
+            stream: Some(stream_ptr),
+            rows_affected: result.rows_affected,
+            query_id: result.query_id,
+            columns: result
+                .columns
+                .into_iter()
+                .map(ColumnMetadata::from)
+                .collect(),
+            statement_type_id: result.statement_type_id,
+            query: result.query,
+            sql_state: result.sql_state,
+            stats: result.stats.map(|s| QueryStats {
+                num_rows_inserted: s.num_rows_inserted,
+                num_rows_updated: s.num_rows_updated,
+                num_rows_deleted: s.num_rows_deleted,
+                num_dml_duplicates: s.num_dml_duplicates,
+            }),
         }
     }
 }
@@ -1087,6 +1113,27 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
+    #[instrument(
+        name = "DatabaseDriverV1::connection_get_query_result",
+        skip(self, input)
+    )]
+    async fn connection_get_query_result(
+        &self,
+        input: ConnectionGetQueryResultRequest,
+    ) -> Result<ConnectionGetQueryResultResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let result = self
+            .driver
+            .connection_get_query_result(conn_handle.into(), input.query_id)
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionGetQueryResultResponse {
+            result: Some(result.into()),
+        })
+    }
+
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]
     async fn statement_new(
         &self,
@@ -1303,28 +1350,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .statement_execute_query(stmt_handle.into(), bindings_opt)
             .await
             .to_protobuf()?;
-        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
 
         Ok(StatementExecuteQueryResponse {
-            result: Some(ExecuteResult {
-                stream: Some(stream_ptr),
-                rows_affected: result.rows_affected,
-                query_id: result.query_id,
-                columns: result
-                    .columns
-                    .into_iter()
-                    .map(ColumnMetadata::from)
-                    .collect(),
-                statement_type_id: result.statement_type_id,
-                query: result.query,
-                sql_state: result.sql_state,
-                stats: result.stats.map(|s| QueryStats {
-                    num_rows_inserted: s.num_rows_inserted,
-                    num_rows_updated: s.num_rows_updated,
-                    num_rows_deleted: s.num_rows_deleted,
-                    num_dml_duplicates: s.num_dml_duplicates,
-                }),
-            }),
+            result: Some(result.into()),
         })
     }
 

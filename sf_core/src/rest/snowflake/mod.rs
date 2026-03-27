@@ -933,6 +933,29 @@ async fn execute_sync_with_retry<'a>(
     Err(last_error.expect("last_error must be set after retry loop"))
 }
 
+/// Map a Snowflake query response into a `Result`, converting
+/// `response.success == false` into `RestError::QueryFailed` with
+/// the server's message, error code, and SQL state.
+fn into_query_result(
+    response: query_response::Response,
+) -> Result<query_response::Response, RestError> {
+    if !response.success {
+        let message = response
+            .message
+            .unwrap_or_else(|| "Unknown error".to_owned());
+        let code = response.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+        let sql_state = response.data.sql_state.clone();
+
+        return QueryFailedSnafu {
+            message,
+            code,
+            sql_state,
+        }
+        .fail();
+    }
+    Ok(response)
+}
+
 /// Execute a single sync query request.
 async fn execute_sync_query<'a>(
     client: &reqwest::Client,
@@ -1001,23 +1024,7 @@ async fn execute_sync_query<'a>(
         "Sync query completed"
     );
 
-    if !query_response.success {
-        let message = query_response
-            .message
-            .unwrap_or_else(|| "Unknown error".to_owned());
-        let code = query_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok());
-        let sql_state = query_response.data.sql_state.clone();
-        return QueryFailedSnafu {
-            message,
-            code,
-            sql_state,
-        }
-        .fail();
-    }
-    Ok(query_response)
+    into_query_result(query_response)
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -1043,6 +1050,36 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     )
     .await
     .context(AsyncQuerySnafu)
+}
+
+/// Fetch the result of a previously executed query by its Snowflake Query ID.
+///
+/// Issues `GET /queries/{query_id}/result` using the connection's session token,
+/// validates the response, and returns the parsed query response on success.
+/// Returns `RestError` so callers can use `RefreshContext` for token refresh.
+#[tracing::instrument(skip(client, query_parameters, session_token))]
+pub async fn snowflake_get_query_result(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    query_id: &str,
+    retry_policy: &RetryPolicy,
+) -> Result<query_response::Response, RestError> {
+    let result_url = format!(
+        "{}/queries/{}/result",
+        query_parameters.server_url, query_id
+    );
+    let query_response = async_exec::poll_query_status(
+        client,
+        &query_parameters.client_info,
+        session_token,
+        &result_url,
+        retry_policy,
+    )
+    .await
+    .context(AsyncQuerySnafu)?;
+
+    into_query_result(query_response)
 }
 
 pub(crate) async fn read_response_json<T>(
@@ -1401,6 +1438,86 @@ mod tests {
         fn no_panic_for_invalid_url() {
             let cache = StubTokenCache::new();
             remove_mfa_token_from_cache("not-a-url", "alice", Some(&cache));
+        }
+    }
+
+    mod into_query_result_tests {
+        use super::*;
+        use serde_json::json;
+
+        fn response_from_json(value: serde_json::Value) -> query_response::Response {
+            serde_json::from_value(value).expect("valid response JSON")
+        }
+
+        #[test]
+        fn success_returns_response_unchanged() {
+            let resp = response_from_json(json!({
+                "success": true,
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null
+                }
+            }));
+
+            match into_query_result(resp) {
+                Ok(r) => assert!(r.success),
+                Err(e) => panic!("expected Ok, got {:?}", e),
+            }
+        }
+
+        #[test]
+        fn failure_returns_query_failed_with_all_fields() {
+            let resp = response_from_json(json!({
+                "success": false,
+                "message": "SQL compilation error",
+                "code": "1003",
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null,
+                    "sqlState": "42000"
+                }
+            }));
+
+            match into_query_result(resp) {
+                Err(RestError::QueryFailed {
+                    message,
+                    code,
+                    sql_state,
+                    ..
+                }) => {
+                    assert_eq!(message, "SQL compilation error");
+                    assert_eq!(code, Some(1003));
+                    assert_eq!(sql_state, Some("42000".to_owned()));
+                }
+                Err(other) => panic!("expected QueryFailed, got {:?}", other),
+                Ok(_) => panic!("expected Err, got Ok"),
+            }
+        }
+
+        #[test]
+        fn failure_with_missing_optional_fields() {
+            let resp = response_from_json(json!({
+                "success": false,
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null
+                }
+            }));
+
+            match into_query_result(resp) {
+                Err(RestError::QueryFailed {
+                    message,
+                    code,
+                    sql_state,
+                    ..
+                }) => {
+                    assert_eq!(message, "Unknown error");
+                    assert_eq!(code, None);
+                    assert_eq!(sql_state, None);
+                }
+                Err(other) => panic!("expected QueryFailed, got {:?}", other),
+                Ok(_) => panic!("expected Err, got Ok"),
+            }
         }
     }
 }

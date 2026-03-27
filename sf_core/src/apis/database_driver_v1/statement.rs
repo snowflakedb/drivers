@@ -15,7 +15,9 @@ use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_response::{Data, Stats};
-use crate::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
+use crate::rest::snowflake::{
+    QueryExecutionMode, QueryInput, snowflake_get_query_result, snowflake_query_with_client,
+};
 
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
@@ -403,56 +405,7 @@ impl DatabaseDriverV1 {
             chunks: response.data.to_chunk_download_data().unwrap_or_default(),
         });
 
-        let query_result = process_query_response(&response.data, &http_client)
-            .await
-            .context(QueryResponseProcessingSnafu)?;
-
-        let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
-
-        // Extract query_id from response
-        let query_id = response.data.query_id.clone().unwrap_or_default();
-
-        // Calculate rows_affected based on statement type
-        // For DML: Sum of affected rows from rowset columns
-        // For SELECT: Total rows in result set
-        // For DDL/Unknown: None
-        let rows_affected = calculate_rows_affected(&response.data);
-        let statement_type_id = response.data.statement_type_id;
-
-        // Extract column metadata: prefer synthetic metadata from PUT/GET processing,
-        // fall back to server-provided rowtype for regular queries.
-        let columns = query_result.columns.unwrap_or_else(|| {
-            response
-                .data
-                .row_type
-                .unwrap_or_default()
-                .iter()
-                .map(|rt| ColumnMetadata {
-                    name: rt.name.clone(),
-                    r#type: rt.type_.clone(),
-                    precision: rt.precision.map(|v| v as i64),
-                    scale: rt.scale.map(|v| v as i64),
-                    length: rt.length.map(|v| v as i64),
-                    byte_length: rt.byte_length.map(|v| v as i64),
-                    nullable: rt.nullable,
-                })
-                .collect()
-        });
-
-        // Extract sql_state and stats from response
-        let sql_state = response.data.sql_state;
-        let stats = response.data.stats;
-
-        let result = ExecuteResult {
-            stream: rowset_stream,
-            rows_affected,
-            query_id,
-            columns,
-            statement_type_id,
-            query,
-            sql_state,
-            stats,
-        };
+        let result = response_to_execute_result(response.data, &http_client, query).await?;
         stmt.state = StatementState::Executed;
         Ok(result)
     }
@@ -485,6 +438,114 @@ impl DatabaseDriverV1 {
                 .collect(),
         })
     }
+
+    pub async fn connection_get_query_result(
+        &self,
+        conn_handle: Handle,
+        query_id: String,
+    ) -> Result<ExecuteResult, ApiError> {
+        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let (query_parameters, http_client, retry_policy) = {
+            let conn = conn_ptr.lock().await;
+            (
+                conn.query_transport_parameters()?,
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?,
+                conn.retry_policy.clone(),
+            )
+        };
+
+        let response = {
+            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
+            let mut last_error = None;
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match snowflake_get_query_result(
+                    &http_client,
+                    &query_parameters,
+                    session_token.reveal(),
+                    &query_id,
+                    &retry_policy,
+                )
+                .await
+                {
+                    Ok(result) => break Ok(result),
+                    Err(e) => last_error = Some(e),
+                }
+            }
+        }?;
+
+        if response.success {
+            let conn = conn_ptr.lock().await;
+            conn.update_session_params_cache(
+                "",
+                response.data.parameters.as_ref(),
+                &super::connection::FinalSessionNames {
+                    database: response.data.final_database_name.clone(),
+                    schema: response.data.final_schema_name.clone(),
+                    warehouse: response.data.final_warehouse_name.clone(),
+                    role: response.data.final_role_name.clone(),
+                },
+            )
+            .await;
+        }
+
+        response_to_execute_result(response.data, &http_client, String::new()).await
+    }
+}
+
+/// Convert a Snowflake query response into an `ExecuteResult` by processing
+/// the Arrow data, extracting column metadata, and assembling all fields.
+///
+/// Async because `process_query_response` may download additional Arrow
+/// chunks over HTTP for large result sets.
+async fn response_to_execute_result(
+    data: Data,
+    http_client: &reqwest::Client,
+    query: String,
+) -> Result<ExecuteResult, ApiError> {
+    let query_result = process_query_response(&data, http_client)
+        .await
+        .context(QueryResponseProcessingSnafu)?;
+
+    let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
+    let query_id = data.query_id.clone().unwrap_or_default();
+    let rows_affected = calculate_rows_affected(&data);
+    let statement_type_id = data.statement_type_id;
+
+    let columns = query_result.columns.unwrap_or_else(|| {
+        data.row_type
+            .unwrap_or_default()
+            .iter()
+            .map(|rt| ColumnMetadata {
+                name: rt.name.clone(),
+                r#type: rt.type_.clone(),
+                precision: rt.precision.map(|v| v as i64),
+                scale: rt.scale.map(|v| v as i64),
+                length: rt.length.map(|v| v as i64),
+                byte_length: rt.byte_length.map(|v| v as i64),
+                nullable: rt.nullable,
+            })
+            .collect()
+    });
+
+    Ok(ExecuteResult {
+        stream,
+        rows_affected,
+        query_id,
+        columns,
+        statement_type_id,
+        query,
+        sql_state: data.sql_state,
+        stats: data.stats,
+    })
 }
 
 pub struct StoredChunkInfo {

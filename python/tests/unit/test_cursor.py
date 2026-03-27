@@ -1739,3 +1739,86 @@ class TestDescribe:
             cursor.describe("INVALID SQL")
 
         assert cursor.sqlstate == "42601"
+
+
+class TestQueryResult:
+    """Unit tests for Cursor.query_result method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def _stub_result(self, mock_connection, **overrides):
+        """Set up the mock RPC to return a result with the given overrides."""
+        result = MagicMock()
+        result.columns = overrides.get("columns", [])
+        result.rows_affected = overrides.get("rows_affected", 0)
+        result.HasField = MagicMock(return_value=overrides.get("has_rows_affected", False))
+        result.sql_state = overrides.get("sql_state", "")
+        mock_connection.db_api.connection_get_query_result.return_value.result = result
+        return result
+
+    def test_query_result_populates_cursor_state(self, cursor, mock_connection):
+        """query_result returns self, sends correct RPC args, and populates all cursor fields."""
+        col = MagicMock()
+        col.name = "ID"
+        col.HasField = MagicMock(return_value=False)
+        col.nullable = True
+
+        result = self._stub_result(
+            mock_connection,
+            columns=[col],
+            rows_affected=42,
+            has_rows_affected=True,
+            sql_state="02000",
+        )
+
+        ret = cursor.query_result("01234567-abcd-ef01-0000-000000000001")
+
+        assert ret is cursor
+        assert cursor.execute_result is result
+        assert cursor.description is not None
+        assert len(cursor.description) == 1
+        assert cursor.description[0].name == "ID"
+        assert cursor.rowcount == 42
+        assert cursor.sqlstate == "02000"
+
+        request = mock_connection.db_api.connection_get_query_result.call_args.args[0]
+        assert request.conn_handle == ConnectionHandle(id=1)
+        assert request.query_id == "01234567-abcd-ef01-0000-000000000001"
+
+    def test_query_result_resets_prior_state(self, cursor, mock_connection):
+        """query_result clears iterator and fetch mode from a previous execute."""
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+        cursor._fetch_mode = FetchMode.ROW
+
+        self._stub_result(mock_connection)
+        cursor.query_result("qid")
+
+        assert cursor._fetch_mode is None
+        assert cursor._iterator is None
+
+    def test_query_result_raises_on_closed_cursor_or_connection(self, cursor, mock_connection):
+        """query_result raises InterfaceError when cursor or connection is closed."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor.query_result("qid")
+
+        fresh = SnowflakeCursor(mock_connection)
+        mock_connection.is_closed.return_value = True
+        with pytest.raises(InterfaceError):
+            fresh.query_result("qid")
+
+    def test_query_result_propagates_rpc_error(self, cursor, mock_connection):
+        """query_result propagates ProgrammingError from the RPC layer."""
+        mock_connection.db_api.connection_get_query_result.side_effect = ProgrammingError("Query has expired")
+        with pytest.raises(ProgrammingError, match="Query has expired"):
+            cursor.query_result("expired-qid")

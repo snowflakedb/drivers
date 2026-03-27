@@ -32,6 +32,7 @@ from ._internal.decorators import pep249
 from ._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
+    ConnectionGetQueryResultRequest,
     ExecuteResult,
     PrepareResult,
     QueryBindings,
@@ -477,16 +478,7 @@ class SnowflakeCursorBase(abc.ABC):
         with create_statement(self.connection, query) as stmt_handle:
             result = self._execute_query(stmt_handle, bindings)
 
-        # populate cursor state from the result
-        self._description = ResultMetadata.create_description(result)
-        self._rowcount = extract_rowcount(result)
-        self._sqlstate = extract_sqlstate(result)
-        self._sfqid = (result.query_id if result.query_id else None) if result else None
-        self._query = (result.query if result.query else None) if result else None
-        # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
-        self._rownumber = -1
-        # save execute result (holds arrow stream data needed for fetching)
-        self.execute_result = result
+        self._populate_state_from_execute_result(result)
 
         return self
 
@@ -505,6 +497,18 @@ class SnowflakeCursorBase(abc.ABC):
         except ProgrammingError as exc:
             self._sqlstate = exc.sqlstate or None
             raise
+
+    def _populate_state_from_execute_result(self, result: ExecuteResult | None) -> None:
+        # populate cursor state from the result
+        self._description = ResultMetadata.create_description(result)
+        self._rowcount = extract_rowcount(result)
+        self._sqlstate = extract_sqlstate(result)
+        self._sfqid = (result.query_id if result.query_id else None) if result else None
+        self._query = (result.query if result.query else None) if result else None
+        # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
+        self._rownumber = -1
+        # save execute result (holds arrow stream data needed for fetching)
+        self.execute_result = result
 
     @pep249
     @_requires_not_closed
@@ -921,10 +925,6 @@ class SnowflakeCursorBase(abc.ABC):
         self._fetch_mode = None
         self._binding_data = None
 
-    def query_result(self, qid: str) -> SnowflakeCursorBase:
-        """Query the result of a previously executed query."""
-        raise NotImplementedError("query_result is not yet implemented")
-
     @_requires_not_closed
     @requires_dependency(pyarrow)
     @_requires_fetch_mode(FetchMode.ARROW)
@@ -994,6 +994,43 @@ class SnowflakeCursorBase(abc.ABC):
         table: Table = self.fetch_arrow_all(force_return_table=True, **kwargs)
         return table.to_pandas()
 
+    def check_can_use_arrow_resultset(self) -> None:
+        check_dependency(pyarrow)
+
+    def check_can_use_pandas(self) -> None:
+        check_dependency(pandas)
+
+    @_requires_not_closed
+    @_requires_open_connection
+    def query_result(self, qid: str) -> SnowflakeCursorBase:
+        """Fetch the result of a previously executed query by its Snowflake Query ID.
+
+        Resets the cursor and populates it with the results from the specified
+        query, making them available through the standard fetch methods
+        (fetchone, fetchall, fetch_arrow_all, etc.).
+
+        Args:
+            qid: Snowflake Query ID (sfqid) of the previously executed query.
+
+        Returns:
+            This cursor instance, now populated with the query results.
+
+        Raises:
+            ProgrammingError: If the query ID is invalid, the query is still
+                running, or the results are no longer available.
+        """
+        self.reset()
+
+        request = ConnectionGetQueryResultRequest(
+            conn_handle=self._connection.conn_handle,
+            query_id=qid,
+        )
+        response = self._connection.db_api.connection_get_query_result(request)
+
+        self._populate_state_from_execute_result(response.result)
+
+        return self
+
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
         raise NotImplementedError("abort_query is not yet implemented")
@@ -1005,12 +1042,6 @@ class SnowflakeCursorBase(abc.ABC):
     def get_result_batches(self) -> list[Any] | None:
         """Get the previously executed query's ResultBatches if available."""
         raise NotImplementedError("get_result_batches is not yet implemented")
-
-    def check_can_use_arrow_resultset(self) -> None:
-        check_dependency(pyarrow)
-
-    def check_can_use_pandas(self) -> None:
-        check_dependency(pandas)
 
 
 # ======================================================================

@@ -1953,3 +1953,31 @@ class TestCursorDescribe:
 
         with pytest.raises(InterfaceError):
             cur.describe("SELECT 1")
+
+
+class TestCursorQueryResult:
+    """Integration tests for Cursor.query_result method."""
+
+    def test_query_result_retrieves_data_and_metadata(self, connection):
+        """query_result fetches rows, description, and rowcount from a previous query."""
+        with connection.cursor() as cur1:
+            cur1.execute("""
+                SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS id,
+                       'row' AS label
+                FROM TABLE(GENERATOR(ROWCOUNT => 3))
+                ORDER BY 1
+            """)
+            qid = cur1.sfqid
+            original_rows = cur1.fetchall()
+            original_desc = cur1.description
+
+        with connection.cursor() as cur2:
+            ret = cur2.query_result(qid)
+
+            assert ret is cur2
+            assert cur2.rowcount == 3
+            assert cur2.description is not None
+            assert len(cur2.description) == len(original_desc)
+            assert cur2.description[0].name == "ID"
+            assert cur2.description[1].name == "LABEL"
+            assert cur2.fetchall() == original_rows

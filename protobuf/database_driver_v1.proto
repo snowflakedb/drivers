@@ -443,6 +443,16 @@ message ConnectionValidateOptionsResponse {
   repeated ValidationIssue issues = 1;
 }
 
+// Fetch the result of a previously executed query by its Snowflake Query ID.
+message ConnectionGetQueryResultRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetQueryResultResponse {
+  ExecuteResult result = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -740,7 +750,8 @@ service DatabaseDriver {
   rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
   // pre-flight validation of connection options - reports all issues at once
   rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
-
+  // Fetch the result of a previously executed query by Snowflake Query ID
+  rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);

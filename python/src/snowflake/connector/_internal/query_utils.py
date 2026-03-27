@@ -49,7 +49,7 @@ def create_statement(connection: Connection, query: str) -> Generator[StatementH
         connection.db_api.statement_release(release_request)
 
 
-def extract_rowcount(result: ExecuteResult) -> int:
+def extract_rowcount(result: ExecuteResult | None) -> int:
     """Return the number of rows affected by the executed statement.
 
     If the result is falsy or the ``rows_affected`` field is not present
