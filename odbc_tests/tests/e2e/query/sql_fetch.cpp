@@ -6,7 +6,6 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"

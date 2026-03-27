@@ -10,7 +10,6 @@
 #include <cstring>
 #include <limits>
 #include <string>
-#include <vector>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -21,7 +20,6 @@
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
@@ -35,7 +33,7 @@ static long long numeric_val_to_int(const SQL_NUMERIC_STRUCT& num) {
   return result;
 }
 
-static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>((unsigned char)c); }
+static unsigned int to_unsigned_int(const char c) { return static_cast<unsigned char>(c); }
 
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to Floating Point Types
@@ -174,7 +172,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting non-numeric strings 
   // Given Snowflake client is logged in
 
   // When Query selecting various non-numeric strings is executed
-  auto stmt = conn.execute_fetch("SELECT 'not a number' AS c1, 'abc123' AS c2");
+  const auto stmt = conn.execute_fetch("SELECT 'not a number' AS c1, 'abc123' AS c2");
 
   // Then text should fail for SQL_C_FLOAT
   check_invalid_string<SQL_C_FLOAT>(stmt, 1);
@@ -191,7 +189,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed numeric st
   // Given Snowflake client is logged in
 
   // When Query selecting various malformed numeric strings is executed
-  auto stmt = conn.execute_fetch("SELECT '123.456.789' AS c1, '123,456' AS c2");
+  const auto stmt = conn.execute_fetch("SELECT '123.456.789' AS c1, '123,456' AS c2");
 
   // Then multiple decimal points should fail for SQL_C_DOUBLE
   check_invalid_string<SQL_C_DOUBLE>(stmt, 1);
@@ -208,16 +206,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL string when converting t
   // Given Snowflake client is logged in
 
   // When Query selecting NULL is executed
-  auto stmt = conn.execute_fetch("SELECT NULL::STRING AS null_double");
+  const auto stmt = conn.execute_fetch("SELECT NULL::STRING AS null_double");
 
   // Then SQL_C_DOUBLE should return SQL_NULL_DATA indicator
-  {
-    SQLDOUBLE value = 999.0;
-    SQLLEN indicator;
-    SQLRETURN ret = get_data_raw(stmt, 1, SQL_C_DOUBLE, &value, &indicator);
-    REQUIRE_ODBC(ret, stmt);
-    CHECK(indicator == SQL_NULL_DATA);
-  }
+  SQLDOUBLE value = 999.0;
+  SQLLEN indicator;
+  const SQLRETURN ret = get_data_raw(stmt, 1, SQL_C_DOUBLE, &value, &indicator);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
 }
 
 // ============================================================================
@@ -231,7 +227,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to floating point ty
   // When Query selecting string numeric value is executed with SQLBindCol for SQL_C_DOUBLE
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '987.654' AS str_num", SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT '987.654' AS str_num"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQLDOUBLE value;
@@ -334,26 +330,26 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to SQL_C_NUM
 
   // And very large integer '123456789012345678901234567890' should convert correctly to 18EE90FF6C373E0EE4E3F0AD2
   {
-    auto num = get_data<SQL_C_NUMERIC>(stmt, 9);
-    CHECK(num.precision == 38);
-    CHECK(num.scale == 0);
-    CHECK(num.sign == 1);  // Positive
-    CHECK(to_unsigned_int(num.val[0]) == 0xD2);
-    CHECK(to_unsigned_int(num.val[1]) == 0x0A);
-    CHECK(to_unsigned_int(num.val[2]) == 0x3F);
-    CHECK(to_unsigned_int(num.val[3]) == 0x4E);
-    CHECK(to_unsigned_int(num.val[4]) == 0xEE);
-    CHECK(to_unsigned_int(num.val[5]) == 0xE0);
-    CHECK(to_unsigned_int(num.val[6]) == 0x73);
-    CHECK(to_unsigned_int(num.val[7]) == 0xC3);
-    CHECK(to_unsigned_int(num.val[8]) == 0xF6);
-    CHECK(to_unsigned_int(num.val[9]) == 0x0F);
-    CHECK(to_unsigned_int(num.val[10]) == 0xE9);
-    CHECK(to_unsigned_int(num.val[11]) == 0x8E);
-    CHECK(to_unsigned_int(num.val[12]) == 0x01);
-    CHECK(to_unsigned_int(num.val[13]) == 0x00);
-    CHECK(to_unsigned_int(num.val[14]) == 0x00);
-    CHECK(to_unsigned_int(num.val[15]) == 0x00);
+    auto [precision, scale, sign, val] = get_data<SQL_C_NUMERIC>(stmt, 9);
+    CHECK(precision == 38);
+    CHECK(scale == 0);
+    CHECK(sign == 1);  // Positive
+    CHECK(to_unsigned_int(val[0]) == 0xD2);
+    CHECK(to_unsigned_int(val[1]) == 0x0A);
+    CHECK(to_unsigned_int(val[2]) == 0x3F);
+    CHECK(to_unsigned_int(val[3]) == 0x4E);
+    CHECK(to_unsigned_int(val[4]) == 0xEE);
+    CHECK(to_unsigned_int(val[5]) == 0xE0);
+    CHECK(to_unsigned_int(val[6]) == 0x73);
+    CHECK(to_unsigned_int(val[7]) == 0xC3);
+    CHECK(to_unsigned_int(val[8]) == 0xF6);
+    CHECK(to_unsigned_int(val[9]) == 0x0F);
+    CHECK(to_unsigned_int(val[10]) == 0xE9);
+    CHECK(to_unsigned_int(val[11]) == 0x8E);
+    CHECK(to_unsigned_int(val[12]) == 0x01);
+    CHECK(to_unsigned_int(val[13]) == 0x00);
+    CHECK(to_unsigned_int(val[14]) == 0x00);
+    CHECK(to_unsigned_int(val[15]) == 0x00);
   }
 
   // And NULL should return SQL_NULL_DATA indicator

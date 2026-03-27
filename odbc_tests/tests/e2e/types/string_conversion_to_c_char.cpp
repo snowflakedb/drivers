@@ -17,11 +17,10 @@
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
-static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(static_cast<unsigned char>(c)); }
+static unsigned int to_unsigned_int(const char c) { return static_cast<unsigned char>(c); }
 
 // ============================================================================
 // STRING TRUNCATION
@@ -49,7 +48,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should truncate string data when byte lengt
   CHECK(buffer[sizeof(buffer) - 1] == 0);
 
   // And the indicator should show the actual length of the original string
-  if (is_ascii_locale() || (get_platform() == PLATFORM::PLATFORM_WINDOWS)) {
+  if (is_ascii_locale() || get_platform() == PLATFORM::PLATFORM_WINDOWS) {
     // TODO: We are not guaranteed to get length of string, due to charset conversion
     CHECK((indicator == SQL_NO_TOTAL || indicator == 49));
   } else {
@@ -439,7 +438,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "Test string basic query", "[e2e][types][str
   conn.execute("INSERT INTO test_string_basic (str_col) VALUES ('Hello World')");
   auto stmt = conn.createStatement();
 
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT str_col FROM test_string_basic"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
@@ -463,20 +462,20 @@ TEST_CASE_METHOD(ConnSchemaFixture, "Test basic string binding", "[e2e][types][s
   auto stmt = conn.createStatement();
 
   SQLRETURN ret =
-      SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_basic_binding (str_col) VALUES (?)", SQL_NTS);
+      SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO test_string_basic_binding (str_col) VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
-  const char* test_value = "Hello World";
+  auto test_value = "Hello World";
   SQLLEN str_len = strlen(test_value);
 
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, str_len, 0,
-                         (SQLPOINTER)test_value, str_len, &str_len);
+                         const_cast<SQLPOINTER>(static_cast<const void*>(test_value)), str_len, &str_len);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic_binding", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT str_col FROM test_string_basic_binding"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());

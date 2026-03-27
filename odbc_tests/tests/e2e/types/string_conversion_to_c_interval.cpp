@@ -51,45 +51,45 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to single-co
   // Then <c_type> conversions should work
   {
     INFO("SQL_C_INTERVAL_YEAR");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
-    CHECK(interval.interval_type == SQL_IS_YEAR);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.year_month.year == 5);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+    CHECK(interval_type == SQL_IS_YEAR);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.year_month.year == 5);
   }
   {
     INFO("SQL_C_INTERVAL_MONTH");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
-    CHECK(interval.interval_type == SQL_IS_MONTH);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.year_month.month == 10);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
+    CHECK(interval_type == SQL_IS_MONTH);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.year_month.month == 10);
   }
   {
     INFO("SQL_C_INTERVAL_DAY");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
-    CHECK(interval.interval_type == SQL_IS_DAY);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.day == 15);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
+    CHECK(interval_type == SQL_IS_DAY);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.day == 15);
   }
   {
     INFO("SQL_C_INTERVAL_HOUR");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 4);
-    CHECK(interval.interval_type == SQL_IS_HOUR);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.hour == 8);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_HOUR>(stmt, 4);
+    CHECK(interval_type == SQL_IS_HOUR);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.hour == 8);
   }
   {
     INFO("SQL_C_INTERVAL_MINUTE");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 5);
-    CHECK(interval.interval_type == SQL_IS_MINUTE);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.minute == 30);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_MINUTE>(stmt, 5);
+    CHECK(interval_type == SQL_IS_MINUTE);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.minute == 30);
   }
   {
     INFO("SQL_C_INTERVAL_SECOND");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 6);
-    CHECK(interval.interval_type == SQL_IS_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.second == 45);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_SECOND>(stmt, 6);
+    CHECK(interval_type == SQL_IS_SECOND);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.second == 45);
   }
 }
 
@@ -103,24 +103,24 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert negative c_type string liter
   // Then negative <c_type> should be correctly parsed
   {
     INFO("SQL_C_INTERVAL_YEAR");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
-    CHECK(interval.interval_type == SQL_IS_YEAR);
-    CHECK(interval.interval_sign == SQL_TRUE);
-    CHECK(interval.intval.year_month.year == 5);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_YEAR>(stmt, 1);
+    CHECK(interval_type == SQL_IS_YEAR);
+    CHECK(interval_sign == SQL_TRUE);
+    CHECK(intval.year_month.year == 5);
   }
   {
     INFO("SQL_C_INTERVAL_MONTH");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
-    CHECK(interval.interval_type == SQL_IS_MONTH);
-    CHECK(interval.interval_sign == SQL_TRUE);
-    CHECK(interval.intval.year_month.month == 10);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_MONTH>(stmt, 2);
+    CHECK(interval_type == SQL_IS_MONTH);
+    CHECK(interval_sign == SQL_TRUE);
+    CHECK(intval.year_month.month == 10);
   }
   {
     INFO("SQL_C_INTERVAL_DAY");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
-    CHECK(interval.interval_type == SQL_IS_DAY);
-    CHECK(interval.interval_sign == SQL_TRUE);
-    CHECK(interval.intval.day_second.day == 15);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_DAY>(stmt, 3);
+    CHECK(interval_type == SQL_IS_DAY);
+    CHECK(interval_sign == SQL_TRUE);
+    CHECK(intval.day_second.day == 15);
   }
 }
 
@@ -137,29 +137,29 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to year-mont
 
   // Then SQL_C_INTERVAL_YEAR_TO_MONTH conversions should work
   {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
-    CHECK(interval.interval_type == SQL_IS_YEAR_TO_MONTH);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
-    CHECK(interval.intval.year_month.year == 3);
-    CHECK(interval.intval.year_month.month == 6);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
+    CHECK(interval_type == SQL_IS_YEAR_TO_MONTH);
+    CHECK(interval_sign == SQL_FALSE);  // Positive
+    CHECK(intval.year_month.year == 3);
+    CHECK(intval.year_month.month == 6);
   }
 
   // And negative year-month should be correctly parsed
   {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 2);
-    CHECK(interval.interval_type == SQL_IS_YEAR_TO_MONTH);
-    CHECK(interval.interval_sign == SQL_TRUE);  // Negative
-    CHECK(interval.intval.year_month.year == 2);
-    CHECK(interval.intval.year_month.month == 9);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 2);
+    CHECK(interval_type == SQL_IS_YEAR_TO_MONTH);
+    CHECK(interval_sign == SQL_TRUE);  // Negative
+    CHECK(intval.year_month.year == 2);
+    CHECK(intval.year_month.month == 9);
   }
 
   // And zero years with months should work
   {
-    auto interval = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 3);
-    CHECK(interval.interval_type == SQL_IS_YEAR_TO_MONTH);
-    CHECK(interval.interval_sign == SQL_FALSE);  // Positive
-    CHECK(interval.intval.year_month.year == 0);
-    CHECK(interval.intval.year_month.month == 11);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 3);
+    CHECK(interval_type == SQL_IS_YEAR_TO_MONTH);
+    CHECK(interval_sign == SQL_FALSE);  // Positive
+    CHECK(intval.year_month.year == 0);
+    CHECK(intval.year_month.month == 11);
   }
 }
 
@@ -176,55 +176,55 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to compound 
   // Then <c_type> conversions should work
   {
     INFO("SQL_C_INTERVAL_DAY_TO_HOUR");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
-    CHECK(interval.interval_type == SQL_IS_DAY_TO_HOUR);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.day == 5);
-    CHECK(interval.intval.day_second.hour == 10);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_DAY_TO_HOUR>(stmt, 1);
+    CHECK(interval_type == SQL_IS_DAY_TO_HOUR);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.day == 5);
+    CHECK(intval.day_second.hour == 10);
   }
   {
     INFO("SQL_C_INTERVAL_DAY_TO_MINUTE");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_MINUTE>(stmt, 2);
-    CHECK(interval.interval_type == SQL_IS_DAY_TO_MINUTE);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.day == 3);
-    CHECK(interval.intval.day_second.hour == 14);
-    CHECK(interval.intval.day_second.minute == 30);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_DAY_TO_MINUTE>(stmt, 2);
+    CHECK(interval_type == SQL_IS_DAY_TO_MINUTE);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.day == 3);
+    CHECK(intval.day_second.hour == 14);
+    CHECK(intval.day_second.minute == 30);
   }
   {
     INFO("SQL_C_INTERVAL_DAY_TO_SECOND");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 3);
-    CHECK(interval.interval_type == SQL_IS_DAY_TO_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.day == 2);
-    CHECK(interval.intval.day_second.hour == 8);
-    CHECK(interval.intval.day_second.minute == 15);
-    CHECK(interval.intval.day_second.second == 30);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_DAY_TO_SECOND>(stmt, 3);
+    CHECK(interval_type == SQL_IS_DAY_TO_SECOND);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.day == 2);
+    CHECK(intval.day_second.hour == 8);
+    CHECK(intval.day_second.minute == 15);
+    CHECK(intval.day_second.second == 30);
   }
   {
     INFO("SQL_C_INTERVAL_HOUR_TO_MINUTE");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 4);
-    CHECK(interval.interval_type == SQL_IS_HOUR_TO_MINUTE);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.hour == 10);
-    CHECK(interval.intval.day_second.minute == 45);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_MINUTE>(stmt, 4);
+    CHECK(interval_type == SQL_IS_HOUR_TO_MINUTE);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.hour == 10);
+    CHECK(intval.day_second.minute == 45);
   }
   {
     INFO("SQL_C_INTERVAL_HOUR_TO_SECOND");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 5);
-    CHECK(interval.interval_type == SQL_IS_HOUR_TO_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.hour == 12);
-    CHECK(interval.intval.day_second.minute == 30);
-    CHECK(interval.intval.day_second.second == 45);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_HOUR_TO_SECOND>(stmt, 5);
+    CHECK(interval_type == SQL_IS_HOUR_TO_SECOND);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.hour == 12);
+    CHECK(intval.day_second.minute == 30);
+    CHECK(intval.day_second.second == 45);
   }
   {
     INFO("SQL_C_INTERVAL_MINUTE_TO_SECOND");
-    auto interval = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 6);
-    CHECK(interval.interval_type == SQL_IS_MINUTE_TO_SECOND);
-    CHECK(interval.interval_sign == SQL_FALSE);
-    CHECK(interval.intval.day_second.minute == 45);
-    CHECK(interval.intval.day_second.second == 30);
+    auto [interval_type, interval_sign, intval] = check_no_truncation<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 6);
+    CHECK(interval_type == SQL_IS_MINUTE_TO_SECOND);
+    CHECK(interval_sign == SQL_FALSE);
+    CHECK(intval.day_second.minute == 45);
+    CHECK(intval.day_second.second == 30);
   }
 }
 
@@ -317,7 +317,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
 
   // Default leading precision is typically 2 digits for intervals
   // When Query selecting interval values with leading field exceeding precision is executed
-  auto stmt = conn.execute_fetch("SELECT '10000' AS large_year, '99999' AS very_large_year");
+  const auto stmt = conn.execute_fetch("SELECT '10000' AS large_year, '99999' AS very_large_year");
 
   // Then values exceeding leading field precision should fail with 22015
   check_interval_precision_lost<SQL_C_INTERVAL_YEAR>(stmt, 1);
@@ -329,7 +329,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
   // Given Snowflake client is logged in
 
   // When Query selecting interval values with leading field exceeding precision is executed
-  auto stmt = conn.execute_fetch("SELECT '10000' AS large_month, '99999' AS very_large_month");
+  const auto stmt = conn.execute_fetch("SELECT '10000' AS large_month, '99999' AS very_large_month");
 
   // Then values exceeding leading field precision should fail with 22015
   check_interval_precision_lost<SQL_C_INTERVAL_MONTH>(stmt, 1);
@@ -341,7 +341,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
   // Given Snowflake client is logged in
 
   // When Query selecting interval values with leading field exceeding precision is executed
-  auto stmt = conn.execute_fetch("SELECT '10000' AS large_day, '99999' AS very_large_day");
+  const auto stmt = conn.execute_fetch("SELECT '10000' AS large_day, '99999' AS very_large_day");
 
   // Then values exceeding leading field precision should fail with 22015
   check_interval_precision_lost<SQL_C_INTERVAL_DAY>(stmt, 1);
@@ -353,7 +353,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
   // Given Snowflake client is logged in
 
   // When Query selecting interval values with leading field exceeding precision is executed
-  auto stmt = conn.execute_fetch("SELECT '10000' AS large_hour, '99999' AS very_large_hour");
+  const auto stmt = conn.execute_fetch("SELECT '10000' AS large_hour, '99999' AS very_large_hour");
 
   // Then values exceeding leading field precision should fail with 22015
   check_interval_precision_lost<SQL_C_INTERVAL_HOUR>(stmt, 1);
@@ -365,7 +365,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is
   // Given Snowflake client is logged in
 
   // When Query selecting compound interval values with leading field exceeding precision is executed
-  auto stmt = conn.execute_fetch("SELECT '10000-6' AS large_year_month, '99999 10:30:45' AS large_day_second");
+  const auto stmt = conn.execute_fetch("SELECT '10000-6' AS large_year_month, '99999 10:30:45' AS large_day_second");
 
   // Then values exceeding leading field precision should fail with 22015
   check_interval_precision_lost<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 1);
@@ -381,7 +381,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting invalid interval str
   // Given Snowflake client is logged in
 
   // When Query selecting invalid interval strings is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT 'not-an-interval' AS invalid1, 'abc' AS invalid2, "
       "'12.34.56' AS invalid3, '' AS empty");
 
@@ -397,7 +397,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval s
   // Given Snowflake client is logged in
 
   // When Query selecting malformed year-month interval strings is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT '3/6' AS wrong_separator, '3.6' AS decimal_separator, "
       "'year-month' AS text, '3 6' AS space_separator");
 
@@ -413,7 +413,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval s
   // Given Snowflake client is logged in
 
   // When Query selecting malformed day-time interval strings is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT '5-10' AS wrong_separator, 'day hour' AS text_values, "
       "'5:10:30:45' AS too_many_components, '::' AS empty_components");
 
@@ -548,16 +548,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL string when converting t
   // Given Snowflake client is logged in
 
   // When Query selecting NULL is executed
-  auto stmt = conn.execute_fetch("SELECT NULL::STRING AS null_interval");
+  const auto stmt = conn.execute_fetch("SELECT NULL::STRING AS null_interval");
 
   // Then NULL should return SQL_NULL_DATA indicator
-  {
-    SQL_INTERVAL_STRUCT interval;
-    SQLLEN indicator;
-    SQLRETURN ret = get_data_raw(stmt, 1, SQL_C_INTERVAL_YEAR, &interval, &indicator);
-    REQUIRE_ODBC(ret, stmt);
-    CHECK(indicator == SQL_NULL_DATA);
-  }
+  SQL_INTERVAL_STRUCT interval;
+  SQLLEN indicator;
+  SQLRETURN ret = get_data_raw(stmt, 1, SQL_C_INTERVAL_YEAR, &interval, &indicator);
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
 }
 
 // ============================================================================
@@ -571,7 +569,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to interval types us
   // When Query selecting interval value is executed with SQLBindCol for SQL_C_INTERVAL_YEAR
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '5' AS interval_year", SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT '5' AS interval_year"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQL_INTERVAL_STRUCT interval;
@@ -591,7 +589,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to interval types us
   // And invalid interval string should fail binding with SQLSTATE 22018
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'not_an_interval' AS str_val", SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 'not_an_interval' AS str_val"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQL_INTERVAL_STRUCT interval;

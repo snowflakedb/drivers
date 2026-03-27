@@ -28,7 +28,7 @@ TEST_CASE("SQLPrepare + SQLExecute retrieves result from simple SELECT.", "[quer
   auto stmt = conn.createStatement();
 
   // When a simple SELECT is prepared and executed
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 42 AS value"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -54,7 +54,7 @@ TEST_CASE("SQLPrepare + SQLExecute retrieves result with multiple columns.", "[q
   auto stmt = conn.createStatement();
 
   // When a SELECT with multiple columns is prepared and executed
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 'hello' AS b, 3.14 AS c", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1 AS a, 'hello' AS b, 3.14 AS c"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -80,7 +80,7 @@ TEST_CASE("SQLPrepare + SQLExecute can be executed multiple times with SQLCloseC
   auto stmt = conn.createStatement();
 
   // When a SELECT is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 100 AS value", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 100 AS value"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And executed a first time
@@ -124,10 +124,10 @@ TEST_CASE("Re-prepare replaces previous statement on same handle.", "[query][pre
   auto stmt = conn.createStatement();
 
   // When a SELECT is prepared and replaced with a different query
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS value", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1 AS value"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
-  ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 999 AS replaced_value", SQL_NTS);
+  ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 999 AS replaced_value"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -153,8 +153,8 @@ TEST_CASE("SQLPrepare with explicit text length (not SQL_NTS).", "[query][prepar
   auto stmt = conn.createStatement();
 
   // When a SELECT is prepared with explicit text length
-  const char* sql = "SELECT 77 AS value";
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)sql, (SQLINTEGER)strlen(sql));
+  auto sql = "SELECT 77 AS value";
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar(sql), static_cast<SQLINTEGER>(strlen(sql)));
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -180,8 +180,8 @@ TEST_CASE("SQLPrepare with explicit length shorter than string uses partial SQL.
   auto stmt = conn.createStatement();
 
   // When a SELECT is prepared with a length shorter than the full string
-  const char* sql = "SELECT 55 AS value";  // 18 chars; passing only 9 gives "SELECT 55" which is still valid
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)sql, 9);
+  auto sql = "SELECT 55 AS value";  // 18 chars; passing only 9 gives "SELECT 55" which is still valid
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar(sql), 9);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -201,10 +201,10 @@ TEST_CASE("SQLNumResultCols available after SQLPrepare without execute.", "[quer
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When a SELECT with 3 columns is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 2 AS b, 3 AS c", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1 AS a, 2 AS b, 3 AS c"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLNumResultCols should return the column count without needing execute
@@ -221,14 +221,14 @@ TEST_CASE("SQLDescribeCol available after SQLPrepare without execute.", "[query]
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When a SELECT is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS MY_COL", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 42 AS MY_COL"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLDescribeCol should return metadata for the prepared column
-  SQLCHAR col_name[128] = {0};
+  SQLCHAR col_name[128] = {};
   SQLSMALLINT name_length = 0;
   SQLSMALLINT data_type = 0;
   SQLULEN col_size = 0;
@@ -254,7 +254,8 @@ TEST_CASE("SQLPrepareW + SQLExecute basic flow.", "[query][prepare]") {
 
   // When a SELECT is prepared using the wide variant
   std::u16string sql = u"SELECT 88 AS wide_value";
-  SQLRETURN ret = SQLPrepareW(stmt.getHandle(), (SQLWCHAR*)sql.data(), (SQLINTEGER)sql.size());
+  SQLRETURN ret =
+      SQLPrepareW(stmt.getHandle(), reinterpret_cast<SQLWCHAR*>(sql.data()), static_cast<SQLINTEGER>(sql.size()));
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -282,7 +283,8 @@ TEST_CASE("SQLPrepareW with Unicode content in query.", "[query][prepare]") {
 
   // When a SELECT with Unicode string literal is prepared using SQLPrepareW
   std::u16string sql = u"SELECT '日本語テスト' AS unicode_col";
-  SQLRETURN ret = SQLPrepareW(stmt.getHandle(), (SQLWCHAR*)sql.data(), (SQLINTEGER)sql.size());
+  SQLRETURN ret =
+      SQLPrepareW(stmt.getHandle(), reinterpret_cast<SQLWCHAR*>(sql.data()), static_cast<SQLINTEGER>(sql.size()));
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -305,10 +307,10 @@ TEST_CASE("SQLExecute without prior SQLPrepare returns HY010.", "[query][prepare
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When SQLExecute is called without a prior SQLPrepare
-  SQLRETURN ret = SQLExecute(stmt.getHandle());
+  const SQLRETURN ret = SQLExecute(stmt.getHandle());
 
   // Then it should return SQL_ERROR with SQLSTATE HY010
   REQUIRE(ret == SQL_ERROR);
@@ -325,13 +327,13 @@ TEST_CASE("SQLExecute with bound parameters via SQLBindParameter.", "[query][pre
   auto stmt = conn.createStatement();
 
   // When a parameterized query is prepared and parameters are bound
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR AS param_val", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?::VARCHAR AS param_val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   std::string param = "bound_value";
   SQLLEN param_len = param.size();
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, param.size(), 0,
-                         (SQLCHAR*)param.c_str(), param.size(), &param_len);
+                         sqlchar(param.c_str()), param.size(), &param_len);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -354,7 +356,7 @@ TEST_CASE("SQLExecute with different parameter values on re-execution.", "[query
   auto stmt = conn.createStatement();
 
   // When a parameterized query is prepared
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::INTEGER AS val", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?::INTEGER AS val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER param_value = 10;
@@ -398,7 +400,7 @@ TEST_CASE("SQLExecute returns 24000 when cursor is not closed before re-execute 
   auto stmt = conn.createStatement();
 
   // When a SELECT is prepared and executed
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS value", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1 AS value"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -426,7 +428,8 @@ TEST_CASE("SQLExecDirectW basic flow.", "[query][prepare]") {
 
   // When a SELECT is executed via SQLExecDirectW
   std::u16string sql = u"SELECT 123 AS direct_w_val";
-  SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), (SQLWCHAR*)sql.data(), (SQLINTEGER)sql.size());
+  SQLRETURN ret =
+      SQLExecDirectW(stmt.getHandle(), reinterpret_cast<SQLWCHAR*>(sql.data()), static_cast<SQLINTEGER>(sql.size()));
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
@@ -454,10 +457,10 @@ TEST_CASE("SQLExecDirect with bound parameters via SQLBindParameter.", "[query][
   std::string param = "direct_bound";
   SQLLEN param_len = param.size();
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, param.size(), 0,
-                                   (SQLCHAR*)param.c_str(), param.size(), &param_len);
+                                   sqlchar(param.c_str()), param.size(), &param_len);
   REQUIRE_ODBC(ret, stmt);
 
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR AS bound_val", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ?::VARCHAR AS bound_val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
@@ -476,7 +479,7 @@ TEST_CASE("SQLPrepare with null statement handle returns SQL_INVALID_HANDLE.", "
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#returns
 
   // When SQLPrepare is called with a null statement handle
-  SQLRETURN ret = SQLPrepare(SQL_NULL_HSTMT, (SQLCHAR*)"SELECT 1", SQL_NTS);
+  const SQLRETURN ret = SQLPrepare(SQL_NULL_HSTMT, sqlchar("SELECT 1"), SQL_NTS);
 
   // Then it should return SQL_INVALID_HANDLE
   REQUIRE(ret == SQL_INVALID_HANDLE);
@@ -488,10 +491,10 @@ TEST_CASE("SQLPrepare with null SQL text pointer returns HY009.", "[query][prepa
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When SQLPrepare is called with a null SQL text pointer
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), nullptr, SQL_NTS);
+  const SQLRETURN ret = SQLPrepare(stmt.getHandle(), nullptr, SQL_NTS);
 
   // Then it should return SQL_ERROR with SQLSTATE HY009
   REQUIRE(ret == SQL_ERROR);
@@ -505,10 +508,10 @@ TEST_CASE("SQLPrepare with negative TextLength returns HY090.", "[query][prepare
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When SQLPrepare is called with a negative text length
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1", -5);
+  const SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1"), -5);
 
   // Then it should return SQL_ERROR with SQLSTATE HY090
   REQUIRE(ret == SQL_ERROR);
@@ -522,10 +525,10 @@ TEST_CASE("SQLPrepare with zero TextLength returns HY090.", "[query][prepare][er
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When SQLPrepare is called with zero text length
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1", 0);
+  const SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1"), 0);
 
   // Then it should return SQL_ERROR with SQLSTATE HY090
   REQUIRE(ret == SQL_ERROR);
@@ -541,7 +544,7 @@ TEST_CASE("SQLPrepare with empty SQL string returns HY090.", "[query][prepare][e
   auto stmt = conn.createStatement();
 
   // When SQLPrepare is called with an empty SQL string
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar(""), SQL_NTS);
 
   // Then it should return SQL_ERROR with SQLSTATE HY090
   REQUIRE(ret == SQL_ERROR);
@@ -560,10 +563,10 @@ TEST_CASE("SQLPrepare with invalid SQL syntax returns 42000.", "[query][prepare]
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When SQLPrepare is called with invalid SQL syntax
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"NOT VALID SQL SYNTAX!!!", SQL_NTS);
+  const SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("NOT VALID SQL SYNTAX!!!"), SQL_NTS);
 
   // Then it should return SQL_ERROR with SQLSTATE 42000
   REQUIRE(ret == SQL_ERROR);
@@ -576,14 +579,14 @@ TEST_CASE("SQLPrepare with cursor already open returns 24000.", "[query][prepare
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // And a query has been executed leaving a cursor open
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS value", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1 AS value"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // When SQLPrepare is called while the cursor is still open
-  ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 2 AS new_value", SQL_NTS);
+  ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 2 AS new_value"), SQL_NTS);
 
   // Then it should return SQL_ERROR with SQLSTATE 24000
   REQUIRE(ret == SQL_ERROR);
@@ -603,7 +606,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "DDL via SQLPrepare + SQLExecute.", "[query]
 
   // When a CREATE TABLE is prepared and executed
   SQLRETURN ret =
-      SQLPrepare(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE prep_ddl_test (id INT, name VARCHAR(100))", SQL_NTS);
+      SQLPrepare(stmt.getHandle(), sqlchar("CREATE TABLE prep_ddl_test (id INT, name VARCHAR(100))"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -628,10 +631,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "DML returning SQL_NO_DATA via SQLPrepare + 
 
   // Given Snowflake client is logged in
   conn.execute("CREATE TABLE prep_dml_nodata (id INT)");
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When a DELETE that affects no rows is prepared and executed
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"DELETE FROM prep_dml_nodata WHERE 1=0", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("DELETE FROM prep_dml_nodata WHERE 1=0"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   ret = SQLExecute(stmt.getHandle());
@@ -650,7 +653,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "INSERT via SQLPrepare + SQLExecute with ver
   // When an INSERT is prepared with bound parameters and executed
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO prep_insert_test VALUES (?, ?)", SQL_NTS);
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO prep_insert_test VALUES (?, ?)"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQLINTEGER id_val = 1;
@@ -662,7 +665,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "INSERT via SQLPrepare + SQLExecute with ver
     std::string name_val = "test_name";
     SQLLEN name_len = name_val.size();
     ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, name_val.size(), 0,
-                           (SQLCHAR*)name_val.c_str(), name_val.size(), &name_len);
+                           sqlchar(name_val.c_str()), name_val.size(), &name_len);
     REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());

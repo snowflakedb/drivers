@@ -61,7 +61,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string literals", "
 
   // When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3"
   // is executed
-  auto stmt = conn.execute_fetch("SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3");
+  const auto stmt =
+      conn.execute_fetch("SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3");
 
   // Then the result should contain:
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
@@ -74,9 +75,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string literals usi
 
   // When Query "SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3" is executed
   auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(
-      stmt.getHandle(), (SQLCHAR*)"SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3",
-      SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(),
+                    sqlchar("SELECT 'hello' AS str1, 'Hello World' AS str2, 'Snowflake Driver Test' AS str3"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol
@@ -244,7 +245,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert and select back hardcoded str
     std::string value = "Test binding value 日本語";
     SQLLEN value_len = value.size();
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value.size(), 0,
-                           (SQLCHAR*)value.c_str(), value.size(), &value_len);
+                           sqlchar(value.c_str()), value.size(), &value_len);
     REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
@@ -266,7 +267,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals using paramet
   // Given Snowflake client is logged in
 
   auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   std::string value1 = "hello";
@@ -278,13 +279,13 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select string literals using paramet
   SQLLEN len3 = value3.size();
 
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value1.size(), 0,
-                         (SQLCHAR*)value1.c_str(), value1.size(), &len1);
+                         sqlchar(value1.c_str()), value1.size(), &len1);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value2.size(), 0,
-                         (SQLCHAR*)value2.c_str(), value2.size(), &len2);
+                         sqlchar(value2.c_str()), value2.size(), &len2);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value3.size(), 0,
-                         (SQLCHAR*)value3.c_str(), value3.size(), &len3);
+                         sqlchar(value3.c_str()), value3.size(), &len3);
   REQUIRE_ODBC(ret, stmt);
   // When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values ['hello', 'Hello
   // World', '日本語テスト']
@@ -307,12 +308,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values usi
   // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
   auto test_bound_value = [&](const std::string& value, const std::string& expected) {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?::VARCHAR"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = value.size();
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR,
-                           value.size() > 0 ? value.size() : 1, 0, (SQLCHAR*)value.c_str(), value.size(), &len);
+                           value.size() > 0 ? value.size() : 1, 0, sqlchar(value.c_str()), value.size(), &len);
     REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
@@ -328,12 +329,12 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values usi
   // Helper lambda to test a single bound wide value
   auto test_bound_wvalue = [&](const std::u16string& value, const std::u16string& expected) {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?::VARCHAR"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQLLEN len = value.size() * sizeof(char16_t);
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_WVARCHAR,
-                           value.size() > 0 ? value.size() : 1, 0, (SQLWCHAR*)value.c_str(), len, &len);
+                           value.size() > 0 ? value.size() : 1, 0, const_cast<char16_t*>(value.c_str()), len, &len);
     REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
@@ -381,7 +382,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values usi
   // Test NULL value
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT ?::VARCHAR"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQLLEN null_indicator = SQL_NULL_DATA;
@@ -413,9 +414,9 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should download string data in multiple chu
   // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY
   // id" is executed
   auto stmt = conn.createStatement();
-  const char* sql =
+  auto sql =
       "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar(sql), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then there are 10000 rows returned and all string values should match the generated values in order
@@ -491,14 +492,14 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should download string data in multiple chu
   // Given Snowflake client is logged in
 
   // And Expected row count is defined
-  const int expected_row_count = 10000;
+  constexpr int expected_row_count = 10000;
 
   // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY
   // 1" is executed
   auto stmt = conn.createStatement();
-  const char* sql =
+  auto sql =
       "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar(sql), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And Columns are bound using SQLBindCol

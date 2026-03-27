@@ -152,7 +152,8 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting string literals with
   // Given Snowflake client is logged in
 
   // When Query selecting string literals with leading/trailing whitespace is executed
-  auto stmt = conn.execute_fetch("SELECT 'abc' AS invalid, '456' AS whole, '6' AS single_digit, '1.1' AS fractional");
+  const auto stmt =
+      conn.execute_fetch("SELECT 'abc' AS invalid, '456' AS whole, '6' AS single_digit, '1.1' AS fractional");
 
   // Then the string values should fail to convert to SQL_C_BIT
   check_invalid_string<SQL_C_BIT>(stmt, 1);
@@ -262,7 +263,7 @@ TEST_CASE_METHOD(ConnSchemaFixture,
         "'-9223372036854775809' AS less_than_min");
     // Then the string values should be truncated when converted to integer types
     CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 9223372036854775807LL);
-    CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == -9223372036854775808LL);
+    CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 2) == -9223372036854775807LL);
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 3);
     check_numeric_out_of_range<SQL_C_SBIGINT>(stmt, 4);
   }
@@ -343,7 +344,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to integer types usi
   // When Query selecting string numeric value is executed with SQLBindCol for SQL_C_LONG
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT '12345' AS str_num", SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT '12345' AS str_num"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQLINTEGER value;
@@ -362,7 +363,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to integer types usi
   // And invalid string should fail binding with SQLSTATE 22018
   {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 'not_a_number' AS str_val", SQL_NTS);
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 'not_a_number' AS str_val"), SQL_NTS);
     REQUIRE_ODBC(ret, stmt);
 
     SQLINTEGER value;

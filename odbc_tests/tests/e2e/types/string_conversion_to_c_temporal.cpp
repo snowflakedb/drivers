@@ -16,10 +16,7 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "conversion_checks.hpp"
-#include "get_data.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
@@ -40,38 +37,46 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to c_type",
   // Then <c_type> conversions should work
   {
     INFO("SQL_C_TYPE_DATE");
-    auto date1 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 1);
-    CHECK(date1.year == 2024);
-    CHECK(date1.month == 1);
-    CHECK(date1.day == 15);
-
-    auto date2 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 2);
-    CHECK(date2.year == 1999);
-    CHECK(date2.month == 12);
-    CHECK(date2.day == 31);
-
-    auto y2k = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 3);
-    CHECK(y2k.year == 2000);
-    CHECK(y2k.month == 1);
-    CHECK(y2k.day == 1);
+    {
+      auto [year, month, day] = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 1);
+      CHECK(year == 2024);
+      CHECK(month == 1);
+      CHECK(day == 15);
+    }
+    {
+      auto [year, month, day] = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 2);
+      CHECK(year == 1999);
+      CHECK(month == 12);
+      CHECK(day == 31);
+    }
+    {
+      auto [year, month, day] = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 3);
+      CHECK(year == 2000);
+      CHECK(month == 1);
+      CHECK(day == 1);
+    }
   }
 
   {
     INFO("SQL_C_TYPE_TIME");
-    auto time1 = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
-    CHECK(time1.hour == 14);
-    CHECK(time1.minute == 30);
-    CHECK(time1.second == 45);
-
-    auto midnight = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 5);
-    CHECK(midnight.hour == 0);
-    CHECK(midnight.minute == 0);
-    CHECK(midnight.second == 0);
-
-    auto end_of_day = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 6);
-    CHECK(end_of_day.hour == 23);
-    CHECK(end_of_day.minute == 59);
-    CHECK(end_of_day.second == 59);
+    {
+      auto [hour, minute, second] = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
+      CHECK(hour == 14);
+      CHECK(minute == 30);
+      CHECK(second == 45);
+    }
+    {
+      auto [hour, minute, second] = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 5);
+      CHECK(hour == 0);
+      CHECK(minute == 0);
+      CHECK(second == 0);
+    }
+    {
+      auto [hour, minute, second] = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 6);
+      CHECK(hour == 23);
+      CHECK(minute == 59);
+      CHECK(second == 59);
+    }
   }
 
   {
@@ -155,20 +160,24 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert timestamp string to SQL_C_TY
       "SELECT '2024-01-15 14:30:45' AS c1, '1999-12-31 23:59:59' AS c2, '2000-06-15 00:00:00' AS c3");
 
   // Then SQL_C_TYPE_DATE should extract the date component (time is truncated)
-  auto date1 = check_fractional_truncation<SQL_C_TYPE_DATE>(stmt, 1);
-  CHECK(date1.year == 2024);
-  CHECK(date1.month == 1);
-  CHECK(date1.day == 15);
-
-  auto date2 = check_fractional_truncation<SQL_C_TYPE_DATE>(stmt, 2);
-  CHECK(date2.year == 1999);
-  CHECK(date2.month == 12);
-  CHECK(date2.day == 31);
-
-  auto date3 = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 3);
-  CHECK(date3.year == 2000);
-  CHECK(date3.month == 6);
-  CHECK(date3.day == 15);
+  {
+    auto [year, month, day] = check_fractional_truncation<SQL_C_TYPE_DATE>(stmt, 1);
+    CHECK(year == 2024);
+    CHECK(month == 1);
+    CHECK(day == 15);
+  }
+  {
+    auto [year, month, day] = check_fractional_truncation<SQL_C_TYPE_DATE>(stmt, 2);
+    CHECK(year == 1999);
+    CHECK(month == 12);
+    CHECK(day == 31);
+  }
+  {
+    auto [year, month, day] = check_no_truncation<SQL_C_TYPE_DATE>(stmt, 3);
+    CHECK(year == 2000);
+    CHECK(month == 6);
+    CHECK(day == 15);
+  }
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should convert timestamp string to SQL_C_TYPE_TIME",
@@ -180,20 +189,24 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should convert timestamp string to SQL_C_TY
       "SELECT '2024-01-15 14:30:45' AS c1, '1999-12-31 23:59:59' AS c2, '2000-06-15 00:00:00' AS c3");
 
   // Then SQL_C_TYPE_TIME should extract the time component (date is truncated)
-  auto time1 = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 1);
-  CHECK(time1.hour == 14);
-  CHECK(time1.minute == 30);
-  CHECK(time1.second == 45);
-
-  auto time2 = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 2);
-  CHECK(time2.hour == 23);
-  CHECK(time2.minute == 59);
-  CHECK(time2.second == 59);
-
-  auto time3 = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 3);
-  CHECK(time3.hour == 0);
-  CHECK(time3.minute == 0);
-  CHECK(time3.second == 0);
+  {
+    auto [hour, minute, second] = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 1);
+    CHECK(hour == 14);
+    CHECK(minute == 30);
+    CHECK(second == 45);
+  }
+  {
+    auto [hour, minute, second] = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 2);
+    CHECK(hour == 23);
+    CHECK(minute == 59);
+    CHECK(second == 59);
+  }
+  {
+    auto [hour, minute, second] = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 3);
+    CHECK(hour == 0);
+    CHECK(minute == 0);
+    CHECK(second == 0);
+  }
 }
 
 // ============================================================================
@@ -205,7 +218,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting invalid date/time st
   // Given Snowflake client is logged in
 
   // When Query selecting invalid date/time strings is executed
-  auto stmt = conn.execute_fetch("SELECT 'not-a-date' AS c1, 'not-a-time' AS c2, 'invalid-timestamp' AS c3");
+  const auto stmt = conn.execute_fetch("SELECT 'not-a-date' AS c1, 'not-a-time' AS c2, 'invalid-timestamp' AS c3");
 
   // Then invalid date/time strings should fail
   check_invalid_string<SQL_C_TYPE_DATE>(stmt, 1);
@@ -222,7 +235,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting impossible date valu
   // Given Snowflake client is logged in
 
   // When Query selecting date strings with correct syntax but impossible values is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT '2024-13-01' AS month_13, '2024-00-15' AS month_0, '2024-01-32' AS day_32, "
       "'2024-02-30' AS feb_30, '2024-04-31' AS apr_31, '2024-01-00' AS day_0");
 
@@ -258,10 +271,10 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting impossible time valu
 
   // And second 60 might behave differently in the old driver
   INFO("Converting impossible time: second 60");
-  auto time = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
-  CHECK(time.hour == 14);
-  CHECK(time.minute == 30);
-  CHECK(time.second == 60);
+  auto [hour, minute, second] = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
+  CHECK(hour == 14);
+  CHECK(minute == 30);
+  CHECK(second == 60);
 }
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting impossible timestamp values",
@@ -269,7 +282,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting impossible timestamp
   // Given Snowflake client is logged in
 
   // When Query selecting timestamp strings with correct syntax but impossible values is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT '2024-13-01 14:30:45' AS month_13, '2024-01-15 25:00:00' AS hour_25, "
       "'2024-02-30 12:00:00' AS feb_30, '2024-01-15 14:60:00' AS minute_60");
 
@@ -292,7 +305,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting alternative date for
   // Given Snowflake client is logged in
 
   // When Query selecting multiple date strings in alternative formats is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT '01/15/2024' AS us_format, '15.01.2024' AS european_format, '2024/01/15' AS slash_format, 'January 15, "
       "2024' AS spelled_month, '15-Jan-2024' AS abbreviated_month, '15-01-2024' AS reversed_format, '24-01-15' AS "
       "two_digit_year, '2024-1-5' AS single_digit");
@@ -322,7 +335,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting alternative time for
   // Given Snowflake client is logged in
 
   // When Query selecting multiple time strings in alternative formats is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT '2:30:45 PM' AS twelve_hour_format, '14:30' AS no_seconds, '14.30.45' AS dot_separator, '9:5:3' AS "
       "single_digit");
 
@@ -347,7 +360,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting alternative timestam
   // Given Snowflake client is logged in
 
   // When Query selecting multiple timestamp strings in alternative formats is executed
-  auto stmt = conn.execute_fetch(
+  const auto stmt = conn.execute_fetch(
       "SELECT '2024-01-15T14:30:45' AS iso_t_separator, '2024-01-15 14:30:45+05:00' AS timezone_offset, "
       "'2024-01-15T14:30:45Z' AS utc_suffix, '01/15/2024 14:30:45' AS us_format");
 

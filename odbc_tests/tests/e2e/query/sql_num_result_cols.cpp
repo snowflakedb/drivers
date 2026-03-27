@@ -4,7 +4,6 @@
 
 #include "Connection.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 
 // =============================================================================
@@ -24,11 +23,11 @@ TEST_CASE("SQLNumResultCols returns 1 for SELECT with single column.", "[query]"
   Connection conn;
 
   // When a SELECT query with one column is executed
-  auto stmt = conn.execute("SELECT 42 AS value");
+  const auto stmt = conn.execute("SELECT 42 AS value");
 
   // Then SQLNumResultCols should return 1
   SQLSMALLINT num_cols = 0;
-  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
+  const SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
   REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 1);
 }
@@ -42,11 +41,11 @@ TEST_CASE("SQLNumResultCols returns correct count for SELECT with many columns."
   Connection conn;
 
   // When a SELECT query with 5 columns is executed
-  auto stmt = conn.execute("SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d, 5 AS e");
+  const auto stmt = conn.execute("SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d, 5 AS e");
 
   // Then SQLNumResultCols should return 5
   SQLSMALLINT num_cols = 0;
-  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
+  const SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
   REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 5);
 }
@@ -61,11 +60,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns correct count for 
   conn.execute("CREATE TABLE num_cols_test (id INT, name VARCHAR(100), active BOOLEAN)");
 
   // When SELECT * is executed on the table
-  auto stmt = conn.execute("SELECT * FROM num_cols_test");
+  const auto stmt = conn.execute("SELECT * FROM num_cols_test");
 
   // Then SQLNumResultCols should return 3
   SQLSMALLINT num_cols = 0;
-  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
+  const SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
   REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 3);
 }
@@ -84,11 +83,11 @@ TEST_CASE("SQLNumResultCols returns correct column count for empty result set.",
   Connection conn;
 
   // When a SELECT query with WHERE 1=0 is executed (empty result set but with columns)
-  auto stmt = conn.execute("SELECT 1 AS col1, 2 AS col2 WHERE 1=0");
+  const auto stmt = conn.execute("SELECT 1 AS col1, 2 AS col2 WHERE 1=0");
 
   // Then SQLNumResultCols should still return the column count (2)
   SQLSMALLINT num_cols = 0;
-  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
+  const SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
   REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 2);
 }
@@ -106,7 +105,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns 0 after DDL statem
   const auto stmt = conn.createStatement();
 
   // When a DDL statement is executed
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE ddl_numcols_test (id INT)", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("CREATE TABLE ddl_numcols_test (id INT)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLNumResultCols should return 0 (DDL produces no result set columns)
@@ -126,11 +125,11 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns correct count afte
       "RETURNS VARCHAR LANGUAGE SQL AS 'BEGIN RETURN p1; END'");
 
   // When the stored procedure is called
-  auto stmt = conn.execute("CALL numcols_proc('hello')");
+  const auto stmt = conn.execute("CALL numcols_proc('hello')");
 
   // Then SQLNumResultCols should return 1
   SQLSMALLINT num_cols = 0;
-  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
+  const SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
   REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 1);
 }
@@ -146,11 +145,11 @@ TEST_CASE("SQLNumResultCols returns HY010 when called on freshly allocated state
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When SQLNumResultCols is called without any prepare or execute
   SQLSMALLINT num_cols = 0;
-  SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
+  const SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
 
   // Then it should return SQL_ERROR with SQLSTATE HY010
   REQUIRE(ret == SQL_ERROR);
@@ -168,10 +167,10 @@ TEST_CASE("SQLNumResultCols returns column count after SQLPrepare.", "[query]") 
 
   // Given Snowflake client is logged in
   Connection conn;
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When a SELECT statement is prepared but not executed
-  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 2 AS b, 3 AS c", SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("SELECT 1 AS a, 2 AS b, 3 AS c"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLNumResultCols should return the column count
@@ -194,7 +193,7 @@ TEST_CASE("SQLNumResultCols updates column count after re-execution with differe
   auto stmt = conn.createStatement();
 
   // When a query with 3 columns is executed
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 2 AS b, 3 AS c", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1 AS a, 2 AS b, 3 AS c"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLNumResultCols is called
@@ -208,7 +207,7 @@ TEST_CASE("SQLNumResultCols updates column count after re-execution with differe
   REQUIRE_ODBC(ret, stmt);
 
   // And a different query with 1 column is executed on the same statement
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS only_col", SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 42 AS only_col"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLNumResultCols should return the updated column count
@@ -231,7 +230,7 @@ TEST_CASE("SQLNumResultCols returns same value as SQL_DESC_COUNT of the IRD.", "
   auto stmt = conn.createStatement();
 
   // When a query with 4 columns is executed
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1 AS a, 2 AS b, 3 AS c, 4 AS d"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLNumResultCols is called
@@ -241,11 +240,11 @@ TEST_CASE("SQLNumResultCols returns same value as SQL_DESC_COUNT of the IRD.", "
 
   // And the IRD SQL_DESC_COUNT is read
   SQLHDESC ird = SQL_NULL_HDESC;
-  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_ROW_DESC, &ird, 0, NULL);
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_IMP_ROW_DESC, &ird, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT ird_count = 0;
-  ret = SQLGetDescField(ird, 0, SQL_DESC_COUNT, &ird_count, 0, NULL);
+  ret = SQLGetDescField(ird, 0, SQL_DESC_COUNT, &ird_count, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Then both values should be equal

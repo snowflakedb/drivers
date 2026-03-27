@@ -20,14 +20,12 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "SchemaFixtures.hpp"
-#include "compatibility.hpp"
-#include "get_data.hpp"
 #include "odbc_matchers.hpp"
 #include "test_setup.hpp"
 
 // Helper to generate random ASCII string for LOB tests
-static std::string generate_random_ascii_string(std::mt19937& gen, size_t length) {
-  static const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+static std::string generate_random_ascii_string(std::mt19937& gen, const size_t length) {
+  static constexpr char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   std::uniform_int_distribution<> dist(0, sizeof(charset) - 2);
   std::string result;
   result.reserve(length);
@@ -55,7 +53,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at maximum 128 MB 
   conn.execute("CREATE OR REPLACE TABLE lob_128mb (val VARCHAR(134217728))");
 
   // When A string of 134217728 ASCII characters is generated and inserted
-  const size_t string_length = 134217728;  // 128 MB
+  constexpr size_t string_length = 134217728;  // 128 MB
   std::string lob_string = generate_random_ascii_string(gen, string_length);
 
   {
@@ -65,7 +63,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at maximum 128 MB 
 
     SQLLEN value_len = static_cast<SQLLEN>(lob_string.size());
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, lob_string.size(), 0,
-                           (SQLCHAR*)lob_string.c_str(), lob_string.size(), &value_len);
+                           sqlchar(lob_string.c_str()), lob_string.size(), &value_len);
     REQUIRE_ODBC(ret, stmt);
     ret = SQLExecute(stmt.getHandle());
     REQUIRE_ODBC(ret, stmt);
@@ -108,7 +106,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at historical 16 M
   conn.execute("CREATE OR REPLACE TABLE lob_16mb (val VARCHAR)");
 
   // When A string of 16777216 ASCII characters is generated and inserted
-  const size_t string_length = 16777216;  // 16 MB
+  constexpr size_t string_length = 16777216;  // 16 MB
   std::string lob_string = generate_random_ascii_string(gen, string_length);
 
   {
@@ -118,7 +116,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at historical 16 M
 
     SQLLEN value_len = static_cast<SQLLEN>(lob_string.size());
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, lob_string.size(), 0,
-                           (SQLCHAR*)lob_string.c_str(), lob_string.size(), &value_len);
+                           sqlchar(lob_string.c_str()), lob_string.size(), &value_len);
     REQUIRE_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
