@@ -175,7 +175,8 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd
+          apt-get update -qq
+          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
@@ -326,8 +327,8 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd python39 python39-pip python39-devel
-          alternatives --set python3 /usr/bin/python3.9 2>/dev/null || true
+          apt-get update -qq
+          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config python3 python3-pip python3-venv python3-dev
           pip3 install --upgrade pip setuptools wheel uv hatch
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -484,9 +485,9 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd \
-            cmake unixODBC unixODBC-devel zlib-devel \
-            gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+          apt-get update -qq
+          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config \
+            cmake unixodbc-dev libz-dev
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
@@ -502,11 +503,11 @@ steps:
           cargo build
 
           echo "--- :hammer: Building C++ Test Suite"
-          source /opt/rh/gcc-toolset-11/enable
           cd odbc_tests
           mkdir -p cmake-build
+          ODBC_LIB=$$(find /usr/lib -name "libodbc.so" -print -quit 2>/dev/null || echo "/usr/lib/aarch64-linux-gnu/libodbc.so")
           cmake -B cmake-build \
-              -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+              -D ODBC_LIBRARY="$$ODBC_LIB" \
               -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=NEW \
               .
@@ -652,9 +653,10 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          dnf install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd \
-            java-11-openjdk java-11-openjdk-devel
-          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+          apt-get update -qq
+          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config \
+            openjdk-11-jdk
+          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-arm64
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
