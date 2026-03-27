@@ -311,8 +311,7 @@ impl LoginMethod {
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                token: settings
-                    .get_string("token")
+                token: Self::non_empty_string(settings, "token")
                     .context(MissingParameterSnafu { parameter: "token" })?
                     .into(),
             }),
@@ -360,8 +359,7 @@ impl LoginMethod {
             "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: settings
-                    .get_string("password")
+                password: Self::non_empty_string(settings, "password")
                     .context(MissingParameterSnafu { parameter: "password" })?
                     .into(),
                 passcode_in_password: settings
