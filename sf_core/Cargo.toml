@@ -4,7 +4,7 @@ edition = "2024"
 
 [lib]
 name = "sf_core"
-crate-type = ["dylib", "rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["protobuf"]
