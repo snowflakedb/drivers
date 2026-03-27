@@ -117,12 +117,11 @@ steps:
             ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml" || true
-          for xml in junit-results/*.xml; do
-            [ -f "$$xml" ] || continue
+          buildkite-agent artifact upload "junit-results/rust-junit.xml" || true
+          if [ -f "junit-results/rust-junit.xml" ]; then
             curl -X POST --silent --show-error --fail \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
-              -F "data=@$$xml" \
+              -F "data=@junit-results/rust-junit.xml" \
               -F "format=junit" \
               -F "tags[driver]=rust" \
               -F "run_env[CI]=buildkite" \
@@ -134,8 +133,8 @@ steps:
               -F "run_env[message]=$$BUILDKITE_MESSAGE" \
               -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
               https://analytics-api.buildkite.com/v1/uploads
-            echo "Uploaded $$xml to Test Analytics"
-          done
+            echo "Uploaded rust-junit.xml to Test Analytics"
+          fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
             buildkite-agent annotate ":x: Rust Core -- tests failed" --style "error" --context "rust-result"
             exit "$$DOCKER_EXIT"
@@ -196,12 +195,11 @@ steps:
             ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml" || true
-          for xml in junit-results/*.xml; do
-            [ -f "$$xml" ] || continue
+          buildkite-agent artifact upload "junit-results/python-junit.xml" || true
+          if [ -f "junit-results/python-junit.xml" ]; then
             curl -X POST --silent --show-error --fail \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
-              -F "data=@$$xml" \
+              -F "data=@junit-results/python-junit.xml" \
               -F "format=junit" \
               -F "tags[driver]=python" \
               -F "run_env[CI]=buildkite" \
@@ -213,8 +211,8 @@ steps:
               -F "run_env[message]=$$BUILDKITE_MESSAGE" \
               -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
               https://analytics-api.buildkite.com/v1/uploads
-            echo "Uploaded $$xml to Test Analytics"
-          done
+            echo "Uploaded python-junit.xml to Test Analytics"
+          fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
             buildkite-agent annotate ":x: Python -- tests failed" --style "error" --context "python-result"
             exit "$$DOCKER_EXIT"
@@ -284,12 +282,11 @@ steps:
             ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml" || true
-          for xml in junit-results/*.xml; do
-            [ -f "$$xml" ] || continue
+          buildkite-agent artifact upload "junit-results/odbc-junit.xml" || true
+          if [ -f "junit-results/odbc-junit.xml" ]; then
             curl -X POST --silent --show-error --fail \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
-              -F "data=@$$xml" \
+              -F "data=@junit-results/odbc-junit.xml" \
               -F "format=junit" \
               -F "tags[driver]=odbc" \
               -F "run_env[CI]=buildkite" \
@@ -301,8 +298,8 @@ steps:
               -F "run_env[message]=$$BUILDKITE_MESSAGE" \
               -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
               https://analytics-api.buildkite.com/v1/uploads
-            echo "Uploaded $$xml to Test Analytics"
-          done
+            echo "Uploaded odbc-junit.xml to Test Analytics"
+          fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
             buildkite-agent annotate ":x: ODBC -- tests failed" --style "error" --context "odbc-result"
             exit "$$DOCKER_EXIT"
@@ -372,8 +369,8 @@ steps:
             ' || DOCKER_EXIT=$$?
 
           echo "--- :buildkite: Uploading test results"
-          buildkite-agent artifact upload "junit-results/*.xml" || true
-          for xml in junit-results/*.xml; do
+          buildkite-agent artifact upload "junit-results/TEST-*.xml" || true
+          for xml in junit-results/TEST-*.xml; do
             [ -f "$$xml" ] || continue
             curl -X POST --silent --show-error --fail \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
