@@ -186,9 +186,15 @@ impl From<result_chunk::Data> for FetchChunkInput {
     fn from(data: result_chunk::Data) -> Self {
         match data {
             result_chunk::Data::Inline(bytes) => FetchChunkInput::Inline(bytes),
-            result_chunk::Data::Remote(remote) => FetchChunkInput::Remote(
-                crate::chunks::ChunkDownloadData::new(&remote.url, &remote.headers),
-            ),
+            result_chunk::Data::Remote(remote) => {
+                FetchChunkInput::Remote(crate::chunks::ChunkDownloadData {
+                    url: remote.url,
+                    row_count: 0,
+                    uncompressed_size: 0,
+                    compressed_size: 0,
+                    headers: remote.headers,
+                })
+            }
         }
     }
 }

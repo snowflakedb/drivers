@@ -93,7 +93,7 @@ impl DatabaseDriverV1 {
             FetchChunkInput::Remote(chunk) => {
                 // TODO Configure the client properly here
                 let client = reqwest::Client::new();
-                get_chunk_data(&client, &chunk)
+                get_chunk_data(client, chunk)
                     .await
                     .context(ChunkFetchSnafu)?
             }

@@ -1,5 +1,5 @@
 .gradle/
-bin/
+/bin/
 .idea/
 target/
 parameters*.json
@@ -29,7 +29,6 @@ python/src/snowflake/connector/_internal/nanoarrow_cpp/ArrowIterator/arrow_strea
 python/src/snowflake/connector/_internal/*.so
 *.egg-info/
 universal_driver_e2e_test_coverage.html
-sf_core/src/bin
 .vscode
 tests/wiremock/__files/*
 
@@ -47,3 +46,4 @@ jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDr
 jdbc/src/main/java/net/snowflake/client/internal/unicore/protobuf_gen/DatabaseDriverServiceClient.java
 
 .DS_Store
+tests/test_data/generated_test_data/chunks/
