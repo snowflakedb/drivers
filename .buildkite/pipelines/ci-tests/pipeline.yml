@@ -90,15 +90,23 @@ steps:
 
               echo "--- :test_tube: Running Tests"
               mkdir -p /workdir/junit-results
+              useradd -m testuser 2>/dev/null || true
               export RUSTC_BOOTSTRAP=1
+              cargo test --package sf_core --no-run 2>&1
+              chmod a+rx /root
+              chmod -R a+rX /root/.cargo /root/.rustup 2>/dev/null || true
+              chmod -R a+rwX /workdir/target /workdir/junit-results
+              CARGO_BIN=$$(dirname $$(which cargo))
               set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
-                cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
+                runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
+                  cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
               else
                 IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
                 for filter in "$${FILTERS[@]}"; do
                   echo "Running: cargo test -- $$filter"
-                  cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1
+                  runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
+                    cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1
                 done | tee /tmp/rust-test-output.json
               fi
               TEST_EXIT=$${PIPESTATUS[0]}
