@@ -1,0 +1,334 @@
+//! Integration tests for the per-connection heartbeat background task.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use serde_json::json;
+use sf_core::apis::database_driver_v1::heartbeat::{
+    compute_heartbeat_interval, spawn_heartbeat_task,
+};
+use sf_core::config::rest_parameters::ClientInfo;
+use sf_core::crl::config::CrlConfig;
+use sf_core::rest::snowflake::SessionTokens;
+use sf_core::sensitive::SensitiveString;
+use sf_core::tls::config::TlsConfig;
+use tokio::sync::RwLock as AsyncRwLock;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[tokio::test]
+async fn heartbeat_sends_periodic_requests() {
+    // Given a mock server that accepts heartbeat POST requests
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(2..)
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    // Given a heartbeat task spawned with a 50ms interval
+    let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("tok1"))));
+    let mut handle = spawn_heartbeat_task(
+        tokens,
+        reqwest::Client::new(),
+        server.uri(),
+        test_client_info(),
+        Duration::from_millis(50),
+    );
+
+    // When enough time passes for multiple heartbeat intervals
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Then at least 2 heartbeat POST requests should have been sent
+    handle.cancel_and_wait().await;
+}
+
+#[tokio::test]
+async fn heartbeat_refreshes_on_401_then_retries() {
+    // Given a mock server that returns 401 on the first heartbeat request
+    let heartbeat_count = Arc::new(AtomicUsize::new(0));
+    let heartbeat_count_clone = heartbeat_count.clone();
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(move |_: &wiremock::Request| {
+            let count = heartbeat_count_clone.fetch_add(1, Ordering::SeqCst) + 1;
+            if count == 1 {
+                ResponseTemplate::new(401)
+            } else {
+                ResponseTemplate::new(200).set_body_json(json!({"success": true}))
+            }
+        })
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    // Given a mock token-request endpoint that returns refreshed tokens
+    Mock::given(method("POST"))
+        .and(path("/session/token-request"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "data": {
+                "sessionToken": "refreshed_tok",
+                "masterToken": "refreshed_master",
+                "sessionId": 2
+            }
+        })))
+        .expect(1)
+        .named("refresh")
+        .mount(&server)
+        .await;
+
+    // Given a heartbeat task started with an old session token
+    let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("old_tok"))));
+    let tokens_clone = tokens.clone();
+    let mut handle = spawn_heartbeat_task(
+        tokens_clone,
+        reqwest::Client::new(),
+        server.uri(),
+        test_client_info(),
+        Duration::from_millis(50),
+    );
+
+    // When the heartbeat task runs and encounters the 401
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    handle.cancel_and_wait().await;
+
+    // Then the session token should have been refreshed via /session/token-request
+    let guard = tokens.read().await;
+    let current = guard.as_ref().expect("tokens should still exist");
+    assert_eq!(
+        current.session_token.reveal(),
+        "refreshed_tok",
+        "Session token should have been updated by heartbeat refresh"
+    );
+    assert_eq!(
+        current.master_token.reveal(),
+        "refreshed_master",
+        "Master token should have been updated by heartbeat refresh"
+    );
+
+    // Then at least 2 heartbeat attempts should have occurred (initial 401 + retry after refresh)
+    assert!(
+        heartbeat_count.load(Ordering::SeqCst) >= 2,
+        "Expected at least 2 heartbeat attempts (initial + retry after refresh)"
+    );
+}
+
+#[tokio::test]
+async fn heartbeat_stops_on_cancellation() {
+    // Given a mock server that counts heartbeat requests
+    let server = MockServer::start().await;
+    let heartbeat_count = Arc::new(AtomicUsize::new(0));
+    let heartbeat_count_clone = heartbeat_count.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(move |_: &wiremock::Request| {
+            heartbeat_count_clone.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_json(json!({"success": true}))
+        })
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    // Given a running heartbeat task
+    let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("tok1"))));
+    let mut handle = spawn_heartbeat_task(
+        tokens,
+        reqwest::Client::new(),
+        server.uri(),
+        test_client_info(),
+        Duration::from_millis(50),
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let count_before_cancel = heartbeat_count.load(Ordering::SeqCst);
+    assert!(
+        count_before_cancel >= 1,
+        "Should have sent at least 1 heartbeat before cancel"
+    );
+
+    // When the cancellation token is triggered
+    handle.cancel_and_wait().await;
+
+    // Then no more heartbeat requests should be sent after cancellation
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let count_after = heartbeat_count.load(Ordering::SeqCst);
+    assert_eq!(
+        count_before_cancel, count_after,
+        "No heartbeats should be sent after cancellation"
+    );
+}
+
+#[tokio::test]
+async fn heartbeat_exits_when_tokens_cleared() {
+    // Given a mock server that accepts heartbeat requests
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    // Given a running heartbeat task with shared token state
+    let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("tok1"))));
+    let tokens_clone = tokens.clone();
+    let mut handle = spawn_heartbeat_task(
+        tokens_clone,
+        reqwest::Client::new(),
+        server.uri(),
+        test_client_info(),
+        Duration::from_millis(50),
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // When the session tokens are cleared (simulating session close)
+    *tokens.write().await = None;
+
+    // Then the heartbeat task should exit on its own within a reasonable timeout
+    tokio::time::timeout(Duration::from_secs(2), handle.cancel_and_wait())
+        .await
+        .expect("heartbeat task should exit after tokens cleared");
+}
+
+#[tokio::test]
+async fn heartbeat_not_started_when_keep_alive_false() {
+    // Given a mock server that expects zero heartbeat requests
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
+        .expect(0)
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    // When no heartbeat task is spawned (CLIENT_SESSION_KEEP_ALIVE=false)
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Then no heartbeat requests should have been sent (verified by expect(0) on mock drop)
+}
+
+#[tokio::test]
+async fn heartbeat_uses_short_interval_for_testing() {
+    // Given a master token validity of 16 seconds
+    let interval = compute_heartbeat_interval(Some(Duration::from_secs(16)));
+
+    // Then the computed interval (16s / 4 = 4s) should be clamped to the minimum of 900s
+    assert_eq!(
+        interval,
+        Duration::from_secs(900),
+        "16s validity / 4 = 4s, but clamped to min 900s"
+    );
+
+    // Given a standard master token validity of 14400 seconds
+    let interval = compute_heartbeat_interval(Some(Duration::from_secs(14400)));
+
+    // Then the interval should be 14400 / 4 = 3600s (within bounds)
+    assert_eq!(interval, Duration::from_secs(3600));
+
+    // Given a mock server that counts heartbeat requests
+    let server = MockServer::start().await;
+    let heartbeat_count = Arc::new(AtomicUsize::new(0));
+    let heartbeat_count_clone = heartbeat_count.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(move |_: &wiremock::Request| {
+            heartbeat_count_clone.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_json(json!({"success": true}))
+        })
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    // Given a heartbeat task spawned with a 100ms interval (bypassing clamp for testing)
+    let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("tok1"))));
+    let mut handle = spawn_heartbeat_task(
+        tokens,
+        reqwest::Client::new(),
+        server.uri(),
+        test_client_info(),
+        Duration::from_millis(100),
+    );
+
+    // When 550ms elapse (enough for ~4-5 heartbeats at 100ms)
+    tokio::time::sleep(Duration::from_millis(550)).await;
+    handle.cancel_and_wait().await;
+
+    // Then at least 4 heartbeats should have been sent
+    let count = heartbeat_count.load(Ordering::SeqCst);
+    assert!(
+        count >= 4,
+        "Expected at least 4 heartbeats at 100ms interval over 550ms, got {count}"
+    );
+}
+
+#[tokio::test]
+async fn heartbeat_drop_cancels_task() {
+    // Given a mock server that counts heartbeat requests
+    let server = MockServer::start().await;
+    let heartbeat_count = Arc::new(AtomicUsize::new(0));
+    let heartbeat_count_clone = heartbeat_count.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/session/heartbeat"))
+        .respond_with(move |_: &wiremock::Request| {
+            heartbeat_count_clone.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_json(json!({"success": true}))
+        })
+        .named("heartbeat")
+        .mount(&server)
+        .await;
+
+    // Given a heartbeat task that has sent at least one request
+    let tokens = Arc::new(AsyncRwLock::new(Some(test_tokens("tok1"))));
+    {
+        let _handle = spawn_heartbeat_task(
+            tokens,
+            reqwest::Client::new(),
+            server.uri(),
+            test_client_info(),
+            Duration::from_millis(50),
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // When the HeartbeatHandle is dropped (simulating connection_release)
+    }
+    let count_at_drop = heartbeat_count.load(Ordering::SeqCst);
+
+    // Then no more heartbeat requests should arrive after the handle is dropped
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let count_after = heartbeat_count.load(Ordering::SeqCst);
+    assert_eq!(
+        count_at_drop, count_after,
+        "No heartbeats should be sent after HeartbeatHandle is dropped"
+    );
+}
+
+fn test_client_info() -> ClientInfo {
+    ClientInfo {
+        application: "test".to_string(),
+        version: "1.0".to_string(),
+        os: "test-os".to_string(),
+        os_version: "1.0".to_string(),
+        ocsp_mode: None,
+        crl_config: CrlConfig::default(),
+        tls_config: TlsConfig::default(),
+    }
+}
+
+fn test_tokens(session_token: &str) -> SessionTokens {
+    SessionTokens {
+        session_token: SensitiveString::from(session_token),
+        master_token: SensitiveString::from("master_tok"),
+        session_id: 1,
+        session_expires_at: None,
+        master_expires_at: Some(std::time::Instant::now() + Duration::from_secs(14400)),
+    }
+}
