@@ -154,17 +154,15 @@ class Connection:
         h = self.conn_handle
         _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_app_id", value="PythonConnector"))
         _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_app_version", value=__version__))
-        _set(
-            ConnectionSetOptionStringRequest(
-                conn_handle=h, key="client_runtime_name", value=platform.python_implementation()
-            )
-        )
-        _set(
-            ConnectionSetOptionStringRequest(
-                conn_handle=h, key="client_runtime_version", value=platform.python_version()
-            )
-        )
-        _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_compiler", value=platform.python_compiler()))
+        runtime_name = platform.python_implementation()
+        if runtime_name:
+            _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_runtime_name", value=runtime_name))
+        runtime_version = platform.python_version()
+        if runtime_version:
+            _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_runtime_version", value=runtime_version))
+        compiler = platform.python_compiler()
+        if compiler:
+            _set(ConnectionSetOptionStringRequest(conn_handle=h, key="client_compiler", value=compiler))
 
     @pep249
     def close(self) -> None:

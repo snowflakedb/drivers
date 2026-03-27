@@ -201,6 +201,20 @@ features = ["test", "dev"]
 installer = "uv"
 
 # Precommit environment
+[tool.hatch.envs.precommit]
+skip-install = true
+installer = "uv"
+features = ["dev"]
+extra-dependencies = [
+    "cryptography>=44.0.1",
+    "protobuf>=6.32.1",
+    "pytz",
+    "tomlkit>=0.13",
+]
+
+[tool.hatch.envs.precommit.env-vars]
+MYPYPATH = "src"
+
 [tool.hatch.envs.precommit.scripts]
 check = [
     'ruff format --check {args:src/snowflake tests}',

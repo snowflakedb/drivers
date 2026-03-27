@@ -121,12 +121,15 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
     setStringOption("client_app_id", "JDBC");
     // TODO: Replace with the real JDBC driver version once the release versioning is established.
     setStringOption("client_app_version", "2026");
-    setStringOption("client_runtime_name", System.getProperty("java.vm.name", ""));
-    setStringOption("client_runtime_version", System.getProperty("java.version", ""));
+    setStringOption("client_runtime_name", System.getProperty("java.vm.name"));
+    setStringOption("client_runtime_version", System.getProperty("java.version"));
   }
 
   private void setStringOption(String key, String value)
       throws DatabaseDriverService.ServiceException {
+    if (value == null || value.trim().isEmpty()) {
+      return;
+    }
     ProtobufApis.databaseDriverV1.connectionSetOptionString(
         ConnectionSetOptionStringRequest.newBuilder()
             .setConnHandle(connectionHandle)

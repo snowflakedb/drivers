@@ -83,17 +83,25 @@ impl ClientInfo {
         let client_info = ClientInfo {
             application: settings
                 .get_string("client_app_id")
+                .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "PythonConnector".to_string()),
             // TODO: Replace the default with a proper version once release versioning is established.
             version: settings
                 .get_string("client_app_version")
+                .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "2026".to_string()),
             os: detect_os(),
             os_version: detect_os_version(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),
-            runtime_name: settings.get_string("client_runtime_name"),
-            runtime_version: settings.get_string("client_runtime_version"),
-            compiler: settings.get_string("client_compiler"),
+            runtime_name: settings
+                .get_string("client_runtime_name")
+                .filter(|s| !s.is_empty()),
+            runtime_version: settings
+                .get_string("client_runtime_version")
+                .filter(|s| !s.is_empty()),
+            compiler: settings
+                .get_string("client_compiler")
+                .filter(|s| !s.is_empty()),
             crl_config,
             tls_config,
         };
@@ -127,7 +135,14 @@ fn detect_os_version() -> String {
     let sysname = unsafe { std::ffi::CStr::from_ptr(buf.sysname.as_ptr()) }.to_string_lossy();
     let release = unsafe { std::ffi::CStr::from_ptr(buf.release.as_ptr()) }.to_string_lossy();
     let machine = unsafe { std::ffi::CStr::from_ptr(buf.machine.as_ptr()) }.to_string_lossy();
-    format!("{sysname}-{release}-{machine}-64bit")
+    let bitness = if cfg!(target_pointer_width = "64") {
+        "64bit"
+    } else if cfg!(target_pointer_width = "32") {
+        "32bit"
+    } else {
+        "unknown"
+    };
+    format!("{sysname}-{release}-{machine}-{bitness}")
 }
 
 #[cfg(not(unix))]
