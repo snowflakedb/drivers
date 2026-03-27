@@ -27,15 +27,13 @@ struct HeartbeatResponse {
 #[tracing::instrument(skip(client, client_info, session_token))]
 pub async fn send_heartbeat(
     client: &reqwest::Client,
-    server_url: &str,
+    server_url: &Url,
     client_info: &ClientInfo,
     session_token: &str,
 ) -> Result<(), RestError> {
-    let url = Url::parse(server_url)
-        .and_then(|base| base.join(HEARTBEAT_PATH))
-        .context(UrlJoinSnafu {
-            path: HEARTBEAT_PATH,
-        })?;
+    let url = server_url.join(HEARTBEAT_PATH).context(UrlJoinSnafu {
+        path: HEARTBEAT_PATH,
+    })?;
 
     let request = apply_query_headers(client.post(url), client_info, session_token)
         .timeout(HEARTBEAT_TIMEOUT)
@@ -76,7 +74,7 @@ pub async fn send_heartbeat(
 mod tests {
     use super::*;
     use serde_json::json;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, header_regex, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn test_client_info() -> ClientInfo {
@@ -99,6 +97,12 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/session/heartbeat"))
+            .and(header_regex("Authorization", r#"^Snowflake Token=".+"$"#))
+            .and(header("Accept", "application/json"))
+            .and(header_regex(
+                "User-Agent",
+                r#"^.+/\S+ \(\S+\) CPython/3\.11\.6$"#,
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "success": true
             })))
@@ -107,9 +111,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
+        let server_url = Url::parse(&server.uri()).unwrap();
         let result = send_heartbeat(
             &client,
-            &server.uri(),
+            &server_url,
             &test_client_info(),
             "test_session_token",
         )
@@ -133,9 +138,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
+        let server_url = Url::parse(&server.uri()).unwrap();
         let result = send_heartbeat(
             &client,
-            &server.uri(),
+            &server_url,
             &test_client_info(),
             "test_session_token",
         )
@@ -155,9 +161,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
+        let server_url = Url::parse(&server.uri()).unwrap();
         let result = send_heartbeat(
             &client,
-            &server.uri(),
+            &server_url,
             &test_client_info(),
             "test_session_token",
         )
@@ -192,9 +199,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
+        let server_url = Url::parse(&server.uri()).unwrap();
         let result = send_heartbeat(
             &client,
-            &server.uri(),
+            &server_url,
             &test_client_info(),
             "test_session_token",
         )
