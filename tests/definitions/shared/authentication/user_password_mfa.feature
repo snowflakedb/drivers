@@ -1,4 +1,4 @@
-@core
+@core @python
 Feature: Username Password MFA Authentication
 
   @core_e2e @ignore
@@ -74,5 +74,47 @@ Feature: Username Password MFA Authentication
   @core_int
   Scenario: should fail authentication when passcodeInPassword is set but passcode is not appended to password
     Given Authentication is set to username_password_mfa and user, password are provided and passcodeInPassword is set but passcode is not appended to password
+    When Trying to Connect
+    Then There is error returned
+
+  @python_e2e @ignore
+  Scenario: should authenticate with duo push
+    Given Authentication is set to username_password_mfa and user, password are provided and DUO push is enabled
+    When Trying to Connect
+    Then Login is successful and simple query can be executed
+
+  @python_e2e @ignore
+  Scenario: should authenticate with explicit passcode
+    Given Authentication is set to username_password_mfa and user, password and passcode are provided
+    When Trying to Connect
+    Then Login is successful and simple query can be executed
+
+  @python_e2e @ignore
+  Scenario: should authenticate with passcode in password
+    Given Authentication is set to username_password_mfa with appended passcode and passcodeInPassword is set
+    When Trying to Connect
+    Then Login is successful and simple query can be executed
+
+  @python_e2e @ignore
+  Scenario: should cache MFA token on first connection
+    Given Authentication is set to username_password_mfa with client_store_temporary_credential enabled
+    When Trying to Connect
+    Then Login is successful and simple query can be executed
+
+  @python_e2e @ignore
+  Scenario: should reuse cached MFA token without passcode
+    Given Authentication is set to username_password_mfa and MFA token has been cached from a previous connection
+    When Trying to Connect without passcode
+    Then Login is successful and simple query can be executed
+
+  @python_e2e @ignore
+  Scenario: should fail with invalid passcode
+    Given Authentication is set to username_password_mfa and user, password are provided but passcode is invalid
+    When Trying to Connect
+    Then There is error returned
+
+  @python_e2e @ignore
+  Scenario: should fail with invalid password
+    Given Authentication is set to username_password_mfa and user is provided but password is wrong
     When Trying to Connect
     Then There is error returned
