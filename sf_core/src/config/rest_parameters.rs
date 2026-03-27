@@ -304,11 +304,8 @@ impl LoginMethod {
             "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: settings
-                    .get_string("password")
-                    .context(MissingParameterSnafu {
-                        parameter: "password",
-                    })?
+                password: Self::non_empty_string(settings, "password")
+                    .context(MissingParameterSnafu { parameter: "password" })?
                     .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
