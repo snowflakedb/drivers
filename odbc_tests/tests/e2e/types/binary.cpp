@@ -10,7 +10,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -124,10 +124,8 @@ TEST_CASE("should handle NULL binary values from literals", "[datatype][binary]"
   REQUIRE(get_binary_hex_optional(stmt, 3) == std::nullopt);
 }
 
-TEST_CASE("should select binary values from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select binary values from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with BINARY column is created
   conn.execute("CREATE TABLE binary_table (col BINARY)");
@@ -152,10 +150,8 @@ TEST_CASE("should select binary values from table", "[datatype][binary]") {
   REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
 }
 
-TEST_CASE("should select corner case binary values from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case binary values from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with BINARY column is created
   conn.execute("CREATE TABLE binary_corner_table (col BINARY)");
@@ -179,10 +175,8 @@ TEST_CASE("should select corner case binary values from table", "[datatype][bina
   REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
 }
 
-TEST_CASE("should select NULL binary values from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select NULL binary values from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with BINARY column is created
   conn.execute("CREATE TABLE binary_null_table (col BINARY)");
@@ -221,10 +215,8 @@ TEST_CASE("should select NULL binary values from table", "[datatype][binary]") {
   REQUIRE(value_count == 1);
 }
 
-TEST_CASE("should select binary with specified length from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select binary with specified length from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (bin5 BINARY(5), bin10 BINARY(10), bin_default BINARY) exists
   conn.execute("CREATE TABLE binary_len_table (bin5 BINARY(5), bin10 BINARY(10), bin_default BINARY)");
@@ -314,10 +306,8 @@ TEST_CASE("should select binary literals using parameter binding", "[datatype][b
   REQUIRE(get_binary_hex(stmt, 3) == "0123456789ABCDEF");
 }
 
-TEST_CASE("should insert binary using parameter binding", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert binary using parameter binding", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with BINARY column exists
   conn.execute("CREATE TABLE binary_insert_table (col BINARY)");
@@ -410,10 +400,8 @@ TEST_CASE("should bind corner case binary values", "[datatype][binary]") {
   }
 }
 
-TEST_CASE("should handle VARBINARY as synonym for BINARY", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle VARBINARY as synonym for BINARY", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with VARBINARY column is created
   conn.execute("CREATE TABLE varbinary_test (col VARBINARY)");
@@ -466,10 +454,8 @@ TEST_CASE("should download binary data in multiple chunks using GENERATOR", "[da
   REQUIRE(row_count == 30000);
 }
 
-TEST_CASE("should download binary data in multiple chunks from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download binary data in multiple chunks from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with (bin_data BINARY) exists with 30000 sequential binary values
   conn.execute("CREATE TABLE binary_large_table (bin_data BINARY)");

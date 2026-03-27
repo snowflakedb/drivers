@@ -25,7 +25,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
@@ -37,12 +37,11 @@
 // SUCCESSFUL CONVERSIONS - Single-component interval types (no truncation)
 // ============================================================================
 
-TEST_CASE("should convert string literals to single-component c_type", "[datatype][string][conversion][interval]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to single-component c_type",
+                 "[datatype][string][conversion][interval]") {
   // Catch2 needs one test to be present in the suite, so we skip this one.
   SKIP();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing interval values is executed
   auto stmt = conn.execute_fetch(
@@ -94,10 +93,9 @@ TEST_CASE("should convert string literals to single-component c_type", "[datatyp
   }
 }
 
-TEST_CASE("should convert negative c_type string literals", "[datatype][string][conversion][interval][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert negative c_type string literals",
+                 "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting negative interval values is executed
   auto stmt = conn.execute_fetch("SELECT '-5' AS neg_years, '-10' AS neg_months, '-15' AS neg_days");
@@ -130,11 +128,9 @@ TEST_CASE("should convert negative c_type string literals", "[datatype][string][
 // SUCCESSFUL CONVERSIONS - Multi-component interval types (no truncation)
 // ============================================================================
 
-TEST_CASE("should convert string literals to year-month interval type",
-          "[datatype][string][conversion][interval][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to year-month interval type",
+                 "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting year-month interval string is executed
   auto stmt = conn.execute_fetch("SELECT '3-6' AS year_month, '-2-9' AS neg_year_month, '0-11' AS zero_year");
@@ -167,10 +163,9 @@ TEST_CASE("should convert string literals to year-month interval type",
   }
 }
 
-TEST_CASE("should convert string literals to compound c_type", "[datatype][string][conversion][interval][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to compound c_type",
+                 "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting day-time interval strings is executed
   auto stmt = conn.execute_fetch(
@@ -237,11 +232,9 @@ TEST_CASE("should convert string literals to compound c_type", "[datatype][strin
 // TRUNCATION WITH INFO - Trailing field truncation (SQLSTATE 01S07)
 // ============================================================================
 
-TEST_CASE("should truncate trailing fields when converting interval strings",
-          "[datatype][string][conversion][interval][truncation][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields when converting interval strings",
+                 "[datatype][string][conversion][interval][truncation][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval strings with more precision than target type is executed
   auto stmt = conn.execute_fetch(
@@ -276,11 +269,9 @@ TEST_CASE("should truncate trailing fields when converting interval strings",
   check_interval_precision_lost<SQL_C_INTERVAL_MINUTE>(stmt, 4);
 }
 
-TEST_CASE("should truncate trailing fields in day-time intervals",
-          "[datatype][string][conversion][interval][truncation][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should truncate trailing fields in day-time intervals",
+                 "[datatype][string][conversion][interval][truncation][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting day-time interval strings with more precision is executed
   auto stmt = conn.execute_fetch(
@@ -320,11 +311,9 @@ TEST_CASE("should truncate trailing fields in day-time intervals",
 // LEADING FIELD PRECISION LOSS - (SQLSTATE 22015)
 // ============================================================================
 
-TEST_CASE("should fail when leading field precision is lost for year intervals",
-          "[datatype][string][conversion][interval][precision][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for year intervals",
+                 "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // Default leading precision is typically 2 digits for intervals
   // When Query selecting interval values with leading field exceeding precision is executed
@@ -335,11 +324,9 @@ TEST_CASE("should fail when leading field precision is lost for year intervals",
   check_interval_precision_lost<SQL_C_INTERVAL_YEAR>(stmt, 2);
 }
 
-TEST_CASE("should fail when leading field precision is lost for month intervals",
-          "[datatype][string][conversion][interval][precision][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for month intervals",
+                 "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval values with leading field exceeding precision is executed
   auto stmt = conn.execute_fetch("SELECT '10000' AS large_month, '99999' AS very_large_month");
@@ -349,11 +336,9 @@ TEST_CASE("should fail when leading field precision is lost for month intervals"
   check_interval_precision_lost<SQL_C_INTERVAL_MONTH>(stmt, 2);
 }
 
-TEST_CASE("should fail when leading field precision is lost for day intervals",
-          "[datatype][string][conversion][interval][precision][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for day intervals",
+                 "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval values with leading field exceeding precision is executed
   auto stmt = conn.execute_fetch("SELECT '10000' AS large_day, '99999' AS very_large_day");
@@ -363,11 +348,9 @@ TEST_CASE("should fail when leading field precision is lost for day intervals",
   check_interval_precision_lost<SQL_C_INTERVAL_DAY>(stmt, 2);
 }
 
-TEST_CASE("should fail when leading field precision is lost for hour intervals",
-          "[datatype][string][conversion][interval][precision][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for hour intervals",
+                 "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval values with leading field exceeding precision is executed
   auto stmt = conn.execute_fetch("SELECT '10000' AS large_hour, '99999' AS very_large_hour");
@@ -377,11 +360,9 @@ TEST_CASE("should fail when leading field precision is lost for hour intervals",
   check_interval_precision_lost<SQL_C_INTERVAL_HOUR>(stmt, 2);
 }
 
-TEST_CASE("should fail when leading field precision is lost for compound intervals",
-          "[datatype][string][conversion][interval][precision][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail when leading field precision is lost for compound intervals",
+                 "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting compound interval values with leading field exceeding precision is executed
   auto stmt = conn.execute_fetch("SELECT '10000-6' AS large_year_month, '99999 10:30:45' AS large_day_second");
@@ -395,11 +376,9 @@ TEST_CASE("should fail when leading field precision is lost for compound interva
 // INVALID INTERVAL VALUES - (SQLSTATE 22018)
 // ============================================================================
 
-TEST_CASE("should fail converting invalid interval string formats",
-          "[datatype][string][conversion][interval][failure][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting invalid interval string formats",
+                 "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting invalid interval strings is executed
   auto stmt = conn.execute_fetch(
@@ -413,11 +392,9 @@ TEST_CASE("should fail converting invalid interval string formats",
   check_invalid_string<SQL_C_INTERVAL_HOUR>(stmt, 4);
 }
 
-TEST_CASE("should fail converting malformed interval strings for year-month type",
-          "[datatype][string][conversion][interval][failure][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval strings for year-month type",
+                 "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting malformed year-month interval strings is executed
   auto stmt = conn.execute_fetch(
@@ -431,11 +408,9 @@ TEST_CASE("should fail converting malformed interval strings for year-month type
   check_invalid_string<SQL_C_INTERVAL_YEAR_TO_MONTH>(stmt, 4);
 }
 
-TEST_CASE("should fail converting malformed interval strings for day-time types",
-          "[datatype][string][conversion][interval][failure][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed interval strings for day-time types",
+                 "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting malformed day-time interval strings is executed
   auto stmt = conn.execute_fetch(
@@ -449,11 +424,9 @@ TEST_CASE("should fail converting malformed interval strings for day-time types"
   check_invalid_string<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 4);
 }
 
-TEST_CASE("should fail converting out-of-range component values",
-          "[datatype][string][conversion][interval][failure][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting out-of-range component values",
+                 "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // Month > 11 in year-month, hour > 23, minute > 59, second > 59
   // When Query selecting interval strings with invalid component ranges is executed
@@ -489,10 +462,9 @@ TEST_CASE("should fail converting out-of-range component values",
 // EDGE CASES - Whitespace and special formatting
 // ============================================================================
 
-TEST_CASE("should handle whitespace in interval strings", "[datatype][string][conversion][interval][edge][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle whitespace in interval strings",
+                 "[datatype][string][conversion][interval][edge][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval strings with leading/trailing whitespace is executed
   auto stmt = conn.execute_fetch(
@@ -520,10 +492,9 @@ TEST_CASE("should handle whitespace in interval strings", "[datatype][string][co
   }
 }
 
-TEST_CASE("should handle zero values in interval strings", "[datatype][string][conversion][interval][edge][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle zero values in interval strings",
+                 "[datatype][string][conversion][interval][edge][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting zero interval values is executed
   auto stmt = conn.execute_fetch(
@@ -572,11 +543,9 @@ TEST_CASE("should handle zero values in interval strings", "[datatype][string][c
 // NULL VALUE HANDLING
 // ============================================================================
 
-TEST_CASE("should handle NULL string when converting to interval types",
-          "[datatype][string][conversion][interval][null][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL string when converting to interval types",
+                 "[datatype][string][conversion][interval][null][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting NULL is executed
   auto stmt = conn.execute_fetch("SELECT NULL::STRING AS null_interval");
@@ -595,11 +564,9 @@ TEST_CASE("should handle NULL string when converting to interval types",
 // CONVERSION WITH SQLBindCol - Interval types
 // ============================================================================
 
-TEST_CASE("should convert strings to interval types using SQLBindCol",
-          "[datatype][string][conversion][interval][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to interval types using SQLBindCol",
+                 "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval value is executed with SQLBindCol for SQL_C_INTERVAL_YEAR
   {
@@ -642,11 +609,9 @@ TEST_CASE("should convert strings to interval types using SQLBindCol",
 // FRACTIONAL SECONDS HANDLING
 // ============================================================================
 
-TEST_CASE("should handle fractional seconds in interval strings",
-          "[datatype][string][conversion][interval][fractional][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle fractional seconds in interval strings",
+                 "[datatype][string][conversion][interval][fractional][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting interval strings with fractional seconds is executed
   auto stmt = conn.execute_fetch(

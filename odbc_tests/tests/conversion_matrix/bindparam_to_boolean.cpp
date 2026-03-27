@@ -6,12 +6,10 @@ static const SqlTypeInfo BOOLEAN_SQL_TYPES[] = {
 };
 // clang-format on
 
-TEST_CASE("conversion matrix: all C types -> BOOLEAN SQL type via SQLBindParameter",
-          "[conversion_matrix][bindparam][boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> BOOLEAN SQL type via SQLBindParameter",
+                 "[conversion_matrix][bindparam][boolean]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE OR REPLACE TABLE cm_boolean (val BOOLEAN)");
   ResultWriter report(get_report_path("bindparam_to_boolean"));
 

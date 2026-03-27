@@ -7,12 +7,10 @@ static const SqlTypeInfo TIMESTAMP_SQL_TYPES[] = {
 };
 // clang-format on
 
-TEST_CASE("conversion matrix: all C types -> TIMESTAMP SQL types via SQLBindParameter",
-          "[conversion_matrix][bindparam][timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> TIMESTAMP SQL types via SQLBindParameter",
+                 "[conversion_matrix][bindparam][timestamp]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE OR REPLACE TABLE cm_timestamp (val TIMESTAMP_NTZ)");
   ResultWriter report(get_report_path("bindparam_to_timestamp"));
 

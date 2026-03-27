@@ -66,6 +66,16 @@ docker run --rm \
         # Build tests
         cmake --build cmake-build-reference -- -j \$(nproc)
         
+        # Schema lifecycle
+        SCHEMA_TOOL=\"./cmake-build-reference/tools/schema_tool\"
+        if SCHEMA_NAME=\$(\"\$SCHEMA_TOOL\" create); then
+            export ODBC_TEST_SCHEMA=\"\$SCHEMA_NAME\"
+            trap '\"\$SCHEMA_TOOL\" drop \"\$SCHEMA_NAME\" 2>/dev/null || true' EXIT
+            echo \"run_reference: using shared schema \$SCHEMA_NAME\"
+        else
+            echo \"run_reference: schema pre-creation failed, falling back to per-process\"
+        fi
+        
         # Run tests
         echo 'Running ODBC reference tests...'
         ctest -j \$(nproc) -C Debug --test-dir cmake-build-reference --output-on-failure \"\$@\"

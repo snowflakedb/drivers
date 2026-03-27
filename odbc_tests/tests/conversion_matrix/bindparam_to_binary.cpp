@@ -8,12 +8,10 @@ static const SqlTypeInfo BINARY_SQL_TYPES[] = {
 };
 // clang-format on
 
-TEST_CASE("conversion matrix: all C types -> BINARY SQL types via SQLBindParameter",
-          "[conversion_matrix][bindparam][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> BINARY SQL types via SQLBindParameter",
+                 "[conversion_matrix][bindparam][binary]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE OR REPLACE TABLE cm_binary (val BINARY)");
   ResultWriter report(get_report_path("bindparam_to_binary"));
 

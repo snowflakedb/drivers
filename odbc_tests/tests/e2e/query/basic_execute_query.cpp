@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -96,10 +96,8 @@ TEST_CASE("should execute SELECT returning NULL values", "[query]") {
 // DDL STATEMENTS
 // =============================================================================
 
-TEST_CASE("should execute CREATE and DROP TABLE statements", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should execute CREATE and DROP TABLE statements", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When CREATE TABLE statement is executed
   conn.execute("CREATE TABLE basic_exec_test (id INT, name VARCHAR(100))");
@@ -116,10 +114,8 @@ TEST_CASE("should execute CREATE and DROP TABLE statements", "[query]") {
 // DML STATEMENTS
 // =============================================================================
 
-TEST_CASE("should execute INSERT and retrieve inserted data", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should execute INSERT and retrieve inserted data", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table is created
   conn.execute("CREATE TEMPORARY TABLE insert_test (id INT, value VARCHAR(100))");

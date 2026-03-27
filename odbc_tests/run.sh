@@ -34,5 +34,16 @@ pushd odbc_tests
             .
     fi
     cmake --build cmake-build -- -j 16
+
+    # --- Schema lifecycle ---
+    SCHEMA_TOOL="$(pwd)/cmake-build/tools/schema_tool"
+    if SCHEMA_NAME=$("$SCHEMA_TOOL" create); then
+        export ODBC_TEST_SCHEMA="$SCHEMA_NAME"
+        trap '"$SCHEMA_TOOL" drop "$SCHEMA_NAME" 2>/dev/null || true' EXIT
+        echo "run: using shared schema $SCHEMA_NAME"
+    else
+        echo "run: schema pre-creation failed, falling back to per-process"
+    fi
+
     ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure "$@"
 popd

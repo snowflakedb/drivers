@@ -109,11 +109,42 @@ REQUIRE_THAT(OdbcResult(ret, stmt),
 ```
 
 ### Schema & Table Management
-Use `Schema::use_random_schema(conn)` when the test creates tables. The schema destructor drops CASCADE, so `DROP TABLE IF EXISTS` is redundant inside a random schema.
-```cpp
-auto random_schema = Schema::use_random_schema(conn);
-conn.execute("CREATE OR REPLACE TABLE test_table (col VARCHAR(1000))");
-```
+
+Call `Schema::use_temp_session_schema(conn)` (or the `SQLHDBC` overload) before creating any tables. In CI, all test processes share a single schema (`ODBC_TEST_SCHEMA` env var); in IDE/direct runs, each process gets its own random schema with automatic cleanup.
+
+**Table creation strategy (ordered by preference):**
+
+1. **`CREATE TEMPORARY TABLE`** (default) — session-scoped, auto-dropped on disconnect, session-isolated so names can be simple. Use for all normal data tests.
+   ```cpp
+   Schema::use_temp_session_schema(conn);
+   conn.execute("CREATE TEMPORARY TABLE my_table (id INT, value VARCHAR(100))");
+   ```
+
+2. **`ScopedTable` RAII class** — for permanent tables that must be visible cross-session or show `TABLE_TYPE = 'TABLE'` in catalog queries. Generates a unique name with PID+random, drops in destructor.
+   ```cpp
+   #include "ScopedTable.hpp"
+   Schema::use_temp_session_schema(conn);
+   ScopedTable table(conn, "catalog_test", "id INT, value VARCHAR(100)");
+   // use table.name() in queries
+   // table is dropped automatically when it goes out of scope
+   ```
+
+3. **`CREATE OR REPLACE TABLE` with a hardcoded name** — only for tests that specifically exercise DDL on named permanent tables (e.g., `ALTER TABLE`, `DROP TABLE`, `SQLRowCount` after DDL). Names must be globally unique: `<file_stem>_<scenario>_t`.
+   ```cpp
+   Schema::use_temp_session_schema(conn);
+   conn.execute("CREATE OR REPLACE TABLE rowcount_alter_t (id INT, val VARCHAR(50))");
+   ```
+
+**When TEMPORARY tables are NOT suitable:**
+- Catalog tests (`SQLTables`) that verify `TABLE_TYPE == 'TABLE'` (temp tables show as `LOCAL TEMPORARY`)
+- Tests requiring cross-session table visibility
+- Tests exercising DDL specific to permanent tables (`ALTER TABLE`, `GRANT`, `DROP TABLE`)
+- Tests that check `SQLRowCount` behavior after DDL statements on permanent tables
+
+**Naming rules for hardcoded permanent table names:**
+- Must be globally unique across the entire test suite (all tests share one schema in CI)
+- Convention: `<file_stem>_<scenario>_t` (e.g., `sql_fetch_scroll_t`, `rowcount_alter_t`)
+- Why: duplicate names cause flaky test failures when tests run in parallel
 
 ### Data Retrieval
 ```cpp
@@ -171,7 +202,7 @@ REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 Available matchers: `Succeeded()`, `IsSuccess()`, `IsSuccessWithInfo()`, `IsError()`, `HasSqlState(code)`, `HasDiagMessage(substring)`. Compose with `&&` / `||`.
 
 ### Abstraction Levels
-- **Given (setup)**: use high-level abstractions — `Connection`, `Schema::use_random_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
+- **Given (setup)**: use high-level abstractions — `Connection`, `Schema::use_temp_session_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
 - **When/Then (test)**: use raw ODBC calls (`SQLExecDirect`, `SQLFetch`, `SQLGetData`) or purpose-built helpers to make the tested code path explicit and auditable.
 - Do not use raw ODBC for setup or high-level wrappers for the behaviour under test.
 
@@ -232,6 +263,7 @@ odbc_tests/tests/
 - `get_data.hpp` - `get_data<>()` and `get_data_optional<>()` typed data retrieval helpers
 - `conversion_checks.hpp` - Helpers for type conversion tests
 - `Schema.hpp` - Schema management
+- `ScopedTable.hpp` - RAII wrapper for permanent tables with unique names (PID+random)
 - `put_get_utils.hpp` - PUT/GET operation utilities
 - `compatibility.hpp` - `OLD_DRIVER_ONLY`, `NEW_DRIVER_ONLY` macros
 

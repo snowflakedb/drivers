@@ -15,7 +15,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
@@ -27,10 +27,9 @@
 // SUCCESSFUL CONVERSIONS - String to Date/Time Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to c_type", "[datatype][string][conversion][temporal]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to c_type",
+                 "[datatype][string][conversion][temporal]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing dates and times is executed
   auto stmt = conn.execute_fetch(
@@ -107,11 +106,9 @@ TEST_CASE("should convert string literals to c_type", "[datatype][string][conver
 // SUCCESSFUL CONVERSIONS - Date/Time strings to TIMESTAMP
 // ============================================================================
 
-TEST_CASE("should convert date-only and time-only strings to SQL_C_TYPE_TIMESTAMP",
-          "[datatype][string][conversion][temporal]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert date-only and time-only strings to SQL_C_TYPE_TIMESTAMP",
+                 "[datatype][string][conversion][temporal]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting date-only string is executed
   auto stmt = conn.execute_fetch("SELECT '2024-01-15' AS date_only, '14:30:45' AS time_only");
@@ -149,10 +146,9 @@ TEST_CASE("should convert date-only and time-only strings to SQL_C_TYPE_TIMESTAM
 // SUCCESSFUL CONVERSIONS - Timestamp strings to DATE or TIME
 // ============================================================================
 
-TEST_CASE("should convert timestamp string to SQL_C_TYPE_DATE", "[datatype][string][conversion][temporal][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert timestamp string to SQL_C_TYPE_DATE",
+                 "[datatype][string][conversion][temporal][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting timestamp strings is executed
   auto stmt = conn.execute_fetch(
@@ -175,10 +171,9 @@ TEST_CASE("should convert timestamp string to SQL_C_TYPE_DATE", "[datatype][stri
   CHECK(date3.day == 15);
 }
 
-TEST_CASE("should convert timestamp string to SQL_C_TYPE_TIME", "[datatype][string][conversion][temporal][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert timestamp string to SQL_C_TYPE_TIME",
+                 "[datatype][string][conversion][temporal][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting timestamp strings is executed
   auto stmt = conn.execute_fetch(
@@ -205,10 +200,9 @@ TEST_CASE("should convert timestamp string to SQL_C_TYPE_TIME", "[datatype][stri
 // FAILING CONVERSIONS - Invalid date/time format strings
 // ============================================================================
 
-TEST_CASE("should fail converting invalid date/time strings", "[datatype][string][conversion][temporal][failure]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting invalid date/time strings",
+                 "[datatype][string][conversion][temporal][failure]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting invalid date/time strings is executed
   auto stmt = conn.execute_fetch("SELECT 'not-a-date' AS c1, 'not-a-time' AS c2, 'invalid-timestamp' AS c3");
@@ -223,11 +217,9 @@ TEST_CASE("should fail converting invalid date/time strings", "[datatype][string
 // FAILING CONVERSIONS - Impossible date/time values (correct syntax, invalid values)
 // ============================================================================
 
-TEST_CASE("should fail converting impossible date values",
-          "[datatype][string][conversion][temporal][failure][impossible]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting impossible date values",
+                 "[datatype][string][conversion][temporal][failure][impossible]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting date strings with correct syntax but impossible values is executed
   auto stmt = conn.execute_fetch(
@@ -244,11 +236,9 @@ TEST_CASE("should fail converting impossible date values",
   }
 }
 
-TEST_CASE("should fail converting impossible time values",
-          "[datatype][string][conversion][temporal][failure][impossible][.skip]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting impossible time values",
+                 "[datatype][string][conversion][temporal][failure][impossible][.skip]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting time strings with correct syntax but impossible values is executed
   auto stmt = conn.execute_fetch(
@@ -274,11 +264,9 @@ TEST_CASE("should fail converting impossible time values",
   CHECK(time.second == 60);
 }
 
-TEST_CASE("should fail converting impossible timestamp values",
-          "[datatype][string][conversion][temporal][failure][impossible]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting impossible timestamp values",
+                 "[datatype][string][conversion][temporal][failure][impossible]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting timestamp strings with correct syntax but impossible values is executed
   auto stmt = conn.execute_fetch(
@@ -299,11 +287,9 @@ TEST_CASE("should fail converting impossible timestamp values",
 // FAILING CONVERSIONS - Alternative date serialization formats
 // ============================================================================
 
-TEST_CASE("should fail converting alternative date formats to SQL_C_TYPE_DATE",
-          "[datatype][string][conversion][temporal][failure][date_format]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting alternative date formats to SQL_C_TYPE_DATE",
+                 "[datatype][string][conversion][temporal][failure][date_format]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting multiple date strings in alternative formats is executed
   auto stmt = conn.execute_fetch(
@@ -331,11 +317,9 @@ TEST_CASE("should fail converting alternative date formats to SQL_C_TYPE_DATE",
 // FAILING CONVERSIONS - Alternative time serialization formats
 // ============================================================================
 
-TEST_CASE("should fail converting alternative time formats to SQL_C_TYPE_TIME",
-          "[datatype][string][conversion][temporal][failure][time_format]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting alternative time formats to SQL_C_TYPE_TIME",
+                 "[datatype][string][conversion][temporal][failure][time_format]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting multiple time strings in alternative formats is executed
   auto stmt = conn.execute_fetch(
@@ -358,11 +342,9 @@ TEST_CASE("should fail converting alternative time formats to SQL_C_TYPE_TIME",
 // FAILING CONVERSIONS - Alternative timestamp serialization formats
 // ============================================================================
 
-TEST_CASE("should fail converting alternative timestamp formats to SQL_C_TYPE_TIMESTAMP",
-          "[datatype][string][conversion][temporal][failure][timestamp_format]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting alternative timestamp formats to SQL_C_TYPE_TIMESTAMP",
+                 "[datatype][string][conversion][temporal][failure][timestamp_format]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting multiple timestamp strings in alternative formats is executed
   auto stmt = conn.execute_fetch(

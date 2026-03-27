@@ -3,7 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 
@@ -51,13 +51,11 @@ TEST_CASE("SQLNumResultCols returns correct count for SELECT with many columns."
   CHECK(num_cols == 5);
 }
 
-TEST_CASE("SQLNumResultCols returns correct count for SELECT * from table.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns correct count for SELECT * from table.", "[query]") {
   // Doc: "SQLNumResultCols returns the number of columns in a result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlnumresultcols-function#summary
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And a table with 3 columns exists
   conn.execute("CREATE TABLE num_cols_test (id INT, name VARCHAR(100), active BOOLEAN)");
@@ -99,15 +97,13 @@ TEST_CASE("SQLNumResultCols returns correct column count for empty result set.",
 // DDL / No Result Set
 // =============================================================================
 
-TEST_CASE("SQLNumResultCols returns 0 after DDL statement.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns 0 after DDL statement.", "[query]") {
   // Doc: "If the statement associated with StatementHandle does not return columns,
   //       SQLNumResultCols sets *ColumnCountPtr to 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlnumresultcols-function#comments
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  auto stmt = conn.createStatement();
+  const auto stmt = conn.createStatement();
 
   // When a DDL statement is executed
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE ddl_numcols_test (id INT)", SQL_NTS);
@@ -120,10 +116,9 @@ TEST_CASE("SQLNumResultCols returns 0 after DDL statement.", "[query]") {
   CHECK(num_cols == 0);
 }
 
-TEST_CASE("SQLNumResultCols returns correct count after calling a stored procedure.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns correct count after calling a stored procedure.",
+                 "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And a stored procedure exists that returns one column
   conn.execute(

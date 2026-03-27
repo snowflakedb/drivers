@@ -5,7 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 
@@ -139,10 +139,8 @@ TEST_CASE("should download large result set with multiple chunks for int and syn
   REQUIRE(row_count == 50000);
 }
 
-TEST_CASE("should select values from table for int and synonyms", "[int]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select values from table for int and synonyms", "[int]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   {
     INFO("positive");
@@ -212,7 +210,8 @@ TEST_CASE("should select values from table for int and synonyms", "[int]") {
   }
 }
 
-TEST_CASE("should handle server-side Arrow memory optimization for int columns on multiple chunks", "[int]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should handle server-side Arrow memory optimization for int columns on multiple chunks", "[int]") {
   constexpr int total_rows = 50000;
   constexpr int64_t expected_col1 = 100;
   constexpr int64_t expected_col2 = 30000;
@@ -220,8 +219,6 @@ TEST_CASE("should handle server-side Arrow memory optimization for int columns o
   constexpr int64_t expected_col4 = 9000000000000000000LL;
 
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with four INT columns exists
   conn.execute("CREATE TABLE int_different_column_sizes (col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)");
@@ -307,10 +304,8 @@ TEST_CASE("should handle NULL values for int and synonyms", "[int]") {
 // Table operations - large integers
 // ============================================================================
 
-TEST_CASE("should select large integer values from table for int and synonyms", "[int]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select large integer values from table for int and synonyms", "[int]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists with values [-99999999999999999999999999999999999999,
   // 99999999999999999999999999999999999999]
@@ -336,10 +331,8 @@ TEST_CASE("should select large integer values from table for int and synonyms", 
 // Parameter binding
 // ============================================================================
 
-TEST_CASE("should insert integer using parameter binding for int and synonyms", "[int]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert integer using parameter binding for int and synonyms", "[int]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists
   conn.execute("CREATE TABLE int_bind_insert (col BIGINT)");
@@ -383,11 +376,11 @@ TEST_CASE("should insert integer using parameter binding for int and synonyms", 
   CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 9223372036854775807LL);
 }
 
-TEST_CASE("should insert and select integers from table using batch parameter binding for int and synonyms", "[int]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should insert and select integers from table using batch parameter binding for int and synonyms",
+                 "[int]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists
   conn.execute("CREATE TABLE int_batch_bind (col BIGINT)");

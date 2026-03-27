@@ -3,7 +3,8 @@
 # Required env vars: DRIVER_PATH, PARAMETER_PATH, DRIVER_TYPE
 set -euo pipefail
 
-cd "$(dirname "$0")/../../odbc_tests"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/../../odbc_tests"
 
 # Detect ODBC paths
 if [[ "$(uname)" == "Darwin" ]]; then
@@ -30,4 +31,19 @@ cmake -B cmake-build \
     ${CCACHE_ARGS} \
     .
 cmake --build cmake-build -- -j $((NPROC * 2))
-ctest -j $((NPROC * 4)) -C Debug --test-dir cmake-build --output-on-failure
+
+# --- Schema lifecycle: pre-create a shared schema for all test processes ----------
+SCHEMA_TOOL="./cmake-build/tools/schema_tool"
+if SCHEMA_NAME=$("$SCHEMA_TOOL" create); then
+    export ODBC_TEST_SCHEMA="$SCHEMA_NAME"
+    trap '"$SCHEMA_TOOL" drop "$SCHEMA_NAME" 2>/dev/null || true' EXIT
+    echo "run_tests: using shared schema $SCHEMA_NAME"
+else
+    echo "run_tests: schema pre-creation failed, falling back to per-process"
+fi
+
+CTEST_ARGS=()
+if [[ -n "${CTEST_FILTER:-}" ]]; then
+    CTEST_ARGS+=(-R "$CTEST_FILTER")
+fi
+ctest -j $((NPROC * 4)) -C Debug --test-dir cmake-build --output-on-failure ${CTEST_ARGS[@]+"${CTEST_ARGS[@]}"} "$@"

@@ -366,7 +366,7 @@ TEST_CASE("should select INTERVAL YEAR TO MONTH values from table", "[interval]"
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR TO MONTH column is created
   conn.execute("CREATE TABLE interval_ym_table (C1 INTERVAL YEAR TO MONTH)");
@@ -404,7 +404,7 @@ TEST_CASE("should select INTERVAL DAY TO SECOND values from table", "[interval]"
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY TO SECOND column is created
   conn.execute("CREATE TABLE interval_dt_table (C1 INTERVAL DAY TO SECOND)");
@@ -443,7 +443,7 @@ TEST_CASE("should select INTERVAL YEAR(2) TO MONTH values from table", "[interva
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR(2) TO MONTH column is created
   conn.execute("CREATE TABLE interval_ym2_table (C1 INTERVAL YEAR(2) TO MONTH)");
@@ -481,7 +481,7 @@ TEST_CASE("should select INTERVAL YEAR(7) TO MONTH values from table", "[interva
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR(7) TO MONTH column is created
   conn.execute("CREATE TABLE interval_ym7_table (C1 INTERVAL YEAR(7) TO MONTH)");
@@ -519,7 +519,7 @@ TEST_CASE("should select INTERVAL DAY(3) TO SECOND values from table", "[interva
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY(3) TO SECOND column is created
   conn.execute("CREATE TABLE interval_dt3_table (C1 INTERVAL DAY(3) TO SECOND)");
@@ -563,7 +563,7 @@ TEST_CASE("should insert and select back INTERVAL YEAR TO MONTH values using par
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR TO MONTH column is created
   conn.execute("CREATE TABLE interval_bind_ym (C1 INTERVAL YEAR TO MONTH)");
@@ -620,7 +620,7 @@ TEST_CASE("should insert and select back INTERVAL DAY TO SECOND values using par
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY TO SECOND column is created
   conn.execute("CREATE TABLE interval_bind_dt (C1 INTERVAL DAY TO SECOND)");
