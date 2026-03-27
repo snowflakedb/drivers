@@ -32,6 +32,7 @@ common_arm: &common_arm
     queue: "snowci"
     repo: "snowflakedb/universal-driver"
     worker_arch: arm
+    worker_clone_strategy: full
     worker_size: m
   plugins:
     - ${GLOBAL_PLUGIN}/vault_secrets:
