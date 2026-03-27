@@ -838,4 +838,279 @@ mod tests {
         assert_eq!(v, Value::String("3.14".to_string()));
         Ok(())
     }
+
+    // -- C numeric types → VARCHAR (string SQL types) -------------------------
+
+    #[test]
+    fn convert_i32_as_varchar() -> TestResult {
+        let val: i32 = 42;
+        let binding = make_binding(
+            CDataType::Long,
+            sql::SqlDataType::VARCHAR,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_negative_i32_as_varchar() -> TestResult {
+        let val: i32 = -999;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::VARCHAR,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("-999".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_i16_as_varchar() -> TestResult {
+        let val: i16 = -7;
+        let binding = make_binding(
+            CDataType::Short,
+            sql::SqlDataType::VARCHAR,
+            &val as *const i16 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("-7".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_i64_as_varchar() -> TestResult {
+        let val: i64 = 9_999_999_999;
+        let binding = make_binding(
+            CDataType::SBigInt,
+            sql::SqlDataType::VARCHAR,
+            &val as *const i64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("9999999999".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_u64_as_varchar() -> TestResult {
+        let val: u64 = 1_000_000_000_000;
+        let binding = make_binding(
+            CDataType::UBigInt,
+            sql::SqlDataType::VARCHAR,
+            &val as *const u64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("1000000000000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_u32_as_varchar() -> TestResult {
+        let val: u32 = 4_000_000_000;
+        let binding = make_binding(
+            CDataType::ULong,
+            sql::SqlDataType::VARCHAR,
+            &val as *const u32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("4000000000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_i8_as_varchar() -> TestResult {
+        let val: i8 = -128;
+        let binding = make_binding(
+            CDataType::STinyInt,
+            sql::SqlDataType::VARCHAR,
+            &val as *const i8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("-128".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_u8_as_varchar() -> TestResult {
+        let val: u8 = 255;
+        let binding = make_binding(
+            CDataType::UTinyInt,
+            sql::SqlDataType::VARCHAR,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("255".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_u16_as_varchar() -> TestResult {
+        let val: u16 = 65535;
+        let binding = make_binding(
+            CDataType::UShort,
+            sql::SqlDataType::VARCHAR,
+            &val as *const u16 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("65535".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_f64_as_varchar() -> TestResult {
+        let val: f64 = 1.234;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::VARCHAR,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("1.234".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_f32_as_varchar() -> TestResult {
+        let val: f32 = 1.5;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::VARCHAR,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert!(v.as_str().unwrap().starts_with("1.5"));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_bit_true_as_varchar() -> TestResult {
+        let val: u8 = 1;
+        let binding = make_binding(
+            CDataType::Bit,
+            sql::SqlDataType::VARCHAR,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("1".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_bit_false_as_varchar() -> TestResult {
+        let val: u8 = 0;
+        let binding = make_binding(
+            CDataType::Bit,
+            sql::SqlDataType::VARCHAR,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("0".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_nts_as_varchar() -> TestResult {
+        let val = b"hello world\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::VARCHAR,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("hello world".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_wchar_as_varchar() -> TestResult {
+        let val: Vec<u16> = "hello".encode_utf16().collect();
+        let mut ind: sql::Len = (val.len() * 2) as sql::Len;
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::VARCHAR,
+            val.as_ptr() as sql::Pointer,
+            (val.len() * 2) as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("hello".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_i32_as_wvarchar() -> TestResult {
+        let val: i32 = 77;
+        let binding = make_binding(
+            CDataType::Long,
+            sql::SqlDataType::EXT_W_VARCHAR,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("77".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_i32_as_char_sql_type() -> TestResult {
+        let val: i32 = 99;
+        let binding = make_binding(
+            CDataType::Long,
+            sql::SqlDataType::CHAR,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("99".to_string()));
+        Ok(())
+    }
 }
