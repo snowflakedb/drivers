@@ -184,6 +184,12 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: OLD
 
+      - name: Cleanup orphaned test schemas
+        if: always() && matrix.os == 'ubuntu-latest'
+        run: scripts/odbc/cleanup_test_schemas.sh
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
   odbc_tests:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
@@ -349,7 +355,13 @@ jobs:
           DRIVER_PATH: ${{ github.workspace }}\target\debug\${{ matrix.driver_lib }}
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           DRIVER_TYPE: NEW
-          
+
+      - name: Cleanup orphaned test schemas
+        if: always() && runner.os == 'Linux'
+        run: scripts/odbc/cleanup_test_schemas.sh
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+
   build_rpm:
     needs: [detect-changes, odbc_unit_tests, odbc_tests]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'

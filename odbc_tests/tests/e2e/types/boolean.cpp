@@ -5,7 +5,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
@@ -93,10 +93,8 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
   REQUIRE(false_count == 500000);
 }
 
-TEST_CASE("should select boolean values from table", "[boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select boolean values from table", "[boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
   conn.execute("CREATE TABLE boolean_table (c1 BOOLEAN, c2 BOOLEAN, c3 BOOLEAN)");
@@ -113,10 +111,8 @@ TEST_CASE("should select boolean values from table", "[boolean]") {
   REQUIRE(get_data<SQL_C_BIT>(stmt, 3) == 1);
 }
 
-TEST_CASE("should handle NULL values from table", "[boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table", "[boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with BOOLEAN column exists
   conn.execute("CREATE TABLE boolean_null_table (col BOOLEAN)");
@@ -155,10 +151,8 @@ TEST_CASE("should handle NULL values from table", "[boolean]") {
   REQUIRE(null_count == 1);
 }
 
-TEST_CASE("should download large result set with multiple chunks from table", "[boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download large result set with multiple chunks from table", "[boolean]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
   conn.execute("CREATE TABLE boolean_large_table (col BOOLEAN)");
@@ -251,11 +245,9 @@ TEST_CASE("should select null boolean using parameter binding", "[boolean]") {
   REQUIRE(get_data_optional<SQL_C_BIT>(stmt, 1) == std::nullopt);
 }
 
-TEST_CASE("should insert boolean using parameter binding", "[boolean]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert boolean using parameter binding", "[boolean]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with BOOLEAN column exists
   conn.execute("CREATE TABLE boolean_bind_table (col BOOLEAN)");

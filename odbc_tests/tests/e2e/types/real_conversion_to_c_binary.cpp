@@ -7,7 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
@@ -18,12 +18,10 @@
 // value as SQL_NUMERIC_STRUCT into the buffer.
 // ============================================================================
 
-TEST_CASE("REAL to SQL_C_BINARY", "[e2e][types][real][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL to SQL_C_BINARY", "[e2e][types][real][binary]") {
   // Given A Snowflake connection is established
   SKIP_OLD_DRIVER("BD#14",
                   "Old driver returns raw f64 bytes instead of SQL_NUMERIC_STRUCT for SQL_C_BINARY on FLOAT columns");
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When REAL values are fetched as SQL_C_BINARY
   (void)0;  // Brace blocks below perform the fetch and assertions
@@ -96,11 +94,9 @@ TEST_CASE("REAL to SQL_C_BINARY", "[e2e][types][real][binary]") {
   check_null_via_get_data(conn.execute_fetch("SELECT NULL::FLOAT"), 1, SQL_C_BINARY);
 }
 
-TEST_CASE("REAL SQL_C_BINARY buffer too small returns 22003", "[e2e][types][real][binary][22003]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_BINARY buffer too small returns 22003",
+                 "[e2e][types][real][binary][22003]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-
   // When A REAL value is fetched as SQL_C_BINARY into a buffer smaller than SQL_NUMERIC_STRUCT
   auto stmt = conn.execute_fetch("SELECT 42.0::FLOAT");
   char tiny_buffer[4];
@@ -112,11 +108,9 @@ TEST_CASE("REAL SQL_C_BINARY buffer too small returns 22003", "[e2e][types][real
   CHECK(get_sqlstate(stmt) == "22003");
 }
 
-TEST_CASE("REAL SQL_C_BINARY negative zero", "[e2e][types][real][binary][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_BINARY negative zero", "[e2e][types][real][binary][edge]") {
   // Given A Snowflake connection is established
   SKIP_OLD_DRIVER("BD#14", "Old driver returns raw f64 bytes instead of SQL_NUMERIC_STRUCT for FLOAT columns");
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When -0.5 is fetched as SQL_C_BINARY
   auto stmt = conn.execute_fetch("SELECT -0.5::FLOAT");
@@ -133,11 +127,8 @@ TEST_CASE("REAL SQL_C_BINARY negative zero", "[e2e][types][real][binary][edge]")
   CHECK(numeric.val[0] == 0);
 }
 
-TEST_CASE("REAL NULL to SQL_C_BINARY", "[real][conversion][c_binary][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NULL to SQL_C_BINARY", "[real][conversion][c_binary][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-
   // When A NULL FLOAT value is queried
   auto stmt = conn.execute_fetch("SELECT NULL::FLOAT");
   // Then NULL FLOAT values return SQL_NULL_DATA

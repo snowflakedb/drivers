@@ -9,6 +9,7 @@
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -19,14 +20,12 @@
 // SQLEndTran - Statement Handle
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit persists inserted data",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit persists inserted data",
                  "[odbc-api][endtran][terminating_statement]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
-
-  auto schema = Schema::use_random_schema(dbc_handle());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_COMMIT_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -76,14 +75,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit persists inserted da
   REQUIRE(ret == SQL_SUCCESS);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback discards inserted data",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback discards inserted data",
                  "[odbc-api][endtran][terminating_statement]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
-
-  auto schema = Schema::use_random_schema(dbc_handle());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -127,14 +124,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback discards inserted 
 // SQLEndTran - Environment Handle
 // ============================================================================
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit on environment handle",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit on environment handle",
                  "[odbc-api][endtran][terminating_statement]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
-
-  auto schema = Schema::use_random_schema(dbc_handle());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_ENV_COMMIT_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -183,14 +178,12 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit on environment handl
   REQUIRE(ret == SQL_SUCCESS);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback on environment handle",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback on environment handle",
                  "[odbc-api][endtran][terminating_statement]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
-
-  auto schema = Schema::use_random_schema(dbc_handle());
 
   ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_ENV_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
@@ -294,11 +287,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Commit in autocommit mode",
   REQUIRE(ret == SQL_SUCCESS);
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLEndTran: Rollback in autocommit mode does not undo committed data",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback in autocommit mode does not undo committed data",
                  "[odbc-api][endtran][terminating_statement]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
-  auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_AC_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);

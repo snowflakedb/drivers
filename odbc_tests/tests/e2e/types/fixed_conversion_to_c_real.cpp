@@ -8,16 +8,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "TestTable.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Test decimal to floating point conversion", "[fixed][conversion][c_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Test decimal to floating point conversion", "[fixed][conversion][c_real]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with DECIMAL/NUMBER/INT columns containing value 123 is queried
   TestTable table(conn, "test_number",
@@ -42,10 +40,9 @@ TEST_CASE("Test decimal to floating point conversion", "[fixed][conversion][c_re
   }
 }
 
-TEST_CASE("SQL_DECIMAL explicit floating point conversions preserve fraction", "[fixed][conversion][c_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL explicit floating point conversions preserve fraction",
+                 "[fixed][conversion][c_real]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A fractional DECIMAL value 123.789 is fetched as float and double
   const std::string query = "SELECT 123.789::DECIMAL(10,3)";
@@ -60,10 +57,8 @@ TEST_CASE("SQL_DECIMAL explicit floating point conversions preserve fraction", "
   CHECK(double_val < 123.790);
 }
 
-TEST_CASE("DECIMAL to floating point precision", "[fixed][conversion][c_real][precision]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "DECIMAL to floating point precision", "[fixed][conversion][c_real][precision]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NUMBER values with varying significant digits are fetched as float and double
   (void)0;
@@ -83,10 +78,8 @@ TEST_CASE("DECIMAL to floating point precision", "[fixed][conversion][c_real][pr
   }
 }
 
-TEST_CASE("DECIMAL multiple rows as SQL_C_DOUBLE", "[fixed][conversion][c_real][multirow]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "DECIMAL multiple rows as SQL_C_DOUBLE", "[fixed][conversion][c_real][multirow]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with various DECIMAL(10,3) values is queried
   TestTable table(conn, "test_number_double_multi", "val DECIMAL(10,3)", "(0.000), (1.500), (-2.750), (100.125)");
@@ -105,10 +98,9 @@ TEST_CASE("DECIMAL multiple rows as SQL_C_DOUBLE", "[fixed][conversion][c_real][
   }
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_FLOAT and SQL_C_DOUBLE", "[fixed][conversion][c_real][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL to SQL_C_FLOAT and SQL_C_DOUBLE",
+                 "[fixed][conversion][c_real][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL NUMBER value is queried
   const auto query = "SELECT NULL::NUMBER(10,0)";

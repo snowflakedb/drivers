@@ -11,7 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "TestTable.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
@@ -34,10 +34,8 @@ void test_at_limits(Connection& conn) {
         std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::min());
 }
 
-TEST_CASE("Test decimal to integer conversion", "[fixed][conversion][c_integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Test decimal to integer conversion", "[fixed][conversion][c_integer]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with various DECIMAL/NUMBER/INT columns is queried
   TestTable table(
@@ -65,10 +63,8 @@ TEST_CASE("Test decimal to integer conversion", "[fixed][conversion][c_integer]"
   check_integer_columns<SQL_C_UBIGINT>(stmt, exact_cols, truncated_cols, expected);
 }
 
-TEST_CASE("Test integer at limits", "[fixed][conversion][c_integer][limits]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Test integer at limits", "[fixed][conversion][c_integer][limits]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Max and min values for each integer C type are queried
   test_at_limits<SQL_C_LONG>(conn);
@@ -87,10 +83,9 @@ TEST_CASE("Test integer at limits", "[fixed][conversion][c_integer][limits]") {
   (void)0;  // assertions are inside test_at_limits
 }
 
-TEST_CASE("SQL_DECIMAL explicit integer conversions truncate", "[fixed][conversion][c_integer][truncation]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL explicit integer conversions truncate",
+                 "[fixed][conversion][c_integer][truncation]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A fractional DECIMAL value 123.789 is fetched as each integer C type
   const std::string query = "SELECT 123.789::DECIMAL(10,3)";
@@ -109,10 +104,8 @@ TEST_CASE("SQL_DECIMAL explicit integer conversions truncate", "[fixed][conversi
   CHECK(check_fractional_truncation<SQL_C_UBIGINT>(conn.execute_fetch(query), 1) == 123);
 }
 
-TEST_CASE("SQL_DECIMAL truncation and scale", "[fixed][conversion][c_integer][truncation]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL truncation and scale", "[fixed][conversion][c_integer][truncation]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NUMBER values with various scales are fetched as SQL_C_LONG
   (void)0;
@@ -170,10 +163,9 @@ TEST_CASE("SQL_DECIMAL truncation and scale", "[fixed][conversion][c_integer][tr
   }
 }
 
-TEST_CASE("NUMBER scale=0 - INT and INTEGER types", "[fixed][conversion][c_integer][scale0]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER scale=0 - INT and INTEGER types",
+                 "[fixed][conversion][c_integer][scale0]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with INT/INTEGER/BIGINT/SMALLINT/TINYINT columns is queried
   TestTable table(conn, "test_int_types", "a INT, b INTEGER, c BIGINT, d SMALLINT, e TINYINT",
@@ -195,10 +187,9 @@ TEST_CASE("NUMBER scale=0 - INT and INTEGER types", "[fixed][conversion][c_integ
   CHECK(check_char_success(stmt, 5) == "120");
 }
 
-TEST_CASE("SQL_DECIMAL fractional truncation returns 01S07", "[fixed][conversion][c_integer][01S07]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL fractional truncation returns 01S07",
+                 "[fixed][conversion][c_integer][01S07]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Fractional DECIMAL values are fetched as integer C types
   (void)0;
@@ -239,10 +230,8 @@ TEST_CASE("SQL_DECIMAL fractional truncation returns 01S07", "[fixed][conversion
   }
 }
 
-TEST_CASE("SQL_DECIMAL overflow returns 22003", "[fixed][conversion][c_integer][22003]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL overflow returns 22003", "[fixed][conversion][c_integer][22003]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Out-of-range NUMBER values are fetched as narrow integer C types
   (void)0;
@@ -323,10 +312,8 @@ TEST_CASE("SQL_DECIMAL overflow returns 22003", "[fixed][conversion][c_integer][
   }
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_INTEGER types", "[fixed][conversion][c_integer][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL to SQL_C_INTEGER types", "[fixed][conversion][c_integer][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL NUMBER value is queried
   const auto query = "SELECT NULL::NUMBER(10,0)";
@@ -343,10 +330,9 @@ TEST_CASE("NUMBER NULL to SQL_C_INTEGER types", "[fixed][conversion][c_integer][
   check_null_via_get_data(conn.execute_fetch(query), 1, SQL_C_UTINYINT);
 }
 
-TEST_CASE("NUMBER NULL mixed with non-NULL in multiple rows", "[fixed][conversion][c_integer][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "NUMBER NULL mixed with non-NULL in multiple rows",
+                 "[fixed][conversion][c_integer][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A table with mixed NULL and non-NULL rows is queried
   TestTable table(conn, "test_fixed_null", "val NUMBER(10,0)", "(42), (NULL), (-7), (NULL), (0)");
@@ -374,11 +360,9 @@ TEST_CASE("NUMBER NULL mixed with non-NULL in multiple rows", "[fixed][conversio
   }
 }
 
-TEST_CASE("SQL_DECIMAL SQLGetData NULL without indicator returns 22002",
-          "[fixed][conversion][c_integer][null][22002]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQL_DECIMAL SQLGetData NULL without indicator returns 22002",
+                 "[fixed][conversion][c_integer][null][22002]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A NULL value is fetched without providing an indicator pointer
   auto stmt = conn.execute_fetch("SELECT NULL::DECIMAL(10,2)");

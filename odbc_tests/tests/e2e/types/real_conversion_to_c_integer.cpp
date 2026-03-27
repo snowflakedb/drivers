@@ -10,15 +10,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
-TEST_CASE("REAL explicit integer conversions truncate fractional part", "[e2e][types][real][conversion][c_integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit integer conversions truncate fractional part",
+                 "[e2e][types][real][conversion][c_integer]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A fractional FLOAT value 123.789 is fetched as each integer C type
   const std::string query = "SELECT 123.789::FLOAT";
@@ -37,10 +36,9 @@ TEST_CASE("REAL explicit integer conversions truncate fractional part", "[e2e][t
   CHECK(check_fractional_truncation<SQL_C_UBIGINT>(conn.execute_fetch(query), 1) == 123);
 }
 
-TEST_CASE("REAL explicit integer conversions - negative value", "[e2e][types][real][conversion][c_integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit integer conversions - negative value",
+                 "[e2e][types][real][conversion][c_integer]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A negative fractional FLOAT value -42.9 is fetched as signed integer C types
   const std::string query = "SELECT -42.9::FLOAT";
@@ -55,10 +53,9 @@ TEST_CASE("REAL explicit integer conversions - negative value", "[e2e][types][re
   CHECK(check_fractional_truncation<SQL_C_SBIGINT>(conn.execute_fetch(query), 1) == -42);
 }
 
-TEST_CASE("REAL explicit SQL_C_SBIGINT with large values", "[e2e][types][real][conversion][c_integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit SQL_C_SBIGINT with large values",
+                 "[e2e][types][real][conversion][c_integer]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When The largest integer exactly representable as f64 (2^53) is fetched as SQL_C_SBIGINT
   auto stmt = conn.execute_fetch("SELECT 9007199254740992::FLOAT");
@@ -67,10 +64,9 @@ TEST_CASE("REAL explicit SQL_C_SBIGINT with large values", "[e2e][types][real][c
   CHECK(check_no_truncation<SQL_C_SBIGINT>(stmt, 1) == 9007199254740992LL);
 }
 
-TEST_CASE("REAL fractional truncation returns 01S07", "[e2e][types][real][conversion][c_integer][01S07]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL fractional truncation returns 01S07",
+                 "[e2e][types][real][conversion][c_integer][01S07]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Fractional FLOAT values are fetched as integer C types
   (void)0;
@@ -112,10 +108,8 @@ TEST_CASE("REAL fractional truncation returns 01S07", "[e2e][types][real][conver
   }
 }
 
-TEST_CASE("REAL overflow returns 22003", "[e2e][types][real][conversion][c_integer][22003]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL overflow returns 22003", "[e2e][types][real][conversion][c_integer][22003]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Out-of-range FLOAT values are fetched as narrow integer C types
   (void)0;
@@ -135,10 +129,9 @@ TEST_CASE("REAL overflow returns 22003", "[e2e][types][real][conversion][c_integ
   check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT -1.0::FLOAT"), 1);
 }
 
-TEST_CASE("REAL explicit unsigned integer conversions", "[e2e][types][real][conversion][c_integer]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL explicit unsigned integer conversions",
+                 "[e2e][types][real][conversion][c_integer]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   const std::string q_exact = "SELECT 42.0::FLOAT";
   const std::string q_frac = "SELECT 42.9::FLOAT";
@@ -169,10 +162,9 @@ TEST_CASE("REAL explicit unsigned integer conversions", "[e2e][types][real][conv
   }
 }
 
-TEST_CASE("REAL integer boundary values for overflow", "[e2e][types][real][conversion][c_integer][edge][22003]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL integer boundary values for overflow",
+                 "[e2e][types][real][conversion][c_integer][edge][22003]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When FLOAT values at or just past integer type boundaries are fetched
   (void)0;
@@ -191,11 +183,9 @@ TEST_CASE("REAL integer boundary values for overflow", "[e2e][types][real][conve
   check_numeric_out_of_range<SQL_C_STINYINT>(conn.execute_fetch("SELECT 128.1::FLOAT"), 1);
 }
 
-TEST_CASE("REAL negative fraction to unsigned integer types",
-          "[e2e][types][real][conversion][c_integer][unsigned][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL negative fraction to unsigned integer types",
+                 "[e2e][types][real][conversion][c_integer][unsigned][edge]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Negative fractional FLOAT values are fetched as unsigned integer C types
   (void)0;
@@ -310,11 +300,10 @@ TEST_CASE("REAL negative fraction to unsigned integer types",
   }
 }
 
-TEST_CASE("REAL NaN to integer types returns error", "[e2e][types][real][conversion][c_integer][nan][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NaN to integer types returns error",
+                 "[e2e][types][real][conversion][c_integer][nan][edge]") {
   SKIP_OLD_DRIVER("BD#16", "Old driver silently converts NaN to 0 for integer targets");
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NaN FLOAT value is fetched as integer C types
   (void)0;
@@ -329,10 +318,9 @@ TEST_CASE("REAL NaN to integer types returns error", "[e2e][types][real][convers
   check_numeric_out_of_range<SQL_C_UBIGINT>(conn.execute_fetch("SELECT 'NaN'::FLOAT"), 1);
 }
 
-TEST_CASE("REAL Infinity to integer types returns 22003", "[e2e][types][real][conversion][c_integer][infinity][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL Infinity to integer types returns 22003",
+                 "[e2e][types][real][conversion][c_integer][infinity][edge]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Infinity FLOAT values are fetched as integer C types
   (void)0;
@@ -349,10 +337,8 @@ TEST_CASE("REAL Infinity to integer types returns 22003", "[e2e][types][real][co
   check_numeric_out_of_range<SQL_C_SBIGINT>(conn.execute_fetch("SELECT '-Infinity'::FLOAT"), 1);
 }
 
-TEST_CASE("REAL NULL to SQL_C_INTEGER types", "[real][conversion][c_integer][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "REAL NULL to SQL_C_INTEGER types", "[real][conversion][c_integer][null]") {
   // Given A Snowflake connection is established
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When NULL FLOAT values are queried
   const auto query = "SELECT NULL::FLOAT";

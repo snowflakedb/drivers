@@ -17,7 +17,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
@@ -179,10 +179,8 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR"
 // TABLE OPERATIONS
 // ============================================================================
 
-TEST_CASE("should select decfloats from table", "[decfloat]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select decfloats from table", "[decfloat]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
   conn.execute("CREATE OR REPLACE TABLE decfloat_table (col DECFLOAT)");
@@ -215,10 +213,8 @@ TEST_CASE("should select decfloats from table", "[decfloat]") {
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-0.00000000000000987");
 }
 
-TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle full 38-digit precision values from table", "[decfloat]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with DECFLOAT column exists with values [12345678901234567890123456789012345678,
   // 1.2345678901234567890123456789012345678E+100, 1.2345678901234567890123456789012345678E-100]
@@ -260,10 +256,8 @@ TEST_CASE("should handle full 38-digit precision values from table", "[decfloat]
   }
 }
 
-TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle extreme exponent values from table", "[decfloat]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with DECFLOAT column exists with values [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
   conn.execute("CREATE OR REPLACE TABLE decfloat_extreme_table (col DECFLOAT)");
@@ -306,10 +300,8 @@ TEST_CASE("should handle extreme exponent values from table", "[decfloat]") {
   }
 }
 
-TEST_CASE("should handle NULL values from table", "[decfloat]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table", "[decfloat]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
   conn.execute("CREATE OR REPLACE TABLE decfloat_null_table (col DECFLOAT)");
@@ -338,10 +330,8 @@ TEST_CASE("should handle NULL values from table", "[decfloat]") {
   CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == "-789.012");
 }
 
-TEST_CASE("should download large result set with multiple chunks from table", "[decfloat]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download large result set with multiple chunks from table", "[decfloat]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with DECFLOAT column exists with values from 0 to 19999
   conn.execute("CREATE OR REPLACE TABLE decfloat_large_table (col DECFLOAT)");
@@ -482,10 +472,8 @@ TEST_CASE("should select case decfloat using parameter binding", "[decfloat]") {
   }
 }
 
-TEST_CASE("should insert decfloat using parameter binding", "[decfloat]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert decfloat using parameter binding", "[decfloat]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with DECFLOAT column exists
   conn.execute("CREATE OR REPLACE TABLE decfloat_bind_insert (col DECFLOAT)");
@@ -540,10 +528,8 @@ TEST_CASE("should insert decfloat using parameter binding", "[decfloat]") {
   CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
 }
 
-TEST_CASE("should insert extreme decfloat values using parameter binding", "[decfloat]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert extreme decfloat values using parameter binding", "[decfloat]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with DECFLOAT column exists
   conn.execute("CREATE OR REPLACE TABLE decfloat_extreme_bind (col DECFLOAT)");

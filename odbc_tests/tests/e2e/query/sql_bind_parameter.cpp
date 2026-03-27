@@ -3,7 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
@@ -316,10 +316,9 @@ TEST_CASE("should bind NULL via SQL_NULL_DATA indicator.", "[query][bind_paramet
   CHECK(!result.has_value());
 }
 
-TEST_CASE("should alternate NULL and non-NULL across sequential executions.", "[query][bind_parameter]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should alternate NULL and non-NULL across sequential executions.",
+                 "[query][bind_parameter]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE bind_null_seq (val INTEGER)");
   auto stmt = conn.createStatement();
 

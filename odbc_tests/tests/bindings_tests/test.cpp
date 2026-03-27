@@ -1,13 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 
-TEST_CASE("Test integer single column, single row binding", "[bindings_tests]") {
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("DROP TABLE IF EXISTS universal_driver_odbc_small_binding_integer_test_table");
-  conn.execute("CREATE TABLE universal_driver_odbc_small_binding_integer_test_table (id NUMBER)");
+TEST_CASE_METHOD(ConnSchemaFixture, "Test integer single column, single row binding", "[bindings_tests]") {
+  conn.execute("CREATE OR REPLACE TABLE universal_driver_odbc_small_binding_integer_test_table (id NUMBER)");
 
   {
     auto stmt = conn.createStatement();

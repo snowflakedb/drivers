@@ -109,9 +109,9 @@ REQUIRE_THAT(OdbcResult(ret, stmt),
 ```
 
 ### Schema & Table Management
-Use `Schema::use_random_schema(conn)` when the test creates tables. The schema destructor drops CASCADE, so `DROP TABLE IF EXISTS` is redundant inside a random schema.
+Use `Schema::use_temp_session_schema(conn)` when the test creates tables. A single session schema is shared across all test cases in the binary, so use `CREATE OR REPLACE TABLE` and keep table names unique within each file.
 ```cpp
-auto random_schema = Schema::use_random_schema(conn);
+Schema::use_temp_session_schema(conn);
 conn.execute("CREATE OR REPLACE TABLE test_table (col VARCHAR(1000))");
 ```
 
@@ -171,7 +171,7 @@ REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 Available matchers: `Succeeded()`, `IsSuccess()`, `IsSuccessWithInfo()`, `IsError()`, `HasSqlState(code)`, `HasDiagMessage(substring)`. Compose with `&&` / `||`.
 
 ### Abstraction Levels
-- **Given (setup)**: use high-level abstractions — `Connection`, `Schema::use_random_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
+- **Given (setup)**: use high-level abstractions — `Connection`, `Schema::use_temp_session_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
 - **When/Then (test)**: use raw ODBC calls (`SQLExecDirect`, `SQLFetch`, `SQLGetData`) or purpose-built helpers to make the tested code path explicit and auditable.
 - Do not use raw ODBC for setup or high-level wrappers for the behaviour under test.
 

@@ -10,6 +10,7 @@
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
 #include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -62,21 +63,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes multiple pa
   }
 }
 
-TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: Describes INSERT parameters against typed columns",
+TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLDescribeParam: Describes INSERT parameters against typed columns",
                  "[odbc-api][describeparam][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const auto schema = Schema::use_random_schema(dbc_handle());
-
   SQLRETURN ret = SQLExecDirect(
       stmt_handle(),
-      sqlchar(
-          ("CREATE OR REPLACE TABLE " + schema.name() + ".dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)").c_str()),
+      sqlchar(("CREATE OR REPLACE TABLE " + Schema::name() + ".dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)")
+                  .c_str()),
       SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  ret = SQLPrepare(stmt_handle(), sqlchar(("INSERT INTO " + schema.name() + ".dp_typed_t VALUES(?, ?, ?)").c_str()),
+  ret = SQLPrepare(stmt_handle(), sqlchar(("INSERT INTO " + Schema::name() + ".dp_typed_t VALUES(?, ?, ?)").c_str()),
                    SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

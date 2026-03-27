@@ -9,7 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 
@@ -209,10 +209,8 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
 // TABLE OPERATIONS
 // ============================================================================
 
-TEST_CASE("should select floats from table for float and synonyms", "[float]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select floats from table for float and synonyms", "[float]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
   conn.execute("CREATE TABLE float_table (col FLOAT)");
@@ -241,10 +239,8 @@ TEST_CASE("should select floats from table for float and synonyms", "[float]") {
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-0.00987));
 }
 
-TEST_CASE("should handle special float values from table for float and synonyms", "[float]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle special float values from table for float and synonyms", "[float]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
   conn.execute("CREATE TABLE float_special (col FLOAT)");
@@ -276,10 +272,9 @@ TEST_CASE("should handle special float values from table for float and synonyms"
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == -42.0);
 }
 
-TEST_CASE("should handle float boundary values from table for float and synonyms", "[float]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle float boundary values from table for float and synonyms",
+                 "[float]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists with boundary values [1.7976931348623157e308, -1.7976931348623157e308,
   // 2.2250738585072014e-308, 5e-324, 123456789012345.0]
@@ -315,10 +310,8 @@ TEST_CASE("should handle float boundary values from table for float and synonyms
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(123456789012345.0));
 }
 
-TEST_CASE("should handle NULL values from table for float and synonyms", "[float]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table for float and synonyms", "[float]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
   conn.execute("CREATE TABLE float_null (col FLOAT)");
@@ -343,10 +336,8 @@ TEST_CASE("should handle NULL values from table for float and synonyms", "[float
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == Catch::Approx(-789.012));
 }
 
-TEST_CASE("should select large result set from table for float and synonyms", "[float]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select large result set from table for float and synonyms", "[float]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists with 50000 sequential values
   conn.execute("CREATE TABLE float_large (col FLOAT)");
@@ -435,11 +426,9 @@ TEST_CASE("should select float using parameter binding for float and synonyms", 
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt2, 1) == std::nullopt);
 }
 
-TEST_CASE("should insert float using parameter binding for float and synonyms", "[float]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert float using parameter binding for float and synonyms", "[float]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with <type> column exists
   conn.execute("CREATE TABLE float_bind_insert (col FLOAT)");

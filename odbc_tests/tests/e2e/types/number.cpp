@@ -2,7 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 
 TEST_CASE("should cast number values to appropriate type for number and synonyms", "[number]") {
@@ -125,15 +125,14 @@ TEST_CASE("should download large result set with multiple chunks from GENERATOR 
   REQUIRE(row_count == 30000);
 }
 
-TEST_CASE("should select numbers from table with multiple scales for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select numbers from table with multiple scales for number and synonyms",
+                 "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3), <type>(20,5)) exists
-  conn.execute("DROP TABLE IF EXISTS number_table");
   conn.execute(
-      "CREATE TABLE number_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3), col4 NUMBER(20,5))");
+      "CREATE OR REPLACE TABLE number_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3), col4 "
+      "NUMBER(20,5))");
 
   // And Row (123, 123.45, 123.456, 12345.67890) is inserted
   conn.execute("INSERT INTO number_table VALUES (123, 123.45, 123.456, 12345.67890)");
@@ -178,14 +177,12 @@ TEST_CASE("should select numbers from table with multiple scales for number and 
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 4) == Catch::Approx(123456.78901).epsilon(0.00001));
 }
 
-TEST_CASE("should handle scale and precision boundaries from table for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle scale and precision boundaries from table for number and synonyms",
+                 "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(5,2), <type>(8,0)) exists
-  conn.execute("DROP TABLE IF EXISTS number_boundary_table");
-  conn.execute("CREATE TABLE number_boundary_table (col1 NUMBER(5,2), col2 NUMBER(8,0))");
+  conn.execute("CREATE OR REPLACE TABLE number_boundary_table (col1 NUMBER(5,2), col2 NUMBER(8,0))");
 
   // And Row (999.99, 99999999) is inserted
   conn.execute("INSERT INTO number_boundary_table VALUES (999.99, 99999999)");
@@ -234,10 +231,9 @@ TEST_CASE("should handle NULL values from literals for number and synonyms", "[n
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 4) == std::optional<double>(42.50));
 }
 
-TEST_CASE("should handle NULL values from table with multiple scales for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table with multiple scales for number and synonyms",
+                 "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
   conn.execute("CREATE TABLE number_null_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3))");
@@ -277,15 +273,12 @@ TEST_CASE("should handle NULL values from table with multiple scales for number 
   CHECK(get_data<SQL_C_DOUBLE>(stmt, 3) == -789.012);
 }
 
-TEST_CASE("should download large result set from table for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download large result set from table for number and synonyms", "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows, from 0 to 29999 in the
   // first column and from 0.12345 to 29999.12345 in the second column
-  conn.execute("DROP TABLE IF EXISTS number_large_table");
-  conn.execute("CREATE TABLE number_large_table (col1 NUMBER(38,0), col2 NUMBER(20,5))");
+  conn.execute("CREATE OR REPLACE TABLE number_large_table (col1 NUMBER(38,0), col2 NUMBER(20,5))");
   conn.execute(
       "INSERT INTO number_large_table SELECT seq8(), seq8() + 0.12345 FROM TABLE(GENERATOR(ROWCOUNT => 30000))");
 
@@ -372,10 +365,9 @@ TEST_CASE("should handle high precision boundaries from literals for number and 
 // High precision table operations
 // ============================================================================
 
-TEST_CASE("should handle high precision values from table for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle high precision values from table for number and synonyms",
+                 "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(38,0), <type>(38,2), <type>(38,10), <type>(38,37)) exists
   conn.execute(
@@ -403,10 +395,9 @@ TEST_CASE("should handle high precision values from table for number and synonym
   CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "1.2345678901234567890123456789012345678");
 }
 
-TEST_CASE("should handle high precision boundaries from table for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle high precision boundaries from table for number and synonyms",
+                 "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(38,0), <type>(38,37)) exists
   conn.execute("CREATE TABLE number_high_prec_boundary (col1 NUMBER(38,0), col2 NUMBER(38,37))");
@@ -539,10 +530,9 @@ TEST_CASE("should select high precision number using parameter binding for numbe
 // Parameter binding - INSERT
 // ============================================================================
 
-TEST_CASE("should insert number using parameter binding for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert number using parameter binding for number and synonyms",
+                 "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(10,0), <type>(10,2)) exists
   conn.execute("CREATE TABLE number_bind_insert (col1 NUMBER(10,0), col2 NUMBER(10,2))");
@@ -617,10 +607,9 @@ TEST_CASE("should insert number using parameter binding for number and synonyms"
   CHECK(get_data_optional<SQL_C_DOUBLE>(stmt, 2) == std::nullopt);
 }
 
-TEST_CASE("should insert high precision number using parameter binding for number and synonyms", "[number]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should insert high precision number using parameter binding for number and synonyms", "[number]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (<type>(38,0), <type>(38,2)) exists
   conn.execute("CREATE TABLE number_bind_high_prec (col1 NUMBER(38,0), col2 NUMBER(38,2))");
