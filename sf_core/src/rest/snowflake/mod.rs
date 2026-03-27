@@ -2,6 +2,7 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
@@ -1044,7 +1045,9 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     .context(AsyncQuerySnafu)
 }
 
-async fn read_response_json<T>(response: reqwest::Response) -> Result<T, SnowflakeResponseError>
+pub(crate) async fn read_response_json<T>(
+    response: reqwest::Response,
+) -> Result<T, SnowflakeResponseError>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -1168,6 +1171,13 @@ pub enum RestError {
     },
     #[snafu(display("Session refresh failed: {message} (code: {code})"))]
     SessionRefreshFailed {
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Heartbeat failed: {message} (code: {code})"))]
+    Heartbeat {
         message: String,
         code: i32,
         #[snafu(implicit)]
