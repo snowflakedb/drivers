@@ -2,9 +2,10 @@ use crate::api::CDataType;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu,
-    InvalidBufferLengthSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
-    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
+    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
+    NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required,
+    StatementNotExecutedSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -39,12 +40,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     let stmt = stmt_from_handle(statement_handle);
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
-    if matches!(
-        stmt.state.as_ref(),
-        StatementState::QueryExecuted { .. }
-            | StatementState::Fetching { .. }
-            | StatementState::Done { .. }
-    ) {
+    if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("exec_direct: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
     }
@@ -180,12 +176,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
 
-    if matches!(
-        stmt.state.as_ref(),
-        StatementState::QueryExecuted { .. }
-            | StatementState::Fetching { .. }
-            | StatementState::Done { .. }
-    ) {
+    if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("prepare: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
     }
@@ -250,12 +241,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
 
-    if matches!(
-        stmt.state.as_ref(),
-        StatementState::QueryExecuted { .. }
-            | StatementState::Fetching { .. }
-            | StatementState::Done { .. }
-    ) {
+    if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("execute: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
     }
@@ -604,6 +590,21 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
     }
 
     Ok(())
+}
+
+/// Close the cursor on a statement, returning SQLSTATE 24000 if no cursor is open.
+/// Unlike `free_stmt(SQL_CLOSE)`, which silently no-ops when no cursor is open,
+/// this function errors per the ODBC spec for `SQLCloseCursor`.
+pub fn close_cursor(statement_handle: sql::Handle) -> OdbcResult<()> {
+    tracing::debug!("close_cursor: statement_handle={statement_handle:?}");
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    if !stmt.state.as_ref().has_open_cursor() {
+        return InvalidCursorStateSnafu.fail();
+    }
+
+    free_stmt(statement_handle, FreeStmtOption::Close)
 }
 
 /// Return the number of parameters in the statement via the IPD descriptor.

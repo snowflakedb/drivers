@@ -915,6 +915,18 @@ pub enum StatementState {
     Error,
 }
 
+impl StatementState {
+    /// A cursor is open in `QueryExecuted` (S5), `Fetching` (S6), and `Done` (S7).
+    pub fn has_open_cursor(&self) -> bool {
+        matches!(
+            self,
+            StatementState::QueryExecuted { .. }
+                | StatementState::Fetching { .. }
+                | StatementState::Done { .. }
+        )
+    }
+}
+
 pub struct State<T> {
     current_state: Option<T>,
 }
