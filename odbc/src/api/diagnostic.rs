@@ -187,7 +187,7 @@ impl WithDiagnosticInfo for Connection {
     }
 }
 
-impl<'a> WithDiagnosticInfo for Statement<'a> {
+impl WithDiagnosticInfo for Statement {
     fn get_diag_info(&self) -> &DiagnosticInfo {
         &self.diagnostic_info
     }
@@ -253,6 +253,9 @@ pub fn set_diag_info_from_warnings(
     handle: sql::Handle,
     warnings: &Warnings,
 ) {
+    if handle.is_null() {
+        return;
+    }
     if let Some(t) = from_handle_type(handle_type, handle) {
         let diagnostic_info = t.get_diag_info_mut();
         for warning in warnings {

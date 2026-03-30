@@ -106,8 +106,8 @@ pub fn col_attribute(
 
     match desc_field {
         DescField::Type | DescField::ConciseType => {
-            let sql_type =
-                sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            let sql_type = sql_type_from_field(field, &stmt.conn().numeric_settings)
+                .context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
                 unsafe {
                     std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);
@@ -177,18 +177,18 @@ pub fn describe_col<E: OdbcEncoding>(
 
     if !data_type_ptr.is_null() {
         let sql_type =
-            sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            sql_type_from_field(field, &stmt.conn().numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
     }
 
     if !column_size_ptr.is_null() {
-        let col_size =
-            column_size_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+        let col_size = column_size_from_field(field, &stmt.conn().numeric_settings)
+            .context(ConversionSnafu)?;
         unsafe { std::ptr::write(column_size_ptr, col_size) };
     }
 
     if !decimal_digits_ptr.is_null() {
-        let digits = decimal_digits_from_field(field, &stmt.conn.numeric_settings)
+        let digits = decimal_digits_from_field(field, &stmt.conn().numeric_settings)
             .context(ConversionSnafu)?;
         unsafe { std::ptr::write(decimal_digits_ptr, digits) };
     }

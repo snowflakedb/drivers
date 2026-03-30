@@ -5,13 +5,15 @@ use crate::api::encoding::{
 };
 use crate::api::error::Required;
 use crate::api::error::{
-    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, InvalidBufferLengthSnafu,
-    InvalidPortSnafu, NullPointerSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu,
-    UnsupportedAttributeSnafu,
+    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
+    InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCatalogNameSnafu,
+    InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
+    ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle, types::ConnectionAttribute,
+    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
+    types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
 };
 use crate::conversion::warning::Warnings;
 use odbc_sys as sql;
@@ -20,7 +22,10 @@ use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
 
-const SQL_AUTOCOMMIT_ON: sql::ULen = 1;
+const SQL_TXN_READ_COMMITTED: sql::UInteger = 2;
+const SQL_CD_FALSE: sql::UInteger = 0;
+const SQL_CD_TRUE: sql::UInteger = 1;
+const SQL_FALSE: sql::UInteger = 0;
 
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
@@ -118,6 +123,13 @@ fn connect_with_params(
         .contains_key(&ConnectionAttribute::PrivKeyPassword);
 
     let pre_attrs = connection.pre_connection_attrs.clone();
+
+    // Compute once; used both inside block_on (to send the RPC) and outside (to sync the cache).
+    let pre_connect_autocommit_off = pre_attrs
+        .get(&ConnectionAttribute::Autocommit)
+        .and_then(|v| v.parse::<sql::UInteger>().ok())
+        .and_then(AutocommitValue::from_raw)
+        == Some(AutocommitValue::Off);
 
     let (db_handle, conn_handle) =
         global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -263,14 +275,59 @@ fn connect_with_params(
             })
             .await?;
 
-            Ok::<_, crate::api::error::OdbcError>((db_handle, conn_handle))
+            // Apply pre-connect AUTOCOMMIT=OFF if it was set before connecting.
+            // Snowflake defaults to autocommit ON, so only act when the user explicitly chose OFF.
+            if pre_connect_autocommit_off {
+                c.connection_set_autocommit(ConnectionSetAutocommitRequest {
+                    conn_handle: Some(conn_handle),
+                    autocommit: false,
+                })
+                .await?;
+            }
+
+            Ok::<_, crate::api::OdbcError>((db_handle, conn_handle))
         })?;
+
+    // Keep cached_autocommit in sync with what was actually sent to the server.
+    // set_connect_attr already sets this in the Disconnected branch, but updating
+    // it here as well ensures consistency if the pre_connection_attrs are ever
+    // populated through a path that bypasses set_connect_attr.
+    if pre_connect_autocommit_off {
+        connection.cached_autocommit = AutocommitValue::Off;
+    }
 
     tracing::info!("connect_with_params: connection_init completed");
 
     connection.state = ConnectionState::Connected {
         db_handle,
         conn_handle,
+    };
+
+    // Fetch the initial catalog value. Failure here is non-fatal: the connection is
+    // already established (state = Connected). Use warn-and-continue rather than `?`
+    // to avoid returning an error after the state was set to Connected.
+    // ConnectionHandle is Copy, so conn_handle is still accessible after the move above.
+    connection.current_catalog = match global().context(OdbcRuntimeSnafu) {
+        Ok(rt) => rt
+            .block_on(async |c| {
+                let info = c
+                    .connection_get_info(ConnectionGetInfoRequest {
+                        conn_handle: Some(conn_handle),
+                        info_codes: vec![],
+                    })
+                    .await?;
+                Ok::<Option<String>, crate::api::OdbcError>(info.database)
+            })
+            .unwrap_or_else(|e| {
+                tracing::warn!("connect_with_params: failed to fetch current catalog: {e:?}");
+                None
+            }),
+        Err(e) => {
+            tracing::warn!(
+                "connect_with_params: runtime unavailable for initial catalog fetch: {e:?}"
+            );
+            None
+        }
     };
 
     Ok(())
@@ -577,6 +634,19 @@ pub fn native_sql<E: OdbcEncoding>(
     Ok(())
 }
 
+/// Query a session parameter from sf_core's cached session state.
+fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResult<Option<String>> {
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        let resp = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: key.to_string(),
+            })
+            .await?;
+        Ok(resp.value)
+    })
+}
+
 /// Set a connection attribute (SQLSetConnectAttr / SQLSetConnectAttrW).
 // TODO: Clear sensitive pre_connection_attrs after apply_pre_connection_attrs.
 pub fn set_connect_attr<E: OdbcEncoding>(
@@ -584,6 +654,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
+    _warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let connection = conn_from_handle(connection_handle);
     tracing::debug!("set_connect_attr: attribute={attribute}");
@@ -600,6 +671,54 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     };
 
     match attr {
+        ConnectionAttribute::AccessMode => {
+            let mode = AccessMode::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+                InvalidAttributeValueSnafu {
+                    attribute: attr.as_raw(),
+                    value: value_ptr as i64,
+                }
+                .build()
+            })?;
+            connection.access_mode = mode;
+            Ok(())
+        }
+        ConnectionAttribute::Autocommit => {
+            let val = AutocommitValue::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+                InvalidAttributeValueSnafu {
+                    attribute: attr.as_raw(),
+                    value: value_ptr as i64,
+                }
+                .build()
+            })?;
+            // NOTE: Per ODBC spec, HY011 must be returned if a transaction is currently open.
+            // Transaction state tracking requires server-side awareness — deferred to SNOW-3240589.
+            match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => {
+                    let autocommit_on = matches!(val, AutocommitValue::On);
+                    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                        c.connection_set_autocommit(ConnectionSetAutocommitRequest {
+                            conn_handle: Some(*conn_handle),
+                            autocommit: autocommit_on,
+                        })
+                        .await
+                    })?;
+                    connection.cached_autocommit = val;
+                    // Keep pre_connection_attrs in sync so a reconnect on the same handle
+                    // re-applies the value set while connected rather than the stale pre-connect value.
+                    connection
+                        .pre_connection_attrs
+                        .insert(attr, val.as_raw().to_string());
+                    Ok(())
+                }
+                ConnectionState::Disconnected => {
+                    connection.cached_autocommit = val;
+                    connection
+                        .pre_connection_attrs
+                        .insert(attr, val.as_raw().to_string());
+                    Ok(())
+                }
+            }
+        }
         ConnectionAttribute::LoginTimeout => {
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
@@ -614,17 +733,78 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 .insert(attr, seconds.to_string());
             Ok(())
         }
+        ConnectionAttribute::TxnIsolation => {
+            // Full transaction isolation support (including HY011 when a transaction is open
+            // and 01S02 substitution) requires server-side transaction state tracking.
+            // Deferred to SNOW-3240589.
+            UnsupportedAttributeSnafu {
+                attribute: attr.as_raw(),
+            }
+            .fail()
+        }
+        ConnectionAttribute::CurrentCatalog => {
+            let conn_handle = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+                ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+            };
+            // Return 24000 if any statement has an open cursor.
+            for (weak, _) in &connection.child_statements {
+                if let Some(stmt) = weak.upgrade()
+                    && matches!(
+                        stmt.state.as_ref(),
+                        StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
+                    )
+                {
+                    return InvalidCursorStateSnafu.fail();
+                }
+            }
+            let catalog = read_string_from_pointer::<E>(value_ptr, string_length)?;
+            global()
+                .context(OdbcRuntimeSnafu)?
+                .block_on(async |c| {
+                    c.connection_use_database(ConnectionUseDatabaseRequest {
+                        conn_handle: Some(conn_handle),
+                        database: catalog.clone(),
+                    })
+                    .await
+                })
+                .map_err(|e| -> crate::api::OdbcError {
+                    // Server-side errors from USE DATABASE mean the database does not
+                    // exist or is not accessible — map to 3D000 (invalid catalog name).
+                    // Transport errors (network failure) are propagated as-is.
+                    if matches!(e, proto_utils::ProtoError::Application(_)) {
+                        InvalidCatalogNameSnafu {
+                            name: catalog.clone(),
+                        }
+                        .build()
+                    } else {
+                        e.into()
+                    }
+                })?;
+            connection.current_catalog = Some(catalog);
+            Ok(())
+        }
+        ConnectionAttribute::QuietMode => {
+            connection.quiet_mode = value_ptr;
+            Ok(())
+        }
+        ConnectionAttribute::PacketSize => {
+            if matches!(connection.state, ConnectionState::Connected { .. }) {
+                return AttributeCannotBeSetNowSnafu {
+                    attribute: attr.as_raw(),
+                }
+                .fail();
+            }
+            connection.packet_size = value_ptr as sql::UInteger;
+            Ok(())
+        }
         ConnectionAttribute::ConnectionTimeout => {
             tracing::debug!("set_connect_attr: ConnectionTimeout (ignored)");
             Ok(())
         }
-        ConnectionAttribute::Autocommit => {
-            tracing::debug!("set_connect_attr: Autocommit (ignored)");
-            Ok(())
-        }
-        ConnectionAttribute::CurrentCatalog => {
-            tracing::warn!("set_connect_attr: CurrentCatalog is not yet implemented");
-            crate::api::error::UnsupportedAttributeSnafu {
+        ConnectionAttribute::ConnectionDead | ConnectionAttribute::AutoIpd => {
+            // Read-only attributes — cannot be set
+            ReadOnlyAttributeSnafu {
                 attribute: attr.as_raw(),
             }
             .fail()
@@ -678,34 +858,66 @@ pub fn get_connect_attr<E: OdbcEncoding>(
     };
 
     match attr {
-        ConnectionAttribute::PrivKeyContent
-        | ConnectionAttribute::PrivKeyPassword
-        | ConnectionAttribute::PrivKeyBase64
-        | ConnectionAttribute::Application => {
-            let value = connection
-                .pre_connection_attrs
-                .get(&attr)
-                .map(|s| s.as_str())
-                .unwrap_or("");
-            write_string_bytes_i32::<E>(
-                value,
-                value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                Some(warnings),
-            );
+        ConnectionAttribute::AccessMode => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = connection.access_mode.as_raw();
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
             Ok(())
         }
         ConnectionAttribute::Autocommit => {
+            // Per spec: query the server for the actual autocommit state when connected;
+            // fall back to the cached value if the RPC fails or the parameter is absent.
+            // The cache is the authoritative source when disconnected.
+            let val: sql::UInteger = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => {
+                    match get_session_parameter(conn_handle, "AUTOCOMMIT") {
+                        Ok(Some(v)) if v.eq_ignore_ascii_case("true") => {
+                            connection.cached_autocommit = AutocommitValue::On;
+                            AutocommitValue::On.as_raw()
+                        }
+                        Ok(Some(_)) => {
+                            connection.cached_autocommit = AutocommitValue::Off;
+                            AutocommitValue::Off.as_raw()
+                        }
+                        Ok(None) => {
+                            tracing::warn!(
+                                "get_connect_attr: AUTOCOMMIT session parameter missing, \
+                                 falling back to cached value"
+                            );
+                            connection.cached_autocommit.as_raw()
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "get_connect_attr: failed to read AUTOCOMMIT session parameter \
+                                 ({e}), falling back to cached value"
+                            );
+                            connection.cached_autocommit.as_raw()
+                        }
+                    }
+                }
+                ConnectionState::Disconnected => connection.cached_autocommit.as_raw(),
+            };
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = SQL_AUTOCOMMIT_ON;
+                    *(value_ptr as *mut sql::UInteger) = val;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
                 }
             }
             Ok(())
         }
         ConnectionAttribute::LoginTimeout => {
-            let timeout: sql::ULen = match connection.pre_connection_attrs.get(&attr) {
+            let timeout: sql::UInteger = match connection.pre_connection_attrs.get(&attr) {
                 Some(s) => s.parse().unwrap_or_else(|_| {
                     tracing::warn!(
                         "get_connect_attr: LoginTimeout value {s:?} is not a valid integer, \
@@ -717,20 +929,25 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             };
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = timeout;
+                    *(value_ptr as *mut sql::UInteger) = timeout;
                 }
             }
             if !string_length_ptr.is_null() {
                 unsafe {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
                 }
             }
             Ok(())
         }
-        ConnectionAttribute::ConnectionTimeout => {
+        ConnectionAttribute::TxnIsolation => {
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = 0;
+                    *(value_ptr as *mut sql::UInteger) = SQL_TXN_READ_COMMITTED;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
                 }
             }
             Ok(())
@@ -742,8 +959,130 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 }
                 .fail();
             }
+            let database = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => {
+                    let conn_handle = *conn_handle;
+                    match global().context(OdbcRuntimeSnafu).and_then(|rt| {
+                        rt.block_on(async |c| {
+                            let info = c
+                                .connection_get_info(ConnectionGetInfoRequest {
+                                    conn_handle: Some(conn_handle),
+                                    info_codes: vec![],
+                                })
+                                .await?;
+                            Ok::<Option<String>, crate::api::OdbcError>(info.database)
+                        })
+                    }) {
+                        Ok(db) => {
+                            connection.current_catalog = db.clone();
+                            db
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "get_connect_attr: failed to fetch current catalog from server: \
+                                 {e:?}; falling back to cached value"
+                            );
+                            connection.current_catalog.clone()
+                        }
+                    }
+                }
+                // When disconnected, return the cached catalog (or empty string).
+                // Per ODBC spec the catalog is indeterminate before connecting;
+                // returning an error would break applications that probe this attribute
+                // before calling SQLConnect.
+                ConnectionState::Disconnected => connection.current_catalog.clone(),
+            };
+            let database_str = database.as_deref().unwrap_or("");
             write_string_bytes_i32::<E>(
-                "",
+                database_str,
+                value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
+            );
+            Ok(())
+        }
+        ConnectionAttribute::QuietMode => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::Pointer) = connection.quiet_mode;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::PacketSize => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = connection.packet_size;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::ConnectionTimeout => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = 0;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::ConnectionDead => {
+            let dead = match &connection.state {
+                ConnectionState::Connected { .. } => SQL_CD_FALSE,
+                ConnectionState::Disconnected => SQL_CD_TRUE,
+            };
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = dead;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::AutoIpd => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = SQL_FALSE;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::PrivKeyContent
+        | ConnectionAttribute::PrivKeyPassword
+        | ConnectionAttribute::PrivKeyBase64
+        | ConnectionAttribute::Application => {
+            if buffer_length < 0 {
+                return InvalidBufferLengthSnafu {
+                    length: buffer_length as i64,
+                }
+                .fail();
+            }
+            let value = connection
+                .pre_connection_attrs
+                .get(&attr)
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            write_string_bytes_i32::<E>(
+                value,
                 value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,

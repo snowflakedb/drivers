@@ -26,6 +26,56 @@ use crate::tls::client::create_tls_client_with_config;
 use crate::token_cache::TokenCache;
 
 impl DatabaseDriverV1 {
+    /// Execute `ALTER SESSION SET AUTOCOMMIT = TRUE/FALSE` on the given connection.
+    pub async fn connection_set_autocommit(
+        &self,
+        conn_handle: Handle,
+        autocommit: bool,
+    ) -> Result<(), ApiError> {
+        let sql = if autocommit {
+            "ALTER SESSION SET AUTOCOMMIT = TRUE"
+        } else {
+            "ALTER SESSION SET AUTOCOMMIT = FALSE"
+        };
+        self.execute_session_sql(conn_handle, sql).await
+    }
+
+    /// Execute `USE DATABASE "<name>"` on the given connection.
+    /// The database name is escaped (internal `"` doubled).
+    pub async fn connection_use_database(
+        &self,
+        conn_handle: Handle,
+        database: &str,
+    ) -> Result<(), ApiError> {
+        let db = database.trim();
+        if db.is_empty() {
+            return InvalidArgumentSnafu {
+                argument: "database name must not be empty".to_string(),
+            }
+            .fail();
+        }
+        let escaped = db.replace('"', "\"\"");
+        self.execute_session_sql(conn_handle, &format!("USE DATABASE \"{escaped}\""))
+            .await
+    }
+
+    /// Execute a session-scoped SQL command using a temporary statement.
+    /// Allocates a statement, executes, then releases it regardless of outcome.
+    async fn execute_session_sql(&self, conn_handle: Handle, sql: &str) -> Result<(), ApiError> {
+        let stmt_handle = self.statement_new(conn_handle)?;
+        let result = async {
+            self.statement_set_sql_query(stmt_handle, sql.to_string())
+                .await?;
+            self.statement_execute_query(stmt_handle, None).await
+        }
+        .await;
+        if let Err(e) = self.statement_release(stmt_handle) {
+            tracing::warn!("execute_session_sql: failed to release statement: {e:?}");
+        }
+        result?;
+        Ok(())
+    }
+
     pub async fn connection_init(
         &self,
         conn_handle: Handle,
