@@ -380,7 +380,7 @@ impl ReadODBC for SnowflakeVarchar {
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, JsonBindingError> {
         let s = match binding.value_type {
-            CDataType::Char => read_char_str(binding)?,
+            CDataType::Default | CDataType::Char => read_char_str(binding)?,
             CDataType::WChar => read_wchar_str(binding)?,
             CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding).to_string(),
             CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding).to_string(),
