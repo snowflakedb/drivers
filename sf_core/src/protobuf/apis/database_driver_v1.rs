@@ -250,6 +250,16 @@ impl From<ConnectionInfo> for ConnectionGetInfoResponse {
     }
 }
 
+impl From<crate::rest::snowflake::QueryStatusResult> for ConnectionGetQueryStatusResponse {
+    fn from(result: crate::rest::snowflake::QueryStatusResult) -> Self {
+        ConnectionGetQueryStatusResponse {
+            status_name: result.status_name,
+            error_code: result.error_code,
+            error_message: result.error_message,
+        }
+    }
+}
+
 // Convert ApiError to DriverException
 fn to_driver_error(error: &ApiError) -> DriverError {
     match error {
@@ -1132,6 +1142,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionGetQueryResultResponse {
             result: Some(result.into()),
         })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_get_query_status",
+        skip(self, input)
+    )]
+    async fn connection_get_query_status(
+        &self,
+        input: ConnectionGetQueryStatusRequest,
+    ) -> Result<ConnectionGetQueryStatusResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let result = self
+            .driver
+            .connection_get_query_status(conn_handle.into(), &input.query_id)
+            .await
+            .to_protobuf()?;
+
+        Ok(result.into())
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self, input))]

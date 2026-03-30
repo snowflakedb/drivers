@@ -703,6 +703,18 @@ message ConfigLoadAllSectionsResponse {
   string config_json = 1;
 }
 
+message ConnectionGetQueryStatusRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetQueryStatusResponse {
+  // Status name as returned by the server (e.g. "RUNNING", "SUCCESS", "FAILED_WITH_ERROR")
+  string status_name = 1;
+  optional int32 error_code = 2;
+  optional string error_message = 3;
+}
+
 message ConfigGetPathsRequest {
 }
 
@@ -752,6 +764,7 @@ service DatabaseDriver {
   rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
   // Fetch the result of a previously executed query by Snowflake Query ID
   rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
+  rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
