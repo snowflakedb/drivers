@@ -780,10 +780,12 @@ TEST_CASE("should report APD count zero when no parameters are bound.", "[query]
 // =============================================================================
 
 TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -791,14 +793,17 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_parameter][c_
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
 }
 
 TEST_CASE("should bind negative SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = -999;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -806,14 +811,17 @@ TEST_CASE("should bind negative SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_para
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-999");
 }
 
 TEST_CASE("should bind SQL_C_ULONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLUINTEGER param = 4000000000U;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_ULONG, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -821,14 +829,17 @@ TEST_CASE("should bind SQL_C_ULONG to SQL_VARCHAR.", "[query][bind_parameter][c_
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "4000000000");
 }
 
 TEST_CASE("should bind SQL_C_SSHORT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLSMALLINT param = -7;
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SSHORT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -836,14 +847,17 @@ TEST_CASE("should bind SQL_C_SSHORT to SQL_VARCHAR.", "[query][bind_parameter][c
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-7");
 }
 
 TEST_CASE("should bind SQL_C_USHORT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLUSMALLINT param = 65535;
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_USHORT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -851,14 +865,17 @@ TEST_CASE("should bind SQL_C_USHORT to SQL_VARCHAR.", "[query][bind_parameter][c
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "65535");
 }
 
 TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLBIGINT param = 9999999999LL;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -866,14 +883,17 @@ TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR.", "[query][bind_parameter][
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9999999999");
 }
 
 TEST_CASE("should bind SQL_C_UBIGINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLUBIGINT param = 1000000000000ULL;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_UBIGINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -881,14 +901,17 @@ TEST_CASE("should bind SQL_C_UBIGINT to SQL_VARCHAR.", "[query][bind_parameter][
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1000000000000");
 }
 
 TEST_CASE("should bind SQL_C_STINYINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLSCHAR param = -128;
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_STINYINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -896,14 +919,17 @@ TEST_CASE("should bind SQL_C_STINYINT to SQL_VARCHAR.", "[query][bind_parameter]
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-128");
 }
 
 TEST_CASE("should bind SQL_C_UTINYINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLCHAR param = 255;
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_UTINYINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -911,14 +937,17 @@ TEST_CASE("should bind SQL_C_UTINYINT to SQL_VARCHAR.", "[query][bind_parameter]
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "255");
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = 3.14;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -926,15 +955,18 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR.", "[query][bind_parameter][c
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   auto result = get_data<SQL_C_CHAR>(stmt, 1);
   CHECK(result.substr(0, 4) == "3.14");
 }
 
 TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = 1.5f;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -942,15 +974,18 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR.", "[query][bind_parameter][c_
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   auto result = get_data<SQL_C_CHAR>(stmt, 1);
   CHECK(result.substr(0, 3) == "1.5");
 }
 
 TEST_CASE("should bind SQL_C_BIT true to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLCHAR param = 1;
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -958,14 +993,17 @@ TEST_CASE("should bind SQL_C_BIT true to SQL_VARCHAR.", "[query][bind_parameter]
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1");
 }
 
 TEST_CASE("should bind SQL_C_BIT false to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLCHAR param = 0;
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -973,6 +1011,7 @@ TEST_CASE("should bind SQL_C_BIT false to SQL_VARCHAR.", "[query][bind_parameter
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
 }
 
@@ -982,10 +1021,12 @@ TEST_CASE("should bind SQL_C_BIT false to SQL_VARCHAR.", "[query][bind_parameter
 // =============================================================================
 
 TEST_CASE("should bind SQL_C_SLONG to SQL_CHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_CHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -993,14 +1034,17 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_CHAR.", "[query][bind_parameter][c_to_
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
 }
 
 TEST_CASE("should bind SQL_C_SLONG to SQL_LONGVARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_LONGVARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -1008,14 +1052,17 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_LONGVARCHAR.", "[query][bind_parameter
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
 }
 
 TEST_CASE("should bind SQL_C_SLONG to SQL_WCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -1023,14 +1070,17 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_WCHAR.", "[query][bind_parameter][c_to
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
 }
 
 TEST_CASE("should bind SQL_C_SLONG to SQL_WVARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WVARCHAR, 0, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -1038,14 +1088,17 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_WVARCHAR.", "[query][bind_parameter][c
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
 }
 
 TEST_CASE("should bind SQL_C_SLONG to SQL_WLONGVARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
   SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WLONGVARCHAR, 0, 0, &param, 0,
                                    &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -1053,5 +1106,6 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_WLONGVARCHAR.", "[query][bind_paramete
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
 }
