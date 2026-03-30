@@ -7,7 +7,9 @@ use arrow::array::RecordBatchReader;
 use arrow_ipc::reader::StreamReader;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
+#[cfg(not(target_os = "windows"))]
 use pprof::criterion::{Output, PProfProfiler};
+#[cfg(not(target_os = "windows"))]
 use pprof::flamegraph::Options as FlamegraphOptions;
 use sf_core::chunks::ChunkDownloadData;
 use sf_core::chunks::mock::FileChunkDownloader;
@@ -323,15 +325,22 @@ fn bench_json_prefetch(c: &mut Criterion) {
     group.finish();
 }
 
-fn profiler() -> PProfProfiler<'static, 'static> {
+#[cfg(not(target_os = "windows"))]
+fn profiled_config() -> Criterion {
     let mut opts = FlamegraphOptions::default();
     opts.reverse_stack_order = true;
-    PProfProfiler::new(100, Output::Flamegraph(Some(opts)))
+    let profiler = PProfProfiler::new(100, Output::Flamegraph(Some(opts)));
+    Criterion::default().with_profiler(profiler).sample_size(10)
+}
+
+#[cfg(target_os = "windows")]
+fn profiled_config() -> Criterion {
+    Criterion::default().sample_size(10)
 }
 
 criterion_group!(
     name = benches;
-    config = Criterion::default().with_profiler(profiler()).sample_size(10);
+    config = profiled_config();
     targets = bench_arrow_prefetch, bench_json_prefetch
 );
 criterion_main!(benches);

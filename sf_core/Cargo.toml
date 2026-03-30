@@ -100,6 +100,8 @@ wiremock = "0.6"
 rcgen = "0.13"
 tokio-rustls = "0.26"
 criterion = { version = "0.5", features = ["async_tokio"] }
+
+[target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
 
 [[test]]
