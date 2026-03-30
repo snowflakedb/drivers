@@ -1,4 +1,6 @@
+#include <climits>
 #include <cstring>
+#include <string>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -784,7 +786,7 @@ TEST_CASE("should bind SQL_C_LONG to SQL_VARCHAR.", "[query][bind_parameter][c_t
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -802,7 +804,7 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_parameter][c_
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -820,7 +822,7 @@ TEST_CASE("should bind negative SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_para
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = -999;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -838,7 +840,7 @@ TEST_CASE("should bind SQL_C_ULONG to SQL_VARCHAR.", "[query][bind_parameter][c_
   Connection conn;
   auto stmt = conn.createStatement();
   SQLUINTEGER param = 4000000000U;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_ULONG, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -860,6 +862,24 @@ TEST_CASE("should bind SQL_C_SSHORT to SQL_VARCHAR.", "[query][bind_parameter][c
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SSHORT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-7");
+}
+
+TEST_CASE("should bind SQL_C_SHORT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLSMALLINT param = -7;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SHORT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -892,7 +912,7 @@ TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR.", "[query][bind_parameter][
   Connection conn;
   auto stmt = conn.createStatement();
   SQLBIGINT param = 9999999999LL;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -910,7 +930,7 @@ TEST_CASE("should bind SQL_C_UBIGINT to SQL_VARCHAR.", "[query][bind_parameter][
   Connection conn;
   auto stmt = conn.createStatement();
   SQLUBIGINT param = 1000000000000ULL;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_UBIGINT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -932,6 +952,24 @@ TEST_CASE("should bind SQL_C_STINYINT to SQL_VARCHAR.", "[query][bind_parameter]
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_STINYINT, SQL_VARCHAR, 100, 0, &param, 0,
                                    &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-128");
+}
+
+TEST_CASE("should bind SQL_C_TINYINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLSCHAR param = -128;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TINYINT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -964,7 +1002,7 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR.", "[query][bind_parameter][c
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = 3.14;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -974,8 +1012,7 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR.", "[query][bind_parameter][c
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
-  auto result = get_data<SQL_C_CHAR>(stmt, 1);
-  CHECK(result.substr(0, 4) == "3.14");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "3.14");
 }
 
 TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
@@ -983,7 +1020,7 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR.", "[query][bind_parameter][c_
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = 1.5f;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
@@ -993,8 +1030,7 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR.", "[query][bind_parameter][c_
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
-  auto result = get_data<SQL_C_CHAR>(stmt, 1);
-  CHECK(result.substr(0, 3) == "1.5");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1.5");
 }
 
 TEST_CASE("should bind SQL_C_BIT true to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
@@ -1034,6 +1070,163 @@ TEST_CASE("should bind SQL_C_BIT false to SQL_VARCHAR.", "[query][bind_parameter
 }
 
 // =============================================================================
+// Boundary values, edge cases, and negative tests
+// =============================================================================
+
+TEST_CASE("should bind SQL_C_SLONG INT_MIN to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = INT_MIN;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == std::to_string(INT_MIN));
+}
+
+TEST_CASE("should bind SQL_C_SLONG INT_MAX to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = INT_MAX;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == std::to_string(INT_MAX));
+}
+
+TEST_CASE("should bind SQL_C_SLONG zero to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 0;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
+}
+
+TEST_CASE("should bind SQL_C_SBIGINT LLONG_MIN to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLBIGINT param = LLONG_MIN;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == std::to_string(LLONG_MIN));
+}
+
+TEST_CASE("should bind SQL_C_SBIGINT LLONG_MAX to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLBIGINT param = LLONG_MAX;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == std::to_string(LLONG_MAX));
+}
+
+TEST_CASE("should bind SQL_C_UBIGINT ULLONG_MAX to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLUBIGINT param = ULLONG_MAX;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_UBIGINT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == std::to_string(ULLONG_MAX));
+}
+
+TEST_CASE("should bind SQL_C_DOUBLE negative zero to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLDOUBLE param = -0.0;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
+}
+
+TEST_CASE("should bind SQL_C_BIT value > 1 to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLCHAR param = 42;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1");
+}
+
+TEST_CASE("should bind SQL_C_DEFAULT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  char param[] = "hello";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_VARCHAR, 100, 0, param,
+                                   sizeof(param), &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+}
+
+TEST_CASE("should reject unsupported C type for SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  // When an unsupported C type is bound to a string SQL type
+  SQL_TIMESTAMP_STRUCT param = {};
+  param.year = 2025;
+  param.month = 1;
+  param.day = 15;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_VARCHAR, 100, 0,
+                                   &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  // Then an error should be returned
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError());
+}
+
+// =============================================================================
 // C type → other string SQL types (CHAR, WCHAR, LONGVARCHAR, WVARCHAR, WLONGVARCHAR)
 // Verify that all string SQL types correctly route through the same conversion.
 // =============================================================================
@@ -1043,7 +1236,7 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_CHAR.", "[query][bind_parameter][c_to_
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_CHAR, 100, 0, &param, 0, &indicator);
@@ -1061,7 +1254,7 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_LONGVARCHAR.", "[query][bind_parameter
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_LONGVARCHAR, 100, 0, &param,
                                    0, &indicator);
@@ -1079,7 +1272,7 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_WCHAR.", "[query][bind_parameter][c_to
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WCHAR, 100, 0, &param, 0, &indicator);
@@ -1097,7 +1290,7 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_WVARCHAR.", "[query][bind_parameter][c
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WVARCHAR, 100, 0, &param, 0, &indicator);
@@ -1115,7 +1308,7 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_WLONGVARCHAR.", "[query][bind_paramete
   Connection conn;
   auto stmt = conn.createStatement();
   SQLINTEGER param = 42;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WLONGVARCHAR, 100, 0, &param,
                                    0, &indicator);

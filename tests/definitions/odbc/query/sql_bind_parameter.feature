@@ -256,6 +256,12 @@ Feature: ODBC SQLBindParameter spec compliance
     Then the result should be the expected string
 
   @odbc_e2e
+  Scenario: should bind SQL_C_SHORT to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
   Scenario: should bind SQL_C_USHORT to SQL_VARCHAR.
     Given Snowflake client is logged in
     When the C type value is bound as a string SQL type and SELECT ? is executed
@@ -275,6 +281,12 @@ Feature: ODBC SQLBindParameter spec compliance
 
   @odbc_e2e
   Scenario: should bind SQL_C_STINYINT to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_TINYINT to SQL_VARCHAR.
     Given Snowflake client is logged in
     When the C type value is bound as a string SQL type and SELECT ? is executed
     Then the result should be the expected string
@@ -308,6 +320,68 @@ Feature: ODBC SQLBindParameter spec compliance
     Given Snowflake client is logged in
     When the C type value is bound as a string SQL type and SELECT ? is executed
     Then the result should be the expected string
+
+  # Boundary values, edge cases, and negative tests
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG INT_MIN to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG INT_MAX to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG zero to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SBIGINT LLONG_MIN to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SBIGINT LLONG_MAX to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_UBIGINT ULLONG_MAX to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_DOUBLE negative zero to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_BIT value > 1 to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_DEFAULT to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should reject unsupported C type for SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When an unsupported C type is bound to a string SQL type
+    Then an error should be returned
 
   # Verify all string SQL types route through the same conversion
 
