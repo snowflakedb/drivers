@@ -114,17 +114,20 @@ pub fn write_single_field_interval(
                 },
             };
         }
+        #[allow(unused_unsafe)]
         CDataType::IntervalDay => {
             interval.interval_type = sql::Interval::Day as i32;
-            interval.interval_value.day_second.day = field_val;
+            unsafe { interval.interval_value.day_second.day = field_val };
         }
+        #[allow(unused_unsafe)]
         CDataType::IntervalHour => {
             interval.interval_type = sql::Interval::Hour as i32;
-            interval.interval_value.day_second.hour = field_val;
+            unsafe { interval.interval_value.day_second.hour = field_val };
         }
+        #[allow(unused_unsafe)]
         CDataType::IntervalMinute => {
             interval.interval_type = sql::Interval::Minute as i32;
-            interval.interval_value.day_second.minute = field_val;
+            unsafe { interval.interval_value.day_second.minute = field_val };
         }
         _ => unreachable!("write_single_field_interval called with {target_type:?}"),
     }
