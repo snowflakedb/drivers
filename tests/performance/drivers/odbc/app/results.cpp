@@ -48,7 +48,9 @@ void write_memory_timeline(const std::vector<MemorySample>& samples, const std::
                            const std::string& driver_type, time_t timestamp) {
   if (samples.empty()) return;
 
-  std::filesystem::path results_dir("/results");
+  std::string subdir =
+      (test_name.size() >= 7 && test_name.substr(test_name.size() - 7) == "_record") ? "_record" : test_name;
+  std::filesystem::path results_dir = std::filesystem::path("/results") / driver_type / subdir;
   std::stringstream filename_ss;
   filename_ss << "memory_timeline_" << test_name << "_odbc_" << driver_type << "_" << timestamp << ".csv";
   std::string filename = (results_dir / filename_ss.str()).string();
@@ -66,7 +68,9 @@ void write_memory_timeline(const std::vector<MemorySample>& samples, const std::
 }
 
 std::string generate_results_filename(const std::string& test_name, const std::string& driver_type, time_t timestamp) {
-  std::filesystem::path results_dir = std::filesystem::path("/results");
+  std::string subdir =
+      (test_name.size() >= 7 && test_name.substr(test_name.size() - 7) == "_record") ? "_record" : test_name;
+  std::filesystem::path results_dir = std::filesystem::path("/results") / driver_type / subdir;
   std::stringstream filename_ss;
   filename_ss << test_name << "_odbc_" << driver_type << "_" << timestamp << ".csv";
   return (results_dir / filename_ss.str()).string();

@@ -4,6 +4,7 @@ import shutil
 import statistics
 import time
 from pathlib import Path
+from typing import Optional
 
 from runner.docker_network import DockerNetworkManager
 from runner.modes.common import execute_test, verify_test_results
@@ -499,19 +500,21 @@ def _get_proxy_url_for_container(wiremock_url: str, wiremock_container_name: str
         return f"http://host.docker.internal:{wiremock_port}"
 
 
-def _extract_row_count_from_recording(results_dir: Path, test_name: str, driver: str, driver_type: str) -> int:
+def _extract_row_count_from_recording(results_dir: Path, test_name: str, driver: str, driver_type: str) -> Optional[int]:
     """Extract row count from recording phase CSV file."""
-    # Find the recording CSV file
-    # Core driver doesn't include driver_type in filename, others do
+    # Recording files are all written to {driver_type}/_record/
+    driver_type_dir = driver_type if driver != "core" else "universal"
+    recording_dir = results_dir / driver_type_dir / "_record"
+
     if driver == "core":
         pattern = f"{test_name}_record_{driver}_*.csv"
     else:
         pattern = f"{test_name}_record_{driver}_{driver_type}_*.csv"
-    
-    csv_files = list(results_dir.glob(pattern))
+
+    csv_files = list(recording_dir.glob(pattern))
     
     if not csv_files:
-        logger.warning(f"No recording CSV found matching pattern: {pattern}")
+        logger.warning(f"No recording CSV found matching pattern: {pattern} in {recording_dir}")
         return None
     
     csv_file = max(csv_files, key=lambda p: p.stat().st_mtime)
@@ -617,10 +620,13 @@ def _write_wiremock_monitor_results(
     timestamp = int(time.time())
     driver_suffix = f"_{driver_type}" if driver_type else ""
 
+    wiremock_dir = results_dir / "wiremock"
+    wiremock_dir.mkdir(exist_ok=True)
+
     # --- CSV stats ---
     if result.samples:
         csv_name = f"wiremock_stats_{test_name}_{phase}{driver_suffix}_{timestamp}.csv"
-        csv_path = results_dir / csv_name
+        csv_path = wiremock_dir / csv_name
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["timestamp_ms", "cpu_percent", "memory_usage_mb", "memory_limit_mb"])
@@ -631,7 +637,7 @@ def _write_wiremock_monitor_results(
     # --- Container logs ---
     if result.logs:
         log_name = f"wiremock_logs_{test_name}_{phase}{driver_suffix}_{timestamp}.log"
-        log_path = results_dir / log_name
+        log_path = wiremock_dir / log_name
         log_path.write_text(result.logs, encoding="utf-8")
         logger.info(f"Wrote WireMock logs: {log_path.name}")
 

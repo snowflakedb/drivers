@@ -384,8 +384,8 @@ The `PARAMETERS_JSON` environment variable must contain a JSON object with a `te
 
 Each driver container must generate:
 
-1. **CSV Results File**: `/results/<test_name>_<driver>_<type>_<timestamp>.csv`
-   
+1. **CSV Results File**: `/results/<driver_type>/<test_name>/<test_name>_<driver>_<type>_<timestamp>.csv`
+
    See [CSV Format](#csv-format) section for detailed format specification.
 
 2. **Metadata File**: `/results/run_metadata_<driver>_<type>.json`
@@ -409,16 +409,27 @@ Each driver container must generate:
 ```
 results/
 └── run_20251030_113045/
-    ├── select_string_1M_arrow_python_universal_1761734615.csv
-    ├── select_string_1M_arrow_python_old_1761734627.csv
-    ├── memory_timeline_select_string_1M_arrow_python_universal_1761734615.csv
-    ├── memory_timeline_select_string_1M_arrow_python_old_1761734627.csv
-    ├── select_number_1M_arrow_python_universal_1761734660.csv
-    ├── select_number_1M_arrow_python_old_1761734671.csv
-    ├── memory_timeline_select_number_1M_arrow_python_universal_1761734660.csv
-    ├── memory_timeline_select_number_1M_arrow_python_old_1761734671.csv
     ├── run_metadata_python_universal.json
-    └── run_metadata_python_old.json
+    ├── run_metadata_python_old.json
+    ├── wiremock/
+    │   ├── wiremock_stats_select_string_1M_arrow_recorded_http_record_universal_1761734600.csv
+    │   └── wiremock_logs_select_string_1M_arrow_recorded_http_replay_universal_1761734610.log
+    ├── universal/
+    │   ├── _record/
+    │   │   └── select_string_1M_arrow_recorded_http_record_python_universal_1761734605.csv
+    │   ├── select_string_1M_arrow/
+    │   │   ├── select_string_1M_arrow_python_universal_1761734615.csv
+    │   │   └── memory_timeline_select_string_1M_arrow_python_universal_1761734615.csv
+    │   └── select_number_1M_arrow/
+    │       ├── select_number_1M_arrow_python_universal_1761734660.csv
+    │       └── memory_timeline_select_number_1M_arrow_python_universal_1761734660.csv
+    └── old/
+        ├── select_string_1M_arrow/
+        │   ├── select_string_1M_arrow_python_old_1761734627.csv
+        │   └── memory_timeline_select_string_1M_arrow_python_old_1761734627.csv
+        └── select_number_1M_arrow/
+            ├── select_number_1M_arrow_python_old_1761734671.csv
+            └── memory_timeline_select_number_1M_arrow_python_old_1761734671.csv
 ```
 
 ### CSV Format
@@ -427,22 +438,22 @@ Results CSV files contain per-iteration timing, CPU, and memory data with actual
 
 **For SELECT tests:**
 ```csv
-timestamp,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb
-1762522370,0.005432,1.583121,1000000,1.571032,236.2
-1762522372,0.005118,1.812228,1000000,1.798445,237.4
-1762522374,0.004987,1.799454,1000000,1.785123,236.1
+timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb
+1762522370000,0.005432,1.583121,1000000,1.571032,236.2
+1762522372000,0.005118,1.812228,1000000,1.798445,237.4
+1762522374000,0.004987,1.799454,1000000,1.785123,236.1
 ```
 
 **For PUT/GET tests:**
 ```csv
-timestamp,query_s,cpu_time_s,peak_rss_mb
-1762522254,6.595445,0.312456,85.3
-1762522271,4.385419,0.298234,85.1
-1762522288,5.123456,0.305678,85.2
+timestamp_ms,query_s,cpu_time_s,peak_rss_mb
+1762522254000,6.595445,0.312456,85.3
+1762522271000,4.385419,0.298234,85.1
+1762522288000,5.123456,0.305678,85.2
 ```
 
 **Columns**:
-- `timestamp`: Unix timestamp (seconds since epoch) when the iteration completed
+- `timestamp_ms`: Unix timestamp in milliseconds when the iteration completed
 - `query_s`: Wall-clock time to execute the query (`cursor.execute()`) and get initial response (seconds)
 - `fetch_s`: Wall-clock time to fetch all result rows via `fetchmany()` (seconds) — **SELECT tests only**
 - `row_count`: Number of rows fetched — **SELECT tests only**

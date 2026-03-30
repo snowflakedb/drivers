@@ -75,11 +75,13 @@ def _find_result_file(
     driver_type: Optional[str],
 ) -> Optional[Path]:
     """Find the main result CSV for a test in a given run directory."""
+    driver_type_dir = driver_type if (driver != "core" and driver_type) else "universal"
+    test_dir = run_dir / driver_type_dir / test_name
     if driver != "core" and driver_type:
         pattern = f"{test_name}_{driver}_{driver_type}_*.csv"
     else:
         pattern = f"{test_name}_{driver}_*.csv"
-    candidates = [f for f in run_dir.glob(pattern) if _is_main_result_file(f)]
+    candidates = [f for f in test_dir.glob(pattern) if _is_main_result_file(f)]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
