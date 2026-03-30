@@ -335,7 +335,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 parameter: String::from(USER),
             })?,
             password: settings.get_sensitive_string(PASSWORD)
-                .filter(|s| s.reveal().is_empty())
+                .filter(|s| !s.reveal().is_empty())
                 .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
                 },
@@ -346,7 +346,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                 parameter: String::from(USER),
             })?,
             password: settings.get_sensitive_string(PASSWORD)
-                .filter(|s| s.reveal().is_empty())
+                .filter(|s| !s.reveal().is_empty())
                 .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
                 },
@@ -609,7 +609,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             }
         }
         "PROGRAMMATIC_ACCESS_TOKEN" => {
-            if settings.get_string(TOKEN).is_none_or(|s| !s.is_empty()) {
+            if settings.get_string(TOKEN).is_none_or(|s| s.is_empty()) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: TOKEN.into(),
@@ -1044,6 +1044,24 @@ mod tests {
                 .iter()
                 .any(|i| i.parameter == "user" && i.code == ValidationCode::MissingRequired),
             "Expected empty user to be treated as missing, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn validate_empty_password_reports_issue() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("user".into())),
+            ("password", Setting::String(String::new())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+
+        let issues = validate_settings(&settings);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.parameter == "password" && i.code == ValidationCode::MissingRequired),
+            "Expected empty password to be treated as missing, got: {issues:?}"
         );
     }
 
