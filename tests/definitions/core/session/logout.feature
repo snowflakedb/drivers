@@ -246,7 +246,7 @@ Scenario: should fail when retried logout exceeds remaining timeout budget after
   # ---------------------------------------------------------------------------
   # Design doc: Approach 4 + Extension 1 - wrappers can override retry config
   # Default: 5s timeout, HTTP-wide retry count
-  # Wrappers pass their historical defaults (Python: 5s, JDBC/ODBC: 300s)
+  # Wrappers pass their historical defaults (Python: 15s, JDBC/ODBC: 300s)
 
   # -- Success path: retry then succeed (same outcome for both strategies) --
 
@@ -268,10 +268,12 @@ Scenario: should fail when retried logout exceeds remaining timeout budget after
       | best-effort   | 5            | 4        | 5                 |
 
   Scenario Outline: should honor provided timeout config and succeed for each <strategy_type>
-    # Wrappers pass their historical defaults (Python: 5s, JDBC/ODBC: 300s)
+    # Wrappers pass their defaults (Python: 15s, JDBC/ODBC: 300s)
     # Note: Failure path scenarios (timeout exceeded) are below, split by strategy
+
     Given Core logout function called with <strategy_type> strategy
     And Timeout configured to <timeout_seconds> seconds
+    And Retry policy allows the default attempt number
     And Mock HTTP server delays response by <delay_seconds> seconds then returns 200
     When Logout is executed
     Then Close succeeds
@@ -280,10 +282,14 @@ Scenario: should fail when retried logout exceeds remaining timeout budget after
       | strategy_type | timeout_seconds | delay_seconds |
       | strict        | 5               | 3             |
       | best-effort   | 5               | 3             |
-      | strict        | 10              | 5             |
-      | best-effort   | 10              | 5             |
-      | strict        | 300             | 10            |
-      | best-effort   | 300             | 10            |
+      | strict        | 10              | 8             |
+      | best-effort   | 10              | 8             |
+      # Python default timeout — also tighter margin to catch hardcoded values < 13
+      | strict        | 15              | 13            |
+      | best-effort   | 15              | 13            |
+      # Real-life JDBC/ODBC defaults — sanity check that large timeouts aren't ignored
+      | strict        | 300             | 50            |
+      | best-effort   | 300             | 50            |
 
   # -- Failure path: exhausted retries (outcome differs per strategy) --
 
