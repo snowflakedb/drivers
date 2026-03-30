@@ -37,6 +37,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid handle type for this operation: {handle_type}"))]
+    InvalidHandleType {
+        handle_type: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid descriptor kind: {kind}"))]
     InvalidDescriptorKind {
         kind: u16,
@@ -437,6 +444,7 @@ impl OdbcError {
         match self {
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
+            OdbcError::InvalidHandleType { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
             OdbcError::InvalidDescriptorKind { .. } => SqlState::GeneralError,
             OdbcError::InvalidBufferLength { .. } => SqlState::InvalidStringOrBufferLength,

@@ -398,3 +398,18 @@ behavior_differences:
       the behavior of other numeric C types bound to SQL_BIT.
       Impact: Applications binding SQL_C_NUMERIC values to BOOLEAN columns
       will succeed on the new driver for any nonzero value.
+
+  38:
+    name: "SQLGetFunctions does not report SQLCancelHandle as supported"
+    description: |
+      OLD driver: SQLGetFunctions returns SQL_FALSE for SQL_API_SQLCANCELHANDLE
+      even though the reference driver exports and handles the function.
+      The internal supported-functions bitmap does not include the ODBC 3.8
+      SQLCancelHandle entry, so the function works at runtime but the
+      SQLGetFunctions report is missing.
+      NEW driver: Will report SQL_API_SQLCANCELHANDLE as supported once
+      SQLGetFunctions is implemented.
+      Impact: Applications that probe SQLGetFunctions before calling
+      SQLCancelHandle will incorrectly believe the old driver does not
+      support it. The function works regardless of what SQLGetFunctions
+      reports.
