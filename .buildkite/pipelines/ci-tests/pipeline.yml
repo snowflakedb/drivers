@@ -181,6 +181,12 @@ steps:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
           source $$HOME/.cargo/env
+          if [ "$$(uname -m)" = "aarch64" ]; then
+            echo '#!/bin/sh' > /tmp/cc-arm-wrapper
+            echo 'exec /usr/bin/cc -D__ARM_ARCH=8 "$$@"' >> /tmp/cc-arm-wrapper
+            chmod +x /tmp/cc-arm-wrapper
+            export CC=/tmp/cc-arm-wrapper
+          fi
           cargo install cargo2junit 2>/dev/null || true
 
           echo "--- :key: Decoding secrets"
@@ -331,7 +337,14 @@ steps:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
           source $$HOME/.cargo/env
-          pip3 install --upgrade pip setuptools wheel uv hatch 2>/dev/null || pip install --upgrade pip setuptools wheel uv hatch
+          if [ "$$(uname -m)" = "aarch64" ]; then
+            echo '#!/bin/sh' > /tmp/cc-arm-wrapper
+            echo 'exec /usr/bin/cc -D__ARM_ARCH=8 "$$@"' >> /tmp/cc-arm-wrapper
+            chmod +x /tmp/cc-arm-wrapper
+            export CC=/tmp/cc-arm-wrapper
+          fi
+          pip3 install --user --upgrade pip setuptools wheel uv hatch 2>/dev/null || pip install --user --upgrade pip setuptools wheel uv hatch
+          export PATH="$$HOME/.local/bin:$$PATH"
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
@@ -495,6 +508,12 @@ steps:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
           source $$HOME/.cargo/env
+          if [ "$$(uname -m)" = "aarch64" ]; then
+            echo '#!/bin/sh' > /tmp/cc-arm-wrapper
+            echo 'exec /usr/bin/cc -D__ARM_ARCH=8 "$$@"' >> /tmp/cc-arm-wrapper
+            chmod +x /tmp/cc-arm-wrapper
+            export CC=/tmp/cc-arm-wrapper
+          fi
 
           echo "--- :key: Decoding secrets"
           rm -rf junit-results
@@ -660,11 +679,13 @@ steps:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
           source $$HOME/.cargo/env
-          export JAVA_HOME=$$(dirname $$(dirname $$(readlink -f $$(which java) 2>/dev/null) 2>/dev/null) 2>/dev/null) || true
-          if ! command -v cargo &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          if [ "$$(uname -m)" = "aarch64" ]; then
+            echo '#!/bin/sh' > /tmp/cc-arm-wrapper
+            echo 'exec /usr/bin/cc -D__ARM_ARCH=8 "$$@"' >> /tmp/cc-arm-wrapper
+            chmod +x /tmp/cc-arm-wrapper
+            export CC=/tmp/cc-arm-wrapper
           fi
-          source $$HOME/.cargo/env
+          export JAVA_HOME=$$(dirname $$(dirname $$(readlink -f $$(which java) 2>/dev/null) 2>/dev/null) 2>/dev/null) || true
 
           echo "--- :key: Decoding secrets"
           rm -rf junit-results
