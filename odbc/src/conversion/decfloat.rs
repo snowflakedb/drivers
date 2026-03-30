@@ -4,11 +4,15 @@ use odbc_sys as sql;
 
 use crate::api::CDataType;
 use crate::conversion::error::{
-    IntervalFieldOverflowSnafu, InvalidArrowValueSnafu, NumericValueOutOfRangeSnafu,
-    ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    InvalidArrowValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu,
+    WriteOdbcError,
+};
+use crate::conversion::numeric_helpers::{
+    check_integer_range, fractional_warning, reject_multi_field_interval, write_interval_second,
+    write_numeric_as_binary, write_single_field_interval,
 };
 use crate::conversion::traits::Binding;
-use crate::conversion::warning::{Warning, Warnings};
+use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeDecfloat {
@@ -196,25 +200,6 @@ fn decfloat_to_f64(sig: i128, exp: i16) -> f64 {
     (sig as f64) * 10f64.powi(exp as i32)
 }
 
-fn check_integer_range(value: i128, min: i128, max: i128) -> Result<(), WriteOdbcError> {
-    if value < min || value > max {
-        NumericValueOutOfRangeSnafu {
-            reason: format!("Value {value} is out of range ({min} to {max})"),
-        }
-        .fail()
-    } else {
-        Ok(())
-    }
-}
-
-fn fractional_warning(has_fractional: bool) -> Warnings {
-    if has_fractional {
-        vec![Warning::NumericValueTruncated]
-    } else {
-        vec![]
-    }
-}
-
 impl WriteODBCType for SnowflakeDecfloat {
     fn sql_type(&self) -> sql::SqlDataType {
         sql::SqlDataType::NUMERIC
@@ -355,121 +340,22 @@ impl WriteODBCType for SnowflakeDecfloat {
                     | CDataType::IntervalMonth
                     | CDataType::IntervalDay
                     | CDataType::IntervalHour
-                    | CDataType::IntervalMinute => {
-                        let abs_int = int_value.unsigned_abs();
-                        let leading_precision =
-                            binding.datetime_interval_precision.unwrap_or(2) as u32;
-                        let max_leading = 10u128.pow(leading_precision);
-                        if abs_int >= max_leading {
-                            return IntervalFieldOverflowSnafu {
-                                reason: format!(
-                                    "Value {int_value} exceeds leading field precision of {leading_precision} digits"
-                                ),
-                            }
-                            .fail();
-                        }
-                        let field_val = abs_int as u32;
-                        let is_negative = significand < 0 && field_val > 0;
-                        let mut interval = sql::IntervalStruct {
-                            interval_type: 0,
-                            interval_sign: if is_negative { 1 } else { 0 },
-                            interval_value: sql::IntervalUnion {
-                                day_second: sql::DaySecond::default(),
-                            },
-                        };
-                        match target_type {
-                            CDataType::IntervalYear => {
-                                interval.interval_type = sql::Interval::Year as i32;
-                                interval.interval_value = sql::IntervalUnion {
-                                    year_month: sql::YearMonth {
-                                        year: field_val,
-                                        month: 0,
-                                    },
-                                };
-                            }
-                            CDataType::IntervalMonth => {
-                                interval.interval_type = sql::Interval::Month as i32;
-                                interval.interval_value = sql::IntervalUnion {
-                                    year_month: sql::YearMonth {
-                                        year: 0,
-                                        month: field_val,
-                                    },
-                                };
-                            }
-                            CDataType::IntervalDay => {
-                                interval.interval_type = sql::Interval::Day as i32;
-                                interval.interval_value.day_second.day = field_val;
-                            }
-                            CDataType::IntervalHour => {
-                                interval.interval_type = sql::Interval::Hour as i32;
-                                interval.interval_value.day_second.hour = field_val;
-                            }
-                            CDataType::IntervalMinute => {
-                                interval.interval_type = sql::Interval::Minute as i32;
-                                interval.interval_value.day_second.minute = field_val;
-                            }
-                            _ => unreachable!(),
-                        }
-                        binding.write_fixed(interval);
-                        Ok(fractional_warning(has_fractional))
-                    }
+                    | CDataType::IntervalMinute => write_single_field_interval(
+                        target_type,
+                        int_value,
+                        significand < 0,
+                        has_fractional,
+                        binding,
+                    ),
                     CDataType::IntervalSecond => {
-                        let abs_int = int_value.unsigned_abs();
-                        let leading_precision =
-                            binding.datetime_interval_precision.unwrap_or(2) as u32;
-                        let max_leading = 10u128.pow(leading_precision);
-                        if abs_int >= max_leading {
-                            return IntervalFieldOverflowSnafu {
-                                reason: format!(
-                                    "Value {int_value} exceeds leading field precision of {leading_precision} digits"
-                                ),
-                            }
-                            .fail();
-                        }
-                        let second_val = abs_int as u32;
-                        let (frac_value, frac_truncated) = if exponent < 0 {
-                            let scale = (-exponent) as u32;
-                            match 10u128.checked_pow(scale) {
-                                Some(divisor) => {
-                                    let remainder =
-                                        significand.unsigned_abs() % divisor;
-                                    if scale > 6 {
-                                        let frac_divisor = 10u128.pow(scale - 6);
-                                        (
-                                            (remainder / frac_divisor) as u32,
-                                            remainder % frac_divisor != 0,
-                                        )
-                                    } else {
-                                        let multiplier = 10u128.pow(6 - scale);
-                                        ((remainder * multiplier) as u32, false)
-                                    }
-                                }
-                                None => (0u32, significand != 0),
-                            }
-                        } else {
-                            (0u32, false)
-                        };
-                        let is_negative =
-                            significand < 0 && (second_val > 0 || frac_value > 0);
-                        let interval = sql::IntervalStruct {
-                            interval_type: sql::Interval::Second as i32,
-                            interval_sign: if is_negative { 1 } else { 0 },
-                            interval_value: sql::IntervalUnion {
-                                day_second: sql::DaySecond {
-                                    day: 0,
-                                    hour: 0,
-                                    minute: 0,
-                                    second: second_val,
-                                    fraction: frac_value,
-                                },
-                            },
-                        };
-                        binding.write_fixed(interval);
-                        Ok(if frac_truncated {
-                            vec![Warning::NumericValueTruncated]
-                        } else {
-                            vec![]
-                        })
+                        let scale = if exponent < 0 { (-exponent) as u32 } else { 0 };
+                        write_interval_second(
+                            int_value,
+                            significand.unsigned_abs(),
+                            scale,
+                            significand < 0,
+                            binding,
+                        )
                     }
                     CDataType::IntervalYearToMonth
                     | CDataType::IntervalDayToHour
@@ -477,12 +363,7 @@ impl WriteODBCType for SnowflakeDecfloat {
                     | CDataType::IntervalDayToSecond
                     | CDataType::IntervalHourToMinute
                     | CDataType::IntervalHourToSecond
-                    | CDataType::IntervalMinuteToSecond => IntervalFieldOverflowSnafu {
-                        reason: format!(
-                            "Cannot convert numeric value to multi-field interval type {target_type:?}"
-                        ),
-                    }
-                    .fail(),
+                    | CDataType::IntervalMinuteToSecond => reject_multi_field_interval(target_type),
                     CDataType::Binary => {
                         let abs_value = int_value.unsigned_abs();
                         let sign: u8 = if int_value >= 0 { 1 } else { 0 };
@@ -492,34 +373,7 @@ impl WriteODBCType for SnowflakeDecfloat {
                             sign,
                             val: abs_value.to_le_bytes(),
                         };
-                        let numeric_size = std::mem::size_of::<sql::Numeric>();
-                        if (binding.buffer_length as usize) < numeric_size {
-                            return NumericValueOutOfRangeSnafu {
-                                reason: format!(
-                                    "Buffer size {} is too small for SQL_C_BINARY (need {numeric_size} bytes)",
-                                    binding.buffer_length
-                                ),
-                            }
-                            .fail();
-                        }
-                        let numeric_bytes: &[u8] = unsafe {
-                            std::slice::from_raw_parts(
-                                &numeric as *const sql::Numeric as *const u8,
-                                numeric_size,
-                            )
-                        };
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                numeric_bytes.as_ptr(),
-                                binding.target_value_ptr as *mut u8,
-                                numeric_size,
-                            );
-                        }
-                        let _ = binding.write_length_or_null(
-                            crate::conversion::traits::LengthOrNull::Length(
-                                numeric_size as sql::Len,
-                            ),
-                        );
+                        write_numeric_as_binary(&numeric, binding)?;
                         Ok(vec![])
                     }
                     _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
