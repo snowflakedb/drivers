@@ -1110,14 +1110,12 @@ pub async fn get_query_status(
             path: MONITORING_QUERIES_PATH,
         })?;
 
-    url.path_segments_mut()
-        .map_err(|()| {
-            MissingResponseFieldSnafu {
-                field: "base URL for monitoring queries",
-            }
-            .build()
-        })?
-        .push(query_id);
+    {
+        let url_str = url.to_string();
+        url.path_segments_mut()
+            .map_err(|()| InvalidUrlSnafu { url: url_str }.build())?
+            .push(query_id);
+    }
 
     let token_str = session_token.reveal();
     let build_request = || {
@@ -1382,6 +1380,12 @@ pub enum RestError {
     HttpRetry {
         context: &'static str,
         source: crate::http::retry::HttpError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Invalid URL: {url}"))]
+    InvalidUrl {
+        url: String,
         #[snafu(implicit)]
         location: Location,
     },
