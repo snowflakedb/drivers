@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 from runner.utils import perf_tests_root, collect_node_info, log_node_info
 import pytest
 
@@ -308,7 +308,7 @@ def _validate_wiremock_old_driver(driver: str, driver_type: str):
         )
 
 
-def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_queries: list[str] = None) -> list[str]:
+def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_queries: list[str] = None) -> list[str]:
     """
     Prepare setup queries based on test type.
     
@@ -321,12 +321,12 @@ def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_quer
         List of setup queries with test-type-specific prefixes
     """
     match test_type:
-        case TestType.SELECT | TestType.SELECT_RECORDED_HTTP:
+        case PerfTestType.SELECT | PerfTestType.SELECT_RECORDED_HTTP:
             # SELECT tests: always use ARROW format
             arrow_query = "alter session set query_result_format = 'ARROW'"
             return [arrow_query] + (setup_queries or [])
         
-        case TestType.PUT_GET:
+        case PerfTestType.PUT_GET:
             # PUT/GET tests: USE DATABASE is required for TEMPORARY STAGE
             params = json.loads(parameters_json)
             testconn = params.get("testconnection", {})
@@ -368,7 +368,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         sql_command: str,
         setup_queries: list[str] = None,
         test_name: str = None,
-        test_type: TestType = TestType.SELECT,
+        test_type: PerfTestType = PerfTestType.SELECT,
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None  # Local directory for downloaded files
     ):
@@ -381,7 +381,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         is_comparison = _should_run_comparison(driver, driver_type)
 
         # Route to appropriate runner based on test type
-        if test_type == TestType.SELECT_RECORDED_HTTP:
+        if test_type == PerfTestType.SELECT_RECORDED_HTTP:
             result = _run_wiremock_test(
                 test_name=test_name,
                 sql_command=sql_command,
@@ -454,7 +454,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         test_name: str,
         sql_command: str,
         setup_queries: list[str],
-        test_type: TestType,
+        test_type: PerfTestType,
         s3_files_dir,
         is_comparison: bool,
     ):

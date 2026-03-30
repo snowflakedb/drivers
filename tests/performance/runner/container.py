@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 from testcontainers.core.container import DockerContainer
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def create_perf_container(
     results_dir: Path,
     driver_type: str = None,
     setup_queries: list[str] = None,
-    test_type: TestType = TestType.SELECT,
+    test_type: PerfTestType = PerfTestType.SELECT,
     s3_files_dir: Path = None,
     network_mode: str = "host",
 ) -> DockerContainer:
@@ -52,7 +52,7 @@ def create_perf_container(
         results_dir: Directory to mount for results
         driver_type: Driver type: 'universal' or 'old' (only 'universal' for core)
         setup_queries: Optional list of SQL queries to run before warmup/test iterations
-        test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
+        test_type: Type of test (PerfTestType.SELECT or PerfTestType.PUT_GET)
         s3_files_dir: Optional directory with S3-downloaded files to mount (for PUT/GET tests)
         network_mode: Docker network mode ("host" for direct host network, reduces jitter)
     

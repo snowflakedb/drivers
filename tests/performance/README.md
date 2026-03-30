@@ -119,16 +119,15 @@ hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
 | `--preserve-mappings` | Keep WireMock mappings after tests (for debugging) | `false` (enabled in local runs) |
 | `--reuse-mappings` | Reuse existing mappings directory (e.g., `run_20260115_120000`) | None (runs recording phase) |
 
-### Local Performance Compare (Local Only)
+### Local Performance Compare
 
-When running locally via `hatch run *-local` scripts, results are compared against previous local runs and printed in a summary at session end (after `✓ TESTS COMPLETED`). The feature is enabled by `PERF_LOCAL_COMPARE=1` set in those scripts; CI runs never set it.
+When running locally via `hatch run *-local` scripts, results are compared against previous local runs and printed in a summary at session end (after `✓ TESTS COMPLETED`). The feature is enabled by `PERF_LOCAL_COMPARE=1` set in those scripts.
 
 **What is shown:**
 
 - **UD vs OLD** (when `--driver-type=both`): percentage difference between Universal and Old driver from the current run. Always shown when both drivers ran.
 - **vs last run**: current median compared to the previous run's median.
 - **vs all prev**: current median compared to the median across all previous runs.
-- **Old driver alone** (`--driver-type=old`): nothing shown.
 
 History comparisons are silently skipped when no previous runs exist.
 
@@ -209,12 +208,12 @@ def test_with_additional_setup(perf_test):
         ]
     )
 
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 
 def test_put_files_12mx100(perf_test):
     """PUT/GET test: Upload files to Snowflake stage"""
     perf_test(
-        test_type=TestType.PUT_GET,
+        test_type=PerfTestType.PUT_GET,
         s3_download_url="s3://sfc-eng-data/ecosystem/12Mx100/",
         setup_queries=[
             "CREATE TEMPORARY STAGE put_test_stage"
@@ -229,7 +228,7 @@ def test_put_files_12mx100(perf_test):
 **Notes**: 
 - **SELECT tests**: ARROW format (`ALTER SESSION SET QUERY_RESULT_FORMAT = 'ARROW'`) is added to any provided `setup_queries`.
 - **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
-- PUT/GET tests use `test_type=TestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
+- PUT/GET tests use `test_type=PerfTestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
 
 ### Test Configuration Priority

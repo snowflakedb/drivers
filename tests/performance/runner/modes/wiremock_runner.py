@@ -7,7 +7,7 @@ from pathlib import Path
 
 from runner.docker_network import DockerNetworkManager
 from runner.modes.common import execute_test, verify_test_results
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 from runner.utils import perf_tests_root
 from wiremock.wiremock_manager import WiremockManager
 from wiremock.wiremock_monitor import WiremockMonitor, MonitorResult
@@ -598,7 +598,7 @@ def _run_test_with_proxy(
         driver=driver,
         driver_type=driver_type,
         setup_queries=setup_queries,
-        test_type=TestType.SELECT,  # WireMock tests are SELECT-based
+        test_type=PerfTestType.SELECT,  # WireMock tests are SELECT-based
         use_local_binary=use_local_binary,
         s3_files_dir=s3_files_dir,
         env_vars=env_vars,
