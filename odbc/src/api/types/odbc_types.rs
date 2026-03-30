@@ -10,9 +10,56 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
 };
 use std::collections::HashMap;
+use std::sync::Weak;
 use tokio_util::sync::CancellationToken;
 
 use super::CDataType;
+
+/// SQL_ATTR_ACCESS_MODE values (ODBC spec: SQLUINTEGER).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessMode {
+    /// SQL_MODE_READ_WRITE (0) — default
+    ReadWrite = 0,
+    /// SQL_MODE_READ_ONLY (1)
+    ReadOnly = 1,
+}
+
+impl AccessMode {
+    pub fn from_raw(val: sql::UInteger) -> Option<Self> {
+        match val {
+            0 => Some(Self::ReadWrite),
+            1 => Some(Self::ReadOnly),
+            _ => None,
+        }
+    }
+
+    pub fn as_raw(self) -> sql::UInteger {
+        self as sql::UInteger
+    }
+}
+
+/// SQL_ATTR_AUTOCOMMIT values (ODBC spec: SQLUINTEGER).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutocommitValue {
+    /// SQL_AUTOCOMMIT_OFF (0)
+    Off = 0,
+    /// SQL_AUTOCOMMIT_ON (1) — default
+    On = 1,
+}
+
+impl AutocommitValue {
+    pub fn from_raw(val: sql::UInteger) -> Option<Self> {
+        match val {
+            0 => Some(Self::Off),
+            1 => Some(Self::On),
+            _ => None,
+        }
+    }
+
+    pub fn as_raw(self) -> sql::UInteger {
+        self as sql::UInteger
+    }
+}
 
 /// Custom Snowflake connection attribute base.
 /// Mirrors the old driver's sf_odbc.h: SQL_DRIVER_CONN_ATTR_BASE (0x4000) + 0x53
@@ -24,14 +71,26 @@ const SQL_SF_CONN_ATTR_BASE: i32 = 0x4000 + 0x53;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectionAttribute {
     // Standard ODBC attributes (from sql.h / sqlext.h)
+    /// SQL_ATTR_ACCESS_MODE (101)
+    AccessMode,
     /// SQL_ATTR_AUTOCOMMIT (102)
     Autocommit,
     /// SQL_ATTR_LOGIN_TIMEOUT (103)
     LoginTimeout,
+    /// SQL_ATTR_TXN_ISOLATION (108)
+    TxnIsolation,
     /// SQL_ATTR_CURRENT_CATALOG (109)
     CurrentCatalog,
+    /// SQL_ATTR_QUIET_MODE (111)
+    QuietMode,
+    /// SQL_ATTR_PACKET_SIZE (112)
+    PacketSize,
     /// SQL_ATTR_CONNECTION_TIMEOUT (113)
     ConnectionTimeout,
+    /// SQL_ATTR_CONNECTION_DEAD (1209) — read-only
+    ConnectionDead,
+    /// SQL_ATTR_AUTO_IPD (10001) — read-only
+    AutoIpd,
 
     // Custom Snowflake attributes (matching sf_odbc.h)
     /// SQL_SF_CONN_ATTR_PRIV_KEY — EVP_PKEY pointer (not supported in new driver)
@@ -51,10 +110,16 @@ impl ConnectionAttribute {
     /// Returns `None` for unrecognized attributes.
     pub fn from_raw(value: i32) -> Option<Self> {
         match value {
+            101 => Some(Self::AccessMode),
             102 => Some(Self::Autocommit),
             103 => Some(Self::LoginTimeout),
+            108 => Some(Self::TxnIsolation),
             109 => Some(Self::CurrentCatalog),
+            111 => Some(Self::QuietMode),
+            112 => Some(Self::PacketSize),
             113 => Some(Self::ConnectionTimeout),
+            1209 => Some(Self::ConnectionDead),
+            10001 => Some(Self::AutoIpd),
             x if x == SQL_SF_CONN_ATTR_BASE + 1 => Some(Self::PrivKey),
             x if x == SQL_SF_CONN_ATTR_BASE + 2 => Some(Self::Application),
             x if x == SQL_SF_CONN_ATTR_BASE + 3 => Some(Self::PrivKeyContent),
@@ -72,10 +137,16 @@ impl ConnectionAttribute {
     /// Convert back to the raw ODBC attribute ID.
     pub fn as_raw(&self) -> i32 {
         match self {
+            Self::AccessMode => 101,
             Self::Autocommit => 102,
             Self::LoginTimeout => 103,
+            Self::TxnIsolation => 108,
             Self::CurrentCatalog => 109,
+            Self::QuietMode => 111,
+            Self::PacketSize => 112,
             Self::ConnectionTimeout => 113,
+            Self::ConnectionDead => 1209,
+            Self::AutoIpd => 10001,
             Self::PrivKey => SQL_SF_CONN_ATTR_BASE + 1,
             Self::Application => SQL_SF_CONN_ATTR_BASE + 2,
             Self::PrivKeyContent => SQL_SF_CONN_ATTR_BASE + 3,
@@ -794,7 +865,36 @@ pub struct Connection {
     /// Attributes set via SQLSetConnectAttr before the connection is established
     pub pre_connection_attrs: PreConnectionAttributes,
     pub numeric_settings: NumericSettings,
+    /// SQL_ATTR_ACCESS_MODE — advisory only (default SQL_MODE_READ_WRITE)
+    pub access_mode: AccessMode,
+    /// SQL_ATTR_QUIET_MODE — window handle pointer (default null)
+    pub quiet_mode: sql::Pointer,
+    /// SQL_ATTR_PACKET_SIZE — pre-connect only (default 0 = driver-defined)
+    pub packet_size: sql::UInteger,
+    /// Weak references to all child statements allocated on this connection, paired with
+    /// the raw pointer obtained from `Arc::into_raw` at allocation time.
+    /// Storing this pointer ensures `Arc::from_raw` (used in `free_connection`) receives a
+    /// pointer that satisfies its documented contract (obtained via `Arc::into_raw`, not
+    /// `Weak::as_ptr`).
+    pub(crate) child_statements: Vec<(Weak<Statement>, *const Statement)>,
+    /// Cached local autocommit state. Defaults to `AutocommitValue::On`.
+    /// Updated when SQL_ATTR_AUTOCOMMIT is set; used as fallback for get_connect_attr
+    /// when the server session parameter is unavailable.
+    pub cached_autocommit: AutocommitValue,
+    /// Cached SQL_ATTR_CURRENT_CATALOG value. Populated after connect and updated
+    /// after each successful USE DATABASE (SET). SQLGetConnectAttr always refreshes
+    /// this from the server per spec; the field is used to track the catalog for
+    /// internal purposes (e.g. logging, future optimizations).
+    pub current_catalog: Option<String>,
 }
+
+// Safety: Send is required so that the async runtime can transfer ownership of the
+// Connection allocation between threads (e.g. when a Tokio task completes on a
+// different thread than it started). All ODBC API access remains serialised on the
+// single caller thread — the raw-pointer DBC handle is never shared across threads.
+// `*const Statement` inside `child_statements` is `!Send`, but Connection is never
+// accessed concurrently, so this is safe.
+unsafe impl Send for Connection {}
 
 /// Application Parameter Descriptor (APD) record.
 ///
@@ -1010,8 +1110,10 @@ impl GetDataState {
     }
 }
 
-pub struct Statement<'a> {
-    pub conn: &'a mut Connection,
+pub struct Statement {
+    /// Raw pointer to the owning connection. Valid for the entire lifetime of this Statement
+    /// (the connection always outlives its statements). Access via `conn()` / `conn_ptr()`.
+    conn: *mut Connection,
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
@@ -1037,6 +1139,67 @@ pub struct Statement<'a> {
     pub cancel_token: CancellationToken,
 }
 
+/// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
+// The conn raw pointer is valid for the Statement's lifetime (Connection outlives Statement).
+// `Send` allows moving the allocation across threads (e.g. when the runtime hands the raw
+// Arc pointer back on an arbitrary thread). `Sync` is NOT implemented: sharing `&Statement`
+// across threads is unsound because `conn` is a `*mut Connection` with no synchronisation.
+// Connection itself uses `unsafe impl Send` to suppress auto-trait checks on the
+// `Vec<(Weak<Statement>, *const Statement)>` field, so `Statement: Sync` is not required
+// for `Connection: Send`.
+unsafe impl Send for Statement {}
+
+impl Statement {
+    /// Construct a new Statement for the given connection.
+    pub fn new(conn: *mut Connection, stmt_handle: StatementHandle) -> Self {
+        Self {
+            conn,
+            stmt_handle,
+            state: StatementState::Created.into(),
+            ard: ArdDescriptor::new(),
+            ird: IrdDescriptor::new(),
+            apd: ApdDescriptor::new(),
+            ipd: IpdDescriptor::new(),
+            diagnostic_info: DiagnosticInfo::default(),
+            get_data_state: None,
+            cursor_type: CursorType::ForwardOnly,
+            max_length: 0,
+            used_extended_fetch: false,
+            last_query_id: None,
+            cancel_token: CancellationToken::new(),
+        }
+    }
+
+    /// Borrow the owning connection.
+    ///
+    /// # Safety
+    /// The caller must ensure the Connection outlives this borrow and no other
+    /// mutable reference to the Connection exists simultaneously.
+    pub unsafe fn conn(&self) -> &Connection {
+        debug_assert!(
+            !self.conn.is_null(),
+            "Statement::conn: connection pointer is null"
+        );
+        unsafe { &*self.conn }
+    }
+
+    /// Return the raw connection pointer without creating a Rust borrow on `self`.
+    ///
+    /// Use this when you need both a `&mut Connection` and access to other
+    /// `Statement` fields in the same scope — the raw pointer carries no borrow
+    /// on `self`, so the borrow checker treats the resulting `&mut Connection`
+    /// as independent.
+    ///
+    /// # Safety
+    /// The caller must ensure that no live `conn()` borrow (or any other `&Connection`
+    /// derived from this statement) exists while the returned pointer is dereferenced
+    /// mutably. Having both an active `&Connection` and a `&mut Connection` pointing
+    /// to the same allocation is undefined behaviour.
+    pub(crate) unsafe fn conn_ptr(&self) -> *mut Connection {
+        self.conn
+    }
+}
+
 // Helper functions for handle conversion
 pub fn env_from_handle<'a>(handle: sql::Handle) -> &'a mut Environment {
     let env_ptr = handle as *mut Environment;
@@ -1048,7 +1211,7 @@ pub fn conn_from_handle<'a>(handle: sql::Handle) -> &'a mut Connection {
     unsafe { conn_ptr.as_mut().unwrap() }
 }
 
-pub fn stmt_from_handle<'a>(handle: sql::Handle) -> &'a mut Statement<'a> {
+pub fn stmt_from_handle<'a>(handle: sql::Handle) -> &'a mut Statement {
     let stmt_ptr = handle as *mut Statement;
     unsafe { stmt_ptr.as_mut().unwrap() }
 }

@@ -26,6 +26,107 @@ use crate::tls::client::create_tls_client_with_config;
 use crate::token_cache::TokenCache;
 
 impl DatabaseDriverV1 {
+    /// Set autocommit on the given connection.
+    ///
+    /// Pre-connect: stores `AUTOCOMMIT` in `init_session_parameters` so it is applied
+    /// at login time — no SQL execution required.
+    /// Post-connect: executes `ALTER SESSION SET AUTOCOMMIT = TRUE/FALSE`.
+    pub async fn connection_set_autocommit(
+        &self,
+        conn_handle: Handle,
+        autocommit: bool,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                if conn.is_post_connect() {
+                    // The guard is intentionally dropped before calling execute_session_sql,
+                    // which internally re-acquires the lock, to avoid a deadlock on the same
+                    // mutex. A TOCTOU gap exists between the check and the SQL execution, but
+                    // this is safe in the ODBC single-threaded connection model where state
+                    // transitions (connect/disconnect) are serialised at the handle level.
+                    drop(conn);
+                    let sql = if autocommit {
+                        "ALTER SESSION SET AUTOCOMMIT = TRUE"
+                    } else {
+                        "ALTER SESSION SET AUTOCOMMIT = FALSE"
+                    };
+                    self.execute_session_sql(conn_handle, sql).await
+                } else {
+                    let value = if autocommit { "true" } else { "false" }.to_string();
+                    conn.init_session_parameters
+                        .get_or_insert_with(HashMap::new)
+                        .insert("AUTOCOMMIT".to_string(), value);
+                    Ok(())
+                }
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    /// Execute `USE DATABASE "<name>"` on the given connection.
+    /// The database name is escaped (internal `"` doubled).
+    /// Must only be called after the connection is initialised (`is_post_connect()`).
+    pub async fn connection_use_database(
+        &self,
+        conn_handle: Handle,
+        database: &str,
+    ) -> Result<(), ApiError> {
+        let db = database.trim();
+        if db.is_empty() {
+            return InvalidArgumentSnafu {
+                argument: "database name must not be empty".to_string(),
+            }
+            .fail();
+        }
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                if !conn.is_post_connect() {
+                    return InvalidArgumentSnafu {
+                        argument: "connection_use_database called before connection is open"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                // The guard is intentionally dropped before calling execute_session_sql,
+                // which internally re-acquires the lock, to avoid a deadlock on the same
+                // mutex. A TOCTOU gap exists between the check and the SQL execution, but
+                // this is safe in the ODBC single-threaded connection model where state
+                // transitions (connect/disconnect) are serialised at the handle level.
+                drop(conn);
+            }
+            None => {
+                return InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                }
+                .fail();
+            }
+        }
+        let escaped = db.replace('"', "\"\"");
+        self.execute_session_sql(conn_handle, &format!("USE DATABASE \"{escaped}\""))
+            .await
+    }
+
+    /// Execute a session-scoped SQL command using a temporary statement.
+    /// Allocates a statement, executes, then releases it regardless of outcome.
+    async fn execute_session_sql(&self, conn_handle: Handle, sql: &str) -> Result<(), ApiError> {
+        let stmt_handle = self.statement_new(conn_handle)?;
+        let result = async {
+            self.statement_set_sql_query(stmt_handle, sql.to_string())
+                .await?;
+            self.statement_execute_query(stmt_handle, None).await
+        }
+        .await;
+        if let Err(e) = self.statement_release(stmt_handle) {
+            tracing::warn!("execute_session_sql: failed to release statement: {e:?}");
+        }
+        result.map(|_| ())
+    }
+
     pub async fn connection_init(
         &self,
         conn_handle: Handle,

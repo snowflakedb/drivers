@@ -108,8 +108,10 @@ pub fn col_attribute<E: OdbcEncoding>(
 
     match desc_field {
         DescField::Type | DescField::ConciseType => {
-            let sql_type =
-                sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            // SAFETY: conn pointer is valid for the statement's lifetime;
+            // no mutable reference to the Connection exists in this scope.
+            let sql_type = sql_type_from_field(field, &unsafe { stmt.conn() }.numeric_settings)
+                .context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
                 unsafe {
                     std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);
@@ -205,6 +207,9 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     let field = schema.field(col_idx);
+    // SAFETY: conn pointer is valid for the statement's lifetime;
+    // no mutable reference to the Connection exists in this scope.
+    let conn = unsafe { stmt.conn() };
 
     let name = field.name();
     write_string_chars::<E>(
@@ -217,19 +222,19 @@ pub fn describe_col<E: OdbcEncoding>(
 
     if !data_type_ptr.is_null() {
         let sql_type =
-            sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            sql_type_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
     }
 
     if !column_size_ptr.is_null() {
         let col_size =
-            column_size_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            column_size_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(column_size_ptr, col_size) };
     }
 
     if !decimal_digits_ptr.is_null() {
-        let digits = decimal_digits_from_field(field, &stmt.conn.numeric_settings)
-            .context(ConversionSnafu)?;
+        let digits =
+            decimal_digits_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(decimal_digits_ptr, digits) };
     }
 

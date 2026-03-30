@@ -424,6 +424,22 @@ message ConnectionRollbackRequest {
 message ConnectionRollbackResponse {
 }
 
+message ConnectionSetAutocommitRequest {
+  ConnectionHandle conn_handle = 1;
+  bool autocommit = 2;
+}
+
+message ConnectionSetAutocommitResponse {
+}
+
+message ConnectionUseDatabaseRequest {
+  ConnectionHandle conn_handle = 1;
+  string database = 2;
+}
+
+message ConnectionUseDatabaseResponse {
+}
+
 message ConnectionSetSessionParametersRequest {
   ConnectionHandle conn_handle = 1;
   map<string, string> parameters = 2;
@@ -798,6 +814,8 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  rpc ConnectionSetAutocommit(ConnectionSetAutocommitRequest) returns (ConnectionSetAutocommitResponse);
+  rpc ConnectionUseDatabase(ConnectionUseDatabaseRequest) returns (ConnectionUseDatabaseResponse);
   // sets initial session parameters connection should be initialized with
   // call before opening the connection
   rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
