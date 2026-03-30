@@ -334,8 +334,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            password: settings.get_sensitive_string(PASSWORD).context(
-                MissingParameterSnafu {
+            password: settings.get_sensitive_string(PASSWORD)
+                .filter(|s| s.reveal().is_empty())
+                .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
                 },
             )?,
@@ -344,8 +345,9 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
-            password: settings.get_sensitive_string(PASSWORD).context(
-                MissingParameterSnafu {
+            password: settings.get_sensitive_string(PASSWORD)
+                .filter(|s| s.reveal().is_empty())
+                .context(MissingParameterSnafu {
                     parameter: String::from(PASSWORD),
                 },
             )?,
@@ -575,7 +577,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             });
         }
         "SNOWFLAKE_PASSWORD" | "" => {
-            if settings.get_string(PASSWORD).is_none() {
+            if settings.get_string(PASSWORD).is_none_or(|s| s.is_empty()) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: PASSWORD.into(),
@@ -586,7 +588,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             }
         }
         "USERNAME_PASSWORD_MFA" => {
-            if settings.get_string(PASSWORD).is_none() {
+            if settings.get_string(PASSWORD).is_none_or(|s| s.is_empty()) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: PASSWORD.into(),
@@ -607,7 +609,7 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
             }
         }
         "PROGRAMMATIC_ACCESS_TOKEN" => {
-            if settings.get_string(TOKEN).is_none() {
+            if settings.get_string(TOKEN).is_none_or(|s| !s.is_empty()) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: TOKEN.into(),
