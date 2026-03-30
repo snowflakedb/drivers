@@ -302,3 +302,35 @@ Feature: ODBC SQLBindParameter spec compliance
     Given Snowflake client is logged in
     When SQL_C_BIT value 0 is bound as SQL_VARCHAR and SELECT ? is executed
     Then the result should be the string "0"
+
+  # Verify all string SQL types route through the same conversion
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG to SQL_CHAR.
+    Given Snowflake client is logged in
+    When SQL_C_SLONG value 42 is bound as SQL_CHAR and SELECT ? is executed
+    Then the result should be the string "42"
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG to SQL_LONGVARCHAR.
+    Given Snowflake client is logged in
+    When SQL_C_SLONG value 42 is bound as SQL_LONGVARCHAR and SELECT ? is executed
+    Then the result should be the string "42"
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG to SQL_WCHAR.
+    Given Snowflake client is logged in
+    When SQL_C_SLONG value 42 is bound as SQL_WCHAR and SELECT ? is executed
+    Then the result should be the string "42"
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG to SQL_WVARCHAR.
+    Given Snowflake client is logged in
+    When SQL_C_SLONG value 42 is bound as SQL_WVARCHAR and SELECT ? is executed
+    Then the result should be the string "42"
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG to SQL_WLONGVARCHAR.
+    Given Snowflake client is logged in
+    When SQL_C_SLONG value 42 is bound as SQL_WLONGVARCHAR and SELECT ? is executed
+    Then the result should be the string "42"

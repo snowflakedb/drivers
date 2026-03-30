@@ -975,3 +975,83 @@ TEST_CASE("should bind SQL_C_BIT false to SQL_VARCHAR.", "[query][bind_parameter
   REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
 }
+
+// =============================================================================
+// C type → other string SQL types (CHAR, WCHAR, LONGVARCHAR, WVARCHAR, WLONGVARCHAR)
+// Verify that all string SQL types correctly route through the same conversion.
+// =============================================================================
+
+TEST_CASE("should bind SQL_C_SLONG to SQL_CHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_CHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
+TEST_CASE("should bind SQL_C_SLONG to SQL_LONGVARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_LONGVARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
+TEST_CASE("should bind SQL_C_SLONG to SQL_WCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
+TEST_CASE("should bind SQL_C_SLONG to SQL_WVARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WVARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
+TEST_CASE("should bind SQL_C_SLONG to SQL_WLONGVARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_WLONGVARCHAR, 0, 0, &param, 0,
+                                   &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
