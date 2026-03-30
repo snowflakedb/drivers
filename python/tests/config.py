@@ -20,7 +20,16 @@ def get_test_parameters() -> dict[str, Any]:
     if parameter_path and os.path.exists(parameter_path):
         with open(parameter_path) as f:
             parameters = json.load(f)
-            return parameters.get("testconnection", {})
+        params = parameters.get("testconnection", {})
+        # MFA credentials are not typically present in parameters.json (they belong to a
+        # separate MFA-enabled account user).  Always overlay from env vars so that MFA
+        # E2E tests can run in any environment regardless of whether parameters.json exists.
+        mfa_env_vars = ["SNOWFLAKE_TEST_MFA_USER", "SNOWFLAKE_TEST_MFA_PASSWORD", "SNOWFLAKE_TEST_MFA_PASSCODE"]
+        for key in mfa_env_vars:
+            env_val = os.environ.get(key)
+            if env_val is not None:
+                params[key] = env_val
+        return params
 
     # Fallback to default test parameters (for local testing)
     env_vars = [

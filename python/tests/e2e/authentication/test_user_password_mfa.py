@@ -1,6 +1,6 @@
 import pytest
 
-from ...compatibility import NEW_DRIVER_ONLY
+from ...compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from ...config import get_test_parameters
 from .auth_helpers import verify_simple_query_execution
 
@@ -92,11 +92,18 @@ class TestUserPasswordMfaAuthentication:
     # Token caching flow
     # ------------------------------------------------------------------
 
-    @pytest.mark.skipif(not NEW_DRIVER_ONLY("BD#MFA1"), reason="Token caching only supported in new driver")
     def test_should_cache_mfa_token_on_first_connection(self, connection_factory, mfa_params, mfa_passcode):
         # Given Authentication is set to username_password_mfa with client_store_temporary_credential enabled
         user = mfa_params["user"]
         password = mfa_params["password"]
+
+        # BD#16: The old driver uses client_request_mfa_token to enable MFA token caching;
+        # the new driver renamed this parameter to client_store_temporary_credential.
+        # The new driver also accepts client_request_mfa_token as a backward-compatible alias.
+        if OLD_DRIVER_ONLY("BD#16"):
+            extra = {"client_request_mfa_token": True}
+        elif NEW_DRIVER_ONLY("BD#16"):
+            extra = {"client_store_temporary_credential": True}
 
         # When Trying to Connect
         connection = connection_factory(
@@ -104,22 +111,32 @@ class TestUserPasswordMfaAuthentication:
             user=user,
             password=password,
             passcode=mfa_passcode,
-            client_store_temporary_credential=True,
+            **extra,
         )
 
         # Then Login is successful and simple query can be executed
         with connection:
             verify_simple_query_execution(connection)
 
-    @pytest.mark.skipif(not NEW_DRIVER_ONLY("BD#MFA2"), reason="Token caching only supported in new driver")
     def test_should_reuse_cached_mfa_token_without_passcode(self, connection_factory, mfa_params, mfa_passcode):
         # Given Authentication is set to username_password_mfa and MFA token has been cached from a previous connection
+        user = mfa_params["user"]
+        password = mfa_params["password"]
+
+        # BD#16: The old driver uses client_request_mfa_token to enable MFA token caching;
+        # the new driver renamed this parameter to client_store_temporary_credential.
+        # The new driver also accepts client_request_mfa_token as a backward-compatible alias.
+        if OLD_DRIVER_ONLY("BD#16"):
+            extra = {"client_request_mfa_token": True}
+        elif NEW_DRIVER_ONLY("BD#16"):
+            extra = {"client_store_temporary_credential": True}
+
         first = connection_factory(
             authenticator="USERNAME_PASSWORD_MFA",
-            user=mfa_params["user"],
-            password=mfa_params["password"],
+            user=user,
+            password=password,
             passcode=mfa_passcode,
-            client_store_temporary_credential=True,
+            **extra,
         )
         with first:
             verify_simple_query_execution(first)
@@ -127,9 +144,9 @@ class TestUserPasswordMfaAuthentication:
         # When Trying to Connect without passcode
         second = connection_factory(
             authenticator="USERNAME_PASSWORD_MFA",
-            user=mfa_params["user"],
-            password=mfa_params["password"],
-            client_store_temporary_credential=True,
+            user=user,
+            password=password,
+            **extra,
         )
 
         # Then Login is successful and simple query can be executed
@@ -173,7 +190,7 @@ class TestUserPasswordMfaAuthentication:
                 authenticator="USERNAME_PASSWORD_MFA",
                 user=user,
                 password=password,
-                passcode="000000",
+                passcode="invalid_passcode",
             )
 
         # Then There is error returned

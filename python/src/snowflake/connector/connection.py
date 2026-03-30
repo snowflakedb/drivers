@@ -43,7 +43,7 @@ from .telemetry import TelemetryClient
 logger = logging.getLogger(__name__)
 
 SessionParameters = dict[str, Any]
-ConnectionParamValue = Union[int, str, float, bytes, SessionParameters]
+ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
 ConnectionParameters = dict[str, ConnectionParamValue]
 
 
@@ -71,17 +71,26 @@ class Connection:
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             session_parameters: Optional dict of session parameters to set at connection time
             authenticator: Authentication method. Use ``"USERNAME_PASSWORD_MFA"`` for MFA authentication.
-            passcode: MFA passcode (TOTP one-time code from an authenticator app). Used when
-                ``authenticator="USERNAME_PASSWORD_MFA"`` and ``ext_authn_duo_method="passcode"``.
+            passcode: MFA passcode (TOTP one-time code from an authenticator app). When provided
+                with ``authenticator="USERNAME_PASSWORD_MFA"``, the driver automatically uses the
+                Duo passcode flow; you do not need to set ``ext_authn_duo_method="passcode"``
+                explicitly.
             passcode_in_password: If ``True``, the MFA passcode is appended to the password field
-                rather than sent separately. Default ``False``.
+                rather than sent separately. This is treated the same as supplying ``passcode``
+                directly and will automatically select the Duo passcode flow. Default ``False``.
             client_store_temporary_credential: If ``True``, a successfully obtained MFA token is
                 cached in the OS keyring and reused for subsequent connections, avoiding repeated
-                MFA prompts. Default ``False``. The server must have
-                ``ALLOW_CLIENT_MFA_CACHING`` enabled. This also implicitly requests an MFA token
-                from the server (``CLIENT_REQUEST_MFA_TOKEN``).
-            ext_authn_duo_method: DUO Security authentication method. Either ``"push"`` (send a
-                push notification to the registered device) or ``"passcode"`` (use a TOTP code).
+                MFA prompts. Default ``False``. The server must have ``ALLOW_CLIENT_MFA_CACHING``
+                enabled. This also implicitly requests an MFA token from the server
+                (``CLIENT_REQUEST_MFA_TOKEN``).
+            client_request_mfa_token: Deprecated alias for ``client_store_temporary_credential``
+                from ``snowflake-connector-python``. Accepted for backward compatibility; prefer
+                ``client_store_temporary_credential`` in new code.
+            ext_authn_duo_method: DUO Security authentication method applied when no explicit
+                passcode is provided and no cached MFA token is available. Either ``"push"``
+                (send a push notification to the registered device) or ``"passcode"`` (prompt
+                for or use a TOTP code). When a ``passcode`` is supplied directly this parameter
+                is ignored because the passcode flow is selected automatically.
             **kwargs: Additional connection parameters
         """
         # paramstyle
@@ -147,7 +156,7 @@ class Connection:
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
-        _sensitive_keys = {"password", "private_key", "passcode"}
+        _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
@@ -374,11 +383,29 @@ class Connection:
             kwargs = {**kwargs, "private_key_password": private_key_file_pwd}
         return kwargs
 
+    @backward_compatibility
     def _rewrite_mfa_params(self, kwargs: ConnectionParameters) -> ConnectionParameters:
-        """Translate Python-style MFA parameter names to the keys expected by the Rust core."""
+        """Translate Python-style MFA parameter names to the keys expected by the Rust core.
+
+        Handles two rewrite rules:
+
+        * ``passcode_in_password`` → ``passcodeInPassword`` (camelCase key required by Rust core).
+        * ``client_request_mfa_token`` → ``client_store_temporary_credential`` for compatibility
+          with ``snowflake-connector-python``, which used the former name for MFA token caching.
+          If both are supplied, ``client_store_temporary_credential`` takes precedence and the
+          legacy key is discarded.
+        """
         passcode_in_password = kwargs.pop("passcode_in_password", None)
         if passcode_in_password is not None:
             kwargs = {**kwargs, "passcodeInPassword": passcode_in_password}
+
+        # client_request_mfa_token is the legacy snowflake-connector-python name for MFA token
+        # caching.  Map it to the canonical key so callers migrating from the old driver do not
+        # need to update their code.
+        legacy_token_cache = kwargs.pop("client_request_mfa_token", None)
+        if legacy_token_cache is not None and "client_store_temporary_credential" not in kwargs:
+            kwargs = {**kwargs, "client_store_temporary_credential": legacy_token_cache}
+
         return kwargs
 
     @property
