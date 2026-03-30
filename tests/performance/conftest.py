@@ -499,13 +499,13 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
             ud_files = result.get("universal", [])
             old_files = result.get("old", [])
 
-            # Get OLD avg for UD vs OLD section
+            # Get OLD median for UD vs OLD section
             old_result = get_file_median(old_files)
-            old_avg = old_result[1] if old_result else None
+            old_median = old_result[1] if old_result else None
 
             if os.environ.get("PERF_LOCAL_COMPARE") == "1":
                 # Full comparison: UD vs OLD + history
-                comp = compare_with_history(ud_files, results_dir, test_name, driver, "universal", old_median=old_avg)
+                comp = compare_with_history(ud_files, results_dir, test_name, driver, "universal", old_median=old_median)
             else:
                 # UD vs OLD only
                 ud_result = get_file_median(ud_files)
@@ -517,7 +517,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                     "driver_type": "universal",
                     "metric_col": ud_result[0],
                     "current_median": ud_result[1],
-                    "old_median": old_avg,
+                    "old_median": old_median,
                     "history": [],
                     "last_median": None,
                     "all_median": None,

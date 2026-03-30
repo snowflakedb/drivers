@@ -121,15 +121,15 @@ hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
 
 ### Local Performance Compare
 
-When running locally via `hatch run *-local` scripts, results are compared against previous local runs and printed in a summary at session end (after `✓ TESTS COMPLETED`). The feature is enabled by `PERF_LOCAL_COMPARE=1` set in those scripts.
+When running locally via `hatch run *-local` scripts, a session summary is printed at the end of the run (after `✓ TESTS COMPLETED`). UD vs OLD comparisons are always shown when both drivers ran. `PERF_LOCAL_COMPARE=1` (set in those scripts) additionally enables comparisons against previous local runs and single-driver summaries.
 
 **What is shown:**
 
-- **UD vs OLD** (when `--driver-type=both`): percentage difference between Universal and Old driver from the current run. Always shown when both drivers ran.
-- **vs last run**: current median compared to the previous run's median.
-- **vs all prev**: current median compared to the median across all previous runs.
+- **UD vs OLD** (when `--driver-type=both`): percentage difference between Universal and Old driver from the current run. Always shown when both drivers ran, regardless of `PERF_LOCAL_COMPARE`.
+- **vs last run** (requires `PERF_LOCAL_COMPARE=1` and at least 1 previous run): current median compared to the previous run's median.
+- **vs all prev** (requires `PERF_LOCAL_COMPARE=1` and at least 2 previous runs): current median compared to the median across all previous runs.
 
-History comparisons are silently skipped when no previous runs exist.
+History comparisons are silently skipped when there are no previous runs for `vs last run`, or fewer than 2 previous runs for `vs all prev`.
 
 Metric used: `fetch_s` for SELECT tests, `query_s` for PUT/GET tests. Per-run values use the median over all iterations.
 

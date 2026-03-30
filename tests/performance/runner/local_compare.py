@@ -28,8 +28,8 @@ def _detect_metric_column(csv_path: Path) -> Optional[str]:
             return "fetch_s"
         if "query_s" in header:
             return "query_s"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to detect metric column from {csv_path}: {e}")
     return None
 
 
@@ -96,11 +96,10 @@ def get_file_median(files: list[Path]) -> Optional[tuple[str, float]]:
     metric_col = _detect_metric_column(f)
     if not metric_col:
         return None
-    avg = _read_median(f, metric_col)
-    if avg is None:
+    median = _read_median(f, metric_col)
+    if median is None:
         return None
-    return metric_col, avg
-
+    return metric_col, median
 
 def compare_with_history(
     current_files: list[Path],
@@ -119,10 +118,10 @@ def compare_with_history(
         test_name:     Test name (without 'test_' prefix)
         driver:        Driver name (core, python, odbc, jdbc)
         driver_type:   Driver type (universal, old) or None for core
-        old_avg:       Optional OLD driver avg from the same run (for UD vs OLD display)
+        old_median:    Optional OLD driver median from the same run (for UD vs OLD display)
 
     Returns:
-        Dict with comparison data, or None if the current avg cannot be determined.
+        Dict with comparison data, or None if the current median cannot be determined.
         History fields are empty when results_dir has no previous runs.
     """
     if not current_files:
@@ -136,8 +135,8 @@ def compare_with_history(
     if not metric_col:
         return None
 
-    current_avg = _read_median(current_file, metric_col)
-    if current_avg is None:
+    current_median = _read_median(current_file, metric_col)
+    if current_median is None:
         return None
 
     results_base = results_dir.parent
@@ -156,11 +155,11 @@ def compare_with_history(
             prev_file = _find_result_file(run_dir, test_name, driver, driver_type)
             if prev_file is None:
                 continue
-            avg = _read_median(prev_file, metric_col)
-            if avg is not None:
-                history.append((run_dir.name, avg))
+            median = _read_median(prev_file, metric_col)
+            if median is not None:
+                history.append((run_dir.name, median))
 
-    last_avg = history[-1][1] if history else None
+    last_median = history[-1][1] if history else None
     all_median = statistics.median(v for _, v in history) if history else None
 
     return {
@@ -168,10 +167,10 @@ def compare_with_history(
         "driver": driver,
         "driver_type": driver_type,
         "metric_col": metric_col,
-        "current_median": current_avg,
+        "current_median": current_median,
         "old_median": old_median,
         "history": history,
-        "last_median": last_avg,
+        "last_median": last_median,
         "all_median": all_median,
     }
 
@@ -196,7 +195,7 @@ def _trend(current: float, reference: float) -> str:
 
 
 def log_summary(comparisons: list[dict]) -> None:
-    """Log all comparison results at session end, grouped by test."""
+    """Log all comparison results at session end, in test-run order."""
     if not comparisons:
         return
 
@@ -230,13 +229,16 @@ def log_summary(comparisons: list[dict]) -> None:
             trend = _trend(current_median, old_median)
             if trend == "faster":
                 colored = _color(f"{diff} ({trend})", _GREEN)
+                suffix = "than OLD"
             elif trend == "slower":
                 colored = _color(f"{diff} ({trend})", _RED)
+                suffix = "than OLD"
             else:
                 colored = f"{diff} ({trend})"
+                suffix = "vs OLD"
             logger.info(
                 f"    UD vs OLD:    {metric_col}  UD={current_median:.3f}s  OLD={old_median:.3f}s"
-                f"  UD is {colored} than OLD"
+                f"  UD is {colored} {suffix}"
             )
 
         # History comparison
