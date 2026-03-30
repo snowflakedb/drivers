@@ -220,3 +220,46 @@ Feature: ODBC SQLBindParameter spec compliance
     Given Snowflake client is logged in
     When APD header count is queried before any binding
     Then count should be 0
+
+  # ============================================================================
+  # C type → VARCHAR conversions
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind negative SQL_C_SLONG to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_ULONG to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SSHORT to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_USHORT to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SBIGINT to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_UBIGINT to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_STINYINT to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_UTINYINT to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_DOUBLE to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_FLOAT to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_BIT true to SQL_VARCHAR.
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_BIT false to SQL_VARCHAR.

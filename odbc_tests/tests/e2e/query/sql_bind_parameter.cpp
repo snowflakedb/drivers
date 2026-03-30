@@ -774,3 +774,204 @@ TEST_CASE("should report APD count zero when no parameters are bound.", "[query]
   // Then count should be 0
   CHECK(count == 0);
 }
+
+// =============================================================================
+// C type → VARCHAR conversions
+// =============================================================================
+
+TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
+TEST_CASE("should bind negative SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = -999;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-999");
+}
+
+TEST_CASE("should bind SQL_C_ULONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLUINTEGER param = 4000000000U;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_ULONG, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "4000000000");
+}
+
+TEST_CASE("should bind SQL_C_SSHORT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLSMALLINT param = -7;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SSHORT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-7");
+}
+
+TEST_CASE("should bind SQL_C_USHORT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLUSMALLINT param = 65535;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_USHORT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "65535");
+}
+
+TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLBIGINT param = 9999999999LL;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "9999999999");
+}
+
+TEST_CASE("should bind SQL_C_UBIGINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLUBIGINT param = 1000000000000ULL;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_UBIGINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1000000000000");
+}
+
+TEST_CASE("should bind SQL_C_STINYINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLSCHAR param = -128;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_STINYINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-128");
+}
+
+TEST_CASE("should bind SQL_C_UTINYINT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLCHAR param = 255;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_UTINYINT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "255");
+}
+
+TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLDOUBLE param = 3.14;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  CHECK(result.substr(0, 4) == "3.14");
+}
+
+TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLREAL param = 1.5f;
+  SQLLEN indicator = 0;
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  CHECK(result.substr(0, 3) == "1.5");
+}
+
+TEST_CASE("should bind SQL_C_BIT true to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLCHAR param = 1;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "1");
+}
+
+TEST_CASE("should bind SQL_C_BIT false to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLCHAR param = 0;
+  SQLLEN indicator = sizeof(param);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BIT, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
+}
