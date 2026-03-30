@@ -196,6 +196,55 @@ impl WithDiagnosticInfo for Statement {
     }
 }
 
+impl WithDiagnosticInfo for crate::api::types::ArdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+impl WithDiagnosticInfo for crate::api::types::ApdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+impl WithDiagnosticInfo for crate::api::types::IrdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+impl WithDiagnosticInfo for crate::api::types::IpdDescriptor {
+    fn get_diag_info(&self) -> &DiagnosticInfo {
+        &self.diagnostic_info
+    }
+    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
+        &mut self.diagnostic_info
+    }
+}
+
+fn desc_diag_from_handle<'a>(handle: sql::Handle) -> &'a mut dyn WithDiagnosticInfo {
+    use crate::api::types::DescriptorKind;
+    let raw_kind = unsafe { *(handle as *const u8) };
+    let kind = DescriptorKind::try_from(raw_kind)
+        .expect("desc_diag_from_handle: invalid descriptor tag — caller passed a bad handle");
+    match kind {
+        DescriptorKind::Ard => unsafe { &mut *(handle as *mut crate::api::types::ArdDescriptor) },
+        DescriptorKind::Ird => unsafe { &mut *(handle as *mut crate::api::types::IrdDescriptor) },
+        DescriptorKind::Apd => unsafe { &mut *(handle as *mut crate::api::types::ApdDescriptor) },
+        DescriptorKind::Ipd => unsafe { &mut *(handle as *mut crate::api::types::IpdDescriptor) },
+    }
+}
+
 pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
     if handle.is_null() {
         return;
@@ -204,6 +253,7 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
         sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
+        sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return,
     };
     t.get_diag_info_mut().clear();
@@ -217,6 +267,7 @@ pub fn from_handle_type<'a>(
         sql::HandleType::Env => Some(env_from_handle(handle)),
         sql::HandleType::Dbc => Some(conn_from_handle(handle)),
         sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
+        sql::HandleType::Desc => Some(desc_diag_from_handle(handle)),
         _ => {
             tracing::info!("Invalid handle type: {:?}", handle_type);
             None
@@ -291,6 +342,7 @@ pub fn get_diag_info(
         sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
         sql::HandleType::Stmt => stmt_from_handle(handle),
+        sql::HandleType::Desc => desc_diag_from_handle(handle),
         _ => return InvalidHandleSnafu.fail(),
     };
     Ok(t.get_diag_info().clone())
@@ -374,11 +426,12 @@ pub fn get_diag_field<E: OdbcEncoding>(
     if rec_number == 0 {
         match diag_id {
             DiagIdentifier::Number => {
+                let count = diagnostic_info
+                    .header
+                    .number_of_records
+                    .unwrap_or(diagnostic_info.records.len() as sql::Integer);
                 unsafe {
-                    std::ptr::write(
-                        diag_info_ptr as *mut sql::Integer,
-                        diagnostic_info.header.number_of_records.unwrap_or(0),
-                    );
+                    std::ptr::write(diag_info_ptr as *mut sql::Integer, count);
                 }
                 Ok(())
             }
@@ -513,5 +566,115 @@ pub fn get_diag_field<E: OdbcEncoding>(
             }
             _ => NoMoreDataSnafu.fail(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::types::{
+        ApdDescriptor, ArdDescriptor, IpdDescriptor, IrdDescriptor, ToSqlReturn,
+    };
+
+    fn make_test_record() -> DiagnosticRecord {
+        DiagnosticRecord {
+            native_error: 0,
+            sql_state: SqlState::InvalidAttributeOptionIdentifier,
+            class_origin: ClassOrigin::Odbc3_0,
+            column_number: None,
+            row_number: None,
+            connection_name: String::new(),
+            message_text: "test diagnostic on descriptor".to_string(),
+        }
+    }
+
+    #[test]
+    fn desc_diag_from_handle_resolves_all_descriptor_kinds() {
+        let mut ard = ArdDescriptor::new();
+        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+
+        let mut apd = ApdDescriptor::new();
+        let handle = &mut apd as *mut ApdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+
+        let mut ird = IrdDescriptor::new();
+        let handle = &mut ird as *mut IrdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+
+        let mut ipd = IpdDescriptor::new();
+        let handle = &mut ipd as *mut IpdDescriptor as sql::Handle;
+        let diag = desc_diag_from_handle(handle);
+        assert!(diag.get_diag_info().records.is_empty());
+    }
+
+    #[test]
+    fn get_diag_info_returns_records_on_descriptor() {
+        let mut ard = ArdDescriptor::new();
+        ard.diagnostic_info.add_record(make_test_record());
+
+        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
+        let info = get_diag_info(sql::HandleType::Desc, handle).unwrap();
+
+        assert_eq!(info.records.len(), 1);
+        assert_eq!(
+            info.records[0].sql_state,
+            SqlState::InvalidAttributeOptionIdentifier
+        );
+        assert_eq!(
+            info.records[0].message_text,
+            "test diagnostic on descriptor"
+        );
+    }
+
+    #[test]
+    fn clear_diag_info_clears_descriptor_diagnostics() {
+        let mut ard = ArdDescriptor::new();
+        ard.diagnostic_info.add_record(make_test_record());
+        assert_eq!(ard.diagnostic_info.records.len(), 1);
+
+        let handle = &mut ard as *mut ArdDescriptor as sql::Handle;
+        clear_diag_info(sql::HandleType::Desc, handle);
+
+        assert!(ard.diagnostic_info.records.is_empty());
+    }
+
+    #[test]
+    fn from_handle_type_returns_some_for_desc() {
+        let mut apd = ApdDescriptor::new();
+        let handle = &mut apd as *mut ApdDescriptor as sql::Handle;
+        assert!(from_handle_type(sql::HandleType::Desc, handle).is_some());
+    }
+
+    #[test]
+    fn invalid_handle_type_returns_sql_error_not_invalid_handle() {
+        let result: OdbcResult<()> = crate::api::error::InvalidHandleTypeSnafu {
+            handle_type: sql::HandleType::Desc as i16,
+        }
+        .fail();
+        assert_eq!(result.to_sql_code(), sql::SqlReturn::ERROR.0);
+    }
+
+    #[test]
+    fn set_diag_info_from_result_posts_error_on_descriptor() {
+        let mut ird = IrdDescriptor::new();
+        let handle = &mut ird as *mut IrdDescriptor as sql::Handle;
+
+        let result: OdbcResult<()> = crate::api::error::InvalidHandleTypeSnafu {
+            handle_type: sql::HandleType::Desc as i16,
+        }
+        .fail();
+
+        set_diag_info_from_result(sql::HandleType::Desc, handle, &result);
+
+        let info = get_diag_info(sql::HandleType::Desc, handle).unwrap();
+        assert_eq!(info.records.len(), 1);
+        assert_eq!(
+            info.records[0].sql_state,
+            SqlState::InvalidAttributeOptionIdentifier
+        );
     }
 }

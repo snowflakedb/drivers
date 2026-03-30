@@ -610,6 +610,7 @@ impl From<SqlType> for sql::SqlDataType {
 #[repr(C)]
 pub struct ArdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
     pub bindings: HashMap<u16, Binding>,
     /// `SQL_DESC_ARRAY_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` — default 1.
     pub array_size: usize,
@@ -629,6 +630,7 @@ impl ArdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ard,
+            diagnostic_info: DiagnosticInfo::default(),
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -663,6 +665,7 @@ impl ArdDescriptor {
 #[repr(C)]
 pub struct ApdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
     pub records: HashMap<u16, ApdRecord>,
     /// `SQL_DESC_ARRAY_SIZE` — number of parameter sets (default 1).
     pub array_size: usize,
@@ -682,6 +685,7 @@ impl ApdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Apd,
+            diagnostic_info: DiagnosticInfo::default(),
             records: HashMap::new(),
             array_size: 1,
             bind_type: 0,
@@ -706,6 +710,7 @@ impl ApdDescriptor {
 #[repr(C)]
 pub struct IrdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
     /// `SQL_DESC_COUNT` — number of columns in the result set.
     pub desc_count: sql::SmallInt,
     /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
@@ -724,6 +729,7 @@ impl IrdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ird,
+            diagnostic_info: DiagnosticInfo::default(),
             desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
@@ -740,6 +746,7 @@ impl IrdDescriptor {
 #[repr(C)]
 pub struct IpdDescriptor {
     kind: DescriptorKind,
+    pub diagnostic_info: DiagnosticInfo,
     pub records: HashMap<u16, IpdRecord>,
     /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
     pub array_status_ptr: *mut u16,
@@ -757,6 +764,7 @@ impl IpdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ipd,
+            diagnostic_info: DiagnosticInfo::default(),
             records: HashMap::new(),
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
