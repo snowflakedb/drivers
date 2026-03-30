@@ -1,7 +1,6 @@
 #pragma once
 
 #include <sql.h>
-#include <sqlext.h>
 
 #include <atomic>
 #include <chrono>
@@ -26,15 +25,20 @@ struct CrossThreadCancel {
   std::atomic<SQLRETURN> exec_result{SQL_NO_DATA};
   SQLRETURN cancel_result = SQL_ERROR;
 
-  void run(SQLHSTMT stmt, const char* query, std::chrono::seconds pre_cancel_delay) {
+  void run(const SQLHSTMT stmt, const char* query, const std::chrono::seconds pre_cancel_delay) {
+    run(stmt, query, pre_cancel_delay, [](const SQLHSTMT s) { return SQLCancel(s); });
+  }
+
+  template <typename CancelFn>
+  void run(SQLHSTMT stmt, const char* query, const std::chrono::seconds pre_cancel_delay, CancelFn cancel_fn) {
     std::mutex mtx;
     std::condition_variable cv;
-    bool executing = false;
+    std::atomic<bool> executing{false};  // NOLINT: read by cv.wait predicate on another thread
 
     std::thread executor([&]() {
       {
         std::lock_guard lk(mtx);
-        executing = true;
+        executing.store(true);
       }
       cv.notify_one();
       exec_result.store(SQLExecDirect(stmt, sqlchar(query), SQL_NTS));
@@ -43,14 +47,14 @@ struct CrossThreadCancel {
 
     {
       std::unique_lock lk(mtx);
-      cv.wait(lk, [&] { return executing; });
+      cv.wait(lk, [&] { return executing.load(); });
     }
 
     if (pre_cancel_delay.count() > 0) {
       std::this_thread::sleep_for(pre_cancel_delay);
     }
 
-    cancel_result = SQLCancel(stmt);
+    cancel_result = cancel_fn(stmt);
   }
 };
 
