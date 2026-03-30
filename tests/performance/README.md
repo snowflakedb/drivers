@@ -119,6 +119,39 @@ hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
 | `--preserve-mappings` | Keep WireMock mappings after tests (for debugging) | `false` (enabled in local runs) |
 | `--reuse-mappings` | Reuse existing mappings directory (e.g., `run_20260115_120000`) | None (runs recording phase) |
 
+### Local Performance Compare (Local Only)
+
+When running locally via `hatch run *-local` scripts, results are compared against previous local runs and printed in a summary at session end (after `✓ TESTS COMPLETED`). The feature is enabled by `PERF_LOCAL_COMPARE=1` set in those scripts; CI runs never set it.
+
+**What is shown:**
+
+- **UD vs OLD** (when `--driver-type=both`): percentage difference between Universal and Old driver from the current run. Always shown when both drivers ran.
+- **vs last run**: current median compared to the previous run's median.
+- **vs all prev**: current median compared to the median across all previous runs.
+- **Old driver alone** (`--driver-type=old`): nothing shown.
+
+History comparisons are silently skipped when no previous runs exist.
+
+Metric used: `fetch_s` for SELECT tests, `query_s` for PUT/GET tests. Per-run values use the median over all iterations.
+
+**Session summary format:**
+```
+================================================================================
+SUMMARY
+================================================================================
+
+  select_string_1M_arrow_recorded_http  (python universal)
+    UD vs OLD:    fetch_s  UD=0.327s  OLD=0.459s  UD is -28.7% (faster) than OLD
+    vs last run:  fetch_s  0.459s -> 0.327s  -28.7%  faster  (run_20260326_122102)
+    vs all prev:  fetch_s  median 0.367s -> 0.327s  -10.8%  faster  [N=17]
+
+================================================================================
+```
+
+Previous runs are read from the local `results/` directory. Use `hatch run clean` to reset it.
+
+---
+
 #### Examples with Custom Arguments
 
 ```bash
