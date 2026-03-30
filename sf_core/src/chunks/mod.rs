@@ -119,9 +119,12 @@ impl ChunkDownloadData {
     }
 }
 
-/// Downloads chunk data from the given URL. Gzip decompression is handled
-/// transparently by reqwest's `gzip` feature during streaming, so no
-/// intermediate compressed buffer is ever materialised.
+/// Downloads chunk data from the given URL.
+///
+/// When reqwest's `gzip` feature handles `Content-Encoding: gzip` transparently
+/// the returned bytes are already decompressed. Some cloud providers (notably
+/// GCS on GCP) may serve gzip-compressed data without setting that header, so
+/// we detect the gzip magic bytes and decompress explicitly when needed.
 pub async fn get_chunk_data(
     client: Client,
     chunk: ChunkDownloadData,
@@ -174,5 +177,26 @@ pub async fn get_chunk_data(
     }
 
     let body = response.bytes().await.context(CommunicationSnafu)?;
-    Ok(body.to_vec())
+    let bytes = body.to_vec();
+    maybe_decompress_gzip(bytes)
+}
+
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+fn maybe_decompress_gzip(data: Vec<u8>) -> Result<Vec<u8>, ChunkError> {
+    if data.len() >= 2 && data[..2] == GZIP_MAGIC {
+        use flate2::bufread::GzDecoder;
+        use std::io::Read as _;
+        let mut decoder = GzDecoder::new(&data[..]);
+        let mut decompressed = Vec::new();
+        decoder
+            .read_to_end(&mut decompressed)
+            .map_err(|e| ChunkError::ChunkDecompression {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
+        Ok(decompressed)
+    } else {
+        Ok(data)
+    }
 }

@@ -42,6 +42,12 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to decompress gzip chunk data"))]
+    ChunkDecompression {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("No initial inline data and no remote chunks available to derive schema"))]
     InitialChunkMissing {
         #[snafu(implicit)]
