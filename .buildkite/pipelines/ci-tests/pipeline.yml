@@ -175,8 +175,16 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          apt-get update -qq
-          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config
+          echo "OS: $$(cat /etc/os-release 2>/dev/null | head -5)"
+          if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config curl
+          elif command -v yum &>/dev/null; then
+            yum install -y gcc gcc-c++ openssl-devel unzip git golang pkg-config perl-IPC-Cmd
+          elif command -v apk &>/dev/null; then
+            apk add --no-cache gcc g++ musl-dev openssl-dev unzip git go pkgconf curl bash
+          else
+            echo "No supported package manager found" && exit 1
+          fi
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
@@ -327,8 +335,16 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          apt-get update -qq
-          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config python3 python3-pip python3-venv python3-dev
+          if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config curl python3 python3-pip python3-venv python3-dev
+          elif command -v yum &>/dev/null; then
+            yum install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd python39 python39-pip python39-devel
+            alternatives --set python3 /usr/bin/python3.9 2>/dev/null || true
+          elif command -v apk &>/dev/null; then
+            apk add --no-cache gcc g++ musl-dev openssl-dev unzip git go pkgconf curl bash python3 python3-dev py3-pip
+          else
+            echo "No supported package manager found" && exit 1
+          fi
           pip3 install --upgrade pip setuptools wheel uv hatch
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -485,9 +501,16 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          apt-get update -qq
-          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config \
-            cmake unixodbc-dev libz-dev
+          if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config curl cmake unixodbc-dev libz-dev
+          elif command -v yum &>/dev/null; then
+            yum install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd cmake3 unixODBC-devel zlib-devel
+            ln -sf /usr/bin/cmake3 /usr/local/bin/cmake 2>/dev/null || true
+          elif command -v apk &>/dev/null; then
+            apk add --no-cache gcc g++ musl-dev openssl-dev unzip git go pkgconf curl bash cmake unixodbc-dev zlib-dev
+          else
+            echo "No supported package manager found" && exit 1
+          fi
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
@@ -653,10 +676,18 @@ steps:
           fi
 
           echo "--- :gear: Installing dependencies"
-          apt-get update -qq
-          apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config \
-            openjdk-11-jdk
-          export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-arm64
+          if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq gcc g++ libssl-dev unzip git golang pkg-config curl openjdk-11-jdk
+            export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-arm64
+          elif command -v yum &>/dev/null; then
+            yum install -y gcc gcc-c++ openssl-devel unzip git golang perl-IPC-Cmd java-11-openjdk java-11-openjdk-devel
+            export JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+          elif command -v apk &>/dev/null; then
+            apk add --no-cache gcc g++ musl-dev openssl-dev unzip git go pkgconf curl bash openjdk11
+            export JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+          else
+            echo "No supported package manager found" && exit 1
+          fi
           if ! command -v cargo &>/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
