@@ -779,6 +779,24 @@ TEST_CASE("should report APD count zero when no parameters are bound.", "[query]
 // C type → VARCHAR conversions
 // =============================================================================
 
+TEST_CASE("should bind SQL_C_LONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLINTEGER param = 42;
+  SQLLEN indicator = 0;
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_VARCHAR, 0, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
 TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
   // Given Snowflake client is logged in
   Connection conn;

@@ -226,6 +226,12 @@ Feature: ODBC SQLBindParameter spec compliance
   # ============================================================================
 
   @odbc_e2e
+  Scenario: should bind SQL_C_LONG to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
   Scenario: should bind SQL_C_SLONG to SQL_VARCHAR.
     Given Snowflake client is logged in
     When the C type value is bound as a string SQL type and SELECT ? is executed
