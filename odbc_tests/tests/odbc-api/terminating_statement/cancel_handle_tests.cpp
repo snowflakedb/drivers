@@ -44,14 +44,21 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after query exe
   ret = SQLCancelHandle(SQL_HANDLE_STMT, stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Per ODBC 3.5 spec, cancel when no async processing is in progress
-  // should have no effect keeping the cursor open and usable. The reference
-  // driver unconditionally closes cursors during cancel.
-  ret = SQLFetch(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  WINDOWS_ONLY {
+    // Windows DM: synchronous cancel is a no-op, cursor remains open and usable
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  UNIX_ONLY {
+    // Note: Per ODBC 3.5 spec, cancel when no async processing is in progress
+    // should have no effect keeping the cursor open and usable. The reference
+    // driver unconditionally closes cursors during cancel.
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
-  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 2"), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 2"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after fetch",
@@ -67,12 +74,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel after fetch",
   ret = SQLCancelHandle(SQL_HANDLE_STMT, stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Same reference driver bug as above
-  ret = SQLFetch(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  WINDOWS_ONLY {
+    // Windows DM: synchronous cancel is a no-op, cursor remains open
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_NO_DATA);
+  }
+  UNIX_ONLY {
+    // Note: Same reference driver bug as above
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
-  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
-  REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+    ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 42"), SQL_NTS);
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Cancel on prepared but not executed statement",
@@ -113,12 +127,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: After cancel on execut
   ret = SQLCancelHandle(SQL_HANDLE_STMT, stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Same reference driver bug
-  ret = SQLFetch(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+  WINDOWS_ONLY {
+    // Windows DM: synchronous cancel is a no-op, cursor remains open
+    ret = SQLFetch(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  UNIX_ONLY {
+    // Note: Same reference driver bug
+    ret = SQLFetch(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
 
-  ret = SQLExecute(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+    ret = SQLExecute(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Statement recoverable via SQLFreeStmt SQL_CLOSE after cancel",
@@ -158,10 +179,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: SQLCloseCursor fails a
   ret = SQLCancelHandle(SQL_HANDLE_STMT, stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: SQLCloseCursor fails because the reference driver already invalidated
-  // the cursor during cancel.
-  ret = SQLCloseCursor(stmt_handle());
-  REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  WINDOWS_ONLY {
+    // Windows DM: synchronous cancel is a no-op, cursor remains open and closeable
+    ret = SQLCloseCursor(stmt_handle());
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+  UNIX_ONLY {
+    // Note: SQLCloseCursor fails because the reference driver already invalidated
+    // the cursor during cancel.
+    ret = SQLCloseCursor(stmt_handle());
+    REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
+  }
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: Multiple cancels on idle statement",
@@ -417,5 +445,9 @@ TEST_CASE_METHOD(EnvFixture, "SQLCancelHandle: SQL_INVALID_HANDLE for environmen
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const SQLRETURN ret = SQLCancelHandle(SQL_HANDLE_ENV, env_handle());
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  WINDOWS_ONLY {
+    // Windows DM returns SQL_ERROR instead of SQL_INVALID_HANDLE for unsupported handle types
+    REQUIRE(ret == SQL_ERROR);
+  }
+  UNIX_ONLY { REQUIRE(ret == SQL_INVALID_HANDLE); }
 }

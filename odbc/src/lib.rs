@@ -1,8 +1,8 @@
+#![recursion_limit = "256"]
+
 mod api;
 pub mod c_api;
-mod cdata_types;
 mod conversion;
-mod write_arrow;
 
 extern crate sf_core;
 extern crate tracing;

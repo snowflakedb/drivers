@@ -67,6 +67,7 @@ class TestFloatTypeCasting:
     @float_type_parametrize
     def test_should_cast_float_values_to_appropriate_type_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT 0.0::<type>, 123.456::<type>, 1.23e10::<type>, 'NaN'::<type>, 'inf'::<type>" is executed
         sql = (
@@ -79,8 +80,10 @@ class TestFloatTypeCasting:
         assert_type(result, float)
 
         # And Regular values should have approximately 15 decimal digits precision
+        assert_floats_equal(result[:3], (0.0, 123.456, 1.23e10))
+
         # And NaN and inf values should be identified correctly
-        assert_floats_equal(result, (0.0, 123.456, 1.23e10, nan, inf))
+        assert_floats_equal(result[3:], (nan, inf))
 
 
 class TestFloatLiteral:
@@ -89,6 +92,7 @@ class TestFloatLiteral:
     @float_type_parametrize
     def test_should_select_float_literals_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT 0.0::<type>, 1.0::<type>, -1.0::<type>, 123.456::<type>, -123.456::<type>" is executed
         sql = (
@@ -104,6 +108,7 @@ class TestFloatLiteral:
     @float_type_parametrize
     def test_should_handle_special_float_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
         sql = f"SELECT 'NaN'::{float_type}, 'inf'::{float_type}, '-inf'::{float_type}"
@@ -113,23 +118,36 @@ class TestFloatLiteral:
         assert_floats_equal(result, (nan, inf, -inf))
         assert_type(result, float)
 
+    BOUNDARY_LITERAL_CASES = [
+        ((FLOAT_MAX, FLOAT_MIN), (FLOAT_MAX, FLOAT_MIN)),
+        ((FLOAT_MIN_NORMAL, FLOAT_MIN_SUBNORMAL), (FLOAT_MIN_NORMAL, FLOAT_MIN_SUBNORMAL)),
+    ]
+
     @float_type_parametrize
-    def test_should_handle_float_boundary_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
+    @pytest.mark.parametrize(
+        "select_values, expected",
+        BOUNDARY_LITERAL_CASES,
+        ids=["max", "min"],
+    )
+    def test_should_handle_float_case_boundary_values_from_literals_for_float_and_synonyms(
+        self, execute_query, float_type, select_values, expected
+    ):
         # Given Snowflake client is logged in
+        pass
 
-        # When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is executed
-        sql = f"SELECT {FLOAT_MAX}::{float_type}, {FLOAT_MIN}::{float_type}"
-        result = execute_query(sql, single_row=True)
+        # When Query "SELECT <query_values>" is executed
+        columns = ", ".join(f"{v}::{float_type}" for v in select_values)
+        result = execute_query(f"SELECT {columns}", single_row=True)
 
-        # Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
-        assert_floats_equal(result, (FLOAT_MAX, FLOAT_MIN))
+        # Then Result should contain floats [<expected_values>]
+        assert_floats_equal(result, expected)
 
-        # When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
-        sql = f"SELECT {FLOAT_MIN_NORMAL}::{float_type}, {FLOAT_MIN_SUBNORMAL}::{float_type}"
-        result = execute_query(sql, single_row=True)
-
-        # Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
-        assert_floats_equal(result, (FLOAT_MIN_NORMAL, FLOAT_MIN_SUBNORMAL))
+    @float_type_parametrize
+    def test_should_handle_float_precision_boundary_values_from_literals_for_float_and_synonyms(
+        self, execute_query, float_type
+    ):
+        # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
         sql = f"SELECT {FLOAT_15_DIGITS}::{float_type}, {FLOAT_16_DIGITS}::{float_type}"
@@ -141,6 +159,7 @@ class TestFloatLiteral:
     @float_type_parametrize
     def test_should_handle_null_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT NULL::<type>, 42.5::<type>, NULL::<type>" is executed
         sql = f"SELECT NULL::{float_type}, 42.5::{float_type}, NULL::{float_type}"
@@ -155,20 +174,20 @@ class TestFloatLiteral:
         self, execute_query, float_type
     ):
         # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
-
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} as id "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
             f"ORDER BY 1"
         )
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         rows = execute_query(sql)
 
-        # Then Result should contain 50000 rows
-        # And All values should be returned as appropriate float type
+        # Then Result should contain 50000 rows with all values returned as appropriate float type
         values = [row[0] for row in rows]
         assert_type(values, float)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
@@ -180,10 +199,11 @@ class TestFloatTable:
     @float_type_parametrize
     def test_should_select_floats_from_table_for_float_and_synonyms(self, execute_query, tmp_schema, float_type):
         # Given Snowflake client is logged in
+        pass
 
         # And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
         table_name = f"{tmp_schema}.float_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         test_values = [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
         for val in test_values:
             execute_query(f"INSERT INTO {table_name} VALUES ({val})")
@@ -201,10 +221,11 @@ class TestFloatTable:
         self, execute_query, tmp_schema, float_type
     ):
         # Given Snowflake client is logged in
+        pass
 
         # And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
         table_name = f"{tmp_schema}.special_float_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(
             f"INSERT INTO {table_name} VALUES\n"
             f"('NaN'::{float_type}),\n"
@@ -227,11 +248,12 @@ class TestFloatTable:
         self, execute_query, tmp_schema, float_type
     ):
         # Given Snowflake client is logged in
+        pass
 
         # And Table with <type> column exists with boundary values
         # [1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 123456789012345.0]
         table_name = f"{tmp_schema}.boundary_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         boundary_values = [
             FLOAT_MAX,
             FLOAT_MIN,
@@ -247,16 +269,17 @@ class TestFloatTable:
         result = [row[0] for row in rows]
 
         # Then Result should contain maximum, minimum, and precision boundary values
-        # And All values should be preserved within float precision limits
+        # preserved within float precision limits
         assert_floats_equal(result, boundary_values)
 
     @float_type_parametrize
     def test_should_handle_null_values_from_table_for_float_and_synonyms(self, execute_query, tmp_schema, float_type):
         # Given Snowflake client is logged in
+        pass
 
         # And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
         table_name = f"{tmp_schema}.null_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(f"INSERT INTO {table_name} VALUES (NULL), (123.456), (NULL), (-789.012)")
 
         # When Query "SELECT * FROM <table>" is executed
@@ -272,13 +295,14 @@ class TestFloatTable:
         self, execute_query, tmp_schema, float_type
     ):
         # Given Snowflake client is logged in
+        pass
 
         # And Table with <type> column exists with 50000 sequential values
+        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
-        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} "
@@ -288,8 +312,7 @@ class TestFloatTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
-        # Then Result should contain 50000 rows
-        # And All values should be returned as appropriate float type
+        # Then Result should contain 50000 rows with all values returned as appropriate float type
         values = [row[0] for row in rows]
         assert_type(values, float)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
@@ -302,6 +325,7 @@ class TestFloatBinding:
     @float_type_parametrize
     def test_should_select_float_using_parameter_binding_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed
         # with bound float values [123.456, -789.012, 42.0]
@@ -312,13 +336,14 @@ class TestFloatBinding:
         assert_floats_equal(result, [123.456, -789.012, 42.0])
         assert_type(result, float)
 
-        # Note: NaN, inf, -inf cannot be bound via parameter binding in Snowflake.
-        # Snowflake rejects them with "Invalid bind value (nan) for type (REAL)".
-        # Special float values are tested via literals in TestFloatLiteral instead.
+    @float_type_parametrize
+    def test_should_select_null_float_using_parameter_binding_for_float_and_synonyms(self, execute_query, float_type):
+        # Given Snowflake client is logged in
+        pass
 
         # When Query "SELECT ?::<type>" is executed with bound NULL value
-        sql_null = f"SELECT ?::{float_type}"
-        result = execute_query(sql_null, (None,), single_row=True)
+        sql = f"SELECT ?::{float_type}"
+        result = execute_query(sql, (None,), single_row=True)
 
         # Then Result should contain NULL
         assert_floats_equal(result, [None])
@@ -328,10 +353,11 @@ class TestFloatBinding:
         self, execute_query, executemany_insert, tmp_schema, float_type
     ):
         # Given Snowflake client is logged in
+        pass
 
         # And Table with <type> column exists
         table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {float_type})")
 
         # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
 

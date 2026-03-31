@@ -215,9 +215,13 @@ std::string get_connection_string() {
   if (!params["warehouse"].empty()) ss << "WAREHOUSE=" << params["warehouse"] << ";";
   if (!params["role"].empty()) ss << "ROLE=" << params["role"] << ";";
 
-  // TLS verification parameters (for WireMock testing)
-  if (!params["verify_certificates"].empty()) ss << "TLS_VERIFY_CERTIFICATES=" << params["verify_certificates"] << ";";
-  if (!params["verify_hostname"].empty()) ss << "TLS_VERIFY_HOSTNAME=" << params["verify_hostname"] << ";";
+  std::string driver_type_str = get_driver_type();
+
+  const char* wiremock_proxy = std::getenv("WIREMOCK_PROXY_URL");
+  if (driver_type_str == "old" && wiremock_proxy) {
+    ss << "proxy=" << wiremock_proxy << ";";
+    std::cout << "Old driver: proxy=" << wiremock_proxy << "\n";
+  }
 
   return ss.str();
 }

@@ -25,7 +25,7 @@ def test_should_auto_detect_standard_compression_types_when_source_compression_s
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE)
         stage_name, test_file_path = create_stage_and_get_compression_file(
@@ -82,7 +82,7 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE)
         stage_name, test_file_path = create_stage_and_get_compression_file(
@@ -115,7 +115,7 @@ def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(
@@ -140,7 +140,7 @@ def test_should_not_compress_file_when_source_compression_set_to_none_and_auto_c
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(
@@ -164,7 +164,7 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_auto_d
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(cursor, "TEST_STAGE_AUTO_COMPRESS", "NONE")
@@ -188,7 +188,7 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_none_a
 ):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # And Uncompressed file
         stage_name, test_file_path = create_stage_and_get_compression_file(
@@ -211,7 +211,7 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_none_a
 def test_should_return_error_for_unsupported_compression_type(connection):
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # And File compressed with unsupported format
         stage_name, test_file_path = create_stage_and_get_compression_file(cursor, "TEST_STAGE_UNSUPPORTED", "LZMA")

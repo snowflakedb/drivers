@@ -94,6 +94,7 @@ public final class SchemaState {
       case VARIANT:
         return Types.VARCHAR;
       case FIXED:
+      case DECFLOAT:
         return Types.DECIMAL;
       case REAL:
         return Types.DOUBLE;
@@ -101,6 +102,8 @@ public final class SchemaState {
         return Types.BOOLEAN;
       case BINARY:
         return Types.BINARY;
+      case DATE:
+        return Types.DATE;
       default:
         return Types.OTHER;
     }

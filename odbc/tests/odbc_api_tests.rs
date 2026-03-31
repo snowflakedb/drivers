@@ -70,7 +70,7 @@
 // }
 
 use sf_core::{
-    protobuf::apis::database_driver_v1::DatabaseDriverClient,
+    protobuf::apis::database_driver_v1::{DatabaseDriverClientBlockingExt, database_driver_client},
     protobuf::generated::database_driver_v1::{
         ConnectionNewRequest, ConnectionSetOptionIntRequest, ConnectionSetOptionStringRequest,
         DatabaseInitRequest, DatabaseNewRequest,
@@ -79,45 +79,54 @@ use sf_core::{
 
 #[test]
 fn smoke_connection_set_tls_config() {
-    let db = DatabaseDriverClient::database_new(DatabaseNewRequest {}).expect("database_new ok");
-    DatabaseDriverClient::database_init(DatabaseInitRequest {
-        db_handle: db.db_handle,
-    })
-    .expect("database_init ok");
-    let conn = DatabaseDriverClient::connection_new(ConnectionNewRequest {})
+    let client = database_driver_client();
+    let db = client
+        .database_new_blocking(DatabaseNewRequest {})
+        .expect("database_new ok");
+    client
+        .database_init_blocking(DatabaseInitRequest {
+            db_handle: db.db_handle,
+        })
+        .expect("database_init ok");
+    let conn = client
+        .connection_new_blocking(ConnectionNewRequest {})
         .unwrap()
         .conn_handle
         .unwrap();
 
-    // Option-based TLS/CRL configuration
-    DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
-        conn_handle: Some(conn),
-        key: "verify_hostname".to_string(),
-        value: "true".to_string(),
-    })
-    .expect("set verify_hostname");
-    DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
-        conn_handle: Some(conn),
-        key: "verify_certificates".to_string(),
-        value: "true".to_string(),
-    })
-    .expect("set verify_certificates");
-    DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
-        conn_handle: Some(conn),
-        key: "crl_mode".to_string(),
-        value: "ENABLED".to_string(),
-    })
-    .expect("set crl_mode");
-    DatabaseDriverClient::connection_set_option_int(ConnectionSetOptionIntRequest {
-        conn_handle: Some(conn),
-        key: "crl_http_timeout".to_string(),
-        value: 30,
-    })
-    .expect("set crl_http_timeout");
-    DatabaseDriverClient::connection_set_option_int(ConnectionSetOptionIntRequest {
-        conn_handle: Some(conn),
-        key: "crl_connection_timeout".to_string(),
-        value: 10,
-    })
-    .expect("set crl_connection_timeout");
+    client
+        .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
+            conn_handle: Some(conn),
+            key: "verify_hostname".to_string(),
+            value: "true".to_string(),
+        })
+        .expect("set verify_hostname");
+    client
+        .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
+            conn_handle: Some(conn),
+            key: "verify_certificates".to_string(),
+            value: "true".to_string(),
+        })
+        .expect("set verify_certificates");
+    client
+        .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
+            conn_handle: Some(conn),
+            key: "crl_mode".to_string(),
+            value: "ENABLED".to_string(),
+        })
+        .expect("set crl_mode");
+    client
+        .connection_set_option_int_blocking(ConnectionSetOptionIntRequest {
+            conn_handle: Some(conn),
+            key: "crl_http_timeout".to_string(),
+            value: 30,
+        })
+        .expect("set crl_http_timeout");
+    client
+        .connection_set_option_int_blocking(ConnectionSetOptionIntRequest {
+            conn_handle: Some(conn),
+            key: "crl_connection_timeout".to_string(),
+            value: 10,
+        })
+        .expect("set crl_connection_timeout");
 }

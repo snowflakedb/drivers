@@ -165,13 +165,13 @@ use prost::Message;
         match method_error {
             Some(error) => {
                 format!(
-                    r#"	fn {name}(input: {input_type}) -> Result<{output_type}, {error}>;
+                    r#"	fn {name}(&self, input: {input_type}) -> impl std::future::Future<Output = Result<{output_type}, {error}>> + Send;
 "#
                 )
             }
             None => {
                 format!(
-                    r#"	fn {name}(input: {input_type}) -> {output_type};
+                    r#"	fn {name}(&self, input: {input_type}) -> impl std::future::Future<Output = {output_type}> + Send;
 "#
                 )
             }
@@ -194,7 +194,7 @@ use prost::Message;
 
         let mut content = format!(
             r#"pub trait {service_name}Server : {service_name} {{
-	fn handle_message(method: &str, message: Vec<u8>) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {{
+	fn handle_message(&self, method: &str, message: Vec<u8>) -> impl std::future::Future<Output = Result<Vec<u8>, ProtoError<Vec<u8>>>> + Send where Self: Sync {{ async move {{
 		match method {{
 "#
         );
@@ -205,7 +205,7 @@ use prost::Message;
 
         content += r#"			_ => Err(ProtoError::Transport(format!("Unknown method: {}", method))),
 		}
-	}
+	} }
 }
 "#;
         content
@@ -230,7 +230,7 @@ use prost::Message;
 					Ok(input) => input,
 					Err(e) => return Err(ProtoError::Transport(e.to_string())),
 				}};
-				let result = Self::{name}(input);
+				let result = self.{name}(input).await;
 				match result {{
 				Ok(output) => Ok(output.encode_to_vec()),
 				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -256,9 +256,12 @@ use prost::Message;
 
         let mut content = format!(
             r#"pub struct {service_name}Client<T: Transport> {{
-	_marker: ::core::marker::PhantomData<T>,
+	transport: T,
 }}
 impl<T: Transport> {service_name}Client<T> {{
+	pub fn new(transport: T) -> Self {{
+		Self {{ transport }}
+	}}
 "#
         );
 
@@ -304,8 +307,8 @@ impl<T: Transport> {service_name}Client<T> {{
             Some(error) => {
                 format!(
                     r#"
-    pub fn {name}(input: {input_type}) -> Result<{output_type}, ProtoError<{error}>> {{
-        let result = T::handle_message("{service_name}", "{name}", input.encode_to_vec());
+    pub async fn {name}(&self, input: {input_type}) -> Result<{output_type}, ProtoError<{error}>> {{
+        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
         match result {{
             Ok(output) => {{
                 let output = {output_type}::decode(&output[..]);
@@ -329,7 +332,21 @@ impl<T: Transport> {service_name}Client<T> {{
             }
             None => {
                 format!(
-                    r#"	fn {name}(input: {input_type}) -> {output_type};
+                    r#"
+    pub async fn {name}(&self, input: {input_type}) -> Result<{output_type}, ProtoError<()>> {{
+        let result = self.transport.handle_message("{service_name}", "{name}", input.encode_to_vec()).await;
+        match result {{
+            Ok(output) => {{
+                let output = {output_type}::decode(&output[..]);
+                match output {{
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }}
+            }},
+            Err(ProtoError::Application(_)) => Err(ProtoError::Transport("Unexpected application error".to_string())),
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }}
+    }}
 "#
                 )
             }

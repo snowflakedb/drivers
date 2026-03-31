@@ -1,15 +1,17 @@
 import csv
-import json
 import logging
 import shutil
 import statistics
+import time
 from pathlib import Path
+from typing import Optional
 
 from runner.docker_network import DockerNetworkManager
 from runner.modes.common import execute_test, verify_test_results
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 from runner.utils import perf_tests_root
 from wiremock.wiremock_manager import WiremockManager
+from wiremock.wiremock_monitor import WiremockMonitor, MonitorResult
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +100,14 @@ def run_wiremock_performance_test(
             logger.info("")
             logger.info("Step 1: Starting WireMock in RECORD mode...")
             wiremock = WiremockManager(mappings_dir, network_mode=network)
+            wm_monitor = None
             try:
                 wiremock.start_recording()
+
+                docker_container = wiremock.get_docker_container()
+                if docker_container:
+                    wm_monitor = WiremockMonitor(docker_container)
+                    wm_monitor.start()
 
                 # Step 3: Execute test once to record traffic
                 logger.info("")
@@ -118,7 +126,8 @@ def run_wiremock_performance_test(
                     s3_files_dir=s3_files_dir,
                     wiremock_url=wiremock.get_url(),
                     wiremock_container_name=wiremock.get_container_name(),
-                    network_mode=network
+                    network_mode=network,
+                    wiremock_manager=wiremock,
                 )
                 
                 # Step 4: Create snapshot and transform
@@ -127,15 +136,24 @@ def run_wiremock_performance_test(
                 wiremock.create_snapshot()
                 
             finally:
+                if wm_monitor:
+                    monitor_result = wm_monitor.stop()
+                    _write_wiremock_monitor_results(
+                        monitor_result, results_dir, test_name, "record", driver_type,
+                    )
                 # Step 5: Stop recording WireMock
                 logger.info("")
                 logger.info("Step 5: Stopping WireMock (record mode)...")
                 wiremock.stop()
             
-            # Extract expected row count from recording phase for validation during replay
             expected_row_count = _extract_row_count_from_recording(results_dir, test_name, driver, driver_type)
-            if expected_row_count:
-                logger.info(f"Extracted row count from recording: {expected_row_count} rows")
+            if expected_row_count is None or expected_row_count == 0:
+                raise RuntimeError(
+                    f"Recording phase failed for '{test_name}': no valid result CSV was produced. "
+                    f"The driver container likely crashed during query execution through "
+                    f"the WireMock proxy. Check the container logs above for details."
+                )
+            logger.info(f"Extracted row count from recording: {expected_row_count} rows")
         else:
             logger.info("")
             logger.info("Skipping recording phase - reusing existing mappings")
@@ -153,9 +171,15 @@ def run_wiremock_performance_test(
             logger.info("")
         logger.info(f"Step {replay_step}: Starting WireMock in REPLAY mode...")
         wiremock = WiremockManager(mappings_dir, network_mode=network)
+        wm_monitor = None
         
         try:
-            wiremock.start_replay()
+            wiremock.start_replay(driver_label=driver_type)
+
+            docker_container = wiremock.get_docker_container()
+            if docker_container:
+                wm_monitor = WiremockMonitor(docker_container)
+                wm_monitor.start()
             
             # Execute test N times with cached responses
             logger.info("")
@@ -176,17 +200,22 @@ def run_wiremock_performance_test(
                 wiremock_container_name=wiremock.get_container_name(),
                 network_mode=network,
                 is_replay=True,  # Flag to indicate replay mode
-                expected_row_count=expected_row_count  # Pass expected row count for validation
+                expected_row_count=expected_row_count,  # Pass expected row count for validation
+                wiremock_manager=wiremock,
             )
             
-            # Collect and display WireMock response time metrics
+            # Collect metrics while WireMock is still running (triggers flush to disk)
             logger.info("")
             logger.info("Collecting response time metrics...")
             metrics = wiremock.get_request_metrics()
             _log_wiremock_metrics(metrics, warmup_iterations=warmup_iterations, iterations=iterations)
             
         finally:
-            # Stop and cleanup
+            if wm_monitor:
+                monitor_result = wm_monitor.stop()
+                _write_wiremock_monitor_results(
+                    monitor_result, results_dir, test_name, "replay", driver_type,
+                )
             cleanup_step = 4 if skip_recording else 8
             logger.info("")
             logger.info(f"Step {cleanup_step}: Cleanup...")
@@ -365,81 +394,83 @@ def _log_banner(message: str, separator: str = "=" * 80):
     logger.info("")
 
 
+def _compute_percentiles(times: list) -> dict:
+    """Compute avg/min/max/P50/P95/P99 from a list of numeric values."""
+    if not times:
+        return {"avg": 0, "min": 0, "max": 0, "p50": 0, "p95": 0, "p99": 0}
+    s = sorted(times)
+    n = len(s)
+    return {
+        "avg": statistics.mean(times),
+        "min": min(times),
+        "max": max(times),
+        "p50": s[int(0.50 * n)],
+        "p95": s[int(0.95 * n)],
+        "p99": s[min(int(0.99 * n), n - 1)],
+    }
+
+
+def _log_time_section(label: str, p: dict):
+    """Log a single metrics section with consistent formatting."""
+    logger.info(f"  {label}:")
+    logger.info(f"    Average: {p['avg']:>10.2f} ms")
+    logger.info(f"    Min:     {p['min']:>10.2f} ms")
+    logger.info(f"    P50:     {p['p50']:>10.2f} ms")
+    logger.info(f"    P95:     {p['p95']:>10.2f} ms")
+    logger.info(f"    P99:     {p['p99']:>10.2f} ms")
+    logger.info(f"    Max:     {p['max']:>10.2f} ms")
+
+
+def _filter_warmup(all_times: list, total_requests: int,
+                   warmup_iterations: int, iterations: int) -> list:
+    """Strip warmup-iteration samples from the front of a time series."""
+    if not all_times or warmup_iterations <= 0 or iterations <= 0:
+        return list(all_times)
+    total_iterations = warmup_iterations + iterations
+    requests_per_iteration = total_requests / total_iterations
+    warmup_requests = int(requests_per_iteration * warmup_iterations)
+    if warmup_requests < len(all_times):
+        logger.info(f"Filtered out {warmup_requests} warmup requests "
+                     f"({warmup_iterations} iterations)")
+        return all_times[warmup_requests:]
+    return list(all_times)
+
+
 def _log_wiremock_metrics(metrics: dict, warmup_iterations: int = 0, iterations: int = 0):
     """
-    Log WireMock response time metrics in a formatted display.
-    
-    Args:
-        metrics: Dictionary containing response time statistics
-        warmup_iterations: Number of warmup iterations to exclude
-        iterations: Total test iterations (used to calculate requests per iteration)
+    Log WireMock response time metrics split into serve (stub matching) and
+    send (socket write / TCP backpressure) phases.
     """
     logger.info("")
     logger.info("=" * 80)
     logger.info("WIREMOCK RESPONSE TIME METRICS")
     logger.info("=" * 80)
-    
+
     total_requests = metrics.get("total_requests", 0)
-    
     if total_requests == 0:
         logger.info("No requests recorded")
         logger.info("=" * 80)
         logger.info("")
         return
-    
-    # Filter out warmup iterations if we have individual response times
-    all_times = metrics.get("response_times", [])
-    if all_times and warmup_iterations > 0 and iterations > 0:
-        # Calculate requests per iteration
-        total_iterations = warmup_iterations + iterations
-        requests_per_iteration = total_requests / total_iterations
-        warmup_requests = int(requests_per_iteration * warmup_iterations)
-        
-        if warmup_requests < len(all_times):
-            # Filter out warmup requests
-            filtered_times = all_times[warmup_requests:]
-            logger.info(f"Filtered out {warmup_requests} warmup requests ({warmup_iterations} iterations)")
-            
-            # Recalculate statistics
-            total_requests = len(filtered_times)
-            avg_time = statistics.mean(filtered_times)
-            min_time = min(filtered_times)
-            max_time = max(filtered_times)
-            sorted_times = sorted(filtered_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-        else:
-            # Calculate from all times (no warmup filtering)
-            avg_time = statistics.mean(all_times)
-            min_time = min(all_times)
-            max_time = max(all_times)
-            sorted_times = sorted(all_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-    else:
-        # Calculate from all times (no warmup information available)
-        if all_times:
-            avg_time = statistics.mean(all_times)
-            min_time = min(all_times)
-            max_time = max(all_times)
-            sorted_times = sorted(all_times)
-            p50_time = sorted_times[int(0.50 * len(sorted_times))]
-            p95_time = sorted_times[int(0.95 * len(sorted_times))]
-            p99_time = sorted_times[min(int(0.99 * len(sorted_times)), len(sorted_times) - 1)]
-        else:
-            # No data
-            avg_time = min_time = max_time = p50_time = p95_time = p99_time = 0
-    
-    logger.info(f"Total Requests:        {total_requests:,}")
-    logger.info(f"Average Response Time: {avg_time:.2f} ms")
-    logger.info(f"Min Response Time:     {min_time:.2f} ms")
-    logger.info(f"Max Response Time:     {max_time:.2f} ms")
-    logger.info(f"P50 Response Time:     {p50_time:.2f} ms")
-    logger.info(f"P95 Response Time:     {p95_time:.2f} ms")
-    logger.info(f"P99 Response Time:     {p99_time:.2f} ms")
-    
+
+    serve_all = metrics.get("serve_times", [])
+    send_all = metrics.get("send_times", [])
+
+    serve_times = _filter_warmup(serve_all, total_requests, warmup_iterations, iterations)
+    send_times = _filter_warmup(send_all, total_requests, warmup_iterations, iterations)
+
+    logger.info(f"Total Requests: {len(serve_times):,}")
+    logger.info("")
+
+    _log_time_section("Serve (stub matching / processing)", _compute_percentiles(serve_times))
+    logger.info("")
+    _log_time_section("Send  (socket write to client)", _compute_percentiles(send_times))
+
+    if serve_times and send_times:
+        total_times = [s + w for s, w in zip(serve_times, send_times)]
+        logger.info("")
+        _log_time_section("Total (serve + send)", _compute_percentiles(total_times))
+
     logger.info("=" * 80)
     logger.info("")
 
@@ -469,22 +500,24 @@ def _get_proxy_url_for_container(wiremock_url: str, wiremock_container_name: str
         return f"http://host.docker.internal:{wiremock_port}"
 
 
-def _extract_row_count_from_recording(results_dir: Path, test_name: str, driver: str, driver_type: str) -> int:
+def _extract_row_count_from_recording(results_dir: Path, test_name: str, driver: str, driver_type: str) -> Optional[int]:
     """Extract row count from recording phase CSV file."""
-    # Find the recording CSV file
-    # Core driver doesn't include driver_type in filename, others do
+    # Recording files are all written to {driver_type}/_record/
+    driver_type_dir = driver_type if driver != "core" else "universal"
+    recording_dir = results_dir / driver_type_dir / "_record"
+
     if driver == "core":
         pattern = f"{test_name}_record_{driver}_*.csv"
     else:
         pattern = f"{test_name}_record_{driver}_{driver_type}_*.csv"
-    
-    csv_files = list(results_dir.glob(pattern))
+
+    csv_files = list(recording_dir.glob(pattern))
     
     if not csv_files:
-        logger.warning(f"No recording CSV found matching pattern: {pattern}")
+        logger.warning(f"No recording CSV found matching pattern: {pattern} in {recording_dir}")
         return None
     
-    csv_file = csv_files[0]
+    csv_file = max(csv_files, key=lambda p: p.stat().st_mtime)
     
     try:
         with open(csv_file, 'r') as f:
@@ -517,27 +550,23 @@ def _run_test_with_proxy(
     s3_files_dir: Path = None,
     is_replay: bool = False,
     expected_row_count: int = None,
+    wiremock_manager: "WiremockManager" = None,
 ):
     """
     Run test with WireMock proxy configuration.
     
-    Adds proxy settings and disables certificate verification for drivers.
-    
-    Args:
-        wiremock_url: WireMock URL for host access (e.g., http://127.0.0.1:12345)
-        wiremock_container_name: WireMock container name for inter-container communication
-        network_mode: Docker network mode ("host" for direct host network)
-        ... (other args)
+    Sets up proxy environment variables and exports the WireMock CA certificate
+    so drivers trust the dynamically generated MITM certificates.
     """
-    # Modify parameters to disable certificate verification for WireMock
-    modified_parameters_json = _modify_parameters_for_wiremock(parameters_json, driver)
-    
     # Build environment variables for proxy and replay mode
     # With host network: use localhost; with bridge network: use container name
     proxy_url = _get_proxy_url_for_container(wiremock_url, wiremock_container_name, network_mode)
     env_vars = {
         "HTTPS_PROXY": proxy_url,
         "HTTP_PROXY": proxy_url,
+        # Lowercase variants required by the old Snowflake ODBC driver (libcurl)
+        "https_proxy": proxy_url,
+        "http_proxy": proxy_url,
     }
     
     if is_replay:
@@ -546,18 +575,33 @@ def _run_test_with_proxy(
             logger.info(f"Setting EXPECTED_ROW_COUNT={expected_row_count} for replay validation")
             env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
     
+    # Export the WireMock CA cert so the driver trusts the dynamically generated
+    # MITM certificates. Each Dockerfile appends this to the appropriate CA bundle.
+    if wiremock_manager:
+        try:
+            ca_cert_path = wiremock_manager.export_ca_cert(results_dir)
+            env_vars["WIREMOCK_CA_CERT"] = "/results/" + ca_cert_path.name
+            if driver == "odbc" and driver_type == "old":
+                env_vars["WIREMOCK_PROXY_URL"] = proxy_url
+        except Exception as e:
+            logger.error(
+                "Failed to export WireMock CA cert; skipping this test execution.",
+                exc_info=True,
+            )
+            return
+    
     # Execute test with common function
     execute_test(
         test_name=test_name,
         sql_command=sql_command,
-        parameters_json=modified_parameters_json,
+        parameters_json=parameters_json,
         results_dir=results_dir,
         iterations=iterations,
         warmup_iterations=warmup_iterations,
         driver=driver,
         driver_type=driver_type,
         setup_queries=setup_queries,
-        test_type=TestType.SELECT,  # WireMock tests are SELECT-based
+        test_type=PerfTestType.SELECT,  # WireMock tests are SELECT-based
         use_local_binary=use_local_binary,
         s3_files_dir=s3_files_dir,
         env_vars=env_vars,
@@ -565,23 +609,56 @@ def _run_test_with_proxy(
     )
 
 
-def _modify_parameters_for_wiremock(parameters_json: str, driver: str) -> str:
-    """
-    Modify connection parameters to disable certificate verification for WireMock tests.
-    
-    Args:
-        parameters_json: Original JSON parameters
-        driver: Driver being used
-    
-    Returns:
-        Modified JSON parameters
-    """
-    params = json.loads(parameters_json)
-    
-    # Disable certificate verification for Core/Python/ODBC
-    # (WireMock needs certs server-side for HTTPS, but clients don't verify them)
-    if driver in ("core", "python", "odbc"):
-        params["testconnection"]["verify_certificates"] = "false"
-        params["testconnection"]["verify_hostname"] = "false"
-    
-    return json.dumps(params)
+def _write_wiremock_monitor_results(
+    result: MonitorResult,
+    results_dir: Path,
+    test_name: str,
+    phase: str,
+    driver_type: str | None,
+):
+    """Write WireMock monitoring CSV + log file and log a summary to console."""
+    timestamp = int(time.time())
+    driver_suffix = f"_{driver_type}" if driver_type else ""
+
+    wiremock_dir = results_dir / "wiremock"
+    wiremock_dir.mkdir(exist_ok=True)
+
+    # --- CSV stats ---
+    if result.samples:
+        csv_name = f"wiremock_stats_{test_name}_{phase}{driver_suffix}_{timestamp}.csv"
+        csv_path = wiremock_dir / csv_name
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp_ms", "cpu_percent", "memory_usage_mb", "memory_limit_mb"])
+            for s in result.samples:
+                writer.writerow([s.timestamp_ms, s.cpu_percent, s.memory_usage_mb, s.memory_limit_mb])
+        logger.info(f"Wrote WireMock stats: {csv_path.name} ({len(result.samples)} samples)")
+
+    # --- Container logs ---
+    if result.logs:
+        log_name = f"wiremock_logs_{test_name}_{phase}{driver_suffix}_{timestamp}.log"
+        log_path = wiremock_dir / log_name
+        log_path.write_text(result.logs, encoding="utf-8")
+        logger.info(f"Wrote WireMock logs: {log_path.name}")
+
+    # --- Console summary ---
+    _log_wiremock_container_summary(result, phase, driver_type)
+
+
+def _log_wiremock_container_summary(
+    result: MonitorResult, phase: str, driver_type: str | None
+):
+    """Log peak CPU, peak memory, and average memory from WireMock container stats."""
+    if not result.samples:
+        return
+
+    cpus = [s.cpu_percent for s in result.samples]
+    mems = [s.memory_usage_mb for s in result.samples]
+    label = f"{phase}" + (f" ({driver_type})" if driver_type else "")
+
+    logger.info("")
+    logger.info(f"WireMock container stats [{label}]:")
+    logger.info(f"  Peak CPU:       {max(cpus):>8.1f} %")
+    logger.info(f"  Peak Memory:    {max(mems):>8.1f} MB")
+    logger.info(f"  Avg Memory:     {statistics.mean(mems):>8.1f} MB")
+    logger.info(f"  Memory Limit:   {result.samples[0].memory_limit_mb:>8.1f} MB")

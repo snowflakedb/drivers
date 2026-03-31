@@ -8,29 +8,38 @@ behavior_differences:
   3:
     name: "BROTLI compression type option is now supported"
 
-  4:
-    name: "Error structure changed"
-
   5:
     name: "Private key password parameter name changed"
     description: |
       NEW driver: `private_key_password`
       OLD driver: `private_key_file_pwd`
 
-  6:
-    name: "ConfigManager reads config from SNOWFLAKE_HOME via sf_core"
+  11:
+    name: "CONFIG_PARSER deprecated alias removed"
     description: |
-      NEW driver: Reads config files from SNOWFLAKE_HOME directory using Rust sf_core.
-      OLD driver: Reads config from file_path specified in ConfigManager constructor.
+      NEW driver: CONFIG_PARSER module attribute no longer exists; accessing it raises AttributeError.
+      OLD driver: CONFIG_PARSER is a deprecated alias for CONFIG_MANAGER that emits DeprecationWarning.
 
-  7:
-    name: "ConfigManager does not support SNOWFLAKE_<SECTION>_<KEY> environment variable overrides"
+  12:
+    name: "Deprecated add_subparser method and _sub_parsers property removed"
     description: |
-      NEW driver: Does not apply SNOWFLAKE_<SECTION>_<KEY> env var overrides to config values.
-      OLD driver: Does not support this pattern; uses only custom env_name if specified.
+      NEW driver: add_subparser() and _sub_parsers are removed; accessing them raises AttributeError.
+      OLD driver: add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.
 
-  8:
-    name: "ConfigManager has clear_cache method and cache attributes"
+  13:
+    name: "Empty connections.toml preserves config.toml connections"
     description: |
-      NEW driver: Has clear_cache() and conf_file_cache attributes.
-      OLD driver: Uses different caching mechanism.
+      NEW driver: When connections.toml exists but is empty, connections from config.toml are preserved.
+      OLD driver: When connections.toml exists but is empty, it replaces config.toml connections with an empty set.
+
+  14:
+    name: "ConfigManager without file_path returns MissingConfigOptionError on option retrieval"
+    description: |
+      NEW driver: Retrieving an option from a ConfigManager with no file_path returns an empty config and raises MissingConfigOptionError.
+      OLD driver: Retrieving an option from a ConfigManager with no file_path raises ConfigManagerError about missing file_path.
+
+  15:
+    name: "Session parameter updates visible across cursors without execute"
+    description: |
+      NEW driver: cursor session parameters (e.g. cursor.timestamp_output_format) read from a shared connection-level cache, so changes made by one cursor are immediately visible to other cursors on the same connection without requiring a query.
+      OLD driver: Each cursor populates its session parameters independently from query responses, so a cursor that has not executed a query will not reflect changes made by another cursor.

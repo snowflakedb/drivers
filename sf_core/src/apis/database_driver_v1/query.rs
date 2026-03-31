@@ -3,12 +3,13 @@ use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{
     boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
 };
-use crate::chunks::{ChunkError, ChunkReader};
+use crate::chunks::{self, ChunkError, ChunkReader, DEFAULT_PREFETCH_THREADS};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::query_types::RowType;
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
+use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
@@ -105,6 +106,7 @@ async fn read_batches<'a>(
                 initial_base64_opt,
                 chunk_download_data.into(),
                 http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
             )
             .await
             .context(ChunkReadingSnafu)?;
@@ -122,25 +124,29 @@ async fn read_batches<'a>(
                 .context(RowsetConversionSnafu)
         }
         query_response::RowsetData::JsonRowset { rowset, rowtype } => {
-            let row_types = rowtype
-                .iter()
-                .map(|rt| rt.try_into())
-                .collect::<Result<Vec<_>, _>>()
-                .context(RowTypeParsingSnafu)?;
-
-            // Validate column counts before converting
-            if !rowset.is_empty() {
-                let num_columns_rowset = rowset.first().unwrap().len();
-                let num_columns_rowtype = row_types.len();
-                if num_columns_rowset != num_columns_rowtype {
-                    return ColumnCountMismatchSnafu {
-                        rowtype_count: num_columns_rowtype,
-                        rowset_count: num_columns_rowset,
-                    }
-                    .fail();
-                }
-            }
+            let row_types = parse_row_types(rowtype)?;
+            validate_column_count(rowset, &row_types)?;
             convert_string_rowset_to_arrow_reader(rowset, &row_types).context(RowsetConversionSnafu)
+        }
+        query_response::RowsetData::JsonMultiChunk {
+            rowset,
+            rowtype,
+            chunk_download_data,
+        } => {
+            let row_types = parse_row_types(rowtype)?;
+            validate_column_count(rowset, &row_types)?;
+
+            let reader = chunks::JsonChunkReader::new(
+                rowset,
+                row_types,
+                chunk_download_data,
+                http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
+            )
+            .await
+            .context(ChunkReadingSnafu)?;
+
+            Ok(Box::new(reader))
         }
         query_response::RowsetData::NoData => {
             // No rowset or rowtype found, return empty reader
@@ -148,6 +154,32 @@ async fn read_batches<'a>(
             Ok(Box::new(reader))
         }
     }
+}
+
+fn parse_row_types(rowtype: &[query_response::RowType]) -> Result<Vec<RowType>, ReadBatchesError> {
+    rowtype
+        .iter()
+        .map(|rt| rt.try_into())
+        .collect::<Result<Vec<_>, _>>()
+        .context(RowTypeParsingSnafu)
+}
+
+fn validate_column_count(
+    rowset: &[Vec<Option<String>>],
+    row_types: &[RowType],
+) -> Result<(), ReadBatchesError> {
+    if !rowset.is_empty() {
+        let num_columns_rowset = rowset.first().unwrap().len();
+        let num_columns_rowtype = row_types.len();
+        if num_columns_rowset != num_columns_rowtype {
+            return ColumnCountMismatchSnafu {
+                rowtype_count: num_columns_rowtype,
+                rowset_count: num_columns_rowset,
+            }
+            .fail();
+        }
+    }
+    Ok(())
 }
 
 /// Helper macro to create string arrays from field accessors
@@ -168,7 +200,7 @@ macro_rules! int64_array {
     };
 }
 
-fn upload_row_types() -> Vec<RowType> {
+fn upload_row_types() -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
@@ -181,7 +213,7 @@ fn upload_row_types() -> Vec<RowType> {
     ]
 }
 
-fn download_row_types() -> Vec<RowType> {
+fn download_row_types() -> Vec<(RowType, DataType)> {
     vec![
         build_generic_text_rowtype("file"),
         build_generic_fixed_rowtype("size"),
@@ -227,17 +259,23 @@ pub fn download_results_reader(
     boxed_arrow_reader(schema, columns)
 }
 
-fn build_generic_text_rowtype(name: &str) -> RowType {
-    RowType::text(
-        name,
-        false,
-        PUT_GET_ROWSET_TEXT_LENGTH,
-        PUT_GET_ROWSET_TEXT_LENGTH,
+fn build_generic_text_rowtype(name: &str) -> (RowType, DataType) {
+    (
+        RowType::text(
+            name,
+            false,
+            PUT_GET_ROWSET_TEXT_LENGTH,
+            PUT_GET_ROWSET_TEXT_LENGTH,
+        ),
+        DataType::Utf8,
     )
 }
 
-fn build_generic_fixed_rowtype(name: &str) -> RowType {
-    RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH)
+fn build_generic_fixed_rowtype(name: &str) -> (RowType, DataType) {
+    (
+        RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH),
+        DataType::Int64,
+    )
 }
 
 /// Convert an internal `RowType` to protobuf `ColumnMetadata`.
@@ -279,7 +317,7 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
 pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
     upload_row_types()
         .iter()
-        .map(rowtype_to_column_metadata)
+        .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
 }
 
@@ -287,7 +325,7 @@ pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
 pub fn download_column_metadata() -> Vec<ColumnMetadata> {
     download_row_types()
         .iter()
-        .map(rowtype_to_column_metadata)
+        .map(|(r, _)| rowtype_to_column_metadata(r))
         .collect()
 }
 
@@ -448,7 +486,7 @@ mod tests {
     #[test]
     fn text_column_metadata_has_correct_fields() {
         let rt = build_generic_text_rowtype("test_col");
-        let meta = rowtype_to_column_metadata(&rt);
+        let meta = rowtype_to_column_metadata(&rt.0);
 
         assert_eq!(meta.name, "test_col");
         assert_eq!(meta.r#type, "TEXT");
@@ -457,12 +495,14 @@ mod tests {
         assert_eq!(meta.precision, None);
         assert_eq!(meta.scale, None);
         assert!(!meta.nullable);
+
+        assert_eq!(rt.1, DataType::Utf8);
     }
 
     #[test]
     fn fixed_column_metadata_has_correct_fields() {
         let rt = build_generic_fixed_rowtype("test_col");
-        let meta = rowtype_to_column_metadata(&rt);
+        let meta = rowtype_to_column_metadata(&rt.0);
 
         assert_eq!(meta.name, "test_col");
         assert_eq!(meta.r#type, "FIXED");
@@ -471,5 +511,7 @@ mod tests {
         assert_eq!(meta.length, None);
         assert_eq!(meta.byte_length, None);
         assert!(!meta.nullable);
+
+        assert_eq!(rt.1, DataType::Int64);
     }
 }

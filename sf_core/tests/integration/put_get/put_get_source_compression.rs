@@ -1,4 +1,4 @@
-use crate::common::file_utils::repo_root;
+use crate::common::file_utils::{path_to_sql_uri, repo_root};
 use crate::common::mocks;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use wiremock::MockServer;
@@ -33,7 +33,7 @@ async fn should_return_error_for_unsupported_compression_type() {
         // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
         let put_sql = format!(
             "PUT 'file://{}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT",
-            test_file_path.to_str().unwrap().replace("\\", "/")
+            path_to_sql_uri(&test_file_path)
         );
 
         // Then Unsupported compression error is thrown

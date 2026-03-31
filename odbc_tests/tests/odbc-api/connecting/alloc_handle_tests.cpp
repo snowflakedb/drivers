@@ -8,8 +8,8 @@
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -195,6 +195,7 @@ TEST_CASE("SQLAllocHandle DBC: SQL_INVALID_HANDLE - Wrong InputHandle type (STMT
 // ============================================================================
 
 TEST_CASE("SQLAllocHandle STMT: Basic allocation succeeds", "[odbc-api][alloc_handle][stmt][connecting]") {
+  const std::string conn_str = get_connection_string();
   SQLHENV env = SQL_NULL_HENV;
   SQLHDBC dbc = SQL_NULL_HDBC;
   SQLHSTMT stmt = SQL_NULL_HSTMT;
@@ -208,9 +209,8 @@ TEST_CASE("SQLAllocHandle STMT: Basic allocation succeeds", "[odbc-api][alloc_ha
   REQUIRE(ret == SQL_SUCCESS);
 
   // Connect
-  const std::string conn_str = get_connection_string();
   ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::Succeeded());
 
   // Allocate statement
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
@@ -219,7 +219,7 @@ TEST_CASE("SQLAllocHandle STMT: Basic allocation succeeds", "[odbc-api][alloc_ha
 
   // Verify statement is usable
   ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   SQLDisconnect(dbc);
@@ -249,7 +249,7 @@ TEST_CASE("SQLAllocHandle STMT: Multiple allocations from same connection",
   for (int i = 0; i < NUM_STATEMENTS; i++) {
     const std::string query = "SELECT " + std::to_string(i);
     SQLRETURN ret = SQLExecDirect(statements[i].getHandle(), sqlchar(query.c_str()), SQL_NTS);
-    CHECK_ODBC(ret, statements[i]);
+    REQUIRE_ODBC(ret, statements[i]);
   }
 }
 
@@ -331,6 +331,7 @@ TEST_CASE("SQLAllocHandle STMT: 08003 - Connection not open", "[odbc-api][alloc_
 TEST_CASE("SQLAllocHandle DESC: Basic allocation succeeds", "[odbc-api][alloc_handle][desc][connecting]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
+  const std::string conn_str = get_connection_string();
   SQLHENV env = SQL_NULL_HENV;
   SQLHDBC dbc = SQL_NULL_HDBC;
   SQLHANDLE desc = SQL_NULL_HANDLE;
@@ -342,9 +343,8 @@ TEST_CASE("SQLAllocHandle DESC: Basic allocation succeeds", "[odbc-api][alloc_ha
   ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
   REQUIRE(ret == SQL_SUCCESS);
 
-  const std::string conn_str = get_connection_string();
   ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::Succeeded());
 
   // Allocate descriptor handle - should succeed on ODBC 3.x compliant drivers
   ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc, &desc);
@@ -362,6 +362,7 @@ TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection",
           "[odbc-api][alloc_handle][desc][connecting]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
+  const std::string conn_str = get_connection_string();
   SQLHENV env = SQL_NULL_HENV;
   SQLHDBC dbc = SQL_NULL_HDBC;
   constexpr int NUM_DESCS = 3;
@@ -374,9 +375,8 @@ TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection",
   ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
   REQUIRE(ret == SQL_SUCCESS);
 
-  const std::string conn_str = get_connection_string();
   ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::Succeeded());
 
   for (auto& desc : descs) {
     desc = SQL_NULL_HANDLE;
@@ -402,6 +402,7 @@ TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection",
 }
 
 TEST_CASE("SQLAllocHandle DESC: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc_handle][desc][connecting][error]") {
+  const std::string conn_str = get_connection_string();
   SQLHENV env = SQL_NULL_HENV;
   SQLHDBC dbc = SQL_NULL_HDBC;
 
@@ -412,9 +413,8 @@ TEST_CASE("SQLAllocHandle DESC: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc
   ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
   REQUIRE(ret == SQL_SUCCESS);
 
-  const std::string conn_str = get_connection_string();
   ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::Succeeded());
 
   ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc, nullptr);
   REQUIRE(ret == SQL_ERROR);
@@ -546,6 +546,7 @@ TEST_CASE("SQLAllocHandle: Works with SQL_OV_ODBC2", "[odbc-api][alloc_handle][c
 // ============================================================================
 
 TEST_CASE("SQLAllocHandle: Complete ENV -> DBC -> STMT hierarchy", "[odbc-api][alloc_handle][connecting][hierarchy]") {
+  const std::string conn_str = get_connection_string();
   SQLHENV env = SQL_NULL_HENV;
   SQLHDBC dbc = SQL_NULL_HDBC;
   SQLHSTMT stmt = SQL_NULL_HSTMT;
@@ -565,9 +566,8 @@ TEST_CASE("SQLAllocHandle: Complete ENV -> DBC -> STMT hierarchy", "[odbc-api][a
   REQUIRE(dbc != SQL_NULL_HDBC);
 
   // Connect
-  const std::string conn_str = get_connection_string();
   ret = SQLDriverConnect(dbc, nullptr, sqlchar(conn_str.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::Succeeded());
 
   // Allocate statement
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
@@ -576,14 +576,14 @@ TEST_CASE("SQLAllocHandle: Complete ENV -> DBC -> STMT hierarchy", "[odbc-api][a
 
   // Execute a query to verify the hierarchy works
   ret = SQLExecDirect(stmt, sqlchar("SELECT 42"), SQL_NTS);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   SQLINTEGER value;
   ret = SQLGetData(stmt, 1, SQL_C_LONG, &value, sizeof(value), nullptr);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
   REQUIRE(value == 42);
 
   // Clean up in reverse order
@@ -591,7 +591,7 @@ TEST_CASE("SQLAllocHandle: Complete ENV -> DBC -> STMT hierarchy", "[odbc-api][a
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc);
-  CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_DBC, dbc), OdbcMatchers::Succeeded());
 
   ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc);
   REQUIRE(ret == SQL_SUCCESS);

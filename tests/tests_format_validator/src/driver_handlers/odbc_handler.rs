@@ -171,12 +171,36 @@ impl BaseDriverHandler for OdbcHandler {
         method_name: &str,
         file_path: &Path,
     ) -> Result<HashMap<String, BehaviorDifferenceLocation>> {
+        enum SkipKind {
+            SkipOld,
+            SkipNew,
+        }
+
         let mut breaking_changes = HashMap::new();
         let lines: Vec<&str> = content.lines().collect();
 
         let mut in_method = false;
         let mut brace_count = 0;
         let mut in_test_case_declaration = false;
+        let mut pending_skip_kind: Option<SkipKind> = None;
+        let mut method_start_line: usize = 0;
+
+        let new_driver_re = Regex::new(r#"NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+        let old_driver_re = Regex::new(r#"OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+        let skip_old_re = Regex::new(r#"SKIP_OLD_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
+        let skip_new_re = Regex::new(r#"SKIP_NEW_DRIVER\s*\(\s*"(BD#\d+)""#).unwrap();
+        let skip_old_multiline_re = Regex::new(r#"SKIP_OLD_DRIVER\s*\(\s*$"#).unwrap();
+        let skip_new_multiline_re = Regex::new(r#"SKIP_NEW_DRIVER\s*\(\s*$"#).unwrap();
+        let bd_id_re = Regex::new(r#""(BD#\d+)""#).unwrap();
+
+        let default_loc = || BehaviorDifferenceLocation {
+            new_behaviour_file: None,
+            new_behaviour_line: None,
+            old_behaviour_file: None,
+            old_behaviour_line: None,
+            old_driver_skipped: false,
+            new_driver_skipped: false,
+        };
 
         for (line_num, line) in lines.iter().enumerate() {
             let line = line.trim();
@@ -184,13 +208,16 @@ impl BaseDriverHandler for OdbcHandler {
             // Check for TEST_CASE start (might be multi-line)
             if line.starts_with("TEST_CASE(") {
                 if line.contains(&format!("\"{method_name}\"")) {
-                    // Method name is on the same line
                     in_method = true;
+                    method_start_line = line_num + 1;
+                    brace_count +=
+                        line.matches('{').count() as i32 - line.matches('}').count() as i32;
+                } else if line.contains('{') {
+                    // Declaration complete on one line but not our method — skip it
                 } else {
-                    // Method name might be on next line
                     in_test_case_declaration = true;
+                    method_start_line = line_num + 1;
                 }
-                brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
                 continue;
             }
 
@@ -202,6 +229,9 @@ impl BaseDriverHandler for OdbcHandler {
                 brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
                 if line.contains('{') {
                     in_test_case_declaration = false;
+                    if !in_method {
+                        brace_count = 0;
+                    }
                 }
                 continue;
             }
@@ -212,6 +242,7 @@ impl BaseDriverHandler for OdbcHandler {
 
             if !line.starts_with("//") && is_void_method && !in_method {
                 in_method = true;
+                method_start_line = line_num + 1;
                 brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
                 continue;
             }
@@ -223,60 +254,77 @@ impl BaseDriverHandler for OdbcHandler {
                     break;
                 }
 
-                // Look for Behavior Difference annotations
-                let new_driver_re = Regex::new(r#"NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
-                let old_driver_re = Regex::new(r#"OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
+                let rel_path = file_path
+                    .strip_prefix(&self.workspace_root)
+                    .unwrap_or(file_path)
+                    .to_string_lossy()
+                    .to_string();
 
+                // Handle continuation of a multi-line SKIP macro from the previous line
+                if let Some(pending) = pending_skip_kind.take() {
+                    if let Some(captures) = bd_id_re.captures(line) {
+                        let bd_id = captures[1].to_string();
+                        let loc = breaking_changes.entry(bd_id).or_insert_with(default_loc);
+                        match pending {
+                            SkipKind::SkipOld => {
+                                loc.new_behaviour_file = Some(rel_path.clone());
+                                loc.new_behaviour_line = Some(method_start_line);
+                                loc.old_driver_skipped = true;
+                            }
+                            SkipKind::SkipNew => {
+                                loc.old_behaviour_file = Some(rel_path.clone());
+                                loc.old_behaviour_line = Some(method_start_line);
+                                loc.new_driver_skipped = true;
+                            }
+                        }
+                    }
+                }
+
+                // NEW_DRIVER_ONLY / OLD_DRIVER_ONLY — point to the annotation line
                 if let Some(captures) = new_driver_re.captures(line) {
                     if let Some(breaking_change_reference) = captures.get(1) {
-                        let breaking_change_reference = breaking_change_reference.as_str();
                         let breaking_change_id =
-                            self.extract_breaking_change_id(breaking_change_reference);
-
-                        let breaking_change_location = breaking_changes
+                            self.extract_breaking_change_id(breaking_change_reference.as_str());
+                        let loc = breaking_changes
                             .entry(breaking_change_id)
-                            .or_insert_with(|| BehaviorDifferenceLocation {
-                                new_behaviour_file: None,
-                                new_behaviour_line: None,
-                                old_behaviour_file: None,
-                                old_behaviour_line: None,
-                            });
-
-                        breaking_change_location.new_behaviour_file = Some(
-                            file_path
-                                .strip_prefix(&self.workspace_root)
-                                .unwrap_or(file_path)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                        breaking_change_location.new_behaviour_line = Some(line_num + 1);
+                            .or_insert_with(default_loc);
+                        loc.new_behaviour_file = Some(rel_path.clone());
+                        loc.new_behaviour_line = Some(line_num + 1);
                     }
                 }
 
                 if let Some(captures) = old_driver_re.captures(line) {
                     if let Some(breaking_change_reference) = captures.get(1) {
-                        let breaking_change_reference = breaking_change_reference.as_str();
                         let breaking_change_id =
-                            self.extract_breaking_change_id(breaking_change_reference);
-
-                        let breaking_change_location = breaking_changes
+                            self.extract_breaking_change_id(breaking_change_reference.as_str());
+                        let loc = breaking_changes
                             .entry(breaking_change_id)
-                            .or_insert_with(|| BehaviorDifferenceLocation {
-                                new_behaviour_file: None,
-                                new_behaviour_line: None,
-                                old_behaviour_file: None,
-                                old_behaviour_line: None,
-                            });
-
-                        breaking_change_location.old_behaviour_file = Some(
-                            file_path
-                                .strip_prefix(&self.workspace_root)
-                                .unwrap_or(file_path)
-                                .to_string_lossy()
-                                .to_string(),
-                        );
-                        breaking_change_location.old_behaviour_line = Some(line_num + 1);
+                            .or_insert_with(default_loc);
+                        loc.old_behaviour_file = Some(rel_path.clone());
+                        loc.old_behaviour_line = Some(line_num + 1);
                     }
+                }
+
+                // SKIP_OLD_DRIVER — test only runs on new driver; point to method start
+                if let Some(captures) = skip_old_re.captures(line) {
+                    let bd_id = captures[1].to_string();
+                    let loc = breaking_changes.entry(bd_id).or_insert_with(default_loc);
+                    loc.new_behaviour_file = Some(rel_path.clone());
+                    loc.new_behaviour_line = Some(method_start_line);
+                    loc.old_driver_skipped = true;
+                } else if skip_old_multiline_re.is_match(line) {
+                    pending_skip_kind = Some(SkipKind::SkipOld);
+                }
+
+                // SKIP_NEW_DRIVER — test only runs on old driver; point to method start
+                if let Some(captures) = skip_new_re.captures(line) {
+                    let bd_id = captures[1].to_string();
+                    let loc = breaking_changes.entry(bd_id).or_insert_with(default_loc);
+                    loc.old_behaviour_file = Some(rel_path.clone());
+                    loc.old_behaviour_line = Some(method_start_line);
+                    loc.new_driver_skipped = true;
+                } else if skip_new_multiline_re.is_match(line) {
+                    pending_skip_kind = Some(SkipKind::SkipNew);
                 }
             }
         }

@@ -16,9 +16,18 @@ odbc-sys = "0.25.1"
 arrow = { version = "56.0.0", features = ["ffi"] }
 chrono = "0.4.43"
 base64 = "0.22.1"
+serde_json = "1.0"
+libc = "0.2"
 
 proto_utils = { path = "../proto_utils" }
 error_trace = { path = "../error_trace" }
+tokio = { version = "1.50.0", features = ["rt"] }
+
+[dev-dependencies]
+test-case = "3.3.1"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
 
 [[test]]
 name = "odbc_api_tests"

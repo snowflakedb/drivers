@@ -14,7 +14,7 @@
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "put_get_utils.hpp"
 #include "test_setup.hpp"
 #include "utils.hpp"
@@ -61,7 +61,7 @@ std::string get_jwt_connection_string_with_invalid_private_key() {
 EnvironmentHandleWrapper setup_environment() {
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env);
+  REQUIRE_ODBC(ret, env);
   return env;
 }
 
@@ -70,20 +70,20 @@ ConnectionHandleWrapper get_connection_handle(EnvironmentHandleWrapper& env) { r
 void attempt_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 }
 
 void verify_simple_query_execution(ConnectionHandleWrapper& dbc) {
   StatementHandleWrapper stmt = dbc.createStatementHandle();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER result = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(result), NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(result == 1);
 }
 
@@ -104,9 +104,10 @@ void assert_login_error(ConnectionHandleWrapper& dbc) {
 TEST_CASE("should authenticate using private file with password", "[private_key_auth]") {
   // Given Authentication is set to JWT and private file with password is provided
   TempTestDir tmp("e2e_auth_pwd_");
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_with_private_key(tmp);
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
-  std::string connection_string = get_jwt_connection_string_with_private_key(tmp);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -119,9 +120,10 @@ TEST_CASE("should authenticate using private file with password", "[private_key_
 
 TEST_CASE("should fail JWT authentication when invalid private key provided", "[private_key_auth]") {
   // Given Authentication is set to JWT and invalid private key file is provided
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_with_invalid_private_key();
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
-  std::string connection_string = get_jwt_connection_string_with_invalid_private_key();
 
   // When Trying to Connect
   attempt_connection_expect_error(dbc, connection_string);
@@ -134,8 +136,6 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   // Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
   TempTestDir tmp("e2e_auth_unenc_");
   auto params = get_test_parameters("testconnection");
-  auto env = setup_environment();
-  auto dbc = get_connection_handle(env);
 
   // Decrypt the test key to produce an unencrypted PEM file.
   std::string encrypted_pem = read_private_key(params);
@@ -149,11 +149,15 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   test_utils::decrypt_pem_key_to_file(encrypted_pem, password, unencrypted_path);
 
   // Build connection string without PRIV_KEY_FILE_PWD
+  /* TODO: Explicit config installation */
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_FILE=" << unencrypted_path.string() << ";";
   std::string connection_string = ss.str();
+
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -165,26 +169,26 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
 }
 
 TEST_CASE("should authenticate using private_key as base64 string", "[private_key_auth]") {
-  // Old driver requires PRIV_KEY_FILE even when PRIV_KEY_BASE64 is provided.
-  // TODO: Re-enable once DSN support is implemented (provide PRIV_KEY_FILE via DSN).
-  SKIP_OLD_DRIVER("", "Old driver requires PRIV_KEY_FILE even when PRIV_KEY_BASE64 is set");
+  SKIP_OLD_DRIVER("", "Old driver does not support PRIV_KEY_BASE64 in connection strings");
 
   // Given Authentication is set to JWT and private key is provided as base64-encoded string
   auto params = get_test_parameters("testconnection");
-  auto env = setup_environment();
-  auto dbc = get_connection_handle(env);
 
   // Base64-encode the PEM private key
   std::string private_key_pem = read_private_key(params);
   std::string private_key_b64 = test_utils::base64_encode(private_key_pem);
 
   // Build connection string with PRIV_KEY_BASE64 (key is encrypted, so include password)
+  /* TODO: Explicit config installation */
   std::stringstream ss;
   read_default_params(ss, params);
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_BASE64=" << private_key_b64 << ";";
   std::string connection_string = ss.str();
+
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -210,20 +214,22 @@ TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key passw
   }
 
   TempTestDir tmp("e2e_auth_pwd_alias_");
-  auto env = setup_environment();
-  auto dbc = get_connection_handle(env);
 
   // Write encrypted key to file
   std::string key_path = get_private_key_path_for_auth(params, tmp);
   std::string password = pwd_it->second.get<std::string>();
 
   // Use PRIV_KEY_PWD instead of PRIV_KEY_FILE_PWD
+  /* TODO: Explicit config installation */
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_FILE=" << key_path << ";";
   ss << "PRIV_KEY_PWD=" << password << ";";
   std::string connection_string = ss.str();
+
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);

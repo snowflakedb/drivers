@@ -4,8 +4,8 @@ repos:
     -   id: rust-linting
         name: Rust formatting
         description: Run cargo fmt on files included in the commit. rustfmt should be installed before-hand.
-        entry: cargo fmt --all --
-        pass_filenames: true
+        entry: cargo fmt --all
+        pass_filenames: false
         types: [file, rust]
         language: system
     -   id: rust-clippy

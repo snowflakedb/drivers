@@ -36,7 +36,6 @@ struct EmptyLayer;
 impl Layer<Registry> for EmptyLayer {}
 
 pub fn init(config: LoggingConfig) -> Result<(), LogError> {
-    eprintln!("Initializing logging");
     init_logging::<EmptyLayer>(config, None)
 }
 
@@ -50,7 +49,11 @@ where
     let file_layer = if let Some(log_file) = config.log_file {
         let log_file =
             std::fs::File::create(log_file).map_err(|e| LogError::InitError(e.to_string()))?;
-        Some(tracing_subscriber::fmt::layer().with_writer(log_file))
+        Some(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(log_file),
+        )
     } else {
         None
     };

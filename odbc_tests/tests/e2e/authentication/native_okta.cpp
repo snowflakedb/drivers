@@ -11,7 +11,7 @@
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "require.hpp"
 #include "test_setup.hpp"
 
@@ -24,7 +24,7 @@ using namespace Catch::Matchers;
 std::string get_okta_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_USER", "UID");
@@ -37,7 +37,7 @@ std::string get_okta_connection_string() {
 EnvironmentHandleWrapper setup_okta_environment() {
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env);
+  REQUIRE_ODBC(ret, env);
   return env;
 }
 
@@ -48,20 +48,20 @@ ConnectionHandleWrapper get_okta_connection_handle(EnvironmentHandleWrapper& env
 void attempt_okta_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 }
 
 void verify_okta_simple_query_execution(ConnectionHandleWrapper& dbc) {
   StatementHandleWrapper stmt = dbc.createStatementHandle();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER result = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(result), NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(result == 1);
 }
 
@@ -71,11 +71,11 @@ void verify_okta_simple_query_execution(ConnectionHandleWrapper& dbc) {
 
 TEST_CASE("should authenticate using native okta", "[native_okta]") {
   REQUIRE_VPN("Native Okta E2E tests need access to preprod Snowflake account");
+  std::string connection_string = get_okta_connection_string();
 
   // Given Okta authentication is configured with valid credentials
   auto env = setup_okta_environment();
   auto dbc = get_okta_connection_handle(env);
-  std::string connection_string = get_okta_connection_string();
 
   // When Trying to Connect
   attempt_okta_connection(dbc, connection_string);
@@ -92,7 +92,7 @@ TEST_CASE("should fail native okta authentication with wrong credentials", "[nat
   // Given Okta authentication is configured with wrong password
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_USER", "UID");
@@ -116,7 +116,7 @@ TEST_CASE("should fail native okta authentication with wrong okta url", "[native
   // Given Okta authentication is configured with invalid okta url
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_OKTA_USER", "UID");

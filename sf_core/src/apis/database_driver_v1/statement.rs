@@ -1,29 +1,29 @@
-use snafu::{OptionExt, ResultExt};
-use std::sync::{Mutex, MutexGuard};
+use snafu::{OptionExt, ResultExt, Snafu};
+use tokio::sync::Mutex;
 
-use super::Handle;
-use super::connection::RefreshContext;
+use super::connection::{Connection, RefreshContext};
 use super::error::*;
-use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
-use crate::apis::database_driver_v1::query::process_query_response;
-use crate::rest::snowflake::query_response::Data;
-use crate::{
-    config::{rest_parameters::QueryParameters, settings::Setting},
-    rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
+use super::global_state::DatabaseDriverV1;
+use super::query::process_query_response;
+use super::validation::{
+    ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
+    validate_statement_option_write,
+};
+use crate::chunks::ChunkDownloadData;
+use crate::config::ParamStore;
+use crate::config::param_registry::param_names;
+use crate::config::settings::Setting;
+use crate::handle_manager::Handle;
+use crate::rest::snowflake::query_response::{Data, Stats};
+use crate::rest::snowflake::{
+    QueryExecutionMode, QueryInput, snowflake_get_query_result, snowflake_query_with_client,
 };
 
-use arrow::array::{RecordBatch, StructArray};
-use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use arrow::{
-    array::{Int32Array, StringArray},
-    datatypes::DataType,
-};
 use serde_json::value::RawValue;
-use snafu::Snafu;
 use std::{collections::HashMap, sync::Arc};
 
-use super::connection::Connection;
+#[cfg(test)]
 use crate::rest::snowflake::query_request;
 
 /// Pointer to raw bytes in memory - used by query bindings
@@ -36,6 +36,17 @@ pub struct DataPtr<'a> {
     /// Phantom data to enforce lifetime
     _phantom: std::marker::PhantomData<&'a [u8]>,
 }
+
+// Safety: DataPtr semantically represents a &[u8] (immutable borrowed slice),
+// which is Send. The raw pointer is only used for FFI interop and is always
+// accessed immutably within the lifetime 'a.
+//
+// Callers must ensure the backing memory is not freed or mutated while
+// any DataPtr (or Future holding one) is alive — including across .await
+// points. All current production paths run the entire async execution
+// synchronously via block_on, keeping the source data on the stack for
+// the full duration, which satisfies this requirement.
+unsafe impl Send for DataPtr<'_> {}
 
 impl<'a> DataPtr<'a> {
     /// Create a new DataPtr from a raw pointer and length
@@ -106,7 +117,7 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
 /// - For DML: Parse rowset columns to sum affected rows
 /// - For SELECT and other queries: Use total field
 /// - For unknown: Return None
-fn calculate_rows_affected(data: &Data) -> Option<i64> {
+pub(crate) fn calculate_rows_affected(data: &Data) -> Option<i64> {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
         // For DML, parse the rowset to get affected rows
@@ -124,7 +135,7 @@ fn calculate_rows_affected(data: &Data) -> Option<i64> {
                     || DML_AFFECTED_ROWS_COLUMN_PREFIXES
                         .iter()
                         .any(|p| col_name.starts_with(p)))
-                    && let Some(value) = rowset[0].get(idx)
+                    && let Some(Some(value)) = rowset[0].get(idx)
                     && let Ok(count) = value.parse::<i64>()
                 {
                     affected_rows += count;
@@ -142,114 +153,127 @@ fn calculate_rows_affected(data: &Data) -> Option<i64> {
     data.total
 }
 
-pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {
-    let handle = conn_handle;
-    match CONN_HANDLE_MANAGER.get_obj(handle) {
-        Some(conn_ptr) => {
-            let stmt = Mutex::new(Statement::new(conn_ptr));
-            let handle = STMT_HANDLE_MANAGER.add_handle(stmt);
-            Ok(handle)
-        }
-        None => InvalidArgumentSnafu {
-            argument: "Connection handle not found".to_string(),
-        }
-        .fail(),
-    }
-}
-
-pub fn statement_release(stmt_handle: Handle) -> Result<(), ApiError> {
-    match STMT_HANDLE_MANAGER.delete_handle(stmt_handle) {
-        true => Ok(()),
-        false => InvalidArgumentSnafu {
-            argument: "Failed to release statement handle".to_string(),
-        }
-        .fail(),
-    }
-}
-
-pub fn statement_set_option(handle: Handle, key: String, value: Setting) -> Result<(), ApiError> {
-    match STMT_HANDLE_MANAGER.get_obj(handle) {
-        Some(stmt_ptr) => {
-            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-            stmt.settings.insert(key, value);
-            Ok(())
-        }
-        None => InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
-        }
-        .fail(),
-    }
-}
-
-pub fn statement_set_sql_query(stmt_handle: Handle, query: String) -> Result<(), ApiError> {
-    let handle = stmt_handle;
-    match STMT_HANDLE_MANAGER.get_obj(handle) {
-        Some(stmt_ptr) => {
-            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-            stmt.query = Some(query);
-            Ok(())
-        }
-        None => InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
-        }
-        .fail(),
-    }
-}
-
-pub fn statement_prepare(_stmt_handle: Handle) -> Result<(), ApiError> {
-    // TODO: Implement statement preparation logic if required.
-    Ok(())
-}
-
-fn with_statement<T>(
-    handle: Handle,
-    f: impl FnOnce(MutexGuard<Statement>) -> Result<T, ApiError>,
-) -> Result<T, ApiError> {
-    let stmt = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
-        }
-        .build()
-    })?;
-    let guard = stmt.lock().map_err(|_| {
-        InvalidArgumentSnafu {
-            argument: "Statement cannot be locked".to_string(),
-        }
-        .build()
-    })?;
-    f(guard)
-}
-
-/// # Safety
-///
-/// This function is unsafe because it dereferences raw pointers to FFI_ArrowSchema and FFI_ArrowArray.
-/// The caller must ensure that:
-/// - The pointers are valid and properly aligned
-/// - The pointers point to valid FFI_ArrowSchema and FFI_ArrowArray structs
-/// - The structs referenced by the pointers will not be freed by the caller
-/// - No other code is concurrently modifying the memory referenced by these pointers
-pub unsafe fn statement_bind(
-    stmt_handle: Handle,
-    schema: *mut FFI_ArrowSchema,
-    array: *mut FFI_ArrowArray,
-) -> Result<(), ApiError> {
-    let schema = unsafe { FFI_ArrowSchema::from_raw(schema) };
-    let array = unsafe { FFI_ArrowArray::from_raw(array) };
-    let array = unsafe { arrow::ffi::from_ffi(array, &schema) }.map_err(|_| {
-        InvalidArgumentSnafu {
-            argument: "Failed to convert ArrowArray".to_string(),
-        }
-        .build()
-    })?;
-    let record_batch = RecordBatch::from(StructArray::from(array));
-    with_statement(stmt_handle, |mut stmt| {
-        stmt.bind_parameters(record_batch).map_err(|_| {
-            InvalidArgumentSnafu {
-                argument: "Failed to bind parameters".to_string(),
+impl DatabaseDriverV1 {
+    pub fn statement_new(&self, conn_handle: Handle) -> Result<Handle, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let stmt = Mutex::new(Statement::new(conn_ptr));
+                let handle = self.statements.add_handle(stmt);
+                Ok(handle)
             }
-            .build()
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub fn statement_release(&self, stmt_handle: Handle) -> Result<(), ApiError> {
+        match self.statements.delete_handle(stmt_handle) {
+            true => Ok(()),
+            false => InvalidArgumentSnafu {
+                argument: "Failed to release statement handle".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub async fn statement_set_option(
+        &self,
+        handle: Handle,
+        key: String,
+        value: Setting,
+    ) -> Result<(), ApiError> {
+        match self.statements.get_obj(handle) {
+            Some(stmt_ptr) => {
+                let mut stmt = stmt_ptr.lock().await;
+                let (canonical, def) = canonicalize_setting_key(&key);
+                validate_statement_option_write(def)?;
+                stmt.settings.insert(canonical, value);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub async fn statement_set_options(
+        &self,
+        handle: Handle,
+        options: HashMap<String, Setting>,
+    ) -> Result<Vec<ValidationIssue>, ApiError> {
+        match self.statements.get_obj(handle) {
+            Some(stmt_ptr) => {
+                let mut stmt = stmt_ptr.lock().await;
+                let (resolved, issues) = resolve_options(options);
+                let error_messages: Vec<String> = issues
+                    .iter()
+                    .filter(|i| i.severity == ValidationSeverity::Error)
+                    .map(|i| i.to_string())
+                    .collect();
+                if !error_messages.is_empty() {
+                    return InvalidArgumentSnafu {
+                        argument: error_messages.join("; "),
+                    }
+                    .fail();
+                }
+                for key in resolved.keys() {
+                    let def = crate::config::param_registry::registry().resolve(key.as_str());
+                    validate_statement_option_write(def)?;
+                }
+                for (key, value) in resolved {
+                    stmt.settings.insert(key, value);
+                }
+                Ok(issues
+                    .into_iter()
+                    .filter(|i| i.severity == ValidationSeverity::Warning)
+                    .collect())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub async fn statement_set_sql_query(
+        &self,
+        stmt_handle: Handle,
+        query: String,
+    ) -> Result<(), ApiError> {
+        match self.statements.get_obj(stmt_handle) {
+            Some(stmt_ptr) => {
+                let mut stmt = stmt_ptr.lock().await;
+                stmt.query = Some(query);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+}
+
+pub struct PrepareResult {
+    pub stream: Box<FFI_ArrowArrayStream>,
+    pub columns: Vec<ColumnMetadata>,
+    pub number_of_binds: i32,
+}
+
+impl DatabaseDriverV1 {
+    pub async fn statement_prepare(&self, stmt_handle: Handle) -> Result<PrepareResult, ApiError> {
+        let result = self
+            .execute_query_internal(stmt_handle, None, Some(true))
+            .await?;
+        Ok(PrepareResult {
+            stream: result.stream,
+            columns: result.columns,
+            number_of_binds: result.number_of_binds,
         })
-    })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -270,131 +294,237 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
     pub statement_type_id: Option<i64>,
     pub query: String,
+    pub sql_state: Option<String>,
+    pub stats: Option<Stats>,
+    pub number_of_binds: i32,
 }
 
-pub fn statement_execute_query<'a>(
-    stmt_handle: Handle,
-    bindings: Option<BindingType<'a>>,
-) -> Result<ExecuteResult, ApiError> {
-    let handle = stmt_handle;
-    let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Statement handle not found".to_string(),
-        }
-        .build()
-    })?;
-
-    let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
-    let query_str = stmt.query.as_deref().ok_or_else(|| {
-        InvalidArgumentSnafu {
-            argument: "Query not found".to_string(),
-        }
-        .build()
-    })?;
-
-    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
-    let (query_parameters, http_client, retry_policy) = {
-        let conn = stmt
-            .conn
-            .lock()
-            .map_err(|_| ConnectionLockingSnafu.build())?;
-        (
-            QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
-            conn.http_client
-                .clone()
-                .context(ConnectionNotInitializedSnafu)?,
-            conn.retry_policy.clone(),
-        )
-    };
-
-    let execution_mode = stmt.execution_mode(Some(query_str));
-    let query = stmt.query.take().expect("query must be present");
-
-    // Get bindings from request or from statement's Arrow bindings.
-    //
-    // JSON path (from language wrappers): **ZERO COPY** - borrows directly from wrapper memory.
-    // Arrow path (ODBC backwards compat): builds HashMap and serializes to JSON (allocations),
-    //   stored in `owned_bindings` so `query_bindings` can borrow it.
-    // Arrow path produces owned Box<RawValue>; keep it alive so query_bindings can borrow it.
-    let owned_bindings = if bindings.is_none() {
-        stmt.get_query_parameter_bindings()
-            .context(StatementSnafu)?
-    } else {
-        None
-    };
-    let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
-        // Handle bindings from request
-        match &binding_type {
-            BindingType::Json(data_ptr) => {
-                // True zero-copy: pointer → &'static RawValue (no allocation, no validation).
-                // Wrapper guarantees data lives through synchronous execute call.
-                Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
-            }
-            BindingType::Csv(_csv_ptr) => {
-                // TODO: Implement CSV binding handling (stage upload)
-                return Err(InvalidArgumentSnafu {
-                    argument: "CSV bindings are not yet implemented".to_string(),
-                }
-                .build());
-            }
-        }
-    } else {
-        owned_bindings.as_deref()
-    };
-
-    let response = rt.block_on(async {
-        let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
-        let mut last_error = None;
-        loop {
-            let session_token = ctx.refresh_token(last_error).await?;
-            match snowflake_query_with_client(
-                &http_client,
-                query_parameters.clone(),
-                session_token,
-                query.clone(),
-                query_bindings,
-                &retry_policy,
-                execution_mode,
-            )
+impl DatabaseDriverV1 {
+    pub async fn statement_execute_query<'a>(
+        &self,
+        stmt_handle: Handle,
+        bindings: Option<BindingType<'a>>,
+    ) -> Result<ExecuteResult, ApiError> {
+        self.execute_query_internal(stmt_handle, bindings, None)
             .await
-            {
-                Ok(result) => return Ok(result),
-                Err(e) => last_error = Some(e),
-            }
-        }
-    })?;
-
-    if response.success {
-        let conn = stmt
-            .conn
-            .lock()
-            .map_err(|_| ConnectionLockingSnafu.build())?;
-        conn.update_session_params_cache(&query, response.data.parameters.as_ref());
     }
 
-    let query_result = rt
-        .block_on(process_query_response(&response.data, &http_client))
+    async fn execute_query_internal<'a>(
+        &self,
+        stmt_handle: Handle,
+        bindings: Option<BindingType<'a>>,
+        describe_only: Option<bool>,
+    ) -> Result<ExecuteResult, ApiError> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let mut stmt = stmt_ptr.lock().await;
+        let query = stmt.query.clone().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Query not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let (query_parameters, http_client, retry_policy) = {
+            let conn = stmt.conn.lock().await;
+            (
+                conn.query_transport_parameters()?,
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?,
+                conn.retry_policy.clone(),
+            )
+        };
+
+        let execution_mode = stmt.execution_mode(Some(&query));
+
+        // Get bindings from request.
+        // JSON path: zero-copy — borrows directly from wrapper memory.
+        let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
+            match &binding_type {
+                BindingType::Json(data_ptr) => {
+                    Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
+                }
+                BindingType::Csv(_csv_ptr) => {
+                    return Err(InvalidArgumentSnafu {
+                        argument: "CSV bindings are not yet implemented".to_string(),
+                    }
+                    .build());
+                }
+            }
+        } else {
+            None
+        };
+
+        let query_input = QueryInput {
+            sql: query.clone(),
+            bindings: query_bindings,
+            describe_only,
+        };
+
+        let response = {
+            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
+            let mut last_error = None;
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match snowflake_query_with_client(
+                    &http_client,
+                    query_parameters.clone(),
+                    session_token.reveal(),
+                    query_input.clone(),
+                    &retry_policy,
+                    execution_mode,
+                )
+                .await
+                {
+                    Ok(result) => break Ok(result),
+                    Err(e) => last_error = Some(e),
+                }
+            }
+        }?;
+
+        if response.success {
+            let conn = stmt.conn.lock().await;
+            conn.update_session_params_cache(
+                &query,
+                response.data.parameters.as_ref(),
+                &super::connection::FinalSessionNames {
+                    database: response.data.final_database_name.clone(),
+                    schema: response.data.final_schema_name.clone(),
+                    warehouse: response.data.final_warehouse_name.clone(),
+                    role: response.data.final_role_name.clone(),
+                },
+            )
+            .await;
+        }
+
+        stmt.chunk_info = Some(StoredChunkInfo {
+            initial_chunk_base64: response.data.to_initial_base64_opt().map(String::from),
+            chunks: response.data.to_chunk_download_data().unwrap_or_default(),
+        });
+
+        let result = response_to_execute_result(response.data, &http_client, query).await?;
+        stmt.state = StatementState::Executed;
+        Ok(result)
+    }
+
+    pub async fn statement_result_chunks(
+        &self,
+        stmt_handle: Handle,
+    ) -> Result<StoredChunkInfo, ApiError> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let stmt = stmt_ptr.lock().await;
+        let chunk_info = stmt.chunk_info.as_ref().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "No chunk info available; execute a query first".to_string(),
+            }
+            .build()
+        })?;
+
+        Ok(StoredChunkInfo {
+            initial_chunk_base64: chunk_info.initial_chunk_base64.clone(),
+            chunks: chunk_info
+                .chunks
+                .iter()
+                .map(|c| ChunkDownloadData::new(&c.url, &c.headers))
+                .collect(),
+        })
+    }
+
+    pub async fn connection_get_query_result(
+        &self,
+        conn_handle: Handle,
+        query_id: String,
+    ) -> Result<ExecuteResult, ApiError> {
+        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let (query_parameters, http_client, retry_policy) = {
+            let conn = conn_ptr.lock().await;
+            (
+                conn.query_transport_parameters()?,
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?,
+                conn.retry_policy.clone(),
+            )
+        };
+
+        let response = {
+            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
+            let mut last_error = None;
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match snowflake_get_query_result(
+                    &http_client,
+                    &query_parameters,
+                    session_token.reveal(),
+                    &query_id,
+                    &retry_policy,
+                )
+                .await
+                {
+                    Ok(result) => break Ok(result),
+                    Err(e) => last_error = Some(e),
+                }
+            }
+        }?;
+
+        if response.success {
+            let conn = conn_ptr.lock().await;
+            conn.update_session_params_cache(
+                "",
+                response.data.parameters.as_ref(),
+                &super::connection::FinalSessionNames {
+                    database: response.data.final_database_name.clone(),
+                    schema: response.data.final_schema_name.clone(),
+                    warehouse: response.data.final_warehouse_name.clone(),
+                    role: response.data.final_role_name.clone(),
+                },
+            )
+            .await;
+        }
+
+        response_to_execute_result(response.data, &http_client, String::new()).await
+    }
+}
+
+/// Convert a Snowflake query response into an `ExecuteResult` by processing
+/// the Arrow data, extracting column metadata, and assembling all fields.
+///
+/// Async because `process_query_response` may download additional Arrow
+/// chunks over HTTP for large result sets.
+async fn response_to_execute_result(
+    data: Data,
+    http_client: &reqwest::Client,
+    query: String,
+) -> Result<ExecuteResult, ApiError> {
+    let query_result = process_query_response(&data, http_client)
+        .await
         .context(QueryResponseProcessingSnafu)?;
 
-    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
+    let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
+    let query_id = data.query_id.clone().unwrap_or_default();
+    let rows_affected = calculate_rows_affected(&data);
+    let statement_type_id = data.statement_type_id;
 
-    // Extract query_id from response
-    let query_id = response.data.query_id.clone().unwrap_or_default();
-
-    // Calculate rows_affected based on statement type
-    // For DML: Sum of affected rows from rowset columns
-    // For SELECT: Total rows in result set
-    // For DDL/Unknown: None
-    let rows_affected = calculate_rows_affected(&response.data);
-    let statement_type_id = response.data.statement_type_id;
-
-    // Extract column metadata: prefer synthetic metadata from PUT/GET processing,
-    // fall back to server-provided rowtype for regular queries.
     let columns = query_result.columns.unwrap_or_else(|| {
-        response
-            .data
-            .row_type
+        data.row_type
             .unwrap_or_default()
             .iter()
             .map(|rt| ColumnMetadata {
@@ -409,93 +539,32 @@ pub fn statement_execute_query<'a>(
             .collect()
     });
 
-    stmt.state = StatementState::Executed;
+    let number_of_binds = data.number_of_binds.unwrap_or(0);
+
     Ok(ExecuteResult {
-        stream: rowset_stream,
+        stream,
         rows_affected,
         query_id,
         columns,
         statement_type_id,
         query,
+        sql_state: data.sql_state,
+        stats: data.stats,
+        number_of_binds,
     })
 }
 
-/// Convert Arrow RecordBatch parameter bindings to `Cow::Owned(Box<RawValue>)`.
-///
-/// This is the backwards-compatibility path used by ODBC's `StatementBind` API.
-/// Unlike the JSON path (which borrows wrapper memory with zero copy), this path
-/// must allocate:
-///   1. A `HashMap<String, BindParameter>` is built from Arrow column data.
-///   2. `serde_json::to_string()` serializes the HashMap into a JSON `String`
-///      (one heap allocation for the output buffer).
-///   3. `RawValue::from_string()` validates the JSON syntax and wraps the string
-///      (no additional copy -- RawValue takes ownership of the String).
-///   4. `Cow::Owned` wraps the Box (no allocation, just an enum tag).
-fn parameters_from_record_batch(record_batch: &RecordBatch) -> Result<String, StatementError> {
-    let mut parameters = HashMap::new();
-    for i in 0..record_batch.num_columns() {
-        let column = record_batch.column(i);
-        match column.data_type() {
-            DataType::Int32 => {
-                let value = column
-                    .as_any()
-                    .downcast_ref::<Int32Array>()
-                    .unwrap()
-                    .value(0);
-                let json_value = serde_json::Value::String(value.to_string());
-                parameters.insert(
-                    format!("{}", i + 1),
-                    query_request::BindParameter {
-                        type_: "FIXED".to_string(),
-                        value: json_value,
-                        format: None,
-                        schema: None,
-                    },
-                );
-            }
-            DataType::Utf8 => {
-                let value = column
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .unwrap()
-                    .value(0);
-                let json_value = serde_json::Value::String(value.to_string());
-                parameters.insert(
-                    format!("{}", i + 1),
-                    query_request::BindParameter {
-                        type_: "TEXT".to_string(),
-                        value: json_value,
-                        format: None,
-                        schema: None,
-                    },
-                );
-            }
-            _ => {
-                UnsupportedBindParameterTypeSnafu {
-                    type_: column.data_type().to_string(),
-                }
-                .fail()?;
-            }
-        }
-    }
-    // Serialize HashMap to a JSON string, then wrap as RawValue.
-    // serde_json::to_string allocates the output buffer; RawValue::from_string
-    // takes ownership of that String without copying.
-    let json_string = serde_json::to_string(&parameters).map_err(|_| {
-        UnsupportedBindParameterTypeSnafu {
-            type_: "Failed to serialize parameters".to_string(),
-        }
-        .build()
-    })?;
-    Ok(json_string)
+pub struct StoredChunkInfo {
+    pub initial_chunk_base64: Option<String>,
+    pub chunks: Vec<ChunkDownloadData>,
 }
 
 pub struct Statement {
     pub state: StatementState,
-    pub settings: HashMap<String, Setting>,
+    pub(crate) settings: ParamStore,
     pub query: Option<String>,
-    pub parameter_bindings: Option<RecordBatch>,
     pub conn: Arc<Mutex<Connection>>,
+    pub(crate) chunk_info: Option<StoredChunkInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -507,49 +576,18 @@ pub enum StatementState {
 impl Statement {
     pub fn new(conn: Arc<Mutex<Connection>>) -> Self {
         Statement {
-            settings: HashMap::new(),
+            settings: ParamStore::new(),
             state: StatementState::Initialized,
             query: None,
-            parameter_bindings: None,
             conn,
+            chunk_info: None,
         }
     }
 
-    pub fn bind_parameters(&mut self, record_batch: RecordBatch) -> Result<(), StatementError> {
-        match self.state {
-            StatementState::Initialized => {
-                self.parameter_bindings = Some(record_batch);
-            }
-            _ => {
-                InvalidStateTransitionSnafu {
-                    msg: format!("Cannot bind parameters in state={:?}", self.state),
-                }
-                .fail()?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn get_query_parameter_bindings(&self) -> Result<Option<Box<RawValue>>, StatementError> {
-        match self.parameter_bindings.as_ref() {
-            Some(parameters) => {
-                let json_string = parameters_from_record_batch(parameters)?;
-                let raw = RawValue::from_string(json_string).map_err(|_| {
-                    UnsupportedBindParameterTypeSnafu {
-                        type_: "Failed to create RawValue from serialized parameters".to_string(),
-                    }
-                    .build()
-                })?;
-                Ok(Some(raw))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn execution_mode(&self, query: Option<&str>) -> QueryExecutionMode {
+    pub(crate) fn execution_mode(&self, query: Option<&str>) -> QueryExecutionMode {
         let async_requested = self
             .settings
-            .get(snowflake::STATEMENT_ASYNC_EXECUTION_OPTION)
+            .get(param_names::ASYNC_EXECUTION)
             .and_then(parse_bool_setting)
             .unwrap_or(false);
 
@@ -562,6 +600,7 @@ impl Statement {
 
 fn parse_bool_setting(setting: &Setting) -> Option<bool> {
     match setting {
+        Setting::Bool(v) => Some(*v),
         Setting::String(s) => {
             let s = s.trim();
             if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("yes") || s == "1" {
@@ -668,7 +707,9 @@ pub enum StatementError {
 /// The caller (language wrapper) MUST guarantee:
 /// 1. The pointer points to memory that remains valid for the entire `statement_execute_query` call
 /// 2. `statement_execute_query` is called synchronously (blocks until HTTP completes)
-fn parse_json_bindings<'a>(data_ptr: &'a DataPtr<'a>) -> Result<&'a RawValue, StatementError> {
+pub(crate) fn parse_json_bindings<'a>(
+    data_ptr: &'a DataPtr<'a>,
+) -> Result<&'a RawValue, StatementError> {
     // Get the byte slice from the pointer - zero allocation.
     // The slice lifetime is tied to DataPtr, ensuring safety.
     let json_bytes: &'a [u8] = data_ptr.slice();
@@ -696,6 +737,42 @@ fn parse_json_bindings<'a>(data_ptr: &'a DataPtr<'a>) -> Result<&'a RawValue, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_bool_setting_accepts_native_bool_values() {
+        assert_eq!(parse_bool_setting(&Setting::Bool(true)), Some(true));
+        assert_eq!(parse_bool_setting(&Setting::Bool(false)), Some(false));
+    }
+
+    #[test]
+    fn execution_mode_uses_native_bool_async_setting() {
+        let conn = Arc::new(Mutex::new(Connection::new()));
+        let mut stmt = Statement::new(conn);
+        stmt.settings
+            .insert("async_execution".to_string(), Setting::Bool(true));
+
+        assert_eq!(
+            stmt.execution_mode(Some("SELECT 1")),
+            QueryExecutionMode::Async
+        );
+    }
+
+    #[tokio::test]
+    async fn statement_rejects_connection_scoped_param() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let sh = ds.statement_new(ch).unwrap();
+        let err = ds
+            .statement_set_option(sh, "host".into(), Setting::String("h".into()))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not statement-scoped"),
+            "unexpected: {err}"
+        );
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
+    }
 
     #[test]
     fn is_file_transfer_detects_put_statements() {
@@ -1057,97 +1134,6 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // parameters_from_record_batch (Arrow backwards-compat path)
-    // ---------------------------------------------------------------
-
-    #[test]
-    fn test_parameters_from_record_batch_int32() {
-        use arrow::array::Int32Array;
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![Field::new("1", DataType::Int32, false)]);
-        let batch =
-            RecordBatch::try_new(Arc::new(schema), vec![Arc::new(Int32Array::from(vec![42]))])
-                .unwrap();
-
-        let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let obj = params.as_object().unwrap();
-        assert_eq!(obj.len(), 1);
-        assert_eq!(obj["1"]["type"], "FIXED");
-        assert_eq!(obj["1"]["value"], "42");
-    }
-
-    #[test]
-    fn test_parameters_from_record_batch_utf8() {
-        use arrow::array::StringArray;
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![Field::new("1", DataType::Utf8, false)]);
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(StringArray::from(vec!["hello"]))],
-        )
-        .unwrap();
-
-        let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let obj = params.as_object().unwrap();
-        assert_eq!(obj.len(), 1);
-        assert_eq!(obj["1"]["type"], "TEXT");
-        assert_eq!(obj["1"]["value"], "hello");
-    }
-
-    #[test]
-    fn test_parameters_from_record_batch_mixed_columns() {
-        use arrow::array::{Int32Array, StringArray};
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![
-            Field::new("1", DataType::Int32, false),
-            Field::new("2", DataType::Utf8, false),
-        ]);
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![
-                Arc::new(Int32Array::from(vec![99])),
-                Arc::new(StringArray::from(vec!["world"])),
-            ],
-        )
-        .unwrap();
-
-        let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
-        let obj = params.as_object().unwrap();
-        assert_eq!(obj.len(), 2);
-
-        assert_eq!(obj["1"]["type"], "FIXED");
-        assert_eq!(obj["1"]["value"], "99");
-
-        assert_eq!(obj["2"]["type"], "TEXT");
-        assert_eq!(obj["2"]["value"], "world");
-    }
-
-    #[test]
-    fn test_parameters_from_record_batch_unsupported_type() {
-        use arrow::array::Float64Array;
-        use arrow::datatypes::{Field, Schema};
-
-        let schema = Schema::new(vec![Field::new("1", DataType::Float64, false)]);
-        let batch = RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(Float64Array::from(vec![1.234]))],
-        )
-        .unwrap();
-
-        let result = parameters_from_record_batch(&batch);
-        assert!(
-            result.is_err(),
-            "Float64 is not a supported bind parameter type"
-        );
-    }
-
-    // ---------------------------------------------------------------
     // Request serialization round-trip
     // ---------------------------------------------------------------
 
@@ -1225,5 +1211,63 @@ mod tests {
             !serialized.contains("bindings"),
             "None bindings should be omitted from serialized output.\nSerialized: {serialized}"
         );
+    }
+
+    fn deserialize_query_response(json: &str) -> Data {
+        serde_json::from_str(json).expect("test JSON must be valid query response Data")
+    }
+
+    #[test]
+    fn calculate_rows_affected_sums_dml_columns() {
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [["10", "3"]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                    {"name": "number of rows updated", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(13));
+    }
+
+    #[test]
+    fn calculate_rows_affected_skips_null_cells() {
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [["5", null]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": false, "scale": 0, "precision": 10},
+                    {"name": "number of rows deleted", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(5));
+    }
+
+    #[test]
+    fn calculate_rows_affected_all_null_cells() {
+        let data = deserialize_query_response(
+            r#"{
+                "statementTypeId": 12544,
+                "rowset": [[null]],
+                "rowtype": [
+                    {"name": "number of rows inserted", "type": "FIXED", "nullable": true, "scale": 0, "precision": 10}
+                ]
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(0));
+    }
+
+    #[test]
+    fn calculate_rows_affected_select_uses_total() {
+        let data = deserialize_query_response(
+            r#"{
+                "total": 42
+            }"#,
+        );
+        assert_eq!(calculate_rows_affected(&data), Some(42));
     }
 }

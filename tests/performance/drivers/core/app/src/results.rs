@@ -1,6 +1,7 @@
 //! Results output and CSV formatting
 
-use crate::connection::get_server_version as get_server_version_internal;
+use crate::connection::{DriverRuntime, get_server_version as get_server_version_internal};
+use crate::resource_monitor::MemorySample;
 use crate::types::{IterationResult, PutGetResult};
 use sf_core::protobuf::generated::database_driver_v1::ConnectionHandle;
 use std::fs;
@@ -11,15 +12,23 @@ type Result<T> = std::result::Result<T, String>;
 
 pub fn write_csv_results(results: &[IterationResult], test_name: &str) -> Result<String> {
     write_csv_file(test_name, |file| {
-        writeln!(file, "timestamp,query_s,fetch_s,row_count")
-            .map_err(|e| format!("Failed to write: {:?}", e))?;
-        for result in results {
+        writeln!(
+            file,
+            "timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb"
+        )
+        .map_err(|e| format!("Failed to write: {e:?}"))?;
+        for r in results {
             writeln!(
                 file,
-                "{},{:.6},{:.6},{}",
-                result.timestamp, result.query_time_s, result.fetch_time_s, result.row_count
+                "{},{:.6},{:.6},{},{:.6},{:.1}",
+                r.timestamp,
+                r.query_time_s,
+                r.fetch_time_s,
+                r.row_count,
+                r.cpu_time_s,
+                r.peak_rss_mb
             )
-            .map_err(|e| format!("Failed to write: {:?}", e))?;
+            .map_err(|e| format!("Failed to write: {e:?}"))?;
         }
         Ok(())
     })
@@ -40,13 +49,51 @@ pub fn print_statistics(results: &[IterationResult]) {
 
 pub fn write_csv_results_put_get(results: &[PutGetResult], test_name: &str) -> Result<String> {
     write_csv_file(test_name, |file| {
-        writeln!(file, "timestamp,query_s").map_err(|e| format!("Failed to write: {:?}", e))?;
-        for result in results {
-            writeln!(file, "{},{:.6}", result.timestamp, result.query_time_s)
-                .map_err(|e| format!("Failed to write: {:?}", e))?;
+        writeln!(file, "timestamp_ms,query_s,cpu_time_s,peak_rss_mb")
+            .map_err(|e| format!("Failed to write: {e:?}"))?;
+        for r in results {
+            writeln!(
+                file,
+                "{},{:.6},{:.6},{:.1}",
+                r.timestamp, r.query_time_s, r.cpu_time_s, r.peak_rss_mb
+            )
+            .map_err(|e| format!("Failed to write: {e:?}"))?;
         }
         Ok(())
     })
+}
+
+pub fn write_memory_timeline(samples: &[MemorySample], test_name: &str) {
+    if samples.is_empty() {
+        return;
+    }
+
+    let timestamp = current_unix_timestamp_ms();
+    let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
+    let subdir = if test_name.ends_with("_record") { "_record" } else { test_name };
+    let results_path = PathBuf::from(&results_dir).join("universal").join(subdir);
+    let filename = results_path.join(format!("memory_timeline_{test_name}_core_{timestamp}.csv"));
+
+    if let Err(e) = fs::create_dir_all(&results_path) {
+        eprintln!("⚠️  Warning: Could not create results directory: {e}");
+        return;
+    }
+
+    let Ok(mut file) = fs::File::create(&filename) else {
+        eprintln!("⚠️  Warning: Could not create memory timeline file");
+        return;
+    };
+
+    let _ = writeln!(file, "timestamp_ms,rss_bytes,vm_bytes");
+    for s in samples {
+        let _ = writeln!(file, "{},{},{}", s.timestamp_ms, s.rss_bytes, s.vm_bytes);
+    }
+
+    println!(
+        "✓ Memory timeline → {} ({} samples)",
+        filename.display(),
+        samples.len()
+    );
 }
 
 pub fn print_statistics_put_get(results: &[PutGetResult]) {
@@ -70,7 +117,7 @@ pub fn write_run_metadata_json(server_version: &str) -> Result<String> {
         return Ok(metadata_filename.display().to_string());
     }
 
-    let timestamp = current_unix_timestamp();
+    let timestamp = current_unix_timestamp_ms();
 
     // Get driver version from env (set at compile time in Cargo.toml)
     let driver_version = env!("CARGO_PKG_VERSION");
@@ -162,11 +209,11 @@ fn get_os_version() -> String {
     }
 }
 
-pub fn current_unix_timestamp() -> i64 {
+pub fn current_unix_timestamp_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 /// Common CSV file creation logic.
@@ -176,11 +223,12 @@ fn write_csv_file<F>(test_name: &str, write_content: F) -> Result<String>
 where
     F: FnOnce(&mut fs::File) -> Result<()>,
 {
-    let timestamp = current_unix_timestamp();
+    let timestamp = current_unix_timestamp_ms();
 
     // Use RESULTS_DIR env var if set (for local execution), otherwise use /results (Docker)
     let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
-    let results_path = PathBuf::from(&results_dir);
+    let subdir = if test_name.ends_with("_record") { "_record" } else { test_name };
+    let results_path = PathBuf::from(&results_dir).join("universal").join(subdir);
     let filename = results_path.join(format!("{}_core_{}.csv", test_name, timestamp));
 
     fs::create_dir_all(&results_path)
@@ -193,11 +241,14 @@ where
     Ok(filename.display().to_string())
 }
 
-pub fn write_metadata_if_not_replay(conn_handle: ConnectionHandle) -> Result<()> {
+pub fn write_metadata_if_not_replay(
+    rt: &DriverRuntime,
+    conn_handle: ConnectionHandle,
+) -> Result<()> {
     // In replay mode, skip server version query and use N/A
     let actual_server_version = match std::env::var("WIREMOCK_REPLAY") {
         Ok(val) if val == "true" => "N/A".to_string(),
-        _ => get_server_version_internal(conn_handle).unwrap_or_else(|e| {
+        _ => get_server_version_internal(rt, conn_handle).unwrap_or_else(|e| {
             eprintln!("⚠️  Warning: Could not retrieve server version: {}", e);
             "UNKNOWN".to_string()
         }),

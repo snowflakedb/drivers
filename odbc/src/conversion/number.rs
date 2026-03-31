@@ -1,18 +1,24 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
+use serde_json::Value;
 
-use crate::cdata_types::CDataType;
+use crate::api::CDataType;
+use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    IntervalFieldOverflowSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::Binding;
+use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 /// Controls how FIXED numeric columns are reported to ODBC applications.
 /// These settings match the Snowflake server-side session parameters
 /// `ODBC_TREAT_DECIMAL_AS_INT` and `ODBC_TREAT_BIG_NUMBER_AS_STRING`.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct NumericSettings {
     /// When true, FIXED columns with scale=0 are reported as SQL_BIGINT
     /// instead of SQL_DECIMAL. Default C type becomes SQL_C_SBIGINT.
@@ -21,6 +27,24 @@ pub struct NumericSettings {
     /// When true, FIXED columns with precision > 18 are reported as SQL_VARCHAR.
     /// Takes precedence over `treat_decimal_as_int` for high-precision columns.
     pub treat_big_number_as_string: bool,
+    /// Server-reported maximum VARCHAR size (from session parameter
+    /// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT`). Used as the default
+    /// `column_size` in auto-populated IPD records for untyped `?` markers.
+    pub max_varchar_size: u64,
+}
+
+/// Snowflake default max VARCHAR size (16 MB). Overridden by the server's
+/// `VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT` session parameter after login.
+pub const SF_DEFAULT_VARCHAR_MAX_LEN: u64 = 16_777_216;
+
+impl Default for NumericSettings {
+    fn default() -> Self {
+        Self {
+            treat_decimal_as_int: false,
+            treat_big_number_as_string: false,
+            max_varchar_size: SF_DEFAULT_VARCHAR_MAX_LEN,
+        }
+    }
 }
 
 /// Represents the SQL numeric data types as defined by the ODBC specification.
@@ -353,7 +377,182 @@ impl WriteODBCType for SnowflakeNumber {
                 );
                 Ok(vec![])
             }
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute => {
+                let abs_int = int_value.unsigned_abs();
+                let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
+                let max_leading = 10u128.pow(leading_precision);
+                if abs_int >= max_leading {
+                    return IntervalFieldOverflowSnafu {
+                        reason: format!(
+                            "Value {int_value} exceeds leading field precision of {leading_precision} digits"
+                        ),
+                    }
+                    .fail();
+                }
+                let field_val = abs_int as u32;
+                let is_negative = snowflake_value < 0 && field_val > 0;
+                let mut interval = sql::IntervalStruct {
+                    interval_type: 0,
+                    interval_sign: if is_negative { 1 } else { 0 },
+                    interval_value: sql::IntervalUnion {
+                        day_second: sql::DaySecond::default(),
+                    },
+                };
+                match target_type {
+                    CDataType::IntervalYear => {
+                        interval.interval_type = sql::Interval::Year as i32;
+                        interval.interval_value = sql::IntervalUnion {
+                            year_month: sql::YearMonth {
+                                year: field_val,
+                                month: 0,
+                            },
+                        };
+                    }
+                    CDataType::IntervalMonth => {
+                        interval.interval_type = sql::Interval::Month as i32;
+                        interval.interval_value = sql::IntervalUnion {
+                            year_month: sql::YearMonth {
+                                year: 0,
+                                month: field_val,
+                            },
+                        };
+                    }
+                    CDataType::IntervalDay => {
+                        interval.interval_type = sql::Interval::Day as i32;
+                        interval.interval_value.day_second.day = field_val;
+                    }
+                    CDataType::IntervalHour => {
+                        interval.interval_type = sql::Interval::Hour as i32;
+                        interval.interval_value.day_second.hour = field_val;
+                    }
+                    CDataType::IntervalMinute => {
+                        interval.interval_type = sql::Interval::Minute as i32;
+                        interval.interval_value.day_second.minute = field_val;
+                    }
+                    _ => return UnsupportedOdbcTypeSnafu { target_type }.fail(),
+                }
+                binding.write_fixed(interval);
+                Ok(Self::fractional_warning(has_fractional))
+            }
+            CDataType::IntervalSecond => {
+                let abs_int = int_value.unsigned_abs();
+                let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
+                let max_leading = 10u128.pow(leading_precision);
+                if abs_int >= max_leading {
+                    return IntervalFieldOverflowSnafu {
+                        reason: format!(
+                            "Value {int_value} exceeds leading field precision of {leading_precision} digits"
+                        ),
+                    }
+                    .fail();
+                }
+                let second_val = abs_int as u32;
+                let (frac_value, frac_truncated) = if self.scale > 0 {
+                    let remainder = snowflake_value.unsigned_abs() % (scale_factor as u128);
+                    if self.scale > 6 {
+                        let divisor = 10u128.pow(self.scale - 6);
+                        (
+                            (remainder / divisor) as u32,
+                            !remainder.is_multiple_of(divisor),
+                        )
+                    } else {
+                        let multiplier = 10u128.pow(6 - self.scale);
+                        ((remainder * multiplier) as u32, false)
+                    }
+                } else {
+                    (0, false)
+                };
+                let is_negative = snowflake_value < 0 && (second_val > 0 || frac_value > 0);
+                let interval = sql::IntervalStruct {
+                    interval_type: sql::Interval::Second as i32,
+                    interval_sign: if is_negative { 1 } else { 0 },
+                    interval_value: sql::IntervalUnion {
+                        day_second: sql::DaySecond {
+                            day: 0,
+                            hour: 0,
+                            minute: 0,
+                            second: second_val,
+                            fraction: frac_value,
+                        },
+                    },
+                };
+                binding.write_fixed(interval);
+                Ok(if frac_truncated {
+                    vec![Warning::NumericValueTruncated]
+                } else {
+                    vec![]
+                })
+            }
+            CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => IntervalFieldOverflowSnafu {
+                reason: format!(
+                    "Cannot convert numeric value to multi-field interval type {target_type:?}"
+                ),
+            }
+            .fail(),
             _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
         }
+    }
+}
+
+impl ReadODBC for SnowflakeNumber {
+    fn read_odbc<'a>(
+        &self,
+        binding: &'a ParameterBinding,
+    ) -> Result<Self::Representation<'a>, JsonBindingError> {
+        let value = match binding.value_type {
+            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as i128,
+            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as i128,
+            CDataType::SBigInt => read_unaligned::<i64>(binding) as i128,
+            CDataType::ULong => read_unaligned::<u32>(binding) as i128,
+            CDataType::UShort => read_unaligned::<u16>(binding) as i128,
+            CDataType::UBigInt => read_unaligned::<u64>(binding) as i128,
+            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) as i128,
+            CDataType::UTinyInt => read_unaligned::<u8>(binding) as i128,
+            CDataType::Char => {
+                let s = read_char_str(binding)?;
+                s.trim().parse::<i128>().map_err(|_| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })?
+            }
+            CDataType::WChar => {
+                let s = read_wchar_str(binding)?;
+                s.trim().parse::<i128>().map_err(|_| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })?
+            }
+            _ => {
+                return UnsupportedCDataTypeSnafu {
+                    c_type: binding.value_type,
+                }
+                .fail();
+            }
+        };
+        Ok(value)
+    }
+}
+
+impl WriteJson for SnowflakeNumber {
+    fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
+        Ok(Value::String(value.to_string()))
+    }
+
+    fn sf_type(&self) -> SnowflakeLogicalType {
+        SnowflakeLogicalType::Fixed
     }
 }

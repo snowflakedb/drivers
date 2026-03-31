@@ -2,6 +2,8 @@
 Integration tests for PEP 249 Connection objects.
 """
 
+import uuid
+
 from io import StringIO
 from unittest.mock import Mock
 
@@ -14,7 +16,7 @@ from snowflake.connector.errors import NotSupportedError
 class TestConnectionInfo:
     """Integration tests for Connection._get_connection_info."""
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no _get_connection_info method")
     def test_get_connection_info_returns_info_after_connect(self, connection):
         """Test that _get_connection_info returns info after connection is established."""
         # Given an established connection
@@ -23,6 +25,61 @@ class TestConnectionInfo:
 
         # Then it should not be None
         assert info is not None
+
+
+class TestConnectionInfoProperties:
+    """Integration tests for Connection properties backed by _get_connection_info."""
+
+    @pytest.mark.parametrize("prop", ["account", "user", "host", "role", "database", "schema", "warehouse"])
+    def test_string_property_is_set(self, connection, prop):
+        """After connecting, string properties should return a non-empty string."""
+        value = getattr(connection, prop)
+        assert value is not None, f"connection.{prop} should not be None"
+        assert isinstance(value, str), f"connection.{prop} should be a str"
+        assert len(value) > 0, f"connection.{prop} should not be empty"
+
+    def test_session_id_is_set(self, connection):
+        """After connecting, session_id should return a positive integer."""
+        sid = connection.session_id
+        assert isinstance(sid, int)
+        assert sid > 0
+
+    def test_port_is_set(self, connection):
+        """After connecting, port should return a valid port number or None."""
+        port = connection.port
+        if port is not None:
+            assert isinstance(port, int)
+            assert port > 0
+
+
+class TestConnectionInfoReflectsSessionChanges:
+    """Integration tests verifying that properties reflect server-side session changes."""
+
+    def test_database_reflects_use_database(self, connection):
+        """After USE DATABASE, the database property should reflect the new database."""
+        original_db = connection.database
+        assert original_db is not None
+
+        tmp_db = f"TEST_DB_{uuid.uuid4().hex}".upper()
+        cur = connection.cursor()
+        try:
+            cur.execute(f"CREATE DATABASE {tmp_db}")
+            cur.execute(f"USE DATABASE {tmp_db}")
+            assert connection.database.upper() == tmp_db
+        finally:
+            cur.execute(f"USE DATABASE {original_db}")
+            cur.execute(f"DROP DATABASE IF EXISTS {tmp_db}")
+            cur.close()
+
+    def test_schema_reflects_use_schema(self, connection):
+        """After USE SCHEMA, the schema property should reflect the new schema."""
+        cur = connection.cursor()
+        try:
+            cur.execute("USE SCHEMA INFORMATION_SCHEMA")
+        finally:
+            cur.close()
+
+        assert connection.schema.upper() == "INFORMATION_SCHEMA"
 
 
 class TestConnectionMethods:
@@ -34,76 +91,60 @@ class TestConnectionMethods:
         connection.close()
         assert connection.is_closed()
 
-    @pytest.mark.skip_reference
-    def test_commit_not_implemented(self, connection):
-        """Test that commit raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.commit()
-        assert "commit is not implemented" in str(excinfo.value)
-
-    @pytest.mark.skip_reference
-    def test_rollback_not_implemented(self, connection):
-        """Test that rollback raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.rollback()
-        assert "rollback is not implemented" in str(excinfo.value)
-
-
-# TODO: Tests for context manager were deleted - we might want to add them again later
-
 
 class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no cancel method")
     def test_cancel_not_implemented(self, connection):
         """Test that cancel raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
             connection.cancel()
         assert "cancel is not implemented" in str(excinfo.value)
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no ping method")
     def test_ping_not_implemented(self, connection):
         """Test that ping raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
             connection.ping()
         assert "ping is not implemented" in str(excinfo.value)
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
     def test_set_autocommit(self, connection):
-        """Test that set_autocommit sets the internal flag."""
+        """Test that set_autocommit changes the autocommit flag."""
+        connection.set_autocommit(False)
         assert connection._autocommit is False
         connection.set_autocommit(True)
         assert connection._autocommit is True
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/get_autocommit methods")
     def test_get_autocommit(self, connection):
         """Test that get_autocommit returns the current setting."""
+        connection.set_autocommit(False)
         assert connection.get_autocommit() is False
-        connection._autocommit = True
+        connection.set_autocommit(True)
         assert connection.get_autocommit() is True
 
 
 class TestConnectionAutocommitMethod:
     """Test Connection autocommit method."""
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
     def test_autocommit_sets_flag_and_calls_set_autocommit(self, connection, monkeypatch):
-        """Test that autocommit() sets _autocommit and delegates to set_autocommit."""
+        """Test that autocommit() delegates to set_autocommit."""
         mock_set_autocommit = Mock()
         monkeypatch.setattr(connection, "set_autocommit", mock_set_autocommit)
 
         connection.autocommit(True)
 
-        assert connection._autocommit is True
         mock_set_autocommit.assert_called_once_with(True)
 
-    @pytest.mark.skip_reference
-    def test_autocommit_default_is_false(self, connection):
-        """Test that autocommit defaults to False."""
-        assert connection._autocommit is False
+    @pytest.mark.skip_reference(reason="Reference driver _autocommit defaults to None, not True")
+    def test_autocommit_default_is_server_default(self, connection):
+        """Test that autocommit defaults to the server default (true) when not explicitly set."""
+        assert connection._autocommit is True
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(reason="Reference driver has no get_autocommit method")
     def test_autocommit_roundtrip(self, connection):
         """Test setting autocommit via autocommit() and reading via get_autocommit()."""
         connection.autocommit(True)
@@ -265,3 +306,142 @@ class TestExecuteStream:
         assert len(cursors) == 1
         assert isinstance(cursors[0], DictCursor)
         assert cursors[0].fetchone() == {"ID": 1}
+
+
+class TestCommitRollback:
+    """Integration tests for commit and rollback."""
+
+    def test_commit_persists_inserted_rows(self, connection, connection_factory, tmp_schema):
+        """Test that commit() persists data inserted in a transaction."""
+        table = f"{tmp_schema}.test_commit"
+        connection.autocommit(False)
+        cur = connection.cursor()
+        cur.execute(f"CREATE TABLE {table} (id INTEGER, name VARCHAR)")
+        connection.commit()
+
+        cur.execute(f"INSERT INTO {table} VALUES (1, 'alice')")
+
+        # Before commit, the row should not be visible from another session
+        with connection_factory() as other_conn:
+            other_cur = other_conn.cursor()
+            other_cur.execute(f"SELECT COUNT(*) FROM {table}")
+            assert other_cur.fetchone() == (0,)
+
+        connection.commit()
+
+        cur.execute(f"SELECT id, name FROM {table} WHERE id = 1")
+        assert cur.fetchone() == (1, "alice")
+
+    def test_rollback_discards_inserted_rows(self, connection, tmp_schema):
+        """Test that rollback() discards uncommitted inserts."""
+        table = f"{tmp_schema}.test_rollback"
+        connection.autocommit(False)
+        cur = connection.cursor()
+        cur.execute(f"CREATE TABLE {table} (id INTEGER)")
+        cur.execute(f"INSERT INTO {table} VALUES (1)")
+        connection.commit()
+
+        cur.execute(f"INSERT INTO {table} VALUES (2)")
+        connection.rollback()
+
+        cur.execute(f"SELECT COUNT(*) FROM {table}")
+        assert cur.fetchone() == (1,)
+
+    def test_rollback_discards_update(self, connection, tmp_schema):
+        """Test that rollback() reverts an UPDATE to previously committed data."""
+        table = f"{tmp_schema}.test_rb_upd"
+        connection.autocommit(False)
+        cur = connection.cursor()
+        cur.execute(f"CREATE TABLE {table} (id INTEGER, val VARCHAR)")
+        cur.execute(f"INSERT INTO {table} VALUES (1, 'original')")
+        connection.commit()
+
+        cur.execute(f"UPDATE {table} SET val = 'modified' WHERE id = 1")
+        connection.rollback()
+
+        cur.execute(f"SELECT val FROM {table} WHERE id = 1")
+        assert cur.fetchone() == ("original",)
+
+
+class TestAutocommitAlterSession:
+    """Integration tests for set_autocommit ALTER SESSION."""
+
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_get_session_parameter methods")
+    def test_set_autocommit_true_updates_session_parameter(self, connection):
+        """Test that set_autocommit(True) sets the AUTOCOMMIT session parameter."""
+        connection.set_autocommit(True)
+        assert connection._get_session_parameter("AUTOCOMMIT") == "true"
+
+    @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit/_get_session_parameter methods")
+    def test_set_autocommit_false_updates_session_parameter(self, connection):
+        """Test that set_autocommit(False) sets the AUTOCOMMIT session parameter."""
+        connection.set_autocommit(False)
+        assert connection._get_session_parameter("AUTOCOMMIT") == "false"
+
+    def test_autocommit_on_persists_without_explicit_commit(self, connection, tmp_schema):
+        """Test that with autocommit ON, each statement is committed automatically."""
+        table = f"{tmp_schema}.test_ac_on"
+        connection.autocommit(True)
+        cur = connection.cursor()
+        cur.execute(f"CREATE TABLE {table} (id INTEGER)")
+        cur.execute(f"INSERT INTO {table} VALUES (1)")
+        # No explicit commit — autocommit should handle it
+
+        cur.execute(f"SELECT COUNT(*) FROM {table}")
+        assert cur.fetchone() == (1,)
+
+
+class TestContextManagerAutocommit:
+    """Integration tests for context manager with autocommit."""
+
+    def test_context_manager_commits_inserts_on_clean_exit(self, connection_factory, tmp_schema):
+        """Test that the context manager commits DML on clean exit when autocommit is off."""
+        table = f"{tmp_schema}.test_cm_commit"
+        with connection_factory() as conn:
+            conn.autocommit(False)
+            cur = conn.cursor()
+            cur.execute(f"CREATE TABLE {table} (id INTEGER)")
+            conn.commit()
+            cur.execute(f"INSERT INTO {table} VALUES (1)")
+            cur.execute(f"INSERT INTO {table} VALUES (2)")
+            # clean exit should trigger commit
+
+        with connection_factory() as conn:
+            cur = conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM {table}")
+            assert cur.fetchone() == (2,)
+
+    def test_context_manager_rolls_back_on_exception(self, connection_factory, tmp_schema):
+        """Test that the context manager rolls back on exception when autocommit is off."""
+        table = f"{tmp_schema}.test_cm_rb"
+        with connection_factory() as setup_conn:
+            setup_conn.autocommit(False)
+            cur = setup_conn.cursor()
+            cur.execute(f"CREATE TABLE {table} (id INTEGER)")
+            cur.execute(f"INSERT INTO {table} VALUES (1)")
+            setup_conn.commit()
+
+        try:
+            with connection_factory() as conn:
+                conn.autocommit(False)
+                cur = conn.cursor()
+                cur.execute(f"INSERT INTO {table} VALUES (99)")
+                raise ValueError("simulated error")
+        except ValueError:
+            pass
+
+        with connection_factory() as conn:
+            cur = conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM {table}")
+            assert cur.fetchone() == (1,)
+
+    def test_context_manager_with_autocommit_on_does_not_commit_or_rollback(self, connection_factory, tmp_schema):
+        """Test that with autocommit ON, __exit__ skips explicit commit/rollback."""
+        table = f"{tmp_schema}.test_cm_ac"
+        with connection_factory() as conn:
+            conn.autocommit(True)
+            cur = conn.cursor()
+            cur.execute(f"CREATE TABLE {table} (id INTEGER)")
+            cur.execute(f"INSERT INTO {table} VALUES (1)")
+            cur.execute(f"SELECT COUNT(*) FROM {table}")
+            assert cur.fetchone() == (1,)

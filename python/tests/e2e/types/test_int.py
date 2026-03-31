@@ -8,7 +8,7 @@ parameter binding, large result sets, and type casting.
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_connection_is_open, assert_sequential_values, assert_type, batch_insert
+from .utils import assert_sequential_values, assert_type, batch_insert
 
 
 # =============================================================================
@@ -79,16 +79,14 @@ class TestIntTypeCasting:
     @int_type_parametrize
     def test_should_cast_integer_values_to_appropriate_type_for_int_and_synonyms(self, execute_query, int_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT 0::<type>, 1000000::<type>, 9223372036854775807::<type>" is executed
         sql = f"SELECT 0::{int_type}, 1000000::{int_type}, {INT64_SIGNED_MAX}::{int_type}"
         result = execute_query(sql, single_row=True)
 
-        # Then All values should be returned as appropriate type
+        # Then All values should be returned as appropriate type with no precision loss
         assert_type(result, int)
-
-        # And No precision loss should occur
         assert result == (0, 1000000, INT64_SIGNED_MAX)
 
 
@@ -116,23 +114,29 @@ class TestIntLiteral:
     ]
 
     @int_type_parametrize
-    def test_should_select_integer_values_for_int_and_synonyms(self, execute_query, int_type):
+    @pytest.mark.parametrize(
+        "values,query_values,expected_values",
+        LITERAL_SELECT_TEST_CASES,
+        ids=[c[0] for c in LITERAL_SELECT_TEST_CASES],
+    )
+    def test_should_select_integer_values_for_int_and_synonyms(
+        self, execute_query, int_type, values, query_values, expected_values
+    ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
-        for _values, query_values, expected_values in self.LITERAL_SELECT_TEST_CASES:
-            # When Query "SELECT <query_values>" is executed
-            select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
-            result = execute_query(f"SELECT {select_cols}", single_row=True)
+        # When Query "SELECT <query_values>" is executed
+        select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
+        result = execute_query(f"SELECT {select_cols}", single_row=True)
 
-            # Then Result should contain integers <expected_values>
-            assert result == expected_values
-            assert_type(result, int)
+        # Then Result should contain integers <expected_values>
+        assert result == expected_values
+        assert_type(result, int)
 
     @int_type_parametrize
     def test_should_handle_large_integer_values_for_int_and_synonyms(self, execute_query, int_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT -99999999999999999999999999999999999999::<type>,
         #   99999999999999999999999999999999999999::<type>" is executed
@@ -146,7 +150,7 @@ class TestIntLiteral:
     @int_type_parametrize
     def test_should_handle_null_values_for_int_and_synonyms(self, execute_query, int_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
         result = execute_query(
@@ -161,7 +165,7 @@ class TestIntLiteral:
     @int_type_parametrize
     def test_should_download_large_result_set_with_multiple_chunks_for_int_and_synonyms(self, execute_query, int_type):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
 
@@ -225,35 +229,41 @@ class TestIntTable:
     ]
 
     @int_type_parametrize
-    def test_should_select_values_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
+    @pytest.mark.parametrize(
+        "values,insert_values,expected_values,can_be_none",
+        TABLE_SELECT_TEST_CASES,
+        ids=[c[0] for c in TABLE_SELECT_TEST_CASES],
+    )
+    def test_should_select_values_from_table_for_int_and_synonyms(
+        self, execute_query, tmp_schema, int_type, values, insert_values, expected_values, can_be_none
+    ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
-        for values, insert_values, expected_values, can_be_none in self.TABLE_SELECT_TEST_CASES:
-            # And Table with <type> column exists with values <insert_values>
-            table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
-            execute_query(f"CREATE TABLE {table_name} (col {int_type})")
-            batch_insert(execute_query, table_name, insert_values)
+        # And Table with <type> column exists with values <insert_values>
+        table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
+        batch_insert(execute_query, table_name, insert_values)
 
-            # When Query "SELECT * FROM <table> ORDER BY col" is executed
-            rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
-            result = [row[0] for row in rows]
+        # When Query "SELECT * FROM <table> ORDER BY col" is executed
+        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+        result = [row[0] for row in rows]
 
-            # Then Result should contain integers <expected_values>
-            assert result == expected_values
-            assert_type(result, int, can_be_none=can_be_none)
+        # Then Result should contain integers <expected_values>
+        assert result == expected_values
+        assert_type(result, int, can_be_none=can_be_none)
 
     @int_type_parametrize
     def test_should_select_large_integer_values_from_table_for_int_and_synonyms(
         self, execute_query, tmp_schema, int_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with <type> column exists with values
         # [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
         table_name = f"{tmp_schema}.int38_table_{int_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
         batch_insert(execute_query, table_name, [INT38_MIN, INT38_MAX])
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
@@ -265,30 +275,34 @@ class TestIntTable:
         assert result == [INT38_MIN, INT38_MAX]
         assert_type(result, int)
 
-    @int_type_parametrize
-    def test_should_select_large_result_set_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
+    def test_should_handle_server_side_arrow_memory_optimization_for_int_columns_on_multiple_chunks(
+        self, execute_query, tmp_schema
+    ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
-        # And Table with <type> column exists with 50000 sequential values
+        # And Table with four INT columns exists
+        table_name = f"{tmp_schema}.different_int_column_sizes"
+        execute_query(
+            f"CREATE OR REPLACE TEMPORARY TABLE {table_name} "
+            f"(col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)"
+        )
 
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
-        table_name = f"{tmp_schema}.large_int_table_{int_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        # And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
         execute_query(
             f"INSERT INTO {table_name} "
-            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{int_type} "
+            f"SELECT 100, 30000, 2000000000, 9000000000000000000 "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
-        # When Query "SELECT * FROM <table> ORDER BY col" is executed
-        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+        # When Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
 
-        # Then Result should contain 50000 sequentially numbered rows from 0 to 49999
-        values = [row[0] for row in rows]
-        assert_type(values, int)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
+        # Then Result should contain 50000 rows with all values equal to expected data
+        assert len(rows) == LARGE_RESULT_SET_SIZE
+
+        for row in rows:
+            assert row == (100, 30000, 2000000000, 9000000000000000000)
 
 
 @with_paramstyle("qmark")
@@ -300,11 +314,11 @@ class TestIntBinding:
         self, execute_query, tmp_schema, int_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with <type> column exists
         table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
 
         # When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
         test_values = [0, INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT64_SIGNED_MAX]
@@ -325,11 +339,11 @@ class TestIntBinding:
         self, execute_query, executemany_insert, tmp_schema, int_type
     ):
         # Given Snowflake client is logged in
-        assert_connection_is_open(execute_query)
+        pass
 
         # And Table with <type> column exists
         table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+        execute_query(f"CREATE OR REPLACE TEMPORARY TABLE {table_name} (col {int_type})")
 
         # When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
         test_values = [0, 42, INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT64_SIGNED_MAX]

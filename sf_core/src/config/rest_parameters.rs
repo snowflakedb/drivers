@@ -8,6 +8,7 @@ use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
+use crate::sensitive::SensitiveString;
 use crate::tls::config::TlsConfig;
 use openssl::pkey::PKey;
 use snafu::OptionExt;
@@ -43,6 +44,10 @@ pub struct QueryParameters {
 }
 
 impl QueryParameters {
+    /// Build transport parameters from an arbitrary settings bag (e.g. tests, pre-connect paths).
+    ///
+    /// After login, prefer `Connection::query_transport_parameters` (transport snapshot)
+    /// instead of re-reading merged settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             server_url: get_server_url(settings)?,
@@ -96,6 +101,10 @@ pub struct LoginParameters {
 }
 
 impl LoginParameters {
+    /// Build login request fields from a resolved settings map (defaults + files + connection seed).
+    ///
+    /// Session defaults (`database`, `schema`, etc.) are included only when they are part of the
+    /// resolved connect seed (`used_at_connect` session fields in the registry).
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             account_name: {
@@ -131,7 +140,7 @@ pub struct NativeOktaConfig {
     /// property — useful when the Okta email differs from the Snowflake user.
     pub okta_username: Option<String>,
     /// IdP password (native Okta SSO).
-    pub password: String,
+    pub password: SensitiveString,
     /// Okta authenticator URL endpoint (native Okta SSO).
     pub okta_url: Url,
     /// Disable SAML destination/postback validation (default false; discouraged).
@@ -144,17 +153,24 @@ pub struct NativeOktaConfig {
 pub enum LoginMethod {
     Password {
         username: String,
-        password: String,
+        password: SensitiveString,
     },
     NativeOkta(NativeOktaConfig),
     PrivateKey {
         username: String,
-        private_key: String,
-        passphrase: Option<String>,
+        private_key: SensitiveString,
+        passphrase: Option<SensitiveString>,
     },
     Pat {
         username: String,
-        token: String,
+        token: SensitiveString,
+    },
+    UserPasswordMfa {
+        username: String,
+        password: SensitiveString,
+        passcode_in_password: bool,
+        passcode: Option<SensitiveString>,
+        client_store_temporary_credential: bool,
     },
 }
 
@@ -238,8 +254,6 @@ impl LoginMethod {
             // Otherwise, assume it's DER format and convert to PEM
             return Self::der_to_pem(&private_key_bytes);
         }
-
-        // Otherwise, check for private_key_file
         if let Some(private_key_file) = settings.get_string("private_key_file") {
             let private_key = fs::read_to_string(private_key_file.clone()).map_err(|e| {
                 InvalidParameterValueSnafu {
@@ -263,6 +277,10 @@ impl LoginMethod {
         settings.get("private_key").is_some() || settings.get_string("private_key_file").is_some()
     }
 
+    fn non_empty_string(settings: &dyn Settings, key: &str) -> Option<String> {
+        settings.get_string(key).filter(|s| !s.is_empty())
+    }
+
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
 
@@ -273,32 +291,29 @@ impl LoginMethod {
 
         if use_jwt {
             return Ok(Self::PrivateKey {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                private_key: Self::read_private_key(settings)?,
-                passphrase: settings.get_string("private_key_password"),
+                private_key: Self::read_private_key(settings)?.into(),
+                passphrase: settings
+                    .get_string("private_key_password")
+                    .map(SensitiveString::from),
             });
         }
 
         match authenticator.as_str() {
             "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: settings
-                    .get_string("password")
-                    .context(MissingParameterSnafu {
-                        parameter: "password",
-                    })?,
+                password: Self::non_empty_string(settings, "password")
+                    .context(MissingParameterSnafu { parameter: "password" })?
+                    .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
-                username: settings
-                    .get_string("user")
+                username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                token: settings
-                    .get_string("token")
-                    .context(MissingParameterSnafu { parameter: "token" })?,
+                token: Self::non_empty_string(settings, "token")
+                    .context(MissingParameterSnafu { parameter: "token" })?
+                    .into(),
             }),
             _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
@@ -313,8 +328,7 @@ impl LoginMethod {
                     .build()
                 })?;
 
-                let username = settings
-                    .get_string("user")
+                let username = Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?;
                 let okta_username = settings.get_string("okta_username");
                 let password = settings
@@ -336,16 +350,46 @@ impl LoginMethod {
                 Ok(Self::NativeOkta(NativeOktaConfig {
                     username,
                     okta_username,
-                    password,
+                    password: password.into(),
                     okta_url,
                     disable_saml_url_check,
                     authentication_timeout_secs,
                 }))
             }
+            "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {
+                username: Self::non_empty_string(settings, "user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                password: Self::non_empty_string(settings, "password")
+                    .context(MissingParameterSnafu { parameter: "password" })?
+                    .into(),
+                passcode_in_password: settings
+                    .get_bool("passcodeInPassword")
+                    .or_else(|| {
+                        settings
+                            .get_string("passcodeInPassword")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| settings.get_int("passcodeInPassword").map(|v| v != 0))
+                    .unwrap_or(false),
+                passcode: settings.get_string("passcode").map(SensitiveString::from),
+                client_store_temporary_credential: settings
+                    .get_bool("client_store_temporary_credential")
+                    .or_else(|| {
+                        settings
+                            .get_string("client_store_temporary_credential")
+                            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    })
+                    .or_else(|| {
+                        settings
+                            .get_int("client_store_temporary_credential")
+                            .map(|v| v != 0)
+                    })
+                    .unwrap_or(false),
+            }),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, or an https:// URL for native Okta SSO",
+                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA, or an https:// URL for native Okta SSO",
             }
             .fail()?,
         }
@@ -496,7 +540,7 @@ mod tests {
         match result.unwrap() {
             LoginMethod::Password { username, password } => {
                 assert_eq!(username, "test_user");
-                assert_eq!(password, "test_password");
+                assert_eq!(password.reveal(), "test_password");
             }
             _ => panic!("Expected Password login method"),
         }
@@ -567,5 +611,21 @@ mod tests {
             Setting::String("true".to_string()),
         )]);
         assert!(cfg.disable_saml_url_check);
+    }
+
+    #[test]
+    fn test_empty_user_returns_missing_parameter_error() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Missing required parameter") && err_msg.contains("user"),
+            "Expected MissingParameter error for empty user, got: {err_msg}"
+        );
     }
 }

@@ -2,7 +2,7 @@
 from enum import Enum
 
 
-class TestType(str, Enum):
+class PerfTestType(str, Enum):
     """Enum for test types"""
     SELECT = "select"
     PUT_GET = "put_get"

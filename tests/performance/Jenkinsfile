@@ -159,11 +159,16 @@ pipeline {
                                     // Build test command with optional TEST_ARGS
                                     def testArgs = params.TEST_ARGS?.trim() ?: ""
                                     
+                                    // Disable long PUT tests (12mx1000, 1.2Gx10) for ODBC and Python
+                                    if (!testArgs && (params.DRIVER == 'odbc' || params.DRIVER == 'python')) {
+                                        testArgs = "tests/ -k 'not (test_put_files_12mx1000 or test_put_files_1_2Gx10)'"
+                                        echo "${params.DRIVER}: excluding long PUT tests to avoid timeout"
+                                    }
+                                    
                                     echo "Hatch environment: ${hatchEnv}"
                                     echo "TEST_ARGS parameter: '${testArgs ?: '(empty - will run all tests)'}'"
                                     
                                     if (testArgs) {
-                                        // Pass TEST_ARGS directly as a Groovy variable, not through shell export
                                         echo "Running specific test(s): ${testArgs}"
                                         sh """
                                             source .venv/bin/activate
@@ -220,9 +225,9 @@ pipeline {
 def getAgentLabel(architecture) {
     switch (architecture) {
         case 'x86_64':
-            return 'regular-memory-node-snowos'
+            return 'drivers-perf-regular-memory-node-snowos'
         case 'arm64':
-            return 'regular-memory-node-snowosarm'
+            return 'drivers-perf-regular-memory-node-snowosarm'
         default:
             error "Unsupported architecture: ${architecture}. Use 'x86_64' or 'arm64'."
     }

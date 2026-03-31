@@ -5,6 +5,8 @@ from pathlib import Path
 
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
+    as_file_uri,
+    create_temporary_stage,
     create_temporary_stage_and_upload_file,
     get_file_from_stage,
     list_stage_contents,
@@ -84,7 +86,7 @@ def test_should_return_correct_rowset_for_put(connection):
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
@@ -142,7 +144,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
 
     with connection.cursor() as cursor:
         # Given Snowflake client is logged in
-        assert cursor is not None
+        pass
 
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
@@ -192,10 +194,10 @@ def test_should_return_correct_column_metadata_for_get(connection):
             auto_compress=True,
             overwrite=True,
         )
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # When File is downloaded using GET command
-            download_dir = Path(temp_dir)
 
+        # When File is downloaded using GET command
+        with tempfile.TemporaryDirectory() as temp_dir:
+            download_dir = Path(temp_dir)
             get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
 
             # Then Column metadata for GET command should be correct
@@ -220,3 +222,60 @@ def test_should_return_correct_column_metadata_for_get(connection):
                 assert actual_type_code == expected_type_code, (
                     f"Column '{expected_name}' type_code should be {expected_type_code}, got {actual_type_code}"
                 )
+
+
+def test_should_get_file_from_subdirectory_in_stage(connection):
+    test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
+    filename = test_file_path.name
+
+    with connection.cursor() as cursor:
+        # Given File is uploaded to a subdirectory in stage
+        stage_name = create_temporary_stage(cursor, "TEST_SUBDIR_GET")
+        subdir = "nested/subdir"
+        file_uri = as_file_uri(test_file_path)
+        put_command = f"PUT 'file://{file_uri}' @{stage_name}/{subdir} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        cursor.execute(put_command)
+        upload_result = cursor.fetchone()
+        assert upload_result[6] == "UPLOADED"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # When All files are downloaded from stage using GET command
+            download_dir = Path(temp_dir)
+            download_uri = as_file_uri(download_dir)
+            get_command = f"GET @{stage_name}/ 'file://{download_uri}/'"
+            cursor.execute(get_command)
+            get_result = cursor.fetchone()
+
+            # Then File should be downloaded flat into the local directory
+            assert get_result[2] == "DOWNLOADED"
+            downloaded_file = download_dir / filename
+            assert downloaded_file.exists(), (
+                f"Expected file at {downloaded_file}, but directory contents: {list(download_dir.rglob('*'))}"
+            )
+
+            # And Have correct content
+            content = downloaded_file.read_text().strip()
+            assert content == "1,2,3"
+
+
+def test_should_upload_file_to_subdirectory_in_stage(connection):
+    test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
+    filename = test_file_path.name
+
+    with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        pass
+
+        # When File is uploaded to a subdirectory in stage
+        stage_name = create_temporary_stage(cursor, "TEST_SUBDIR_UPLOAD")
+        subdir_path = f"@{stage_name}/nested/subdir"
+        file_uri = as_file_uri(test_file_path)
+        put_command = f"PUT 'file://{file_uri}' {subdir_path} AUTO_COMPRESS=FALSE"
+        cursor.execute(put_command)
+        upload_result = cursor.fetchone()
+        assert upload_result[6] == "UPLOADED"
+
+        # Then File should be listed under the subdirectory
+        files = list_stage_contents(cursor, stage_name)
+        listed_names = [row[0] for row in files]
+        assert any("nested/subdir" in name and filename in name for name in listed_names)

@@ -6,8 +6,8 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
-from snowflake.connector.errors import NotSupportedError, ProgrammingError
+from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
+from snowflake.connector.errors import InterfaceError, NotSupportedError, ProgrammingError
 from tests.e2e.types.utils import assert_sequential_values
 
 
@@ -564,6 +564,496 @@ class TestCursorRowcount:
         assert cursor.rowcount == 1
 
 
+class TestCursorStats:
+    """Integration tests for Cursor.stats property."""
+
+    def test_stats_returns_all_none_before_execute(self, connection):
+        """Test that stats returns all-None QueryResultStats before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing stats before execute
+        result = cursor.stats
+
+        # Then all fields should be None
+        assert isinstance(result, QueryResultStats)
+        assert result == QueryResultStats(None, None, None, None)
+
+    def test_stats_returns_query_result_stats_type(self, cursor):
+        """Test that stats always returns a QueryResultStats instance."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+
+        # When accessing stats
+        result = cursor.stats
+
+        # Then it should be a QueryResultStats instance
+        assert isinstance(result, QueryResultStats)
+
+    def test_stats_after_insert(self, cursor, tmp_schema):
+        """Test stats.num_rows_inserted is populated after INSERT."""
+        # Given a table to insert into
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_insert (id INTEGER, name VARCHAR)")
+
+        # When inserting rows
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_insert VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+
+        # Then num_rows_inserted should reflect the number of inserted rows
+        assert cursor.stats.num_rows_inserted == 3
+
+    def test_stats_after_single_row_insert(self, cursor, tmp_schema):
+        """Test stats.num_rows_inserted for a single row INSERT."""
+        # Given a table
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_single_insert (id INTEGER)")
+
+        # When inserting a single row
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_single_insert VALUES (1)")
+
+        # Then num_rows_inserted should be 1
+        assert cursor.stats.num_rows_inserted == 1
+
+    def test_stats_after_update(self, cursor, tmp_schema):
+        """Test stats.num_rows_updated is populated after UPDATE."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_update (id INTEGER, value INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_update VALUES (1, 10), (2, 20), (3, 30)")
+
+        # When updating some rows
+        cursor.execute(f"UPDATE {tmp_schema}.test_stats_update SET value = 100 WHERE id <= 2")
+
+        # Then num_rows_updated should reflect the number of updated rows
+        assert cursor.stats.num_rows_updated == 2
+
+    def test_stats_after_update_zero_rows(self, cursor, tmp_schema):
+        """Test stats when no rows match the UPDATE condition."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_update_zero (id INTEGER, value INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_update_zero VALUES (1, 10), (2, 20)")
+
+        # When updating with a condition that matches no rows
+        cursor.execute(f"UPDATE {tmp_schema}.test_stats_update_zero SET value = 999 WHERE id > 100")
+
+        # Then stats should have no DML counts (server omits stats when 0 rows affected)
+        assert cursor.stats.num_rows_updated is None
+
+    def test_stats_after_delete(self, cursor, tmp_schema):
+        """Test stats.num_rows_deleted is populated after DELETE."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_delete (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_delete VALUES (1), (2), (3), (4), (5)")
+
+        # When deleting some rows
+        cursor.execute(f"DELETE FROM {tmp_schema}.test_stats_delete WHERE id > 2")
+
+        # Then num_rows_deleted should reflect the number of deleted rows
+        assert cursor.stats.num_rows_deleted == 3
+
+    def test_stats_after_delete_zero_rows(self, cursor, tmp_schema):
+        """Test stats when no rows match the DELETE condition."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_delete_zero (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_delete_zero VALUES (1), (2), (3)")
+
+        # When deleting with a condition that matches no rows
+        cursor.execute(f"DELETE FROM {tmp_schema}.test_stats_delete_zero WHERE id > 100")
+
+        # Then stats should have no DML counts (server omits stats when 0 rows affected)
+        assert cursor.stats.num_rows_deleted is None
+
+    def test_stats_after_select(self, cursor):
+        """Test that stats has no DML counts after a SELECT statement."""
+        # Given a cursor that executes a SELECT query
+        cursor.execute("SELECT 1")
+
+        # When accessing stats
+        result = cursor.stats
+
+        # Then DML-specific fields should be None (SELECT is not a DML operation)
+        assert result.num_rows_inserted is None
+        assert result.num_rows_deleted is None
+        assert result.num_rows_updated is None
+
+    def test_stats_persists_after_fetchall(self, cursor, tmp_schema):
+        """Test that stats persists after fetching results."""
+        # Given a table with an INSERT
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_persist (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_persist VALUES (1), (2)")
+        stats_before = cursor.stats
+
+        # When doing a SELECT and fetching all
+        cursor.execute(f"SELECT * FROM {tmp_schema}.test_stats_persist")
+        cursor.fetchall()
+
+        # Then stats should reflect the latest query (the SELECT)
+        # and the old stats from the INSERT should no longer be there
+        assert cursor.stats != stats_before or stats_before.num_rows_inserted is None
+
+    def test_stats_updates_with_new_execute(self, cursor, tmp_schema):
+        """Test that stats updates to reflect the most recent DML operation."""
+        # Given a table
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_updates (id INTEGER, value INTEGER)")
+
+        # When performing an INSERT
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_updates VALUES (1, 10), (2, 20)")
+        insert_stats = cursor.stats
+
+        # Then INSERT stats should be populated
+        assert insert_stats.num_rows_inserted == 2
+
+        # When performing a DELETE
+        cursor.execute(f"DELETE FROM {tmp_schema}.test_stats_updates WHERE id = 1")
+        delete_stats = cursor.stats
+
+        # Then DELETE stats should be populated
+        assert delete_stats.num_rows_deleted == 1
+
+    def test_stats_after_insert_select(self, cursor, tmp_schema):
+        """Test stats after INSERT ... SELECT."""
+        # Given source and target tables
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_src (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_src VALUES (1), (2), (3)")
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_stats_dst (id INTEGER)")
+
+        # When inserting via SELECT
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_stats_dst SELECT * FROM {tmp_schema}.test_stats_src")
+
+        # Then num_rows_inserted should reflect the number of rows inserted
+        assert cursor.stats.num_rows_inserted == 3
+
+    def test_stats_num_dml_duplicates_after_update_with_duplicate_join(self, cursor):
+        """Test stats.num_dml_duplicates is populated when UPDATE joins to duplicate source rows."""
+        # Given a target with one row and a source where multiple rows match the same target
+        cursor.execute("CREATE OR REPLACE TEMP TABLE test_dup_src (c1 INT, c2 INT)")
+        cursor.execute("CREATE OR REPLACE TEMP TABLE test_dup_target (c INT)")
+        cursor.execute("INSERT INTO test_dup_src VALUES (0, 100), (0, 200), (0, 300)")
+        cursor.execute("INSERT INTO test_dup_target VALUES (0)")
+
+        # When updating via a join that produces duplicate matches
+        cursor.execute("""
+            UPDATE test_dup_target t
+            SET c = s.c1
+            FROM test_dup_src s
+            WHERE s.c1 = t.c
+        """)
+
+        # Then one source row wins the update and the rest are counted as duplicates
+        assert cursor.stats.num_rows_updated == 1
+        assert cursor.stats.num_dml_duplicates == 1
+
+
+class TestCursorRownumber:
+    """Integration tests for Cursor.rownumber property."""
+
+    def test_rownumber_is_none_before_fetch(self, cursor):
+        """Test that rownumber is None after execute but before any fetch."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT * FROM VALUES (1), (2)")
+
+        # When accessing rownumber before fetching
+        result = cursor.rownumber
+
+        # Then it should be None (no rows fetched yet)
+        assert result is None
+
+    def test_rownumber_starts_at_zero_after_first_fetch(self, cursor):
+        """Test that rownumber is 0 after the first fetchone."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT * FROM VALUES (1), (2)")
+
+        # When fetching the first row
+        cursor.fetchone()
+
+        # Then rownumber should be 0 (0-based index)
+        assert cursor.rownumber == 0
+
+    def test_rownumber_increments_with_fetchone(self, cursor):
+        """Test that rownumber increments with each fetchone call."""
+        # Given a cursor that executes a query with multiple rows
+        cursor.execute("SELECT * FROM VALUES (1), (2), (3)")
+
+        # When fetching rows one by one
+        cursor.fetchone()
+        assert cursor.rownumber == 0
+
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        cursor.fetchone()
+        assert cursor.rownumber == 2
+
+    def test_rownumber_does_not_increment_past_end(self, cursor):
+        """Test that rownumber does not increment when fetchone returns None."""
+        # Given a cursor with a single row
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        assert cursor.rownumber == 0
+
+        # When fetching past the end
+        cursor.fetchone()
+
+        # Then rownumber should stay at last value
+        assert cursor.rownumber == 0
+
+    def test_rownumber_resets_with_new_execute(self, cursor):
+        """Test that rownumber resets when a new query is executed."""
+        # Given a cursor that has fetched rows
+        cursor.execute("SELECT * FROM VALUES (1), (2), (3)")
+        cursor.fetchone()
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        # When executing a new query
+        cursor.execute("SELECT * FROM VALUES (10), (20)")
+
+        # Then rownumber should be reset to None (no rows fetched yet)
+        assert cursor.rownumber is None
+
+    def test_rownumber_increments_with_fetchmany(self, cursor):
+        """Test that rownumber increments correctly with fetchmany."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching multiple rows at once
+        cursor.fetchmany(3)
+
+        # Then rownumber should reflect the last row fetched (0-based)
+        assert cursor.rownumber == 2
+
+    def test_rownumber_updated_by_fetchall(self, cursor):
+        """Test that rownumber reflects total rows fetched after fetchall."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching all rows at once
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 4
+
+    def test_rownumber_updated_by_fetchall_after_partial_fetchone(self, cursor):
+        """Test that rownumber is correct when fetchall follows partial fetchone."""
+        # Given a cursor with multiple rows, partially consumed
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        cursor.fetchone()
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        # When fetching remaining rows
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 4
+
+    def test_rownumber_fetchall_on_empty_result(self, cursor):
+        """Test that rownumber stays None when fetchall returns no rows."""
+        # Given a cursor with an empty result set
+        cursor.execute("SELECT 1 WHERE FALSE")
+
+        # When fetching all (no rows)
+        cursor.fetchall()
+
+        # Then rownumber should remain None
+        assert cursor.rownumber is None
+
+    def test_rownumber_fetchmany_then_fetchall(self, cursor):
+        """Test rownumber is correct after fetchmany followed by fetchall."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching some rows with fetchmany, then the rest with fetchall
+        cursor.fetchmany(3)
+        assert cursor.rownumber == 2
+
+        cursor.fetchall()
+
+        # Then rownumber should be the 0-based index of the last row
+        assert cursor.rownumber == 9
+
+
+class TestCursorSqlstate:
+    """Integration tests for Cursor.sqlstate property."""
+
+    def test_sqlstate_is_none_before_execute(self, connection):
+        """Test that sqlstate returns None before any query is executed."""
+        cursor = connection.cursor()
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_none_after_successful_select(self, cursor):
+        """Successful queries set sqlstate to None (00000 is normalized)."""
+        cursor.execute("SELECT 1")
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_none_after_dml(self, cursor):
+        """Successful DDL/DML statements set sqlstate to None."""
+        cursor.execute("CREATE TEMPORARY TABLE test_sqlstate_dml (id INT)")
+        assert cursor.sqlstate is None
+
+        cursor.execute("INSERT INTO test_sqlstate_dml VALUES (1)")
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_stays_none_across_executes(self, cursor):
+        """sqlstate is refreshed on every execute call."""
+        cursor.execute("SELECT 1")
+        first = cursor.sqlstate
+
+        cursor.execute("SELECT 2")
+        second = cursor.sqlstate
+
+        assert first is None
+        assert second is None
+
+    def test_sqlstate_persists_after_fetchall(self, cursor):
+        """sqlstate is not cleared by fetching results."""
+        cursor.execute("SELECT 1, 2, 3")
+        cursor.fetchall()
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_persists_after_fetchone(self, cursor):
+        """sqlstate is not cleared by fetching results."""
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        assert cursor.sqlstate is None
+
+    def test_sqlstate_set_on_failed_execute(self, cursor):
+        """sqlstate is captured from the error when a query fails."""
+        with pytest.raises(ProgrammingError):
+            cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+
+        assert cursor.sqlstate == "42S02"
+
+    def test_sqlstate_transitions_across_success_and_failure(self, cursor):
+        """sqlstate updates correctly through None -> error -> None."""
+        cursor.execute("SELECT 1")
+        assert cursor.sqlstate is None
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+        assert cursor.sqlstate == "42S02"
+
+        cursor.execute("SELECT 2")
+        assert cursor.sqlstate is None
+
+
+class TestCursorStatementLifecycle:
+    """Integration tests for statement handle lifecycle (create/release)."""
+
+    def test_sequential_executes_do_not_leak(self, cursor):
+        """Test that many sequential execute calls work without resource exhaustion."""
+        # Given a cursor that executes many queries in sequence
+        for i in range(50):
+            cursor.execute(f"SELECT {i}")
+            row = cursor.fetchone()
+            assert row[0] == i
+
+    def test_cursor_context_manager_cleanup(self, connection):
+        """Test that cursor context manager properly cleans up resources."""
+        # Given a cursor used as a context manager
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1")
+            result = cur.fetchone()
+            assert result == (1,)
+
+        # When the context manager exits, the cursor should be closed
+        assert cur.is_closed()
+
+    def test_cursor_usable_after_close_and_reopen(self, connection):
+        """Test that closing a cursor and creating a new one works."""
+        # Given a cursor that executes and is then closed
+        cursor1 = connection.cursor()
+        cursor1.execute("SELECT 1")
+        cursor1.fetchone()
+        cursor1.close()
+        assert cursor1.is_closed()
+
+        # When creating a new cursor
+        cursor2 = connection.cursor()
+        cursor2.execute("SELECT 2")
+        result = cursor2.fetchone()
+
+        # Then the new cursor should work normally
+        assert result == (2,)
+        cursor2.close()
+
+    def test_execute_after_previous_execute(self, cursor):
+        """Test that a second execute properly replaces the first result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 'first'")
+        assert cursor.fetchone()[0] == "first"
+
+        # When executing a second query on the same cursor
+        cursor.execute("SELECT 'second'")
+
+        # Then the second result should be available
+        assert cursor.fetchone()[0] == "second"
+
+    def test_multiple_cursors_independent(self, connection):
+        """Test that multiple cursors operate independently."""
+        cursor1 = connection.cursor()
+        cursor2 = connection.cursor()
+
+        cursor1.execute("SELECT 1")
+        cursor2.execute("SELECT 2")
+
+        assert cursor1.fetchone() == (1,)
+        assert cursor2.fetchone() == (2,)
+
+        cursor1.close()
+        cursor2.close()
+
+    def test_close_is_idempotent(self, cursor):
+        """Test that calling close() multiple times is safe."""
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+
+        # First close
+        cursor.close()
+        assert cursor.is_closed()
+
+        # Second close should not raise an error
+        cursor.close()
+        assert cursor.is_closed()
+
+    def test_statement_cleanup_on_execute_failure(self, cursor):
+        """Test that statement handles are cleaned up even if execute fails."""
+        # Execute a successful query first
+        cursor.execute("SELECT 1")
+        assert cursor.fetchone() == (1,)
+
+        # Try to execute an invalid query
+        try:
+            cursor.execute("SELECT * FROM nonexistent_table_xyz")
+        except Exception:
+            pass  # Expected to fail
+
+        # Should be able to execute a new valid query after failure
+        cursor.execute("SELECT 2")
+        assert cursor.fetchone() == (2,)
+
+
 class TestCursorMethods:
     """Test Cursor object methods."""
 
@@ -573,20 +1063,23 @@ class TestCursorMethods:
         cursor.close()
         assert cursor.is_closed()
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(
+        reason="Reference driver forwards callproc to server instead of raising NotSupportedError"
+    )
     def test_callproc_not_implemented(self, cursor):
         """Test that callproc raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.callproc("test_proc", [1, 2, 3])
         assert "callproc is not implemented" in str(excinfo.value)
 
-    @pytest.mark.skip_reference
     def test_executemany_is_callable(self, cursor):
         """Test that executemany is callable (basic smoke test)."""
         # Just verify it's callable and accepts empty sequence without error
         cursor.executemany("INSERT INTO test VALUES (?)", [])
 
-    @pytest.mark.skip_reference
+    @pytest.mark.skip_reference(
+        reason="Reference driver returns None from nextset instead of raising NotSupportedError"
+    )
     def test_nextset_not_implemented(self, cursor):
         """Test that nextset raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
@@ -603,6 +1096,70 @@ class TestCursorMethods:
         # Should not raise any exception
         cursor.setoutputsize(100)
         cursor.setoutputsize(100, 1)
+
+
+class TestCursorExecutemany:
+    """Integration tests for Cursor.executemany with client-side binding."""
+
+    def test_executemany_rowcount_with_dict_params(self, cursor, tmp_schema):
+        """Test that executemany accumulates rowcount across individual executions."""
+        # Given a table to insert into
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_em (id INTEGER, name VARCHAR)")
+
+        # When inserting multiple rows via executemany with dict params
+        params = [
+            {"id": 1, "name": "alice"},
+            {"id": 2, "name": "bob"},
+            {"id": 3, "name": "charlie"},
+        ]
+        cursor.executemany(f"INSERT INTO {tmp_schema}.test_em VALUES (%(id)s, %(name)s)", params)
+
+        # Then rowcount should equal the total number of rows inserted
+        assert cursor.rowcount == 3
+
+        # And the data should actually be in the table
+        cursor.execute(f"SELECT id, name FROM {tmp_schema}.test_em ORDER BY id")
+        rows = cursor.fetchall()
+        assert rows == [(1, "alice"), (2, "bob"), (3, "charlie")]
+
+
+class TestCursorReset:
+    """Integration tests for Cursor.reset method."""
+
+    def test_reset_clears_state_after_execute(self, cursor):
+        """Test that reset() matches old driver semantics.
+
+        Fields preserved after reset: description, sfqid, query, rownumber, sqlstate.
+        Fields cleared after reset: rowcount.
+        """
+        query_text = "SELECT 1 AS col1, 2 AS col2"
+
+        # Given a cursor that has executed a query and fetched results
+        cursor.execute(query_text)
+        cursor.fetchone()
+        assert cursor.description is not None
+        assert cursor.rowcount is not None
+        assert cursor.sfqid is not None
+        assert cursor.rownumber == 0
+
+        saved_sfqid = cursor.sfqid
+        saved_description = cursor.description
+
+        # When resetting the cursor
+        cursor.reset()
+
+        # Then rowcount should be cleared
+        assert cursor.rowcount is None
+
+        # But metadata fields must survive (consistent with old driver)
+        assert cursor.sfqid == saved_sfqid
+        assert cursor.description == saved_description
+        assert cursor.query == query_text
+
+        # And the cursor should still be usable for a new query
+        cursor.execute("SELECT 42 AS answer")
+        assert cursor.fetchone() == (42,)
+        assert cursor.sfqid != saved_sfqid
 
 
 class TestCursorContextManager:
@@ -706,7 +1263,6 @@ class TestCursorFetch:
         result = cursor.fetchall()
         assert result == [(1, "hello", Decimal("3.14"))]
 
-    @pytest.mark.skip("TODO: Known issue, SNOW-2997744")
     def test_fetchall_empty_result(self, cursor):
         """Test fetchall with empty result."""
         cursor.execute("SELECT 1 WHERE FALSE")
@@ -757,7 +1313,6 @@ class TestCursorFetch:
         result = cursor.fetchmany(0)
         assert result == []
 
-    @pytest.mark.skip_reference
     def test_fetchmany_negative_size_raises_error(self, cursor):
         """Test fetchmany with negative size raises ProgrammingError."""
         cursor.execute("SELECT 1")
@@ -1059,7 +1614,7 @@ class TestDictCursorCreation:
 
     def test_dict_cursor_is_base_cursor_subclass(self):
         """Test that DictCursor is a subclass of BaseCursor."""
-        from snowflake.connector.cursor import DictCursor
+        from snowflake.connector.cursor import DictCursor, SnowflakeCursorBase
 
         assert issubclass(DictCursor, SnowflakeCursorBase)
 
@@ -1336,3 +1891,93 @@ class TestDictCursorMultipleQueries:
 
         remainder = dict_cursor.fetchall()
         assert remainder == [{"N": i} for i in range(6, 20)]
+
+
+class TestCursorDescribe:
+    """Integration tests for Cursor.describe method."""
+
+    def test_describe_returns_column_metadata(self, cursor):
+        """describe() returns ResultMetadata with correct names, types, and structure."""
+        result = cursor.describe("""
+            SELECT
+                1::INTEGER AS int_col,
+                'hello'::VARCHAR AS str_col,
+                3.14::FLOAT AS float_col,
+                TRUE::BOOLEAN AS bool_col
+        """)
+
+        assert result is not None
+        assert len(result) == 4
+        assert all(len(col) == 7 for col in result)
+        assert result[0].name == "INT_COL"
+        assert result[0].type_code == 0  # FIXED
+        assert result[1].name == "STR_COL"
+        assert result[1].type_code == 2  # TEXT
+        assert result[2].name == "FLOAT_COL"
+        assert result[2].type_code == 1  # REAL
+        assert result[3].name == "BOOL_COL"
+        assert result[3].type_code == 13  # BOOLEAN
+        assert cursor.description == result
+
+    def test_describe_side_effects(self, cursor):
+        """describe() sets description and row count but not sqlstate."""
+        cursor.describe("SELECT 1 AS col1")
+
+        assert cursor.description is not None
+        assert cursor.rowcount == 0
+        assert cursor.sqlstate is None
+        assert cursor.rownumber is None
+
+    def test_describe_matches_execute_description(self, cursor):
+        """describe() returns the same column metadata as execute()."""
+        sql = "SELECT 1::INTEGER AS a, 'x'::VARCHAR AS b, 3.14::FLOAT AS c"
+        describe_result = cursor.describe(sql)
+
+        cursor.execute(sql)
+
+        assert describe_result is not None
+        assert cursor.description is not None
+        for d, e in zip(describe_result, cursor.description):
+            assert d.name == e.name
+            assert d.type_code == e.type_code
+
+    def test_describe_with_invalid_sql_raises_error(self, cursor):
+        """describe() raises ProgrammingError for invalid SQL."""
+        with pytest.raises(ProgrammingError):
+            cursor.describe("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+
+    def test_describe_raises_when_cursor_closed(self, connection):
+        """describe() raises InterfaceError when cursor is closed."""
+        cur = connection.cursor()
+        cur.close()
+
+        with pytest.raises(InterfaceError):
+            cur.describe("SELECT 1")
+
+
+class TestCursorQueryResult:
+    """Integration tests for Cursor.query_result method."""
+
+    def test_query_result_retrieves_data_and_metadata(self, connection):
+        """query_result fetches rows, description, and rowcount from a previous query."""
+        with connection.cursor() as cur1:
+            cur1.execute("""
+                SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS id,
+                       'row' AS label
+                FROM TABLE(GENERATOR(ROWCOUNT => 3))
+                ORDER BY 1
+            """)
+            qid = cur1.sfqid
+            original_rows = cur1.fetchall()
+            original_desc = cur1.description
+
+        with connection.cursor() as cur2:
+            ret = cur2.query_result(qid)
+
+            assert ret is cur2
+            assert cur2.rowcount == 3
+            assert cur2.description is not None
+            assert len(cur2.description) == len(original_desc)
+            assert cur2.description[0].name == "ID"
+            assert cur2.description[1].name == "LABEL"
+            assert cur2.fetchall() == original_rows

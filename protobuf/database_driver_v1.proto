@@ -114,6 +114,15 @@ message DriverException {
   StatusCode status_code = 2;
   DriverError error = 3;
   repeated ErrorTraceEntry error_trace = 4;
+  // Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+  // Present when the error originated from a Snowflake server response.
+  optional int32 vendor_code = 5;
+  // ANSI SQL state code (e.g. "42000" for syntax error).
+  // Present when the server provides a sqlState in its response.
+  optional string sql_state = 6;
+  // The deepest cause in the error chain (root cause).
+  // More informative than the top-level message for end users.
+  optional string root_cause = 7;
 }
 
 // Column metadata for description
@@ -127,6 +136,14 @@ message ColumnMetadata {
   bool nullable = 7;
 }
 
+// DML operation statistics
+message QueryStats {
+  optional int64 num_rows_inserted = 1;
+  optional int64 num_rows_updated = 2;
+  optional int64 num_rows_deleted = 3;
+  optional int64 num_dml_duplicates = 4;
+}
+
 // Execute result
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
@@ -135,6 +152,8 @@ message ExecuteResult {
   repeated ColumnMetadata columns = 4;
   optional int64 statement_type_id = 5;
   string query = 6;
+  optional string sql_state = 7;
+  optional QueryStats stats = 8;
 }
 
 // Partitioned result
@@ -169,11 +188,6 @@ message ArrowArrayStreamPtr {
 
 // Arrow schema pointer
 message ArrowSchemaPtr {
-  bytes value = 1;
-}
-
-// Arrow array pointer
-message ArrowArrayPtr {
   bytes value = 1;
 }
 
@@ -246,6 +260,15 @@ message DatabaseSetOptionDoubleRequest {
 message DatabaseSetOptionDoubleResponse {
 }
 
+message DatabaseSetOptionBoolRequest {
+  DatabaseHandle db_handle = 1;
+  string key = 2;
+  bool value = 3;
+}
+
+message DatabaseSetOptionBoolResponse {
+}
+
 message DatabaseInitRequest {
   DatabaseHandle db_handle = 1;
 }
@@ -305,6 +328,15 @@ message ConnectionSetOptionDoubleRequest {
 message ConnectionSetOptionDoubleResponse {
 }
 
+message ConnectionSetOptionBoolRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+  bool value = 3;
+}
+
+message ConnectionSetOptionBoolResponse {
+}
+
 message ConnectionInitRequest {
   ConnectionHandle conn_handle = 1;
   DatabaseHandle db_handle = 2;
@@ -331,6 +363,12 @@ message ConnectionGetInfoResponse {
   optional string server_url = 3;
   optional string session_token = 4;
   optional int64 session_id = 5;
+  optional string account = 6;
+  optional string user = 7;
+  optional string role = 8;
+  optional string database = 9;
+  optional string schema = 10;
+  optional string warehouse = 11;
 }
 
 message ConnectionGetObjectsRequest {
@@ -397,6 +435,24 @@ message ConnectionGetParameterResponse {
   optional string value = 1;
 }
 
+message ConnectionValidateOptionsRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionValidateOptionsResponse {
+  repeated ValidationIssue issues = 1;
+}
+
+// Fetch the result of a previously executed query by its Snowflake Query ID.
+message ConnectionGetQueryResultRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetQueryResultResponse {
+  ExecuteResult result = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -430,11 +486,18 @@ message StatementSetSubstraitPlanRequest {
 message StatementSetSubstraitPlanResponse {
 }
 
+message PrepareResult {
+  ArrowArrayStreamPtr stream = 1;
+  repeated ColumnMetadata columns = 4;
+  int32 number_of_binds = 5;
+}
+
 message StatementPrepareRequest {
   StatementHandle stmt_handle = 1;
 }
 
 message StatementPrepareResponse {
+  PrepareResult result = 1;
 }
 
 message StatementSetOptionStringRequest {
@@ -473,29 +536,21 @@ message StatementSetOptionDoubleRequest {
 message StatementSetOptionDoubleResponse {
 }
 
+message StatementSetOptionBoolRequest {
+  StatementHandle stmt_handle = 1;
+  string key = 2;
+  bool value = 3;
+}
+
+message StatementSetOptionBoolResponse {
+}
+
 message StatementGetParameterSchemaRequest {
   StatementHandle stmt_handle = 1;
 }
 
 message StatementGetParameterSchemaResponse {
   ArrowSchemaPtr schema = 1;
-}
-
-message StatementBindRequest {
-  StatementHandle stmt_handle = 1;
-  ArrowSchemaPtr schema = 2;
-  ArrowArrayPtr array = 3;
-}
-
-message StatementBindResponse {
-}
-
-message StatementBindStreamRequest {
-  StatementHandle stmt_handle = 1;
-  bytes stream = 2;
-}
-
-message StatementBindStreamResponse {
 }
 
 // Extend current StatementExecute
@@ -525,6 +580,75 @@ message StatementReadPartitionResponse {
   int64 partition_stream = 1;
 }
 
+// Distributed fetch types
+
+enum ChunkFormat {
+  CHUNK_FORMAT_UNSPECIFIED = 0;
+  CHUNK_FORMAT_ARROW_IPC = 1;
+  CHUNK_FORMAT_JSON = 2;
+}
+
+message RemoteChunk {
+  string url = 1;
+  map<string, string> headers = 2;
+}
+
+message ResultChunk {
+  // Format of the decoded payload (after base64 decoding when using `inline`).
+  ChunkFormat format = 1;
+  oneof data {
+    // Inline payload: the UTF-8 bytes of a base64-encoded string.
+    // Clients must base64-decode this field, then interpret the resulting
+    // bytes according to `format` (e.g. Arrow IPC or JSON).
+    string inline = 2;
+    RemoteChunk remote = 3;
+  }
+}
+
+message ResultChunksResult {
+  repeated ResultChunk chunks = 1;
+}
+
+message StatementResultChunksRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementResultChunksResponse {
+  ResultChunksResult result = 1;
+}
+
+message DatabaseFetchChunkRequest {
+  DatabaseHandle db_handle = 1;
+  ResultChunk chunk = 2;
+}
+
+message DatabaseFetchChunkResponse {
+  ArrowArrayStreamPtr stream = 1;
+}
+
+// Validation issue reported during set or validate operations.
+message ValidationIssue {
+  ValidationSeverity severity = 1;
+  string parameter = 2;
+  string message = 3;
+  ValidationCode code = 4;
+}
+
+enum ValidationSeverity {
+  VALIDATION_SEVERITY_ERROR = 0;
+  VALIDATION_SEVERITY_WARNING = 1;
+}
+
+enum ValidationCode {
+  VALIDATION_CODE_UNSPECIFIED = 0;
+  VALIDATION_CODE_MISSING_REQUIRED = 1;
+  VALIDATION_CODE_INVALID_TYPE = 2;
+  VALIDATION_CODE_INVALID_VALUE = 3;
+  VALIDATION_CODE_UNKNOWN_PARAMETER = 4;
+  VALIDATION_CODE_DEPRECATED_PARAMETER = 5;
+  VALIDATION_CODE_CONFLICTING_PARAMETERS = 6;
+}
+
 // Config setting value (union type)
 message ConfigSetting {
   oneof value {
@@ -532,6 +656,7 @@ message ConfigSetting {
     int64 int_value = 2;
     double double_value = 3;
     bytes bytes_value = 4;
+    bool bool_value = 5;
   }
 }
 
@@ -540,13 +665,63 @@ message ConfigSection {
   map<string, ConfigSetting> settings = 1;
 }
 
+// Batch set options
+message ConnectionSetOptionsRequest {
+  ConnectionHandle conn_handle = 1;
+  map<string, ConfigSetting> options = 2;
+}
+
+message ConnectionSetOptionsResponse {
+  repeated ValidationIssue warnings = 1;
+}
+
+message DatabaseSetOptionsRequest {
+  DatabaseHandle db_handle = 1;
+  map<string, ConfigSetting> options = 2;
+}
+
+message DatabaseSetOptionsResponse {
+  repeated ValidationIssue warnings = 1;
+}
+
+message StatementSetOptionsRequest {
+  StatementHandle stmt_handle = 1;
+  map<string, ConfigSetting> options = 2;
+}
+
+message StatementSetOptionsResponse {
+  repeated ValidationIssue warnings = 1;
+}
+
 // Config service requests and responses
 
 message ConfigLoadAllSectionsRequest {
+  optional string config_file = 1;
+  optional string connections_file = 2;
 }
 
 message ConfigLoadAllSectionsResponse {
-  map<string, ConfigSection> sections = 1;
+  string config_json = 1;
+}
+
+message ConnectionGetQueryStatusRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetQueryStatusResponse {
+  // Status name as returned by the server (e.g. "RUNNING", "SUCCESS", "FAILED_WITH_ERROR")
+  string status_name = 1;
+  optional int32 error_code = 2;
+  optional string error_message = 3;
+}
+
+message ConfigGetPathsRequest {
+}
+
+message ConfigGetPathsResponse {
+  string config_file = 1;
+  string connections_file = 2;
 }
 
 // Database Driver service definition
@@ -558,8 +733,11 @@ service DatabaseDriver {
   rpc DatabaseSetOptionBytes(DatabaseSetOptionBytesRequest) returns (DatabaseSetOptionBytesResponse);
   rpc DatabaseSetOptionInt(DatabaseSetOptionIntRequest) returns (DatabaseSetOptionIntResponse);
   rpc DatabaseSetOptionDouble(DatabaseSetOptionDoubleRequest) returns (DatabaseSetOptionDoubleResponse);
+  rpc DatabaseSetOptionBool(DatabaseSetOptionBoolRequest) returns (DatabaseSetOptionBoolResponse);
+  rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
   rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
   rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
+  rpc DatabaseFetchChunk(DatabaseFetchChunkRequest) returns (DatabaseFetchChunkResponse);
 
   // Connection operations
   rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);
@@ -567,6 +745,8 @@ service DatabaseDriver {
   rpc ConnectionSetOptionBytes(ConnectionSetOptionBytesRequest) returns (ConnectionSetOptionBytesResponse);
   rpc ConnectionSetOptionInt(ConnectionSetOptionIntRequest) returns (ConnectionSetOptionIntResponse);
   rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
+  rpc ConnectionSetOptionBool(ConnectionSetOptionBoolRequest) returns (ConnectionSetOptionBoolResponse);
+  rpc ConnectionSetOptions(ConnectionSetOptionsRequest) returns (ConnectionSetOptionsResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
@@ -581,7 +761,11 @@ service DatabaseDriver {
   // gets cached session parameter. Cache is updated with subset of connection parameters
   // (chosen by server, included in HTTP response) after each query
   rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
-
+  // pre-flight validation of connection options - reports all issues at once
+  rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
+  // Fetch the result of a previously executed query by Snowflake Query ID
+  rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
+  rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
@@ -592,13 +776,15 @@ service DatabaseDriver {
   rpc StatementSetOptionBytes(StatementSetOptionBytesRequest) returns (StatementSetOptionBytesResponse);
   rpc StatementSetOptionInt(StatementSetOptionIntRequest) returns (StatementSetOptionIntResponse);
   rpc StatementSetOptionDouble(StatementSetOptionDoubleRequest) returns (StatementSetOptionDoubleResponse);
+  rpc StatementSetOptionBool(StatementSetOptionBoolRequest) returns (StatementSetOptionBoolResponse);
+  rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
-  rpc StatementBind(StatementBindRequest) returns (StatementBindResponse);
-  rpc StatementBindStream(StatementBindStreamRequest) returns (StatementBindStreamResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
+  rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
+  rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
 }

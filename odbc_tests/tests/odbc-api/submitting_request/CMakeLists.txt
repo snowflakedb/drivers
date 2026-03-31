@@ -1,0 +1,9 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_describe_param_tests describe_param_tests.cpp)
+add_odbc_test(odbc_api_exec_direct_tests exec_direct_tests.cpp)
+add_odbc_test(odbc_api_execute_tests execute_tests.cpp)
+add_odbc_test(odbc_api_num_params_tests num_params_tests.cpp)
+add_odbc_test(odbc_api_param_data_tests param_data_tests.cpp)
+add_odbc_test(odbc_api_put_data_tests put_data_tests.cpp)
+add_odbc_test(odbc_api_native_sql_tests native_sql_tests.cpp)

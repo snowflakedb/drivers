@@ -12,9 +12,10 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
+#include "ODBCConfig.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "put_get_utils.hpp"
 #include "sf_odbc.h"
 #include "test_setup.hpp"
@@ -24,7 +25,7 @@ using pg_utils::TempTestDir;
 
 std::string get_jwt_connection_string_without_private_key() {
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";
@@ -40,7 +41,7 @@ std::string get_jwt_connection_string_without_private_key() {
 
 std::string get_base_jwt_connection_string_int() {
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";
@@ -64,7 +65,7 @@ std::string read_test_private_key_content() {
 EnvironmentHandleWrapper setup_environment_integration() {
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env);
+  REQUIRE_ODBC(ret, env);
   return env;
 }
 
@@ -97,7 +98,7 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
     CHECK(records[0].sqlState == "01S00");
     CHECK(records[0].nativeError == 0);
     CHECK_THAT(records[0].messageText,
-               ContainsSubstring("Missing required parameter: private_key or private_key_file"));
+               ContainsSubstring("Missing required parameter: 'private_key' or 'private_key_file'"));
   }
 }
 
@@ -122,11 +123,12 @@ void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, const st
 
 TEST_CASE("should fail JWT authentication when no private file provided", "[private_key_auth]") {
   // Given Authentication is set to JWT
-  auto env = setup_environment_integration();
-  auto dbc = get_connection_handle_integration(env);
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_without_private_key();
 
   // When Trying to Connect with no private file provided
-  std::string connection_string = get_jwt_connection_string_without_private_key();
+  auto env = setup_environment_integration();
+  auto dbc = get_connection_handle_integration(env);
 
   // Then There is error returned
   verify_connection_fails_with_missing_private_key_error(dbc, connection_string);
@@ -147,7 +149,7 @@ TEST_CASE("should forward private key content set via SQLSetConnectAttr to core"
 
   SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT,
                                     (SQLPOINTER)test_key_pem.c_str(), (SQLINTEGER)test_key_pem.size());
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 
   // When Trying to Connect
   std::string connection_string = get_base_jwt_connection_string_int();
@@ -168,7 +170,7 @@ TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core",
 
   SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_BASE64, (SQLPOINTER)test_key_b64.c_str(),
                                     (SQLINTEGER)test_key_b64.size());
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 
   // When Trying to Connect
   std::string connection_string = get_base_jwt_connection_string_int();
@@ -194,7 +196,7 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
   // Set password via SQLSetConnectAttr
   SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD,
                                     (SQLPOINTER)test_password.c_str(), (SQLINTEGER)test_password.size());
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 
   // When Trying to Connect
   std::string connection_string = get_base_jwt_connection_string_int();

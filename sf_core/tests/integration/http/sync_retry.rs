@@ -9,7 +9,7 @@
 use sf_core::config::rest_parameters::{ClientInfo, QueryParameters};
 use sf_core::config::retry::RetryPolicy;
 use sf_core::crl::config::CrlConfig;
-use sf_core::rest::snowflake::{QueryExecutionMode, snowflake_query_with_client};
+use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
 use sf_core::tls::config::TlsConfig;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -37,9 +37,12 @@ async fn should_include_request_id_in_query_parameters() {
     let result = snowflake_query_with_client(
         &client,
         query_params,
-        "test-token".to_string(),
-        "SELECT 1".to_string(),
-        None,
+        "test-token",
+        QueryInput {
+            sql: "SELECT 1".to_string(),
+            bindings: None,
+            describe_only: None,
+        },
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
     )
@@ -110,9 +113,12 @@ async fn should_retry_sync_query_on_connection_reset() {
     let result = snowflake_query_with_client(
         &client,
         query_params,
-        "test-token".to_string(),
-        "SELECT 1".to_string(),
-        None,
+        "test-token",
+        QueryInput {
+            sql: "SELECT 1".to_string(),
+            bindings: None,
+            describe_only: None,
+        },
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
     )
@@ -166,9 +172,12 @@ async fn should_use_sync_mode_by_default() {
     let result = snowflake_query_with_client(
         &client,
         query_params,
-        "test-token".to_string(),
-        "SELECT 1".to_string(),
-        None,
+        "test-token",
+        QueryInput {
+            sql: "SELECT 1".to_string(),
+            bindings: None,
+            describe_only: None,
+        },
         &RetryPolicy::default(),
         QueryExecutionMode::Blocking,
     )

@@ -21,7 +21,7 @@
 
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 
 namespace pg_utils {
 
@@ -127,6 +127,20 @@ inline std::filesystem::path write_text_file(const std::filesystem::path& dir, c
   ofs << content;
   ofs.close();
   return p;
+}
+
+// BD#17: On Windows, the old driver returns a full absolute path for the PUT source column;
+// the new driver returns just the filename (same as Linux).
+inline std::string expected_put_source(const std::filesystem::path& file_path) {
+  WINDOWS_ONLY {
+    OLD_DRIVER_ONLY("BD#17") {
+      std::string s = std::filesystem::absolute(file_path).string();
+      std::replace(s.begin(), s.end(), '\\', '/');
+      return s;
+    }
+    NEW_DRIVER_ONLY("BD#17") { return file_path.filename().string(); }
+  }
+  UNIX_ONLY { return file_path.filename().string(); }
 }
 
 // Convert a path into a URI-safe string for Snowflake file:// usage
