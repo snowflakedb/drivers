@@ -172,15 +172,15 @@ steps:
 
               echo "--- :hammer: Building Python Wheel"
               RUSTFLAGS="" hatch build -t wheel
-              hatch run test.py3.9:install-wheel
+              hatch run test-pandas.py3.9:install-wheel
 
               echo "--- :test_tube: Running Integ + E2E Tests"
               mkdir -p /workdir/junit-results
               set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
-                hatch run test.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
+                hatch run test-pandas.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
               else
-                hatch run test.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
+                hatch run test-pandas.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
               fi
               exit $$?
             ' || DOCKER_EXIT=$$?
