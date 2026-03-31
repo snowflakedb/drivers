@@ -551,18 +551,28 @@ pub struct RefreshContext {
     server_url: String,
     client_info: ClientInfo,
     state: RefreshState,
-    /// Shared closed-state flag. When true, refresh_token() returns ConnectionClosed
-    /// rather than attempting a new HTTP refresh. Prevents token refresh for queries
-    /// in flight when close() has been called.
-    is_closed: Arc<AtomicBool>,
 }
 
 impl RefreshContext {
+    /// Create a `RefreshContext` for a query operation.
+    ///
+    /// Rejects context creation if the connection is already closed, preventing
+    /// in-flight queries from performing token refreshes after `close()` is called.
+    /// This is safe because the query's early `is_closed` check already rejected
+    /// the operation; this provides a second gate for races between that check and
+    /// the token refresh setup.
     pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().await;
+        if guard.is_closed.load(Ordering::SeqCst) {
+            return Err(ConnectionClosedSnafu {}.build());
+        }
         Self::new(&guard)
     }
     /// Create a new `RefreshContext` by extracting connection info.
+    ///
+    /// Does **not** check `is_closed`. Use `from_arc` for query paths (which
+    /// must reject creation on a closed connection). The logout path calls
+    /// `new` directly because logout itself runs after `is_closed` is set.
     pub fn new(conn: &Connection) -> Result<Self, ApiError> {
         Ok(Self {
             tokens_lock: conn.tokens.clone(),
@@ -579,7 +589,6 @@ impl RefreshContext {
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
             state: RefreshState::Initial,
-            is_closed: conn.is_closed.clone(),
         })
     }
 
@@ -595,12 +604,6 @@ impl RefreshContext {
         &mut self,
         last_error: Option<RestError>,
     ) -> Result<SensitiveString, ApiError> {
-        // Abort token refresh if connection has been closed. This prevents in-flight
-        // queries from performing a token refresh after close() has been called.
-        if self.is_closed.load(Ordering::SeqCst) {
-            return Err(ConnectionClosedSnafu {}.build());
-        }
-
         match &self.state {
             // No token issued yet - read the current session token
             RefreshState::Initial => {
