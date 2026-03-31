@@ -51,6 +51,12 @@ class TestLogoutResourceCleanup:
     state management contract.
     """
 
+    # TODO(gherkin): "Given Snowflake client is logged in" is an empty step — the client is
+    # created by the And step (connection_factory). Refactor: separate connection creation
+    # from keep_alive configuration so Given has its own code.
+    # TODO(gherkin): "Then Session token in Connection.tokens is null" and
+    # "And Master token in Connection.tokens is null" are not verified — the test only
+    # calls is_closed() as a proxy. Python connection does not expose token field inspection.
     @pytest.mark.parametrize("keep_alive", [True, False, None])
     def test_should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent(
         self, connection_factory, keep_alive
@@ -87,6 +93,9 @@ class TestLogoutSessionInvalidation:
     These tests verify that connections properly reject operations after close().
     """
 
+    # TODO(gherkin): "And Query is attempted on closed connection" is an empty step — the next
+    # line is "# Then The query fails..." (another step comment). The pytest.raises block
+    # covers both steps together. Refactor: separate the query attempt from the assertion.
     def test_should_reject_queries_client_side_after_connection_is_closed(self, connection_factory):
         """Verify queries are rejected client-side after connection is closed.
 
@@ -213,6 +222,13 @@ class TestLogoutPythonWrapper:
     server_session_keep_alive).
     """
 
+    # TODO(gherkin): Three empty steps:
+    # 1. "Given Snowflake Python client is created with server_session_keep_alive set to none"
+    #    is empty — Given and And are set together in int_test_connection_factory.
+    # 2. "Then Auto-detection is not performed" is empty — the test has no direct assertion
+    #    for this; it only checks that a logout request was sent (indirect proxy).
+    # 3. "And Connection close metrics are recorded in telemetry" is empty — telemetry
+    #    recording is not yet implemented (SNOW-2912513).
     def test_should_send_logout_when_server_session_keep_alive_is_none_and_auto_detection_false(
         self, int_test_connection_factory
     ):

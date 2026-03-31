@@ -12,6 +12,13 @@ use sf_core::protobuf::generated::database_driver_v1::*;
 //                          Token Cleanup
 // ===========================================================================
 
+// TODO(gherkin): "Given Snowflake client is logged in" is an empty step — no code immediately
+// follows it because the client is created inside the loop interleaved with the And step.
+// Refactor: move client creation before the And comment so each step has its own code.
+// TODO(gherkin): "Then Session token in Connection.tokens is null" and
+// "And Master token in Connection.tokens is null" are not actually verified —
+// the test only checks close() succeeds; it does not inspect the token fields.
+// Requires SnowflakeTestClient to expose token field inspection (SNOW-2872349).
 #[test]
 fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
     //Given Snowflake client is logged in
@@ -44,6 +51,9 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
     }
 }
 
+// TODO(gherkin): "Then Only one logout request is sent" is an empty step — the test only
+// verifies all close() calls return Ok, not that exactly one HTTP logout request was sent.
+// Requires HTTP request interception (e.g. Wiremock) like the Python version of this test.
 #[test]
 fn should_be_idempotent_when_close_called_multiple_times() {
     //Given Snowflake client is logged in
@@ -75,6 +85,9 @@ fn should_be_idempotent_when_close_called_multiple_times() {
 //                        Concurrency
 // ===========================================================================
 
+// TODO(gherkin): "Then Only one logout request is sent" is an empty step — the test only
+// verifies concurrent close() calls return Ok, not that exactly one HTTP logout was sent.
+// Requires HTTP request interception (e.g. Wiremock) like the Python version of this test.
 #[test]
 fn should_handle_concurrent_close_calls_safely() {
     use std::sync::Arc;
@@ -149,6 +162,11 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
 //                        Process Exit and Thread Management
 // ===========================================================================
 
+// TODO(gherkin): ALL steps in this scenario are empty (no implementation code).
+// - SNOW-2881763: Heartbeat thread not yet implemented (Given/Then Heartbeat steps)
+// - SNOW-2912513: Telemetry cache not yet implemented (And Telemetry steps)
+// All step comments have no following code. This test is #[ignore]d but the validator
+// still flags every step as unimplemented.
 #[test]
 #[ignore = "Requires SNOW-2881763 (Heartbeat)"]
 fn should_allow_process_to_exit_cleanly_when_session_kept_alive() {

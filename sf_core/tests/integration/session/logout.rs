@@ -333,6 +333,9 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
 //                      Default Configuration
 // ===========================================================================
 
+// TODO(gherkin): Feature step is "Then Close throws timeout error" but the test uses
+// "//And Close throws timeout error" — keyword mismatch (And vs Then). The validator
+// cannot match "Then Close throws timeout error" in this test.
 #[tokio::test]
 async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond() {
     //Given Mock HTTP server holds connection open for 10 seconds without responding
@@ -489,6 +492,11 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
     server.await.unwrap();
 }
 
+// TODO(gherkin): Two issues:
+// 1. "And UD Core connection is logged in" is an empty step — the next line is also a step
+//    comment ("And Total retry budget timeout..."). These two are batched before the code.
+// 2. Step text mismatch: feature says "The last attempt times out" but test says
+//    "The last attempt timeouts" (typo: "timeouts" should be "times out").
 #[tokio::test]
 async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
     //Given Mock HTTP server responds with 503 after 2 second delay on each attempt
@@ -615,6 +623,11 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
     }
 }
 
+// TODO(gherkin): Empty steps in both the HTTP-error and connection-reset blocks:
+// "Given Core logout function called with <strategy_type> strategy" and
+// "And Mock HTTP server returns <error_type> on attempt 1" both have no code immediately
+// following them — server setup is batched after the third step comment.
+// Refactor: move strategy and error-type setup so each step comment has its own code.
 #[tokio::test]
 async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
     // Scenario Outline: Examples (error_type, strategy_type)
@@ -767,6 +780,12 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
     }
 }
 
+// TODO(gherkin): Empty steps — "Given", "And Mock HTTP server returns SESSION_TOKEN_EXPIRED",
+// and "And Mock HTTP server returns 200 after token refresh" all have no code immediately
+// following them; server mock setup is batched after all three comments.
+// Also: "Then Token refresh request is sent to server" and "And Logout is retried with new
+// session token" are empty — assertions are batched after "And Close succeeds".
+// Refactor: split setup and assertions so each step comment precedes its own code.
 #[tokio::test]
 async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_strategy_type() {
     // Scenario Outline: Examples (strategy_type)
@@ -1056,6 +1075,10 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
 //                  Retry and Timeout Configuration
 // ===========================================================================
 
+// TODO(gherkin): "Given Core logout function called with <strategy_type> strategy" and
+// "And Retry policy configured with <max_attempts> max attempts" are empty steps — both are
+// configured in the RetryPolicy/LogoutConfig setup below the third step comment.
+// Refactor: extract strategy and retry config before their respective step comments.
 #[tokio::test]
 async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type() {
     // Scenario Outline: Examples (strategy_type, max_attempts, failures)
@@ -1118,6 +1141,13 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
     }
 }
 
+// TODO(gherkin): Two issues:
+// 1. "Given Core logout function called with <strategy_type> strategy" and
+//    "And Timeout configured to <timeout_seconds> seconds" are empty steps — both are
+//    configured in the LogoutConfig setup below the third step comment.
+// 2. Feature step is "Then Close succeeds" but test uses "//And Close succeeds" —
+//    keyword mismatch (And vs Then). The validator cannot match "Then Close succeeds".
+// Refactor: extract strategy/timeout config before their step comments; fix keyword.
 #[tokio::test]
 async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type() {
     // Scenario Outline: Examples (strategy_type, timeout_seconds, delay_seconds)
@@ -1191,6 +1221,12 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 // These tests verify error strategy behavior at the connection layer,
 // testing connection_close() with different ErrorStrategy configurations.
 
+// TODO(gherkin): Empty steps — "Given Core logout function called with strict strategy" and
+// "And Retry policy configured with <max_attempts> max attempts" have no code immediately
+// following them; setup is batched in SnowflakeTestClient block after the third step.
+// Also: "Then Exactly <max_attempts> attempts are made", "And No further retries after max
+// reached", and "And WARN log is emitted" are batched before assertions. WARN log is also
+// not verified at all. Refactor: split setup/assertions per step; implement log capture.
 #[tokio::test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     // Scenario Outline with Examples: max_attempts = 2, 3
@@ -1270,6 +1306,10 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     }
 }
 
+// TODO(gherkin): Same issues as strict strategy above — "Given", "And Retry policy...",
+// "Then Exactly <max_attempts>...", "And No further retries...", and "And WARN log is
+// emitted" are all empty steps (batched setup/assertions). WARN log is not verified.
+// Refactor: split per step; implement log capture.
 #[tokio::test]
 async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy() {
     // Scenario Outline with Examples: max_attempts = 2, 3
@@ -1560,6 +1600,12 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
 //                      Timeout Failure Scenarios
 // ===========================================================================
 
+// TODO(gherkin): Two issues:
+// 1. "Given Core logout function called with strict strategy" is an empty step — the next
+//    line is also a step comment ("And Timeout configured..."). Strategy is set in
+//    LogoutConfig below both comments. Refactor: set strategy before the And comment.
+// 2. Feature step is "Then Close throws timeout error" but test uses
+//    "//And Close throws timeout error" — keyword mismatch (And vs Then).
 #[tokio::test]
 async fn should_throw_on_timeout_with_strict_strategy() {
     // Scenario Outline: Examples (timeout_seconds=3, delay_seconds=5)
