@@ -22,6 +22,16 @@ Feature: ODBC DECFLOAT to SQL_C_NUMERIC conversions
     Then Value is truncated to integer part with SQLSTATE 01S07
 
   # ============================================================================
+  # OVERFLOW (extreme exponent)
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: DECFLOAT extreme exponent to SQL_C_NUMERIC returns 22003
+    Given Snowflake client is logged in
+    When A DECFLOAT value with exponent exceeding u128 range is fetched as SQL_C_NUMERIC
+    Then SQL_ERROR is returned with SQLSTATE 22003
+
+  # ============================================================================
   # NULL VALUE HANDLING
   # ============================================================================
 

@@ -173,15 +173,17 @@ pub(crate) fn format_decfloat(sig: i128, exp: i16, max_plain_digits: usize) -> S
 
 /// Computes the integer part and whether there is a fractional remainder
 /// for a DECFLOAT value represented as `significand * 10^exponent`.
-fn compute_int_and_fractional(sig: i128, exp: i16) -> (i128, bool) {
+/// Returns `(int_value, has_fractional, overflowed)` where `overflowed`
+/// is true when the scaled integer exceeds i128 range.
+fn compute_int_and_fractional(sig: i128, exp: i16) -> (i128, bool, bool) {
     if exp >= 0 {
         let factor = 10i128.checked_pow(exp as u32);
         match factor {
             Some(f) => match sig.checked_mul(f) {
-                Some(v) => (v, false),
-                None => (if sig >= 0 { i128::MAX } else { i128::MIN }, false),
+                Some(v) => (v, false, false),
+                None => (if sig >= 0 { i128::MAX } else { i128::MIN }, false, true),
             },
-            None => (if sig >= 0 { i128::MAX } else { i128::MIN }, false),
+            None => (if sig >= 0 { i128::MAX } else { i128::MIN }, false, true),
         }
     } else {
         let scale = (-exp) as u32;
@@ -189,9 +191,9 @@ fn compute_int_and_fractional(sig: i128, exp: i16) -> (i128, bool) {
             Some(divisor) => {
                 let int_val = sig / divisor;
                 let has_frac = sig % divisor != 0;
-                (int_val, has_frac)
+                (int_val, has_frac, false)
             }
-            None => (0, sig != 0),
+            None => (0, sig != 0, false),
         }
     }
 }
@@ -257,7 +259,8 @@ impl WriteODBCType for SnowflakeDecfloat {
                 Ok(vec![])
             }
             _ => {
-                let (int_value, has_fractional) = compute_int_and_fractional(significand, exponent);
+                let (int_value, has_fractional, overflowed) =
+                    compute_int_and_fractional(significand, exponent);
                 match target_type {
                     CDataType::Short | CDataType::SShort => {
                         check_integer_range(int_value, i16::MIN as i128, i16::MAX as i128)?;
@@ -320,10 +323,21 @@ impl WriteODBCType for SnowflakeDecfloat {
 
                         let adjusted_exp = exponent as i32 + target_scale as i32;
                         let (unscaled, truncated) = if adjusted_exp >= 0 {
-                            (abs_sig * 10u128.pow(adjusted_exp as u32), false)
+                            let factor = 10u128.checked_pow(adjusted_exp as u32);
+                            match factor.and_then(|f| abs_sig.checked_mul(f)) {
+                                Some(v) => (v, false),
+                                None => {
+                                    return NumericValueOutOfRangeSnafu {
+                                        reason: "Value out of range for SQL_C_NUMERIC".to_string(),
+                                    }
+                                    .fail();
+                                }
+                            }
                         } else {
-                            let divisor = 10u128.pow((-adjusted_exp) as u32);
-                            (abs_sig / divisor, abs_sig % divisor != 0)
+                            match 10u128.checked_pow((-adjusted_exp) as u32) {
+                                Some(divisor) => (abs_sig / divisor, abs_sig % divisor != 0),
+                                None => (0, abs_sig != 0),
+                            }
                         };
 
                         let numeric = sql::Numeric {
@@ -365,6 +379,12 @@ impl WriteODBCType for SnowflakeDecfloat {
                     | CDataType::IntervalHourToSecond
                     | CDataType::IntervalMinuteToSecond => reject_multi_field_interval(target_type),
                     CDataType::Binary => {
+                        if overflowed {
+                            return NumericValueOutOfRangeSnafu {
+                                reason: "Value out of range for SQL_C_BINARY".to_string(),
+                            }
+                            .fail();
+                        }
                         let abs_value = int_value.unsigned_abs();
                         let sign: u8 = if int_value >= 0 { 1 } else { 0 };
                         let numeric = sql::Numeric {

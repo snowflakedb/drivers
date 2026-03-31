@@ -58,6 +58,28 @@ TEST_CASE("DECFLOAT fractional truncation to SQL_C_NUMERIC", "[decfloat][convers
 }
 
 // ============================================================================
+// OVERFLOW (extreme exponent)
+// ============================================================================
+
+TEST_CASE("DECFLOAT extreme exponent to SQL_C_NUMERIC returns 22003", "[decfloat][conversion][c_numeric][22003]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A DECFLOAT value with exponent exceeding u128 range is fetched as SQL_C_NUMERIC
+  (void)0;
+  // Then SQL_ERROR is returned with SQLSTATE 22003
+  {
+    INFO("1e100 overflows u128 scaled value");
+    check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT '1e100'::DECFLOAT"), 1);
+  }
+
+  {
+    INFO("negative extreme exponent");
+    check_numeric_out_of_range<SQL_C_NUMERIC>(conn.execute_fetch("SELECT '-1e100'::DECFLOAT"), 1);
+  }
+}
+
+// ============================================================================
 // NULL handling
 // ============================================================================
 

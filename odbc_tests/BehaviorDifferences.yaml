@@ -321,3 +321,12 @@ behavior_differences:
       NEW driver: Returns SQL_NO_DATA per the ODBC spec, which states
       "SQL_NO_DATA is returned if RecNumber is greater than the current
       number of descriptor records."
+
+  31:
+    name: "DECFLOAT extreme exponent to SQL_C_BINARY returns 22003 instead of silently succeeding"
+    type: "Bug Fix"
+    description: |
+      OLD driver: Converting a DECFLOAT with an extreme exponent (e.g. 1e100)
+      to SQL_C_BINARY returns SQL_SUCCESS with an incorrect/clamped value.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (numeric value out of
+      range) because the value overflows the i128 intermediate representation.

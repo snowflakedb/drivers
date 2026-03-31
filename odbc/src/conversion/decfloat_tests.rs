@@ -1377,4 +1377,176 @@ mod tests {
         assert_eq!(sig, -42);
         assert_eq!(exp, 0);
     }
+
+    // ======================================================================
+    // Overflow safety — SQL_C_NUMERIC (checked pow/mul)
+    // ======================================================================
+
+    #[test]
+    fn write_numeric_large_positive_exponent_overflows_returns_error() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // sig=1, exp=100 → adjusted_exp=100 → 10^100 overflows u128
+        let result = df.write_odbc_type((1, 100), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_numeric_multiplication_overflow_returns_error() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // 10^38 * 10^1 overflows u128 (u128 max ~ 3.4e38)
+        let sig: i128 = 10i128.pow(37);
+        let result = df.write_odbc_type((sig, 2), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_numeric_large_negative_adjusted_exp_truncates_to_zero() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // sig=42, exp=-100 → adjusted_exp=-100 → 10^100 overflows u128 → (0, true)
+        let warnings = df.write_odbc_type((42, -100), &binding, &mut None).unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert!(value.val.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn write_numeric_small_positive_exponent_succeeds() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // sig=5, exp=2 → adjusted_exp=2 → 5 * 100 = 500, fits fine
+        let warnings = df.write_odbc_type((5, 2), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 1);
+        let stored = u128::from_le_bytes(value.val);
+        assert_eq!(stored, 500);
+    }
+
+    // ======================================================================
+    // Overflow safety — SQL_C_BINARY (clamped value detection)
+    // ======================================================================
+
+    #[test]
+    fn write_binary_extreme_positive_exponent_returns_error() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // sig=1, exp=100 → 10^100 overflows i128 → should return 22003
+        let result = df.write_odbc_type((1, 100), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_binary_negative_extreme_exponent_returns_error() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // sig=-1, exp=100 → overflows → should return 22003
+        let result = df.write_odbc_type((-1, 100), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_binary_large_sig_with_exponent_returns_error() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // sig * 10^exp overflows i128 via checked_mul
+        let sig: i128 = i128::MAX / 5;
+        let result = df.write_odbc_type((sig, 1), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_binary_max_representable_value_succeeds() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // Large value that fits in i128: sig=99, exp=0
+        let warnings = df.write_odbc_type((99, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
+        assert_eq!(numeric.sign, 1);
+        assert_eq!(numeric.val[0], 99);
+    }
 }

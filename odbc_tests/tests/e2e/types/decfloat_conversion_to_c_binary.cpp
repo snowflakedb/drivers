@@ -86,6 +86,44 @@ TEST_CASE("DECFLOAT SQL_C_BINARY buffer too small returns 22003", "[decfloat][co
 }
 
 // ============================================================================
+// OVERFLOW (extreme exponent)
+// ============================================================================
+
+TEST_CASE("DECFLOAT extreme exponent to SQL_C_BINARY returns 22003", "[decfloat][conversion][c_binary][22003]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A DECFLOAT value with exponent exceeding i128 range is fetched as SQL_C_BINARY
+  (void)0;
+  // Then SQL_ERROR is returned with SQLSTATE 22003
+  {
+    INFO("1e100 overflows i128 integer part");
+    auto stmt = conn.execute_fetch("SELECT '1e100'::DECFLOAT");
+    char buffer[100] = {};
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    OLD_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_SUCCESS); }
+    NEW_DRIVER_ONLY("BD#31") {
+      CHECK(ret == SQL_ERROR);
+      CHECK(get_sqlstate(stmt) == "22003");
+    }
+  }
+
+  {
+    INFO("negative extreme exponent");
+    auto stmt = conn.execute_fetch("SELECT '-1e100'::DECFLOAT");
+    char buffer[100] = {};
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    OLD_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_SUCCESS); }
+    NEW_DRIVER_ONLY("BD#31") {
+      CHECK(ret == SQL_ERROR);
+      CHECK(get_sqlstate(stmt) == "22003");
+    }
+  }
+}
+
+// ============================================================================
 // NULL handling
 // ============================================================================
 
