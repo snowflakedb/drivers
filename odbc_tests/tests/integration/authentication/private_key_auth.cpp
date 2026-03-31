@@ -112,6 +112,7 @@ void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, const st
     for (const auto& record : records) {
       // Error must not be about a missing parameter (any other error is acceptable).
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
+      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
   // SQL_SUCCESS means the key was forwarded and used successfully.

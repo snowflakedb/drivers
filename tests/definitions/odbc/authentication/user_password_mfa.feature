@@ -1,8 +1,20 @@
 @odbc
 Feature: Username Password MFA Authentication (ODBC-specific)
 
+  @odbc_e2e
+  Scenario: should authenticate using user password mfa with passcode in password
+    Given MFA authentication is configured with valid credentials
+    When Trying to Connect
+    Then Login is successful
+
+  @odbc_e2e
+  Scenario: should authenticate using user password mfa with passcode explicit
+    Given MFA authentication is configured with valid credentials
+    When Trying to Connect
+    Then Login is successful
+
   @odbc_int
-  Scenario: should forward MFA DUO push parameters to core
+  Scenario: should forward USERNAME_PASSWORD_MFA parameters to core
     Given Authentication is set to USERNAME_PASSWORD_MFA with user and password
     When Trying to Connect
     Then Connection reaches sf_core without a missing-parameter error for MFA fields

@@ -4,6 +4,7 @@
 add_odbc_test(e2e_authentication_native_okta authentication/native_okta.cpp)
 add_odbc_test(e2e_authentication_pat authentication/pat.cpp)
 add_odbc_test(e2e_authentication_private_key_auth authentication/private_key_auth.cpp)
+add_odbc_test(e2e_authentication_mfa_auth authentication/user_password_mfa.cpp)
 
 # put_get
 add_odbc_test(e2e_put_get_put_get_auto_compress put_get/put_get_auto_compress.cpp)

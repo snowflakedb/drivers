@@ -56,6 +56,9 @@ ConnectionHandleWrapper get_mfa_connection_handle(EnvironmentHandleWrapper& env)
 }
 
 SQLRETURN attempt_mfa_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
+  WARN("Connection string: " << connection_string);
+  WARN("ODBCSYSINI=" << (std::getenv("ODBCSYSINI") ? std::getenv("ODBCSYSINI") : "(unset)"));
+  WARN("DRIVER_PATH=" << (std::getenv("DRIVER_PATH") ? std::getenv("DRIVER_PATH") : "(unset)"));
   return SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                           SQL_DRIVER_NOPROMPT);
 }
@@ -67,7 +70,7 @@ SQLRETURN attempt_mfa_connection(ConnectionHandleWrapper& dbc, const std::string
 TEST_CASE("should forward USERNAME_PASSWORD_MFA parameters to core", "[mfa_auth]") {
   SKIP_OLD_DRIVER("", "New-driver-only: tests MFA parameter forwarding");
 
-  // Given Authentication is set to USERNAME_PASSWORD_MFA with user and password (no passcode — defaults to DUO push)
+  // Given Authentication is set to USERNAME_PASSWORD_MFA with user and password
   auto env = setup_mfa_environment();
   auto dbc = get_mfa_connection_handle(env);
   std::string connection_string = get_mfa_base_connection_string();
@@ -80,6 +83,7 @@ TEST_CASE("should forward USERNAME_PASSWORD_MFA parameters to core", "[mfa_auth]
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
+      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
@@ -105,6 +109,7 @@ TEST_CASE("should forward PASSCODE parameter to core", "[mfa_auth]") {
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
+      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
@@ -130,6 +135,7 @@ TEST_CASE("should forward PASSCODEINPASSWORD parameter to core", "[mfa_auth]") {
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
+      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
@@ -145,7 +151,6 @@ TEST_CASE("should fail MFA authentication when password is not provided", "[mfa_
   auto env = setup_mfa_environment();
   auto dbc = get_mfa_connection_handle(env);
   std::string connection_string = get_mfa_connection_string_without_password();
-  // connection_string += "PWD=;";
 
   // When Trying to Connect
   SQLRETURN ret = attempt_mfa_connection(dbc, connection_string);
@@ -153,15 +158,6 @@ TEST_CASE("should fail MFA authentication when password is not provided", "[mfa_
   // Then Connection fails with a missing-parameter error
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(dbc);
-  WARN("Rec #: " << records.size());
-  for (size_t i = 0; i < records.size(); ++i) {
-    WARN("sss");
-    WARN("DiagRec[" << i << "] state=" << records[i].sqlState << " msg=" << records[i].messageText);
-  }
-
-  REQUIRE(!records.empty());
-
-  matcher = ContainsSubstring("Missing required parameter") && ContainsSubstring("password");
   bool found_password_error = std::any_of(records.begin(), records.end(), [](const auto& r) {
     return (ContainsSubstring("Missing required parameter") && ContainsSubstring("password")).match(r.messageText);
   });
@@ -189,6 +185,7 @@ TEST_CASE("should forward CLIENT_STORE_TEMPORARY_CREDENTIAL parameter to core", 
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
+      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
