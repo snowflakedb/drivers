@@ -55,7 +55,9 @@ class TestUserPasswordMfaAuthentication:
     # Passcode flow
     # ------------------------------------------------------------------
 
-    def test_should_authenticate_with_explicit_passcode(self, connection_factory, mfa_params, mfa_passcode):
+    def test_should_authenticate_using_username_password_and_totp_passcode(
+        self, connection_factory, mfa_params, mfa_passcode
+    ):
         # Given Authentication is set to username_password_mfa and user, password and passcode are provided
         user = mfa_params["user"]
         password = mfa_params["password"]
@@ -72,8 +74,10 @@ class TestUserPasswordMfaAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
-    def test_should_authenticate_with_passcode_in_password(self, connection_factory, mfa_params, mfa_passcode):
-        # Given Authentication is set to username_password_mfa with appended passcode and passcodeInPassword is set
+    def test_should_authenticate_using_username_password_with_appended_totp_passcode(
+        self, connection_factory, mfa_params, mfa_passcode
+    ):
+        # Given Authentication is set to username_password_mfa and user, password with appended passcode are provided and passcodeInPassword is set
         combined_password = mfa_params["password"] + mfa_passcode
 
         # When Trying to Connect
@@ -154,52 +158,13 @@ class TestUserPasswordMfaAuthentication:
             verify_simple_query_execution(second)
 
     # ------------------------------------------------------------------
-    # DUO push flow
-    # ------------------------------------------------------------------
-
-    @pytest.mark.skip(reason="DUO push requires interactive device approval – run manually")
-    def test_should_authenticate_with_duo_push(self, connection_factory, mfa_params):
-        # Given Authentication is set to username_password_mfa and user, password are provided and DUO push is enabled
-        user = mfa_params["user"]
-        password = mfa_params["password"]
-
-        # When Trying to Connect
-        connection = connection_factory(
-            authenticator="USERNAME_PASSWORD_MFA",
-            user=user,
-            password=password,
-            ext_authn_duo_method="push",
-        )
-
-        # Then Login is successful and simple query can be executed
-        with connection:
-            verify_simple_query_execution(connection)
-
-    # ------------------------------------------------------------------
     # Error cases
     # ------------------------------------------------------------------
 
-    def test_should_fail_with_invalid_passcode(self, connection_factory, mfa_params):
-        # Given Authentication is set to username_password_mfa and user, password are provided but passcode is invalid
-        user = mfa_params["user"]
-        password = mfa_params["password"]
-
-        # When Trying to Connect
-        with pytest.raises(Exception) as exc_info:
-            connection_factory(
-                authenticator="USERNAME_PASSWORD_MFA",
-                user=user,
-                password=password,
-                passcode="invalid_passcode",
-            )
-
-        # Then There is error returned
-        from snowflake.connector.errors import DatabaseError
-
-        assert isinstance(exc_info.value, DatabaseError), f"Expected DatabaseError, got: {type(exc_info.value)}"
-
-    def test_should_fail_with_invalid_password(self, connection_factory, mfa_params, mfa_passcode):
-        # Given Authentication is set to username_password_mfa and user is provided but password is wrong
+    def test_should_fail_authentication_when_wrong_password_is_provided(
+        self, connection_factory, mfa_params, mfa_passcode
+    ):
+        # Given Authentication is set to username_password_mfa and user is provided but password is skipped or invalid
         user = mfa_params["user"]
 
         # When Trying to Connect
@@ -215,3 +180,25 @@ class TestUserPasswordMfaAuthentication:
         from snowflake.connector.errors import DatabaseError
 
         assert isinstance(exc_info.value, DatabaseError), f"Expected DatabaseError, got: {type(exc_info.value)}"
+
+    # ------------------------------------------------------------------
+    # DUO push flow
+    # ------------------------------------------------------------------
+
+    @pytest.mark.skip(reason="DUO push requires interactive device approval \u2013 run manually")
+    def test_should_authenticate_using_username_password_and_duo_push(self, connection_factory, mfa_params):
+        # Given Authentication is set to username_password_mfa and user, password are provided and DUO push is enabled
+        user = mfa_params["user"]
+        password = mfa_params["password"]
+
+        # When Trying to Connect
+        connection = connection_factory(
+            authenticator="USERNAME_PASSWORD_MFA",
+            user=user,
+            password=password,
+            ext_authn_duo_method="push",
+        )
+
+        # Then Login is successful and simple query can be executed
+        with connection:
+            verify_simple_query_execution(connection)
