@@ -11,6 +11,9 @@ Before running tests, ensure you have:
 - CMake 3.10 or later
 - C++17 compatible compiler
 - coreutils (for `nproc`), unixodbc (for `odbc_config`) from `brew`
+- (Optional) ccache for faster rebuilds: `brew install ccache`
+
+When ccache is installed, the build scripts automatically use it. The cache is stored in `odbc_tests/.ccache/` and persists across builds.
 
 ### Local Testing (macOS/Linux)
 

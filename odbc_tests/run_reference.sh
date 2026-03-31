@@ -27,8 +27,10 @@ docker build \
     -t odbc-reference-tests "$SCRIPT_DIR"
 
 echo "Running ODBC reference tests in Docker container..."
+mkdir -p "$SCRIPT_DIR/.ccache"
 docker run --rm \
     -v "$PROJECT_ROOT":/workspace \
+    -v "$SCRIPT_DIR/.ccache:/root/.ccache" \
     -w /workspace \
     -e DRIVER_PATH="/usr/lib/snowflake/odbc/lib/libSnowflake.so" \
     -e PARAMETER_PATH="/workspace/parameters.json" \
@@ -59,6 +61,8 @@ docker run --rm \
             -D ODBC_LIBRARY=\"\$ODBC_LIB\" \\
             -D ODBC_INCLUDE_DIR='/usr/include' \\
             -D DRIVER_TYPE=OLD \\
+            -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \\
+            -D CMAKE_C_COMPILER_LAUNCHER=ccache \\
             .
         
         # Build tests

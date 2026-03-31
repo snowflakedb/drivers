@@ -10,6 +10,9 @@ try {
     
     New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
     $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=$env:DRIVER_TYPE")
+    if (Get-Command ccache -ErrorAction SilentlyContinue) {
+        $cmakeArgs += @("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", "-DCMAKE_C_COMPILER_LAUNCHER=ccache")
+    }
     if ($env:VCPKG_INSTALLATION_ROOT) {
         $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
     }

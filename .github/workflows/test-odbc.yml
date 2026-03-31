@@ -16,6 +16,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_MAXSIZE: 200M
 
 jobs:
   detect-changes:
@@ -94,9 +97,17 @@ jobs:
         uses: actions/cache@v5
         with:
           path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-catch2-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-catch2-deps-
+            ${{ runner.os }}-test-deps-
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-ccache-odbc-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-odbc-
 
       - name: Install dependencies (Windows)
         if: matrix.os == 'windows-latest'
@@ -110,6 +121,8 @@ jobs:
 
           Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
           cmake --version
+
+          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
 
@@ -126,7 +139,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev
+          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev ccache
 
           pip install cmake>=4.0.3
           cmake --version
@@ -160,6 +173,8 @@ jobs:
               -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
               -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=OLD \
+              -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              -D CMAKE_C_COMPILER_LAUNCHER=ccache \
               .
           cmake --build cmake-build -- -j $(($(nproc) * 2))
           ctest -j $(($(nproc) * 4)) -C Debug --test-dir cmake-build --output-on-failure
@@ -253,16 +268,24 @@ jobs:
         uses: actions/cache@v5
         with:
           path: odbc_tests/cmake-build/_deps
-          key: ${{ runner.os }}-catch2-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-catch2-deps-
+            ${{ runner.os }}-test-deps-
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-ccache-odbc-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-odbc-
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
@@ -273,7 +296,7 @@ jobs:
         run: |
           set -euxo pipefail
           # Go is required for building aws-lc-fips-sys (FIPS crypto)
-          brew install unixodbc cmake go
+          brew install unixodbc cmake go ccache
           cmake --version
           go version
           # Export ODBC paths dynamically (works for both ARM64 and Intel Macs)
@@ -291,6 +314,8 @@ jobs:
 
           Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
           cmake --version
+
+          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
 
           if (!(Test-Path "C:\Program Files\OpenSSL\lib\VC\x64\MD")) {
             Invoke-Checked "choco install openssl" { choco install openssl -y --no-progress }
