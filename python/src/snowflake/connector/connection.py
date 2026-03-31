@@ -17,6 +17,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
     ConnectionGetParameterRequest,
+    ConnectionGetQueryStatusRequest,
+    ConnectionGetQueryStatusResponse,
     ConnectionInitRequest,
     ConnectionNewRequest,
     ConnectionSetOptionBytesRequest,
@@ -562,13 +564,31 @@ class Connection:
         """The current Snowflake server version string."""
         raise NotImplementedError("snowflake_version is not yet implemented")
 
-    def get_query_status(self, sf_qid: str) -> Any:
+    def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""
-        raise NotImplementedError("get_query_status is not yet implemented")
+        status, _ = self._get_query_status_with_response(sf_qid)
+        return status
 
-    def get_query_status_throw_if_error(self, sf_qid: str) -> Any:
+    def get_query_status_throw_if_error(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
-        raise NotImplementedError("get_query_status_throw_if_error is not yet implemented")
+        status, response = self._get_query_status_with_response(sf_qid)
+        if self.is_an_error(status):
+            message = response.error_message if response.HasField("error_message") else f"Query {sf_qid} failed"
+            errno = response.error_code if response.HasField("error_code") else -1
+            raise ProgrammingError(msg=message, errno=errno, sfqid=sf_qid)
+        return status
+
+    def _get_query_status_with_response(self, sf_qid: str) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
+        """Fetch query status from the server and map the status name to a QueryStatus enum value."""
+        response = self.db_api.connection_get_query_status(
+            ConnectionGetQueryStatusRequest(conn_handle=self.conn_handle, query_id=sf_qid)
+        )
+        try:
+            status = QueryStatus[response.status_name]
+        except KeyError:
+            logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
+            status = QueryStatus.NO_DATA
+        return status, response
 
     @staticmethod
     def is_still_running(status: QueryStatus) -> bool:

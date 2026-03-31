@@ -8,6 +8,7 @@ import pytest
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionGetInfoResponse,
+    ConnectionGetQueryStatusResponse,
     ConnectionHandle,
     DatabaseHandle,
 )
@@ -440,3 +441,95 @@ class TestConnectionArrowProperties:
 
         connection.arrow_number_to_decimal = 0
         assert connection.arrow_number_to_decimal is False
+
+
+class TestGetQueryStatus:
+    """Unit tests for Connection.get_query_status."""
+
+    @pytest.mark.parametrize(
+        "status_name, expected",
+        [
+            ("SUCCESS", QueryStatus.SUCCESS),
+            ("RUNNING", QueryStatus.RUNNING),
+            ("FAILED_WITH_ERROR", QueryStatus.FAILED_WITH_ERROR),
+            ("QUEUED", QueryStatus.QUEUED),
+            ("ABORTING", QueryStatus.ABORTING),
+            ("ABORTED", QueryStatus.ABORTED),
+            ("RESUMING_WAREHOUSE", QueryStatus.RESUMING_WAREHOUSE),
+            ("QUEUED_REPARING_WAREHOUSE", QueryStatus.QUEUED_REPARING_WAREHOUSE),
+            ("FAILED_WITH_INCIDENT", QueryStatus.FAILED_WITH_INCIDENT),
+            ("DISCONNECTED", QueryStatus.DISCONNECTED),
+            ("RESTARTED", QueryStatus.RESTARTED),
+            ("BLOCKED", QueryStatus.BLOCKED),
+            ("NO_DATA", QueryStatus.NO_DATA),
+        ],
+    )
+    def test_maps_status_name_to_enum(self, connection, mock_db_api, status_name, expected):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name=status_name,
+        )
+        assert connection.get_query_status("test-query-id") == expected
+
+    def test_unknown_status_returns_no_data(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SOME_FUTURE_STATUS",
+        )
+        assert connection.get_query_status("test-query-id") == QueryStatus.NO_DATA
+
+    def test_passes_correct_conn_handle_and_query_id(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SUCCESS",
+        )
+        connection.get_query_status("abc-123")
+
+        args, _ = mock_db_api.connection_get_query_status.call_args
+        request = args[0]
+        assert request.conn_handle == connection.conn_handle
+        assert request.query_id == "abc-123"
+
+    def test_propagates_proto_error(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.side_effect = ProgrammingError("Query not found")
+        with pytest.raises(ProgrammingError, match="Query not found"):
+            connection.get_query_status("invalid-id")
+
+
+class TestGetQueryStatusThrowIfError:
+    """Unit tests for Connection.get_query_status_throw_if_error."""
+
+    def test_returns_status_on_success(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SUCCESS",
+        )
+        assert connection.get_query_status_throw_if_error("qid") == QueryStatus.SUCCESS
+
+    def test_returns_status_when_running(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="RUNNING",
+        )
+        assert connection.get_query_status_throw_if_error("qid") == QueryStatus.RUNNING
+
+    def test_raises_on_error_status_with_details(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="FAILED_WITH_ERROR",
+            error_code=1003,
+            error_message="SQL compilation error",
+        )
+        with pytest.raises(ProgrammingError, match="SQL compilation error") as exc_info:
+            connection.get_query_status_throw_if_error("failed-qid")
+        assert exc_info.value.errno == 1003
+        assert exc_info.value.sfqid == "failed-qid"
+
+    def test_raises_on_aborted_status(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="ABORTED",
+        )
+        with pytest.raises(ProgrammingError) as exc_info:
+            connection.get_query_status_throw_if_error("aborted-qid")
+        assert exc_info.value.sfqid == "aborted-qid"
+
+    def test_raises_with_fallback_message_when_no_error_message(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="FAILED_WITH_ERROR",
+        )
+        with pytest.raises(ProgrammingError, match="Query failed-qid-2 failed"):
+            connection.get_query_status_throw_if_error("failed-qid-2")
