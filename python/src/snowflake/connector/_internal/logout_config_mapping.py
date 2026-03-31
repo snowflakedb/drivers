@@ -14,6 +14,21 @@ if TYPE_CHECKING:
     from snowflake.connector.connection import Connection
 
 
+class LogoutOptionKeys:
+    """Core API option key strings for logout configuration.
+
+    These constants correspond to the option keys accepted by Core's
+    connection_set_option_* RPCs for logout behavior.
+    """
+
+    SERVER_SESSION_KEEP_ALIVE = "server_session_keep_alive"
+    ENABLE_LOGOUT_AUTO_DETECTION = "enable_logout_auto_detection"
+    LOGOUT_ERROR_STRATEGY = "logout_error_strategy"
+    LOGOUT_TOTAL_TIMEOUT_SECONDS = "logout_total_timeout_seconds"
+    LOGOUT_MAX_ATTEMPTS = "logout_max_attempts"
+    LOGOUT_REQUEST_TIMEOUT_SECONDS = "logout_request_timeout_seconds"
+
+
 @dataclass
 class LogoutConfig:
     """Final logout configuration for Core API.
@@ -43,11 +58,11 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
     - server_session_keep_alive=False + auto-detection disabled/None → Core receives False
     - server_session_keep_alive=True → Core receives True
     - server_session_keep_alive=None → Core receives None
-    - enable_auto_detection: passed through as-is (constructor already applied Phase 2 default)
+    - enable_auto_detection: passed through as-is
     - error_strategy: BEST_EFFORT (backward compatible)
 
-    Note: Constructor defaults enable_auto_detection to True for Phase 2, but if user
-    explicitly passes None, it's kept as None (Core treats None as False).
+    Note: If enable_server_session_keep_alive_auto_detection is not set by the caller,
+    it defaults to None (Core treats None as False = auto-detection disabled).
 
     Args:
         connection: Connection instance with logout configuration

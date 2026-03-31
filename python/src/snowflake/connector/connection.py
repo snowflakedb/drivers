@@ -35,16 +35,17 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseInitRequest,
     DatabaseNewRequest,
 )
-from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
-from snowflake.connector.logout_config_mapping import (
-    LogoutConfig,
-    map_logout_config_phase2,
-)
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.logout_config_mapping import (
+    LogoutConfig,
+    LogoutOptionKeys,
+    map_logout_config_phase2,
+)
+from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, SnowflakeCursor
@@ -124,13 +125,15 @@ class Connection:
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             session_parameters: Optional dict of session parameters to set at connection time
             server_session_keep_alive: Optional[bool] - Control server session lifecycle
-                - True: Never send logout (Fire & Forget)
-                - False: Respects auto-detection if enabled
+                - True: Never send logout (Fire & Forget; session persists on server)
+                - False: Always send logout on close (no auto-detection at Core level).
+                  Phase 2 note: if auto-detection is also enabled, the Python wrapper
+                  remaps False → None so Core applies auto-detection (SNOW-2314152).
                 - None: Delegate to auto-detection setting
             enable_server_session_keep_alive_auto_detection: Optional[bool]
                 - True: Check async query registry before logout
                 - False: Don't check registry
-                - None: Defaults to True (auto-detection enabled for backward compatibility)
+                - None: Auto-detection disabled (Core treats None as False)
             auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
             **kwargs: Additional connection parameters
         """
@@ -201,63 +204,7 @@ class Connection:
             )
 
         # Configure logout behavior BEFORE connection_init (init-time configuration)
-        # Map logout parameters using Phase 2 semantics for backward compatibility
-        logout_config = self._map_logout_config()
-
-        # Set logout configuration via ConnectionSetOption* calls
-        if logout_config.server_session_keep_alive is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
-                    conn_handle=self.conn_handle,
-                    key="server_session_keep_alive",
-                    value=logout_config.server_session_keep_alive,
-                )
-            )
-
-        if logout_config.enable_auto_detection is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
-                    conn_handle=self.conn_handle,
-                    key="enable_logout_auto_detection",
-                    value=logout_config.enable_auto_detection,
-                )
-            )
-
-        # Set error strategy (always set, has default) - send protobuf enum value directly
-        self.db_api.connection_set_option_int(
-            ConnectionSetOptionIntRequest(
-                conn_handle=self.conn_handle,
-                key="logout_error_strategy",
-                value=logout_config.error_strategy,  # Protobuf enum: 1=BEST_EFFORT, 2=STRICT
-            )
-        )
-
-        # Set timeout and retry configuration
-        self.db_api.connection_set_option_int(
-            ConnectionSetOptionIntRequest(
-                conn_handle=self.conn_handle,
-                key="logout_total_timeout_seconds",
-                value=logout_config.logout_total_timeout_seconds,
-            )
-        )
-
-        if logout_config.max_attempts is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key="logout_max_attempts",  # Renamed for semantic accuracy (total attempts, not retry count)
-                    value=logout_config.max_attempts,
-                )
-            )
-
-        if logout_config.logout_request_timeout_seconds is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key="logout_request_timeout_seconds",
-                    value=logout_config.logout_request_timeout_seconds,
-                )
-            )
+        self._setup_logout_config()
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         _sensitive_keys = {"password", "private_key"}
@@ -281,6 +228,67 @@ class Connection:
         """
         return map_logout_config_phase2(self)
 
+    def _setup_logout_config(self) -> None:
+        """Apply logout configuration to Core via ConnectionSetOption* RPCs.
+
+        Must be called BEFORE connection_init. Reads configuration at call time
+        via _map_logout_config() so values reflect the state at close()-time.
+        """
+        logout_config = self._map_logout_config()
+
+        if logout_config.server_session_keep_alive is not None:
+            self.db_api.connection_set_option_bool(
+                ConnectionSetOptionBoolRequest(
+                    conn_handle=self.conn_handle,
+                    key=LogoutOptionKeys.SERVER_SESSION_KEEP_ALIVE,
+                    value=logout_config.server_session_keep_alive,
+                )
+            )
+
+        if logout_config.enable_auto_detection is not None:
+            self.db_api.connection_set_option_bool(
+                ConnectionSetOptionBoolRequest(
+                    conn_handle=self.conn_handle,
+                    key=LogoutOptionKeys.ENABLE_LOGOUT_AUTO_DETECTION,
+                    value=logout_config.enable_auto_detection,
+                )
+            )
+
+        # Error strategy: always set (has a default in Core)
+        self.db_api.connection_set_option_int(
+            ConnectionSetOptionIntRequest(
+                conn_handle=self.conn_handle,
+                key=LogoutOptionKeys.LOGOUT_ERROR_STRATEGY,
+                value=logout_config.error_strategy,
+            )
+        )
+
+        self.db_api.connection_set_option_int(
+            ConnectionSetOptionIntRequest(
+                conn_handle=self.conn_handle,
+                key=LogoutOptionKeys.LOGOUT_TOTAL_TIMEOUT_SECONDS,
+                value=logout_config.logout_total_timeout_seconds,
+            )
+        )
+
+        if logout_config.max_attempts is not None:
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key=LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS,
+                    value=logout_config.max_attempts,
+                )
+            )
+
+        if logout_config.logout_request_timeout_seconds is not None:
+            self.db_api.connection_set_option_int(
+                ConnectionSetOptionIntRequest(
+                    conn_handle=self.conn_handle,
+                    key=LogoutOptionKeys.LOGOUT_REQUEST_TIMEOUT_SECONDS,
+                    value=logout_config.logout_request_timeout_seconds,
+                )
+            )
+
     @pep249
     def close(self, retry: bool = True) -> None:
         """
@@ -299,7 +307,7 @@ class Connection:
             self.db_api.connection_set_option_int(
                 ConnectionSetOptionIntRequest(
                     conn_handle=self.conn_handle,
-                    key="logout_max_attempts",
+                    key=LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS,
                     value=1,
                 )
             )
