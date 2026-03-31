@@ -58,3 +58,10 @@ behavior_differences:
       Internal API used by Snowflake CLI via connection.rest.request().
       NEW driver: Raises ValueError for unsupported HTTP methods (only 'get' and 'post' are accepted).
       OLD driver: Does not validate the method parameter; attempts the request, which may result in an HttpError from the server.
+
+  18:
+    name: "JSONResultBatch supports Arrow and Pandas conversion"
+    description: |
+      NEW driver: `JSONResultBatch` and `ArrowResultBatch` are backward-compatibility aliases for the Arrow-backed `ResultBatch`.
+        `to_arrow()`, `to_pandas()`, and `create_iter(iter_unit=TABLE_UNIT)` all work on every batch regardless of its class.
+      OLD driver: `JSONResultBatch.to_arrow()` and `JSONResultBatch.to_pandas()` raise `NotSupportedError` because JSON-format chunks have no Arrow representation.

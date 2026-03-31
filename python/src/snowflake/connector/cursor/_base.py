@@ -12,6 +12,7 @@ import abc
 import ctypes
 import enum
 import functools
+import logging
 
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
@@ -36,9 +37,11 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     ExecuteResult,
     PrepareResult,
     QueryBindings,
+    ResultChunk,
     StatementExecuteQueryRequest,
     StatementHandle,
     StatementPrepareRequest,
+    StatementResultChunksRequest,
 )
 from .._internal.statement_utils import (
     create_statement,
@@ -47,6 +50,7 @@ from .._internal.statement_utils import (
     get_stream_ptr,
 )
 from ..errors import InterfaceError, NotSupportedError, ProgrammingError
+from ..result_batch import ResultBatch
 from ._result_metadata import QueryResultStats, ResultMetadata
 
 
@@ -55,6 +59,8 @@ if TYPE_CHECKING:
     from pyarrow import Table
 
     from ..connection import Connection
+
+logger = logging.getLogger(__name__)
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
@@ -123,8 +129,8 @@ class SnowflakeCursorBase(abc.ABC):
             connection: Connection object that created this cursor
         """
         # -- Core cursor state (identity, lifecycle, error handling) --
-        self._connection = connection
-        self._closed = False
+        self._connection: Connection = connection
+        self._closed: bool = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
@@ -140,7 +146,11 @@ class SnowflakeCursorBase(abc.ABC):
 
         # -- Active result state (cleared on reset) --
         self._rowcount: int | None = None
+        # TODO: API will be changed to fetch execute_results or chunks in separate step
+        #   then statement should be stored in cursor field instead of ExecuteResult and ResultChunk
+        #   and those will be fetch on demand
         self._execute_result: ExecuteResult | None = None
+        self._result_chunks: list[ResultChunk] | None = None
         self._iterator: Iterator[Row | DictRow] | None = None
         self._fetch_mode: FetchMode | None = None
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
@@ -393,10 +403,23 @@ class SnowflakeCursorBase(abc.ABC):
         result: ExecuteResult | None = None
         with create_statement(self.connection, query) as stmt_handle:
             result = self._execute_query(stmt_handle, bindings)
+            self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle)
 
         self._populate_state_from_execute_result(result)
 
         return self
+
+    def _fetch_result_chunk_metadata(self, stmt_handle: StatementHandle) -> list[ResultChunk] | None:
+        """Retrieve chunk metadata while the statement handle is still alive."""
+        try:
+            request = StatementResultChunksRequest(stmt_handle=stmt_handle)
+            response = self._connection.db_api.statement_result_chunks(request)
+            if response.HasField("result"):
+                return list(response.result.chunks)
+            return None
+        except Exception:
+            logger.warning("Failed to fetch result chunk metadata", exc_info=True)
+            return None
 
     def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteResult:
         try:
@@ -732,6 +755,7 @@ class SnowflakeCursorBase(abc.ABC):
         if not closing:
             self._rowcount = None
         self._execute_result = None
+        self._result_chunks = None
         self._iterator = None
         self._fetch_mode = None
         self._binding_data = None
@@ -885,9 +909,10 @@ class SnowflakeCursorBase(abc.ABC):
     # Distributed fetch
     # ------------------------------------------------------------------
 
-    def get_result_batches(self) -> list[Any] | None:
+    @_requires_open
+    def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
-        raise NotImplementedError("get_result_batches is not yet implemented")
+        return ResultBatch.from_chunks(self._result_chunks, self._description, self._connection)
 
     # ------------------------------------------------------------------
     # Async query support

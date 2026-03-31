@@ -3,11 +3,13 @@
 This module tests the cursor methods that return results as Pandas DataFrames:
 - fetch_pandas_all
 - fetch_pandas_batches
+- result batch pickle + to_pandas
 """
 
 from __future__ import annotations
 
 import json
+import pickle
 
 from datetime import time
 from decimal import Decimal
@@ -218,3 +220,30 @@ class TestFetchPandasBatches:
 
         # And The total row count across all DataFrames should be 100000
         assert total_rows == LARGE_RESULT_SET_ROW_COUNT
+
+
+class TestResultBatchPicklePandas:
+    """Tests for result batch pickle round-trip with to_pandas conversion."""
+
+    def test_should_survive_pickle_round_trip_and_convert_to_pandas(self, execute_query, cursor, connection_factory):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
+        # When Query "SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => 100000)) v" is executed
+        cursor.execute(f"SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_ROW_COUNT})) v")
+
+        # And get_result_batches is called
+        batches = cursor.get_result_batches()
+        assert batches is not None
+
+        # And The batches are serialized with pickle
+        pickled = pickle.dumps(batches)
+
+        # And The batches are deserialized with pickle
+        restored_batches = pickle.loads(pickled)
+
+        # And The batches are fetched via to_pandas with a fresh connection
+        with connection_factory() as fresh_conn:
+            # Then Fetching all deserialized batches via to_pandas should return 100000 total rows
+            total_rows = sum(len(batch.to_pandas(connection=fresh_conn)) for batch in restored_batches)
+            assert total_rows == LARGE_RESULT_SET_ROW_COUNT
