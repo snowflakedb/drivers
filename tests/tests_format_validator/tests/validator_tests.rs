@@ -1089,6 +1089,587 @@ fn should_handle_multiple_breaking_changes_in_single_test_method() -> Result<()>
     Ok(())
 }
 
+// ===== Regression Tests for SKIP_OLD_DRIVER / SKIP_NEW_DRIVER =====
+
+#[test]
+fn should_detect_skip_old_driver_annotations_in_cpp() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "skip_annotations",
+        TestImplementations::create_skip_annotation_feature(),
+    )?;
+
+    workspace.create_cpp_test(
+        "auth",
+        "skip_annotations",
+        TestImplementations::create_cpp_test_with_skip_annotations(),
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    let report = &enhanced_results.behavior_differences_report;
+    let odbc_bds = report
+        .behavior_differences_by_language
+        .get("odbc")
+        .expect("Should find ODBC behavior differences");
+
+    let bd_ids: Vec<&str> = odbc_bds
+        .iter()
+        .map(|b| b.behavior_difference_id.as_str())
+        .collect();
+
+    // Single-line SKIP_OLD_DRIVER
+    assert!(
+        bd_ids.contains(&"BD#11"),
+        "Should detect single-line SKIP_OLD_DRIVER BD#11"
+    );
+    // Multi-line SKIP_OLD_DRIVER (BD# on next line)
+    assert!(
+        bd_ids.contains(&"BD#15"),
+        "Should detect multi-line SKIP_OLD_DRIVER BD#15"
+    );
+    // SKIP_NEW_DRIVER
+    assert!(
+        bd_ids.contains(&"BD#20"),
+        "Should detect SKIP_NEW_DRIVER BD#20"
+    );
+
+    // SKIP_OLD_DRIVER → new-driver behaviour points to method start, old side is "skipped"
+    let bd11 = odbc_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#11")
+        .unwrap();
+    let impl11 = &bd11.implementations[0];
+    assert!(
+        impl11.new_behaviour_file.is_some(),
+        "SKIP_OLD_DRIVER should record new_behaviour_file"
+    );
+    assert!(
+        impl11.new_behaviour_line.is_some(),
+        "SKIP_OLD_DRIVER should record new_behaviour_line"
+    );
+    assert_eq!(
+        impl11.new_behaviour_line.unwrap(),
+        impl11.test_line,
+        "SKIP_OLD_DRIVER new_behaviour_line should point to the test method start"
+    );
+    assert!(
+        impl11.old_driver_skipped,
+        "SKIP_OLD_DRIVER should set old_driver_skipped = true"
+    );
+    assert!(
+        !impl11.new_driver_skipped,
+        "SKIP_OLD_DRIVER should NOT set new_driver_skipped"
+    );
+
+    // SKIP_NEW_DRIVER → old-driver behaviour points to method start, new side is "skipped"
+    let bd20 = odbc_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#20")
+        .unwrap();
+    let impl20 = &bd20.implementations[0];
+    assert!(
+        impl20.old_behaviour_file.is_some(),
+        "SKIP_NEW_DRIVER should record old_behaviour_file"
+    );
+    assert!(
+        impl20.old_behaviour_line.is_some(),
+        "SKIP_NEW_DRIVER should record old_behaviour_line"
+    );
+    assert_eq!(
+        impl20.old_behaviour_line.unwrap(),
+        impl20.test_line,
+        "SKIP_NEW_DRIVER old_behaviour_line should point to the test method start"
+    );
+    assert!(
+        impl20.new_driver_skipped,
+        "SKIP_NEW_DRIVER should set new_driver_skipped = true"
+    );
+    assert!(
+        !impl20.old_driver_skipped,
+        "SKIP_NEW_DRIVER should NOT set old_driver_skipped"
+    );
+
+    // Multi-line SKIP_OLD_DRIVER should also point to method start
+    let bd15 = odbc_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#15")
+        .unwrap();
+    let impl15 = &bd15.implementations[0];
+    assert_eq!(
+        impl15.new_behaviour_line.unwrap(),
+        impl15.test_line,
+        "Multi-line SKIP_OLD_DRIVER should also point to test method start"
+    );
+    assert!(
+        impl15.old_driver_skipped,
+        "Multi-line SKIP_OLD_DRIVER should set old_driver_skipped"
+    );
+
+    Ok(())
+}
+
+// ===== Python skip_reference / skip_universal BD Tests =====
+
+#[test]
+fn should_detect_skip_reference_annotations_in_python() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_bd_yaml(
+        "python",
+        r#"behavior_differences:
+  11:
+    name: "Numeric conversion returns 22003 instead of SQL_SUCCESS"
+  20:
+    name: "Interval leading field precision enforcement"
+"#,
+    )?;
+
+    workspace.create_feature_file(
+        "auth",
+        "skip_annotations_python",
+        r#"@python
+Feature: Python Skip Annotation Test
+
+  @python_e2e
+  Scenario: should handle numeric conversion correctly
+    Given I have a numeric column
+    When I fetch with small buffer
+    Then correct error is returned
+
+  @python_e2e
+  Scenario: should handle interval precision
+    Given I have a number column
+    When I convert to interval type
+    Then interval precision is enforced
+"#,
+    )?;
+
+    workspace.create_python_test(
+        "auth",
+        "skip_annotations_python",
+        r#"import pytest
+
+@pytest.mark.skip_reference(reason="BD#11: Old driver returns SQL_SUCCESS instead of 22003")
+def test_should_handle_numeric_conversion_correctly():
+    # Given I have a numeric column
+    stmt = setup_numeric_column()
+
+    # When I fetch with small buffer
+    ret = fetch_with_small_buffer(stmt)
+
+    # Then correct error is returned
+    assert ret == "22003"
+
+@pytest.mark.skip_universal(reason="BD#20: New driver enforces interval leading precision")
+def test_should_handle_interval_precision():
+    # Given I have a number column
+    stmt = setup_number_column()
+
+    # When I convert to interval type
+    ret = convert_to_interval(stmt, 999)
+
+    # Then interval precision is enforced
+    assert ret == "SQL_SUCCESS"
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    let report = &enhanced_results.behavior_differences_report;
+    let python_bds = report
+        .behavior_differences_by_language
+        .get("python")
+        .expect("Should find Python behavior differences");
+
+    let bd_ids: Vec<&str> = python_bds
+        .iter()
+        .map(|b| b.behavior_difference_id.as_str())
+        .collect();
+
+    assert!(
+        bd_ids.contains(&"BD#11"),
+        "Should detect skip_reference BD#11, found: {:?}",
+        bd_ids
+    );
+    assert!(
+        bd_ids.contains(&"BD#20"),
+        "Should detect skip_universal BD#20, found: {:?}",
+        bd_ids
+    );
+
+    // skip_reference → old driver is skipped, new-driver behaviour points to method start
+    let bd11 = python_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#11")
+        .unwrap();
+    let impl11 = &bd11.implementations[0];
+    assert!(
+        impl11.new_behaviour_file.is_some(),
+        "skip_reference should record new_behaviour_file"
+    );
+    assert!(
+        impl11.old_driver_skipped,
+        "skip_reference should set old_driver_skipped = true"
+    );
+    assert!(
+        !impl11.new_driver_skipped,
+        "skip_reference should NOT set new_driver_skipped"
+    );
+
+    // skip_universal → new driver is skipped, old-driver behaviour points to method start
+    let bd20 = python_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#20")
+        .unwrap();
+    let impl20 = &bd20.implementations[0];
+    assert!(
+        impl20.old_behaviour_file.is_some(),
+        "skip_universal should record old_behaviour_file"
+    );
+    assert!(
+        impl20.new_driver_skipped,
+        "skip_universal should set new_driver_skipped = true"
+    );
+    assert!(
+        !impl20.old_driver_skipped,
+        "skip_universal should NOT set old_driver_skipped"
+    );
+
+    Ok(())
+}
+
+// ===== JDBC SKIP_OLD_DRIVER / SKIP_NEW_DRIVER BD Tests =====
+
+#[test]
+fn should_detect_skip_driver_annotations_in_jdbc() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_bd_yaml(
+        "jdbc",
+        r#"behavior_differences:
+  11:
+    name: "Numeric conversion returns 22003 instead of SQL_SUCCESS"
+  20:
+    name: "Interval leading field precision enforcement"
+"#,
+    )?;
+
+    workspace.create_feature_file(
+        "auth",
+        "skip_annotations_jdbc",
+        r#"@jdbc
+Feature: JDBC Skip Annotation Test
+
+  @jdbc_int
+  Scenario: should handle numeric conversion correctly
+    Given I have a numeric column
+    When I fetch with small buffer
+    Then correct error is returned
+
+  @jdbc_int
+  Scenario: should handle interval precision
+    Given I have a number column
+    When I convert to interval type
+    Then interval precision is enforced
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "SkipAnnotationsJdbc",
+        r#"
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class SkipAnnotationsJdbcTest {
+    @Test
+    public void shouldHandleNumericConversionCorrectly() throws Exception {
+        // Given I have a numeric column
+        Statement stmt = setupNumericColumn();
+
+        // When I fetch with small buffer
+        // SKIP_OLD_DRIVER("BD#11", "Old driver returns SQL_SUCCESS instead of 22003")
+        ResultSet rs = fetchWithSmallBuffer(stmt);
+
+        // Then correct error is returned
+        assertEquals("22003", getErrorCode(rs));
+    }
+
+    @Test
+    public void shouldHandleIntervalPrecision() throws Exception {
+        // Given I have a number column
+        Statement stmt = setupNumberColumn();
+
+        // When I convert to interval type
+        // SKIP_NEW_DRIVER("BD#20", "New driver enforces interval leading precision")
+        ResultSet rs = convertToInterval(stmt, 999);
+
+        // Then interval precision is enforced
+        assertEquals("SQL_SUCCESS", getResult(rs));
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    let report = &enhanced_results.behavior_differences_report;
+    let jdbc_bds = report
+        .behavior_differences_by_language
+        .get("jdbc")
+        .expect("Should find JDBC behavior differences");
+
+    let bd_ids: Vec<&str> = jdbc_bds
+        .iter()
+        .map(|b| b.behavior_difference_id.as_str())
+        .collect();
+
+    assert!(
+        bd_ids.contains(&"BD#11"),
+        "Should detect SKIP_OLD_DRIVER BD#11, found: {:?}",
+        bd_ids
+    );
+    assert!(
+        bd_ids.contains(&"BD#20"),
+        "Should detect SKIP_NEW_DRIVER BD#20, found: {:?}",
+        bd_ids
+    );
+
+    // SKIP_OLD_DRIVER → old driver is skipped, new-driver behaviour points to method start
+    let bd11 = jdbc_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#11")
+        .unwrap();
+    let impl11 = &bd11.implementations[0];
+    assert!(
+        impl11.new_behaviour_file.is_some(),
+        "SKIP_OLD_DRIVER should record new_behaviour_file"
+    );
+    assert_eq!(
+        impl11.new_behaviour_line.unwrap(),
+        impl11.test_line,
+        "SKIP_OLD_DRIVER new_behaviour_line should point to method start"
+    );
+    assert!(
+        impl11.old_driver_skipped,
+        "SKIP_OLD_DRIVER should set old_driver_skipped = true"
+    );
+    assert!(
+        !impl11.new_driver_skipped,
+        "SKIP_OLD_DRIVER should NOT set new_driver_skipped"
+    );
+
+    // SKIP_NEW_DRIVER → new driver is skipped, old-driver behaviour points to method start
+    let bd20 = jdbc_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#20")
+        .unwrap();
+    let impl20 = &bd20.implementations[0];
+    assert!(
+        impl20.old_behaviour_file.is_some(),
+        "SKIP_NEW_DRIVER should record old_behaviour_file"
+    );
+    assert_eq!(
+        impl20.old_behaviour_line.unwrap(),
+        impl20.test_line,
+        "SKIP_NEW_DRIVER old_behaviour_line should point to method start"
+    );
+    assert!(
+        impl20.new_driver_skipped,
+        "SKIP_NEW_DRIVER should set new_driver_skipped = true"
+    );
+    assert!(
+        !impl20.old_driver_skipped,
+        "SKIP_NEW_DRIVER should NOT set old_driver_skipped"
+    );
+
+    Ok(())
+}
+
+// ===== JDBC assumeTrue BD Tests =====
+
+#[test]
+fn should_detect_assume_true_annotations_in_jdbc() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_bd_yaml(
+        "jdbc",
+        r#"behavior_differences:
+  15:
+    name: "Float buffer truncation returns 01004 instead of SQL_ERROR"
+"#,
+    )?;
+
+    workspace.create_feature_file(
+        "auth",
+        "assume_true_jdbc",
+        r#"@jdbc
+Feature: JDBC Assume True Test
+
+  @jdbc_int
+  Scenario: should skip old driver via assumption
+    Given I have a float column
+    When I fetch with small char buffer
+    Then truncation warning is returned
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "AssumeTrueJdbc",
+        r#"
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class AssumeTrueJdbcTest {
+    @Test
+    public void shouldSkipOldDriverViaAssumption() throws Exception {
+        // Given I have a float column
+        Statement stmt = setupFloatColumn();
+        Assumptions.assumeTrue(isNewDriver(), "BD#15: Old driver returns SQL_ERROR");
+
+        // When I fetch with small char buffer
+        ResultSet rs = fetchFloatSmallBuffer(stmt);
+
+        // Then truncation warning is returned
+        assertEquals("01004", getSqlState(rs));
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    let report = &enhanced_results.behavior_differences_report;
+    let jdbc_bds = report
+        .behavior_differences_by_language
+        .get("jdbc")
+        .expect("Should find JDBC behavior differences");
+
+    let bd_ids: Vec<&str> = jdbc_bds
+        .iter()
+        .map(|b| b.behavior_difference_id.as_str())
+        .collect();
+
+    assert!(
+        bd_ids.contains(&"BD#15"),
+        "Should detect assumeTrue(isNewDriver()) BD#15, found: {:?}",
+        bd_ids
+    );
+
+    let bd15 = jdbc_bds
+        .iter()
+        .find(|b| b.behavior_difference_id == "BD#15")
+        .unwrap();
+    let impl15 = &bd15.implementations[0];
+    assert!(
+        impl15.new_behaviour_file.is_some(),
+        "assumeTrue(isNewDriver) should record new_behaviour_file"
+    );
+    assert!(
+        impl15.old_driver_skipped,
+        "assumeTrue(isNewDriver) should set old_driver_skipped = true"
+    );
+
+    Ok(())
+}
+
+// ===== Regression Tests for Feature Name Collision in BD Processing =====
+
+/// Test that behaviour differences are found even when two feature files share the same
+/// file stem (e.g. shared/auth/auth.feature and odbc/auth/auth.feature).
+#[test]
+fn should_find_behavior_differences_when_feature_names_collide() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // shared/auth/key_auth.feature — contains the scenario whose test has BD annotations
+    workspace.create_feature_file_in_folder(
+        "shared",
+        "auth",
+        "key_auth",
+        r#"@core @odbc @python
+Feature: Key Auth (shared)
+
+  @core_int @odbc_int @python_int
+  Scenario: should fail when no key provided
+    Given Authentication is set to JWT
+    When Trying to Connect with no key provided
+    Then There is error returned
+"#,
+    )?;
+
+    // odbc/auth/key_auth.feature — same file stem, different scenarios
+    workspace.create_feature_file_in_folder(
+        "odbc",
+        "auth",
+        "key_auth",
+        r#"@odbc
+Feature: Key Auth (ODBC-specific)
+
+  @odbc_int
+  Scenario: should forward key content via SQLSetConnectAttr
+    Given A connection handle is allocated with key content
+    When Trying to Connect
+    Then The key is forwarded to core
+"#,
+    )?;
+
+    // C++ test matching the *shared* scenario, with BD annotation
+    workspace.create_cpp_test(
+        "auth",
+        "key_auth",
+        r#"#include <catch2/catch.hpp>
+
+TEST_CASE("should fail when no key provided") {
+    // Given Authentication is set to JWT
+    auto conn = setup_jwt_connection();
+
+    // When Trying to Connect with no key provided
+    auto ret = connect(conn);
+
+    // Then There is error returned
+    OLD_DRIVER_ONLY("BD#1") {
+        CHECK(get_error_code(conn) == 20032);
+    }
+
+    NEW_DRIVER_ONLY("BD#1") {
+        CHECK(get_error_code(conn) == 0);
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+    let report = &enhanced_results.behavior_differences_report;
+
+    let odbc_bds = report
+        .behavior_differences_by_language
+        .get("odbc")
+        .expect("Should find ODBC behaviour differences even with colliding feature names");
+
+    let bd_ids: Vec<&str> = odbc_bds
+        .iter()
+        .map(|b| b.behavior_difference_id.as_str())
+        .collect();
+
+    assert!(
+        bd_ids.contains(&"BD#1"),
+        "BD#1 must be found from shared feature despite name collision with odbc feature. Found: {:?}",
+        bd_ids
+    );
+
+    Ok(())
+}
+
 // ===== Regression Tests for Path-Based Feature IDs =====
 
 /// Test that features with the same name in different folders are treated as separate.
@@ -1289,6 +1870,727 @@ Feature: JDBC Logout
     Ok(())
 }
 
+// ===== Empty Steps Validation Tests =====
+
+#[test]
+fn should_report_empty_steps_in_rust_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_rust",
+        r#"@core
+Feature: Empty Steps Rust Test
+
+  @core_e2e
+  Scenario: should detect empty steps in rust
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "empty_steps_rust",
+        r#"
+#[test]
+fn should_detect_empty_steps_in_rust() {
+    // Given I have valid credentials
+    let credentials = setup_valid_credentials();
+
+    // When I attempt to login
+
+    // Then login should succeed
+    assert!(login_succeeded());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(
+        validation.empty_steps[0].contains("When"),
+        "Empty step should be the 'When' step, got: {}",
+        validation.empty_steps[0]
+    );
+
+    assert_eq!(validation.missing_steps_by_method.len(), 1);
+    let method_validation = &validation.missing_steps_by_method[0];
+    assert_eq!(method_validation.empty_steps.len(), 1);
+    assert!(method_validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_empty_steps_in_jdbc_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_jdbc",
+        r#"@jdbc
+Feature: Empty Steps JDBC Test
+
+  @jdbc_int
+  Scenario: should detect empty steps in jdbc
+    Given Snowflake client is logged in
+    When Query is executed
+    Then result should be correct
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "EmptyStepsJdbc",
+        r#"
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class EmptyStepsJdbcTest {
+    @Test
+    public void shouldDetectEmptyStepsInJdbc() throws Exception {
+        // Given Snowflake client is logged in
+        Connection connection = getDefaultConnection();
+
+        // When Query is executed
+
+        // Then result should be correct
+        assertTrue(result.isSuccess());
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_empty_steps_in_odbc_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_odbc",
+        r#"@odbc
+Feature: Empty Steps ODBC Test
+
+  @odbc_e2e
+  Scenario: should detect empty steps in odbc
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_cpp_test(
+        "auth",
+        "empty_steps_odbc",
+        r#"
+#include <catch2/catch.hpp>
+
+TEST_CASE("should detect empty steps in odbc") {
+    // Given I have valid credentials
+    auto credentials = setup_valid_credentials();
+
+    // When I attempt to login
+
+    // Then login should succeed
+    REQUIRE(login_succeeded());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_empty_steps_in_python_when_step_comment_has_no_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "empty_steps_python",
+        r#"@python
+Feature: Empty Steps Python Test
+
+  @python_e2e
+  Scenario: should detect empty steps in python
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_python_test(
+        "auth",
+        "empty_steps_python",
+        r#"
+def test_should_detect_empty_steps_in_python():
+    # Given I have valid credentials
+    credentials = setup_valid_credentials()
+
+    # When I attempt to login
+
+    # Then login should succeed
+    assert login_succeeded()
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but has: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have exactly 1 empty step, but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_not_report_empty_steps_when_all_steps_have_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "no_empty_steps",
+        r#"@core @jdbc @odbc @python
+Feature: No Empty Steps Test
+
+  @core_e2e @jdbc_int @odbc_e2e @python_e2e
+  Scenario: should have no empty steps
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+    And I should have access
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "no_empty_steps",
+        r#"
+#[test]
+fn should_have_no_empty_steps() {
+    // Given I have valid credentials
+    let credentials = setup_valid_credentials();
+
+    // When I attempt to login
+    let result = attempt_login(&credentials);
+
+    // Then login should succeed
+    assert!(result.is_ok());
+
+    // And I should have access
+    assert!(has_access(&result.unwrap()));
+}
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "NoEmptySteps",
+        r#"
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class NoEmptyStepsTest {
+    @Test
+    public void shouldHaveNoEmptySteps() throws Exception {
+        // Given I have valid credentials
+        Credentials credentials = setupValidCredentials();
+
+        // When I attempt to login
+        LoginResult result = attemptLogin(credentials);
+
+        // Then login should succeed
+        assertTrue(result.isSuccess());
+
+        // And I should have access
+        assertTrue(result.hasAccess());
+    }
+}
+"#,
+    )?;
+
+    workspace.create_cpp_test(
+        "auth",
+        "no_empty_steps",
+        r#"
+#include <catch2/catch.hpp>
+
+TEST_CASE("should have no empty steps") {
+    // Given I have valid credentials
+    auto credentials = setup_valid_credentials();
+
+    // When I attempt to login
+    auto result = attempt_login(credentials);
+
+    // Then login should succeed
+    REQUIRE(result.is_success());
+
+    // And I should have access
+    REQUIRE(has_access(result));
+}
+"#,
+    )?;
+
+    workspace.create_python_test(
+        "auth",
+        "no_empty_steps",
+        r#"
+def test_should_have_no_empty_steps():
+    # Given I have valid credentials
+    credentials = setup_valid_credentials()
+
+    # When I attempt to login
+    result = attempt_login(credentials)
+
+    # Then login should succeed
+    assert result.is_success()
+
+    # And I should have access
+    assert result.has_access()
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    for validation in &results[0].validations {
+        assert!(
+            validation.test_file_found,
+            "Language {:?} should find test file",
+            validation.language
+        );
+        assert!(
+            validation.missing_steps.is_empty(),
+            "Language {:?} should have no missing steps, but has: {:?}",
+            validation.language,
+            validation.missing_steps
+        );
+        assert!(
+            validation.empty_steps.is_empty(),
+            "Language {:?} should have no empty steps, but has: {:?}",
+            validation.language,
+            validation.empty_steps
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn should_report_multiple_empty_steps_in_same_method() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "multi_empty",
+        r#"@core
+Feature: Multiple Empty Steps Test
+
+  @core_e2e
+  Scenario: should detect multiple empty steps
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+    And I should have access
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "multi_empty",
+        r#"
+#[test]
+fn should_detect_multiple_empty_steps() {
+    // Given I have valid credentials
+
+    // When I attempt to login
+
+    // Then login should succeed
+    assert!(login_succeeded());
+
+    // And I should have access
+    assert!(has_access());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert_eq!(
+        validation.empty_steps.len(),
+        2,
+        "Should have 2 empty steps (Given and When), but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps.iter().any(|s| s.contains("Given")));
+    assert!(validation.empty_steps.iter().any(|s| s.contains("When")));
+
+    Ok(())
+}
+
+#[test]
+fn should_report_last_step_as_empty_when_no_code_follows() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "last_empty",
+        r#"@core
+Feature: Last Empty Step Test
+
+  @core_e2e
+  Scenario: should detect last empty step
+    Given I have valid credentials
+    When I attempt to login
+    Then login should succeed
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "last_empty",
+        r#"
+#[test]
+fn should_detect_last_empty_step() {
+    // Given I have valid credentials
+    let credentials = setup_valid_credentials();
+
+    // When I attempt to login
+    let result = attempt_login(&credentials);
+
+    // Then login should succeed
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have 1 empty step (Then), but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("Then"));
+
+    Ok(())
+}
+
+#[test]
+fn should_not_count_continuation_comments_as_code() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "continuation_empty",
+        r#"@jdbc
+Feature: Continuation Comment Test
+
+  @jdbc_int
+  Scenario: should not count continuations as code
+    Given Snowflake client is logged in
+    When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
+    Then All values should be returned as appropriate type
+"#,
+    )?;
+
+    workspace.create_java_test(
+        "auth",
+        "ContinuationEmpty",
+        r#"
+import org.junit.Test;
+import static org.junit.Assert.*;
+
+public class ContinuationEmptyTest {
+    @Test
+    public void shouldNotCountContinuationsAsCode() throws Exception {
+        // Given Snowflake client is logged in
+        Connection connection = getDefaultConnection();
+
+        // When Query "SELECT 'hello'::<type>, 'Hello World'::<type>,
+        // '日本語テスト'::<type>" is executed
+
+        // Then All values should be returned as appropriate type
+        assertSingleRow(resultSet, Arrays.asList("hello", "Hello World"));
+    }
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let validation = &results[0].validations[0];
+    assert!(validation.test_file_found);
+    assert_eq!(
+        validation.empty_steps.len(),
+        1,
+        "Should have 1 empty step (When with continuation), but has: {:?}",
+        validation.empty_steps
+    );
+    assert!(validation.empty_steps[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_fail_when_scenario_missing_when_step() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "missing_when",
+        r#"@core
+Feature: Missing When Test
+
+  @core_e2e
+  Scenario: should fail without when
+    Given Snowflake client is logged in
+    Then Something should happen
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "missing_when",
+        r#"
+#[test]
+fn should_fail_without_when() {
+    // Given Snowflake client is logged in
+    let client = connect();
+
+    // Then Something should happen
+    assert!(client.is_connected());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].scenario_structure_errors.len(), 1);
+    assert!(results[0].scenario_structure_errors[0].contains("When"));
+
+    Ok(())
+}
+
+#[test]
+fn should_fail_when_scenario_missing_then_step() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "missing_then",
+        r#"@core
+Feature: Missing Then Test
+
+  @core_e2e
+  Scenario: should fail without then
+    Given Snowflake client is logged in
+    When Something is executed
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "missing_then",
+        r#"
+#[test]
+fn should_fail_without_then() {
+    // Given Snowflake client is logged in
+    let client = connect();
+
+    // When Something is executed
+    client.execute("SELECT 1");
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].scenario_structure_errors.len(), 1);
+    assert!(results[0].scenario_structure_errors[0].contains("Then"));
+
+    Ok(())
+}
+
+#[test]
+fn should_fail_when_scenario_missing_both_when_and_then() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "missing_both",
+        r#"@core
+Feature: Missing Both Test
+
+  @core_e2e
+  Scenario: should fail without when and then
+    Given Snowflake client is logged in
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "missing_both",
+        r#"
+#[test]
+fn should_fail_without_when_and_then() {
+    // Given Snowflake client is logged in
+    let client = connect();
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].scenario_structure_errors.len(), 2);
+    assert!(
+        results[0]
+            .scenario_structure_errors
+            .iter()
+            .any(|e| e.contains("When"))
+    );
+    assert!(
+        results[0]
+            .scenario_structure_errors
+            .iter()
+            .any(|e| e.contains("Then"))
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_pass_when_scenario_has_when_and_then() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    workspace.create_feature_file(
+        "auth",
+        "complete_steps",
+        r#"@core
+Feature: Complete Steps Test
+
+  @core_e2e
+  Scenario: should pass with all steps
+    Given Snowflake client is logged in
+    When Something is executed
+    Then Result should be correct
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "complete_steps",
+        r#"
+#[test]
+fn should_pass_with_all_steps() {
+    // Given Snowflake client is logged in
+    let client = connect();
+
+    // When Something is executed
+    let result = client.execute("SELECT 1");
+
+    // Then Result should be correct
+    assert!(result.is_ok());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].scenario_structure_errors.is_empty());
+
+    Ok(())
+}
+
 // ===== Helper Structs and Test Data =====
 
 /// Helper to create a temporary workspace with features and test files
@@ -1312,6 +2614,8 @@ impl TestWorkspace {
         fs::create_dir_all(workspace_root.join("jdbc/src/test/java/e2e/query"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/auth"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/query"))?;
+        fs::create_dir_all(workspace_root.join("python/tests/e2e/auth"))?;
+        fs::create_dir_all(workspace_root.join("python/tests/e2e/query"))?;
 
         // Create BehaviorDifferences.yaml file for tests
         let breaking_change_file = workspace_root.join("odbc_tests/BehaviorDifferences.yaml");
@@ -1379,6 +2683,27 @@ impl TestWorkspace {
         Ok(())
     }
 
+    fn create_python_test(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
+        let test_path = self
+            .workspace_root
+            .join("python/tests/e2e")
+            .join(subdir)
+            .join(format!("test_{name}.py"));
+        fs::create_dir_all(test_path.parent().unwrap())?;
+        fs::write(test_path, content)?;
+        Ok(())
+    }
+
+    fn create_bd_yaml(&self, lang_dir: &str, content: &str) -> Result<()> {
+        let bd_path = self
+            .workspace_root
+            .join(lang_dir)
+            .join("BehaviorDifferences.yaml");
+        fs::create_dir_all(bd_path.parent().unwrap())?;
+        fs::write(bd_path, content)?;
+        Ok(())
+    }
+
     fn create_cpp_common_file(&self, name: &str, content: &str) -> Result<()> {
         let common_dir = self.workspace_root.join("odbc_tests/common/src");
         fs::create_dir_all(&common_dir)?;
@@ -1431,6 +2756,15 @@ impl TestWorkspace {
   
   10:
     name: "Third multiple Breaking Change for testing multiple Breaking Changes in single method"
+  
+  11:
+    name: "Numeric conversion returns 22003 instead of SQL_SUCCESS"
+  
+  15:
+    name: "Float buffer truncation returns 01004 instead of SQL_ERROR"
+  
+  20:
+    name: "Interval leading field precision enforcement"
 "#
     }
 }
@@ -2144,6 +3478,73 @@ TEST_CASE("should test specific line numbers") {
     
     // Then line numbers should be accurate
     REQUIRE(line_numbers_are_correct());
+}
+"#
+    }
+
+    fn create_skip_annotation_feature() -> &'static str {
+        r#"@core @jdbc
+Feature: Skip Annotation Test
+
+  @odbc
+  Scenario: should handle numeric conversion correctly
+    Given I have a numeric column
+    When I fetch with small buffer
+    Then correct error is returned
+
+  @odbc
+  Scenario: should handle float buffer truncation
+    Given I have a float column
+    When I fetch with small char buffer
+    Then truncation warning is returned
+
+  @odbc
+  Scenario: should handle interval precision
+    Given I have a number column
+    When I convert to interval type
+    Then interval precision is enforced
+"#
+    }
+
+    fn create_cpp_test_with_skip_annotations() -> &'static str {
+        r#"#include <catch2/catch.hpp>
+
+TEST_CASE("should handle numeric conversion correctly") {
+    // Given I have a numeric column
+    auto stmt = setup_numeric_column();
+
+    // When I fetch with small buffer
+    SKIP_OLD_DRIVER("BD#11", "Old driver returns SQL_SUCCESS instead of 22003");
+    auto ret = fetch_with_small_buffer(stmt);
+
+    // Then correct error is returned
+    CHECK(ret == SQL_ERROR);
+}
+
+TEST_CASE("should handle float buffer truncation") {
+    // Given I have a float column
+    auto stmt = setup_float_column();
+
+    // When I fetch with small char buffer
+    SKIP_OLD_DRIVER(
+        "BD#15",
+        "Old driver returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO");
+    auto ret = fetch_float_small_buffer(stmt);
+
+    // Then truncation warning is returned
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+}
+
+TEST_CASE("should handle interval precision") {
+    // Given I have a number column
+    auto stmt = setup_number_column();
+
+    // When I convert to interval type
+    SKIP_NEW_DRIVER("BD#20", "New driver enforces interval leading precision");
+    auto ret = convert_to_interval(stmt, 999);
+
+    // Then interval precision is enforced
+    CHECK(ret == SQL_SUCCESS);
 }
 "#
     }

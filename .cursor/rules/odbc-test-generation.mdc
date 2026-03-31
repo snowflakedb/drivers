@@ -11,6 +11,18 @@ alwaysApply: false
 2. **Run format validator** with `tests/tests_format_validator/run_validator.sh`
 3. **Run precommit** to ensure linter compliance
 
+## ODBC Reference Documentation
+
+When writing or reviewing ODBC tests, fetch the relevant Microsoft ODBC API reference pages for context. Use these URLs as needed:
+- Function reference index: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/odbc-api-reference
+- Individual function (replace `sqlfunctionname` with lowercase function name, e.g. `sqlgetdata`, `sqlexecdirect`, `sqlfetch`): `https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfunctionname-function`
+- Data types: https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/sql-data-types
+- Return codes: https://learn.microsoft.com/en-us/sql/odbc/reference/develop-app/return-codes-odbc
+- Diagnostics / SQLGetDiagRec: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdiagrec-function
+- SQLSTATE reference: https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/appendix-a-odbc-error-codes
+
+Before writing or modifying a test for a specific ODBC function, use the WebFetch tool to retrieve that function's documentation page. For example, when working on a `SQLGetData` test, fetch `https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function`. Use the fetched content to verify correct parameter types, buffer sizes, expected return codes, SQLSTATE values, and documented edge cases.
+
 ## C++ Test Structure
 
 ### Framework & Includes
@@ -24,23 +36,46 @@ alwaysApply: false
   #include "test_setup.hpp"
   ```
 
-### Test Case Naming
-- Use descriptive names starting with "should": `TEST_CASE("should select hardcoded string literals", "[tag1][tag2]")`
+### Test Case Naming & Structure
+- Use `TEST_CASE` + `Connection` RAII. Names start with `"should ..."`.
+- Use `TEST_CASE_METHOD(Fixture, ...)` with the appropriate fixture (`EnvFixture`, `DbcFixture`, `StmtFixture`).
 - Tags should match category: `[datatype][string]`, `[put_get]`, `[auth]`, `[query]`
 
 ### Given-When-Then Comments
-Always structure tests with Gherkin comments:
+Always structure tests with Gherkin comments. Each comment must be followed by relevant code (no empty stubs).
+
+**E2E example:**
 ```cpp
 TEST_CASE("should select data from file uploaded to stage", "[put_get]") {
   // Given File is uploaded to stage
   Connection conn;
-  // setup code...
+  // setup code using high-level abstractions...
 
   // When File data is queried using Select command
-  auto stmt = conn.execute_fetch(select_sql);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ..."), SQL_NTS);
 
   // Then File data should be correctly returned
   CHECK(result == expected);
+}
+```
+
+**API test example:**
+```cpp
+TEST_CASE_METHOD(StmtFixture, "SQLGetData: should return correct integer value", "[sqlgetdata]") {
+  // Given A query returning an integer is executed
+  SQLRETURN ret = SQLExecDirect(stmt, sqlchar("SELECT 42"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt);
+  REQUIRE_ODBC(ret, stmt);
+
+  // When Data is retrieved via SQLGetData
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  ret = SQLGetData(stmt, 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+
+  // Then The call should succeed and return the correct value
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  CHECK(value == 42);
 }
 ```
 
@@ -57,18 +92,27 @@ auto stmt = conn.execute("SQL QUERY");
 auto stmt = conn.execute_fetch("SQL QUERY");  // execute + fetch first row
 ```
 
-### ODBC Error Handling
-- Use `CHECK_ODBC(ret, handle)` macro after every ODBC call:
+### ODBC Return Value Checking
+Every ODBC call return value **must** be checked. Use different macros depending on context:
+- **Setup (Given)**: use `REQUIRE_ODBC(ret, handle)` or `REQUIRE_ODBC_SUCCESS(ret, handle)` — failure is fatal, subsequent code is meaningless.
+- **Behaviour assertions (Then)**: use `REQUIRE_THAT` / `CHECK_THAT` with `OdbcMatchers` (see below).
+
 ```cpp
-SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT...", SQL_NTS);
-CHECK_ODBC(ret, stmt);
+// Setup — fatal on failure
+SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT 1"), SQL_NTS);
+REQUIRE_ODBC(ret, stmt);
+
+// Behaviour assertion — the return code itself is what we're testing
+ret = SQLExecDirect(stmt.getHandle(), sqlchar("INVALID SQL"), SQL_NTS);
+REQUIRE_THAT(OdbcResult(ret, stmt),
+             OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("42000"));
 ```
 
 ### Schema & Table Management
+Use `Schema::use_random_schema(conn)` when the test creates tables. The schema destructor drops CASCADE, so `DROP TABLE IF EXISTS` is redundant inside a random schema.
 ```cpp
 auto random_schema = Schema::use_random_schema(conn);
-conn.execute("DROP TABLE IF EXISTS test_table");
-conn.execute("CREATE TABLE test_table (col VARCHAR(1000))");
+conn.execute("CREATE OR REPLACE TABLE test_table (col VARCHAR(1000))");
 ```
 
 ### Data Retrieval
@@ -76,15 +120,60 @@ conn.execute("CREATE TABLE test_table (col VARCHAR(1000))");
 #include "get_data.hpp"
 auto value = get_data<SQL_C_CHAR>(stmt, column_index);
 auto num = get_data<SQL_C_LONG>(stmt, column_index);
+
+// When NULLs are expected:
+auto maybe_value = get_data_optional<SQL_C_CHAR>(stmt, column_index);
+```
+- For type conversion tests, use `conversion_checks.hpp` helpers (`check_fractional_truncation`, `check_no_truncation`, `check_numeric_out_of_range`):
+```cpp
+#include "conversion_checks.hpp"
+
+// Fetch succeeds, value returned without truncation
+auto value = check_no_truncation<SQL_C_SLONG>(stmt, 1);
+CHECK(value == 42);
+
+// Fetch succeeds with SQL_SUCCESS_WITH_INFO + SQLSTATE 01S07 (fractional truncation)
+auto truncated = check_fractional_truncation<SQL_C_SLONG>(stmt, 2);
+CHECK(truncated == 3);  // e.g. 3.14 → 3
+
+// Fetch fails with SQL_ERROR + SQLSTATE 22003 (numeric out of range)
+check_numeric_out_of_range<SQL_C_STINYINT>(stmt, 3);  // e.g. 999 doesn't fit in TINYINT
+
+// Fetch fails with SQL_ERROR + SQLSTATE 22018 (invalid character value for cast)
+check_invalid_string<SQL_C_SLONG>(stmt, 4);  // e.g. "abc" → integer
+
+// Check that a column is NULL
+check_null_via_get_data(stmt, 5, SQL_C_CHAR);
 ```
 
-### Assertions
-- Use `CHECK()` for non-fatal assertions
-- Use `REQUIRE()` for fatal assertions (test stops on failure)
+### Assertions — CHECK vs REQUIRE
+- `CHECK` for value assertions (non-fatal — all failures are reported).
+- `REQUIRE` only for preconditions whose failure makes subsequent code meaningless.
+- **Do not use `REQUIRE` inside loops or multi-column checks** — the first failure hides the rest.
+- Pattern: `REQUIRE_ODBC` on fetch, then `CHECK(value == expected)` per column.
+
+### OdbcMatchers (Behaviour Assertions)
+Use `OdbcMatchers` with `REQUIRE_THAT` / `CHECK_THAT` for asserting ODBC return codes and diagnostics in Then blocks:
 ```cpp
-CHECK(actual == expected);
-REQUIRE(indicator > 0);
+#include "odbc_matchers.hpp"
+
+// Assert error with SQLSTATE
+REQUIRE_THAT(OdbcResult(ret, stmt),
+             OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("42000"));
+
+// Assert error with diagnostic message
+REQUIRE_THAT(OdbcResult(ret, stmt),
+             OdbcMatchers::IsError() && OdbcMatchers::HasDiagMessage("syntax error"));
+
+// Assert success
+REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
 ```
+Available matchers: `Succeeded()`, `IsSuccess()`, `IsSuccessWithInfo()`, `IsError()`, `HasSqlState(code)`, `HasDiagMessage(substring)`. Compose with `&&` / `||`.
+
+### Abstraction Levels
+- **Given (setup)**: use high-level abstractions — `Connection`, `Schema::use_random_schema`, `TestTable`, `get_data<>()`, `conn.execute_fetch()`.
+- **When/Then (test)**: use raw ODBC calls (`SQLExecDirect`, `SQLFetch`, `SQLGetData`) or purpose-built helpers to make the tested code path explicit and auditable.
+- Do not use raw ODBC for setup or high-level wrappers for the behaviour under test.
 
 ## Behavior Differences (BD)
 
@@ -134,14 +223,24 @@ odbc_tests/tests/
 
 ### Available Headers (in `odbc_tests/common/include/`)
 - `Connection.hpp` - Connection management wrapper
-- `HandleWrapper.hpp` - ODBC handle wrappers (Env, Conn, Stmt)
-- `macros.hpp` - `CHECK_ODBC` and error handling macros
+- `HandleWrapper.hpp` - ODBC handle wrappers (Env, Conn, Stmt) and test fixtures (`EnvFixture`, `DbcFixture`, `StmtFixture`)
+- `macros.hpp` - `REQUIRE_ODBC`, `REQUIRE_ODBC_SUCCESS` and error handling macros
+- `odbc_matchers.hpp` - `OdbcMatchers` for Catch2 `REQUIRE_THAT` / `CHECK_THAT` assertions
+- `odbc_cast.hpp` - `sqlchar()` helper (replaces C-style `(SQLCHAR*)` casts)
 - `test_setup.hpp` - Test parameters and connection strings
 - `utils.hpp` - File paths, repo root utilities
-- `get_data.hpp` - Typed data retrieval helpers
+- `get_data.hpp` - `get_data<>()` and `get_data_optional<>()` typed data retrieval helpers
+- `conversion_checks.hpp` - Helpers for type conversion tests
 - `Schema.hpp` - Schema management
 - `put_get_utils.hpp` - PUT/GET operation utilities
 - `compatibility.hpp` - `OLD_DRIVER_ONLY`, `NEW_DRIVER_ONLY` macros
+
+### Code Style
+- No hardcoded SQL type integers (e.g. `3`) — use ODBC constants (`SQL_DECIMAL`).
+- No C-style casts `(SQLCHAR*)` — use `sqlchar()` from `odbc_cast.hpp`.
+- File-local helpers must be `static` or in an anonymous namespace.
+- Avoid verbose table names — use short names within a random schema.
+- Extract duplicated fetch/validation loops into helpers.
 
 ### Creating Helper Functions
 - Put reusable helpers in common headers
@@ -154,15 +253,33 @@ static std::string to_lower_copy(const std::string& s) {
 }
 ```
 
-## Skipping Tests
+## Skipping Tests & Behavior Differences
 
-When a test cannot be run (missing feature, known issue):
+- Prefer `OLD_DRIVER_ONLY("BD#N")` / `NEW_DRIVER_ONLY("BD#N")` over `SKIP` for behavior differences between drivers.
+- `SKIP("SNOW-XXXXXX: reason")` is only acceptable when the test truly cannot execute (missing feature/infra).
 ```cpp
-TEST_CASE("should return correct column metadata", "[put_get]") {
-  SKIP("SNOW-1234567: Reason for skipping");
-  // Given...
-  // When...
-  // Then...
+#include "compatibility.hpp"
+
+TEST_CASE_METHOD(StmtFixture, "SQLGetData: should return trimmed string", "[sqlgetdata]") {
+  // Given A query returning a padded string is executed
+  SQLRETURN ret = SQLExecDirect(stmt, sqlchar("SELECT '  hello  '"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt);
+  REQUIRE_ODBC(ret, stmt);
+
+  // When Data is retrieved via SQLGetData
+  char buffer[256] = {};
+  SQLLEN indicator = 0;
+  ret = SQLGetData(stmt, 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+
+  // Then The old driver returns the string as-is, the new driver trims it
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded());
+  OLD_DRIVER_ONLY("BD#3") {
+    CHECK(std::string(buffer, indicator) == "  hello  ");
+  }
+  NEW_DRIVER_ONLY("BD#3") {
+    CHECK(std::string(buffer, indicator) == "hello");
+  }
 }
 ```
 
@@ -190,5 +307,3 @@ TEST_CASE("should return correct column metadata", "[put_get]") {
 - [ ] Tests pass against OLD driver (`run_reference.sh`)
 - [ ] Format validator passes (`tests/tests_format_validator/run_validator.sh`)
 - [ ] Precommit hooks pass
-- [ ] Test follows Given-When-Then comment structure
-- [ ] Appropriate tags added to TEST_CASE

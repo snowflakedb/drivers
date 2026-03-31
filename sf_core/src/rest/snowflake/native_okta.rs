@@ -408,7 +408,7 @@ async fn fetch_saml_with_retries(
             client,
             token_url,
             idp_login,
-            &config.password,
+            config.password.reveal(),
             &policy,
             start,
         )

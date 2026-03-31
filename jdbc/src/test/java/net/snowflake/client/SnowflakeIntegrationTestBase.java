@@ -5,6 +5,8 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.Properties;
 import java.util.UUID;
@@ -60,7 +62,11 @@ public abstract class SnowflakeIntegrationTestBase {
     props.setProperty("password", params.getString("SNOWFLAKE_TEST_PASSWORD"));
     props.setProperty("db", params.getString("SNOWFLAKE_TEST_DATABASE"));
     props.setProperty("schema", params.getString("SNOWFLAKE_TEST_SCHEMA"));
-    props.setProperty("warehouse", params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
+    props.setProperty(
+        "warehouse",
+        params.has("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
+            ? params.getString("SNOWFLAKE_TEST_WAREHOUSE_JDBC")
+            : params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
     props.setProperty("account", params.getString("SNOWFLAKE_TEST_ACCOUNT"));
 
     addOptionalConnectionProperties(params, props);
@@ -108,6 +114,35 @@ public abstract class SnowflakeIntegrationTestBase {
     String tableName = tablePrefix + UUID.randomUUID().toString().replace("-", "");
     execute(connection, "CREATE TEMPORARY TABLE " + tableName + " (" + columns + ")");
     return tableName;
+  }
+
+  @FunctionalInterface
+  protected interface ResultSetConsumer {
+    void accept(ResultSet resultSet) throws Exception;
+  }
+
+  protected static void withQueryResult(
+      Connection connection, String sql, ResultSetConsumer consumer) throws Exception {
+    try (Statement statement = connection.createStatement();
+        ResultSet resultSet = statement.executeQuery(sql)) {
+      consumer.accept(resultSet);
+    }
+  }
+
+  @FunctionalInterface
+  protected interface PreparedStatementSetup {
+    void accept(PreparedStatement preparedStatement) throws Exception;
+  }
+
+  protected static void withPreparedQueryResult(
+      Connection connection, String sql, PreparedStatementSetup setup, ResultSetConsumer consumer)
+      throws Exception {
+    try (PreparedStatement preparedStatement = connection.prepareStatement(sql)) {
+      setup.accept(preparedStatement);
+      try (ResultSet resultSet = preparedStatement.executeQuery()) {
+        consumer.accept(resultSet);
+      }
+    }
   }
 
   private void addOptionalConnectionProperties(JSONObject params, Properties props) {

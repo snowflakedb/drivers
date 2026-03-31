@@ -1,0 +1,15 @@
+[package]
+name = "odbc_trace_tool"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "odbc-trace-tool"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+snafu = { version = "0.8", features = ["rust_1_65"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

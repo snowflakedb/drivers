@@ -4,13 +4,16 @@
 #include <sql.h>
 #include <sqltypes.h>
 
-#include "macros.hpp"
+#include <catch2/catch_test_macros.hpp>
+
+#include "odbc_return_code.hpp"
 
 class HandleWrapper {
  public:
   HandleWrapper(SQLHANDLE parent_handle, SQLSMALLINT type) : handle(SQL_NULL_HANDLE), type(type) {
     SQLRETURN ret = SQLAllocHandle(type, parent_handle, &this->handle);
-    CHECK_ODBC_ERROR(ret, handle, type);
+    INFO("SQLAllocHandle returned " << return_code_to_string(ret));
+    REQUIRE(ret == SQL_SUCCESS);
   }
 
   HandleWrapper(const HandleWrapper& other) = delete;

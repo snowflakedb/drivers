@@ -95,7 +95,7 @@ Feature: ODBC SQLGetData function behavior
     Given Snowflake client is logged in
     When SQLGetData is called with a small buffer for binary data
     Then SQLGetData should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
-    And the indicator should show SQL_NO_TOTAL
+    And the indicator should show the full length of the original data
     And the buffer should contain the first 3 bytes
 
   @odbc_e2e
@@ -180,6 +180,7 @@ Feature: ODBC SQLGetData function behavior
   Scenario: SQLGetData retrieves data in increasing column number order.
     Given Snowflake client is logged in
     When SQLGetData is called in increasing column order
+    Then each column should return its correct value
 
   @odbc_e2e
   Scenario: SQLGetInfo returns SQL_GETDATA_EXTENSIONS bitmask.
@@ -355,12 +356,14 @@ Feature: ODBC SQLGetData function behavior
     Given Snowflake client is logged in
     When SQLGetData is called with SQL_C_CHAR for a NULL column
     And when called with SQL_C_LONG for a NULL column
+    Then both should return SQL_NULL_DATA indicator
 
   @odbc_e2e
   Scenario: SQLGetData retrieves same data for same column on same row with SQL_GD_ANY_ORDER.
     Given Snowflake client is logged in
     And SQL_GD_ANY_ORDER is supported
     When SQLGetData retrieves column 2 first, then column 1
+    Then both columns should return their correct values
 
   @odbc_e2e
   Scenario: SQLGetData on a bound column when SQL_GD_BOUND is supported.
@@ -394,3 +397,70 @@ Feature: ODBC SQLGetData function behavior
   @odbc_e2e
   Scenario: SQLGetData converts same integer to multiple C types.
     Given Snowflake client is logged in
+    When SQLGetData retrieves the same integer value using different C types
+    Then each C type conversion should return the correct value
+
+  @odbc_e2e
+  Scenario: SQLGetData with BufferLength 0 for SQL_C_CHAR returns data length without writing data.
+    Given Snowflake client is logged in
+    When SQLGetData is called with BufferLength = 0 for SQL_C_CHAR
+    Then the call should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+    And the indicator should contain the full data length
+
+  @odbc_e2e
+  Scenario: SQLGetData with BufferLength 0 for SQL_C_BINARY returns data length without writing data.
+    Given Snowflake client is logged in
+    When SQLGetData is called with BufferLength = 0 for SQL_C_BINARY
+    Then the call should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+    And the indicator should contain the full data length
+
+  @odbc_e2e
+  Scenario: SQLGetData retrieves wide string data in parts with SQL_C_WCHAR.
+    Given Snowflake client is logged in
+    When SQLGetData is called with SQL_C_WCHAR and a small buffer
+    Then the first call should return 3 wide chars with SQL_SUCCESS_WITH_INFO
+    And the second call should return the next 3 wide chars
+    And the third call should return the next 3 wide chars
+    And the fourth call should return the last character with SQL_SUCCESS
+    And the complete string should be reconstructed correctly
+
+  @odbc_e2e
+  Scenario: SQLGetData retrieves binary data in parts with multiple SQL_C_BINARY calls.
+    Given Snowflake client is logged in
+    When SQLGetData is called with SQL_C_BINARY and a 4-byte buffer
+    Then the first call should return the first 4 bytes with SQL_SUCCESS_WITH_INFO
+    And the second call should return the next 4 bytes
+    And the third call should return the last 2 bytes with SQL_SUCCESS
+    And the complete binary data should be reconstructed
+
+  @odbc_e2e
+  Scenario: SQLGetData returns SQL_NULL_DATA for NULL double column.
+    Given Snowflake client is logged in
+    When SQLGetData is called with SQL_C_DOUBLE for a NULL FLOAT column
+    Then the indicator should be SQL_NULL_DATA and the call should succeed
+
+  @odbc_e2e
+  Scenario: SQLGetData returns SQL_NULL_DATA for NULL binary column.
+    Given Snowflake client is logged in
+    When SQLGetData is called with SQL_C_BINARY for a NULL BINARY column
+    Then the indicator should be SQL_NULL_DATA and the call should succeed
+
+  @odbc_e2e
+  Scenario: SQLGetData returns SQL_NULL_DATA for NULL wide string column.
+    Given Snowflake client is logged in
+    When SQLGetData is called with SQL_C_WCHAR for a NULL column
+    Then the indicator should be SQL_NULL_DATA and the call should succeed
+
+  @odbc_e2e
+  Scenario: SQLGetData returns HY010 when called on a statement with no executed query.
+    Given Snowflake client is logged in
+    When SQLGetData is called without executing any query first
+    Then SQLGetData should return SQL_ERROR with SQLSTATE HY010
+
+  @odbc_e2e
+  Scenario: SQLGetData on a lower column number after partial read resets the offset.
+    Given Snowflake client is logged in
+    And SQL_GD_ANY_ORDER is supported
+    When SQLGetData partially reads column 3
+    And SQLGetData is called on column 1 (lower number than previous call on column 3)
+    Then reading column 3 again should start from the beginning (offset was reset)

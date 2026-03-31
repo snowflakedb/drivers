@@ -18,9 +18,10 @@ add_executable(odbc-perf-driver
     results.cpp
 )
 
-# Link ODBC
+# Link ODBC and pthreads (for ResourceMonitor background thread)
+find_package(Threads REQUIRED)
 target_include_directories(odbc-perf-driver PRIVATE ${ODBC_INCLUDE_DIR})
-target_link_libraries(odbc-perf-driver ${ODBC_LIBRARY})
+target_link_libraries(odbc-perf-driver ${ODBC_LIBRARY} Threads::Threads)
 
 # Install
 install(TARGETS odbc-perf-driver DESTINATION /usr/local/bin)

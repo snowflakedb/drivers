@@ -23,8 +23,7 @@ Feature: ODBC string to floating point type conversions
   Scenario: should fail converting string literals to floating point types when data is out of range
     Given Snowflake client is logged in
     When Query selecting string literals representing floating point numbers is executed
-    Then values within range should convert successfully
-    And values exceeding SQL_C_DOUBLE range should fail with numeric out of range
+    Then values within range should convert successfully and values exceeding SQL_C_DOUBLE range should fail
     And values exceeding SQL_C_FLOAT range should fail with numeric out of range
 
   # ============================================================================
@@ -83,8 +82,7 @@ Feature: ODBC string to floating point type conversions
   Scenario: should handle NULL string when converting to floating point types
     Given Snowflake client is logged in
     When Query selecting NULL is executed
-    And Attempt to get data as SQL_C_DOUBLE
-    Then NULL should return SQL_NULL_DATA indicator
+    Then SQL_C_DOUBLE should return SQL_NULL_DATA indicator
 
   # ============================================================================
   # CONVERSION WITH SQLBindCol - Floating point types

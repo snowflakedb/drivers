@@ -5,12 +5,13 @@ use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
+use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
 
 fn test_client_info() -> ClientInfo {
@@ -86,26 +87,20 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
 
     // Create a connection with initial tokens
     let tokens = SessionTokens {
-        session_token: "old-session-token".to_string(),
-        master_token: "valid-master-token".to_string(),
+        session_token: SensitiveString::from("old-session-token"),
+        master_token: SensitiveString::from("valid-master-token"),
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,
     };
 
-    let conn = Arc::new(Mutex::new(Connection {
-        settings: HashMap::new(),
-        tokens: Arc::new(AsyncRwLock::new(Some(tokens))),
-        http_client: Some(reqwest::Client::new()),
-        retry_policy: RetryPolicy::default(),
-        server_url: Some(format!("http://{}", addr)),
-        client_info: Some(test_client_info()),
-        init_session_parameters: None,
-        session_parameters: Arc::new(std::sync::RwLock::new(HashMap::new())),
-        async_query_registry: sf_core::apis::database_driver_v1::AsyncQueryRegistry::new(),
-        is_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        logout_config: sf_core::config::logout::LogoutConfig::default(),
-    }));
+    let mut connection = Connection::new();
+    connection.tokens = Arc::new(AsyncRwLock::new(Some(tokens)));
+    connection.http_client = Some(reqwest::Client::new());
+    connection.retry_policy = RetryPolicy::default();
+    connection.server_url = Some(format!("http://{}", addr));
+    connection.client_info = Some(test_client_info());
+    let conn = Arc::new(Mutex::new(connection));
 
     // When multiple concurrent requests receive 401 errors
     let mut handles = vec![];
@@ -120,7 +115,7 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
                     let client = reqwest::Client::new();
                     let resp = client
                         .post(format!("http://{}/queries/v1/query-request", query_addr))
-                        .header("Authorization", format!("Snowflake Token=\"{}\"", token))
+                        .header("Authorization", format!("Snowflake Token=\"{}\"", token.reveal()))
                         .send()
                         .await
                         .map_err(|e| sf_core::rest::snowflake::RestError::Communication {
@@ -140,21 +135,20 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
 
                     Ok(format!("request {} succeeded", i))
                 }
-            })
-            .await
+            }).await
         }));
     }
 
-    // Then only one refresh attempt should be made
-    // And all requests should succeed after the refresh
+    // Then all requests should succeed after the refresh
     let mut success_count = 0;
     for (i, handle) in handles.into_iter().enumerate() {
         let result = handle.await.expect("task panicked");
-        assert!(result.is_ok(), "Request {} failed: {:?}", i, result);
+        assert!(result.is_ok(), "Request {i} failed: {result:?}");
         success_count += 1;
     }
     assert_eq!(success_count, 3, "Expected all 3 requests to succeed");
 
+    // And only one refresh attempt should be made
     assert_eq!(
         refresh_attempts.load(Ordering::SeqCst),
         1,
@@ -163,14 +157,15 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
     );
 
     // Verify the token was updated
-    let tokens_lock = conn.lock().unwrap().tokens.clone();
+    let tokens_lock = conn.lock().await.tokens.clone();
     let final_token = tokens_lock
         .read()
         .await
         .as_ref()
         .unwrap()
         .session_token
-        .clone();
+        .reveal()
+        .to_string();
     assert_eq!(final_token, "new-session-token");
 
     server.abort();

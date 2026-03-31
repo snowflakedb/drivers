@@ -32,7 +32,7 @@ TEST_CASE("should execute SELECT returning multiple columns", "[query]") {
   // Then the result should contain:
   SQLSMALLINT num_cols;
   SQLRETURN ret = SQLNumResultCols(stmt.getHandle(), &num_cols);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(num_cols == 3);
 
   auto col1 = get_data<SQL_C_CHAR>(stmt, 1);
@@ -55,7 +55,7 @@ TEST_CASE("should execute SELECT returning multiple rows", "[query]") {
   while (true) {
     SQLRETURN ret = SQLFetch(stmt.getHandle());
     if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
 
     auto value = get_data<SQL_C_LONG>(stmt, 1);
     CHECK(value == row_count);
@@ -102,8 +102,11 @@ TEST_CASE("should execute CREATE and DROP TABLE statements", "[query]") {
   auto random_schema = Schema::use_random_schema(conn);
 
   // When CREATE TABLE statement is executed
-  // Then the table should be created successfully
   conn.execute("CREATE TABLE basic_exec_test (id INT, name VARCHAR(100))");
+
+  // Then the table should be created successfully
+  auto verify_stmt = conn.execute_fetch("SELECT COUNT(*) FROM basic_exec_test");
+  CHECK(get_data<SQL_C_LONG>(verify_stmt, 1) == 0);
 
   // And DROP TABLE statement should complete successfully
   conn.execute("DROP TABLE basic_exec_test");
@@ -129,17 +132,17 @@ TEST_CASE("should execute INSERT and retrieve inserted data", "[query]") {
 
   // Then the inserted data should be correctly returned
   SQLRETURN ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 1);
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "first");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 2);
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "second");
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(get_data<SQL_C_LONG>(stmt, 1) == 3);
   CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "third");
 

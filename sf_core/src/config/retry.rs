@@ -18,6 +18,9 @@ pub struct RetryPolicy {
     /// timeout = min(this, remaining_budget). If None, no per-request timeout
     /// is applied (only max_elapsed budget enforcement, like login/query operations).
     pub per_request_timeout: Option<Duration>,
+    /// Additional HTTP status codes to treat as retryable beyond the built-in set
+    /// (408, 429, 307, 308, and 5xx).
+    pub extra_retryable_statuses: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +65,7 @@ impl Default for RetryPolicy {
             },
             max_elapsed: Duration::from_secs(120),
             per_request_timeout: None,
+            extra_retryable_statuses: Vec::new(),
         }
     }
 }

@@ -29,15 +29,18 @@ def verify_results(
     """
     # For drivers with type variants, include driver type in pattern
     # Core only has universal implementation
+    driver_type_dir = driver_type if (driver != "core" and driver_type) else "universal"
+    test_dir = results_dir / driver_type_dir / test_name
+
     if driver != "core" and driver_type:
         pattern = f"{test_name}_{driver}_{driver_type}_*.csv"
     else:
         pattern = f"{test_name}_{driver}_*.csv"
-    
-    result_files = list(results_dir.glob(pattern))
+
+    result_files = list(test_dir.glob(pattern))
     
     if len(result_files) == 0:
-        raise RuntimeError(f"No result files found matching pattern '{pattern}' in {results_dir}")
+        raise RuntimeError(f"No result files found matching pattern '{pattern}' in {test_dir}")
     
     # Verify CSV structure
     latest_file = max(result_files, key=lambda p: p.stat().st_mtime)

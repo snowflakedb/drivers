@@ -11,10 +11,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_all.hpp>
 
+#include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
+#include "get_data.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
+#include "odbc_matchers.hpp"
 #include "require.hpp"
 #include "test_setup.hpp"
 
@@ -30,11 +32,12 @@ struct PatResult {
 class PatSetup {
  private:
   std::string token_name;
-  EnvironmentHandleWrapper env;
-  ConnectionHandleWrapper dbc;
+  std::string user;
+  std::string role;
+  Connection connection;
 
  public:
-  PatSetup() : env(), dbc(create_connection()) {}
+  PatSetup() : connection(Connection()) {}
 
   ~PatSetup() { cleanup(); }
 
@@ -51,16 +54,14 @@ class PatSetup {
     result.token_name = token_name;
 
     auto params = get_test_parameters("testconnection");
-    std::string user = params.at("SNOWFLAKE_TEST_USER").get<std::string>();
-    std::string role = params.at("SNOWFLAKE_TEST_ROLE").get<std::string>();
+    user = params.at("SNOWFLAKE_TEST_USER").get<std::string>();
+    role = params.at("SNOWFLAKE_TEST_ROLE").get<std::string>();
 
     std::stringstream create_sql;
     create_sql << "ALTER USER IF EXISTS " << user << " ADD PROGRAMMATIC ACCESS TOKEN " << token_name
                << " ROLE_RESTRICTION = " << role;
 
-    auto stmt = dbc.createStatementHandle();
-    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)create_sql.str().c_str(), SQL_NTS);
-    CHECK_ODBC(ret, stmt);
+    auto stmt = connection.execute(create_sql.str());
 
     result.fetch_ret = SQLFetch(stmt.getHandle());
 
@@ -71,8 +72,9 @@ class PatSetup {
 
     SQLCHAR token_name_buffer[256];
     SQLLEN token_name_length;
-    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, token_name_buffer, sizeof(token_name_buffer), &token_name_length);
-    CHECK_ODBC(ret, stmt);
+    SQLRETURN ret =
+        SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, token_name_buffer, sizeof(token_name_buffer), &token_name_length);
+    REQUIRE_ODBC(ret, stmt);
     result.token_name = std::string((char*)token_name_buffer, token_name_length);
     token_name = result.token_name;
 
@@ -80,44 +82,22 @@ class PatSetup {
     SQLLEN token_secret_length;
     ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, token_secret_buffer, sizeof(token_secret_buffer),
                      &token_secret_length);
-    CHECK_ODBC(ret, stmt);
+    REQUIRE_ODBC(ret, stmt);
     result.token_secret = std::string((char*)token_secret_buffer, token_secret_length);
 
     return result;
   }
 
  private:
-  ConnectionHandleWrapper create_connection() {
-    SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-    CHECK_ODBC(ret, env);
-    auto conn = env.createConnectionHandle();
-    std::string connection_string = get_connection_string();
-    ret = SQLDriverConnect(conn.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
-                           SQL_DRIVER_NOPROMPT);
-    CHECK_ODBC(ret, conn);
-    return conn;
-  }
-
   void cleanup() {
-    try {
-      auto params = get_test_parameters("testconnection");
-      std::string user = params.at("SNOWFLAKE_TEST_USER").get<std::string>();
-
-      std::stringstream cleanup_sql;
-      cleanup_sql << "ALTER USER IF EXISTS " << user << " REMOVE PROGRAMMATIC ACCESS TOKEN " << token_name;
-
-      auto stmt = dbc.createStatementHandle();
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)cleanup_sql.str().c_str(), SQL_NTS);
-    } catch (...) {
-      // Ignore cleanup errors to avoid throwing in destructor
-    }
+    connection.execute("ALTER USER IF EXISTS " + user + " REMOVE PROGRAMMATIC ACCESS TOKEN " + token_name);
   }
 };
 
 EnvironmentHandleWrapper setup_pat_environment() {
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  CHECK_ODBC(ret, env);
+  REQUIRE_ODBC(ret, env);
   return env;
 }
 
@@ -128,7 +108,7 @@ ConnectionHandleWrapper get_pat_connection_handle(EnvironmentHandleWrapper& env)
 std::string get_pat_as_password_connection_string(const std::string& pat_secret) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
@@ -139,7 +119,7 @@ std::string get_pat_as_password_connection_string(const std::string& pat_secret)
 std::string get_pat_as_token_connection_string(const std::string& pat_secret) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  configure_driver_string(ss);
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
@@ -151,20 +131,20 @@ std::string get_pat_as_token_connection_string(const std::string& pat_secret) {
 void attempt_pat_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
-  CHECK_ODBC(ret, dbc);
+  REQUIRE_ODBC(ret, dbc);
 }
 
 void verify_pat_simple_query_execution(ConnectionHandleWrapper& dbc) {
   StatementHandleWrapper stmt = dbc.createStatementHandle();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
 
   SQLINTEGER result = 0;
   ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &result, sizeof(result), NULL);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   REQUIRE(result == 1);
 }
 

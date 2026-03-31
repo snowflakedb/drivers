@@ -13,8 +13,8 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
-#include "macros.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -256,8 +256,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: SQL_ATTR_LOGIN_TIMEOUT can be set befo
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify the attribute was set
-  SQLUINTEGER timeout = 0;
-  ret = SQLGetConnectAttr(dbc_handle(), SQL_ATTR_LOGIN_TIMEOUT, &timeout, 0, nullptr);
+  SQLULEN timeout = 0;
+  ret = SQLGetConnectAttr(dbc_handle(), SQL_ATTR_LOGIN_TIMEOUT, SQLPOINTER(&timeout), 0, nullptr);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
   REQUIRE(timeout == 5);
 
@@ -304,8 +304,6 @@ TEST_CASE("SQLConnect: DSN configuration check", "[odbc-api][connect][dsn][integ
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeeds",
                  "[odbc-api][connect][dsn][integration]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const std::string dsn = dsn_name();
 
   // Credentials are in odbc.ini, pass NULL for UID/PWD
@@ -318,10 +316,10 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeed
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   ret = SQLFetch(stmt);
-  CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+  REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
@@ -349,8 +347,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: 08002 - Connection already o
 
 TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLConnect: 28000 - Invalid authorization specification",
                  "[odbc-api][connect][dsn][integration][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Use DSN without credentials and provide invalid ones
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
@@ -384,8 +380,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: SQL_SUCCESS_WITH_INFO has re
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cycle",
                  "[odbc-api][connect][dsn][integration][lifecycle]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   const std::string dsn = dsn_name();
 
   constexpr int CYCLES = 3;
@@ -398,7 +392,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cyc
     REQUIRE(ret == SQL_SUCCESS);
 
     ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
-    CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
     ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
     REQUIRE(ret == SQL_SUCCESS);
@@ -410,8 +404,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cyc
 
 TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connections",
                  "[odbc-api][connect][dsn][integration][concurrent]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   constexpr int NUM_CONNECTIONS = 3;
   SQLHDBC connections[NUM_CONNECTIONS];
 
@@ -435,7 +427,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connecti
 
     std::string query = "SELECT " + std::to_string(i + 1);
     ret = SQLExecDirect(stmt, sqlchar(query.c_str()), SQL_NTS);
-    CHECK_ODBC_ERROR(ret, stmt, SQL_HANDLE_STMT);
+    REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt), OdbcMatchers::Succeeded());
 
     ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
     REQUIRE(ret == SQL_SUCCESS);

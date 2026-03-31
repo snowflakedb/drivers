@@ -74,6 +74,10 @@ Feature: TIMESTAMP_LTZ type support
     Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_LTZ, ?::TIMESTAMP_LTZ" is executed with bound timestamp values
     Then Result should contain the bound timestamps
+
+  @python_e2e
+  Scenario: should select null timestamp_ltz using parameter binding
+    Given Snowflake client is logged in
     When Query "SELECT ?::TIMESTAMP_LTZ" is executed with bound NULL value
     Then Result should contain [NULL]
 

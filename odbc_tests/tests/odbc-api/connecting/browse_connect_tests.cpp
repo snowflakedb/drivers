@@ -159,7 +159,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: 08002 - Connection alr
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // First connect using SQLDriverConnect
-  const std::string connStr1 = get_connection_string();
+  const std::string connStr1 = connection_string();
   SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr1.c_str()), SQL_NTS, nullptr, 0, nullptr,
                                    SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));

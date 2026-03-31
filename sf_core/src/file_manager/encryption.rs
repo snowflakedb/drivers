@@ -48,7 +48,7 @@ pub fn encrypt_file_data(
 ) -> Result<EncryptionResult, EncryptionError> {
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE
-        .decode(&encryption_material.query_stage_master_key)
+        .decode(encryption_material.query_stage_master_key.reveal())
         .context(Base64DecodingSnafu {
             context: "master key",
         })?;
@@ -104,7 +104,7 @@ pub fn decrypt_file_data(
 ) -> Result<Vec<u8>, EncryptionError> {
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE
-        .decode(&encryption_material.query_stage_master_key)
+        .decode(encryption_material.query_stage_master_key.reveal())
         .context(Base64DecodingSnafu {
             context: "master key",
         })?;

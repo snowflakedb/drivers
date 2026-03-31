@@ -34,7 +34,7 @@ TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
   auto stmt_initial = conn.execute_fetch("PUT 'file://" + as_file_uri(original) + "' @" + stage);
   std::string src = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_SOURCE_IDX);
   std::string status = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_STATUS_IDX);
-  CHECK(src == filename);
+  CHECK(src == expected_put_source(original));
   CHECK(status == "UPLOADED");
 
   // When Updated file is uploaded with OVERWRITE set to true
@@ -43,7 +43,7 @@ TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
   std::string status_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_STATUS_IDX);
 
   // Then UPLOADED status is returned
-  CHECK(src_update == filename);
+  CHECK(src_update == expected_put_source(updated));
   CHECK(status_update == "UPLOADED");
 
   // And File was overwritten
@@ -66,7 +66,7 @@ TEST_CASE("should not overwrite file when OVERWRITE is set to false", "[put_get]
   auto stmt_initial = conn.execute_fetch("PUT 'file://" + as_file_uri(original) + "' @" + stage);
   std::string src = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_SOURCE_IDX);
   std::string status = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_STATUS_IDX);
-  CHECK(src == filename);
+  CHECK(src == expected_put_source(original));
   CHECK(status == "UPLOADED");
 
   // When Updated file is uploaded with OVERWRITE set to false
@@ -75,7 +75,7 @@ TEST_CASE("should not overwrite file when OVERWRITE is set to false", "[put_get]
   std::string status_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_STATUS_IDX);
 
   // Then SKIPPED status is returned
-  CHECK(src_update == filename);
+  CHECK(src_update == expected_put_source(updated));
   CHECK(status_update == "SKIPPED");
 
   // And File was not overwritten

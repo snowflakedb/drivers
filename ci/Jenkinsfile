@@ -2,6 +2,16 @@
 Jenkinsfile template for use in a multibranch pipeline
  */
 
+@Library('pipeline-utils') _
+import com.snowflake.DevEnvUtils
+
+def e2eDockerSetup(String image) {
+  new DevEnvUtils().withSfCli {
+    sh "sf artifact oci auth"
+  }
+  sh label: 'Docker Pull', script: "docker pull ${image}"
+}
+
 def getAgentLabel(platform) {
   switch (platform) {
     case 'linux-x86_64-musl':
@@ -355,6 +365,50 @@ pipeline {
                     cleanup()
                   }
                 }
+              }
+            }
+          }
+        }
+
+        stage('VPN E2E Tests') {
+          agent { label 'build-node-extra-large' }
+          environment {
+            E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+            PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+          }
+          steps {
+            script {
+              e2eDockerSetup(E2E_DOCKER_IMAGE)
+              docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+                  sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                }
+                sh label: 'Install system dependencies', script: 'yum install -y unzip'
+
+                sh label: 'Rust Core VPN E2E tests', script: '''
+                  set +x
+                  export PARAMETER_PATH=$(pwd)/parameters.json
+                  cargo test --package sf_core -- --ignored
+                '''
+
+                sh label: 'ODBC VPN E2E tests', script: '''
+                  set +x
+                  cargo build
+                  source /opt/rh/gcc-toolset-11/enable
+                  cd odbc_tests
+                  mkdir -p cmake-build
+                  cmake -B cmake-build \
+                      -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                      -D ODBC_INCLUDE_DIR="/usr/include" \
+                      -D DRIVER_TYPE=NEW \
+                      .
+                  cmake --build cmake-build -- -j $(nproc)
+
+                  WORKSPACE_ROOT=$(pwd)/..
+                  export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                  export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
+                '''
               }
             }
           }

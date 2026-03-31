@@ -37,6 +37,7 @@ class TestNumberNumPy:
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_should_cast_number_scale0_to_numpy_int64(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
+        pass
 
         # When Query "SELECT 0::NUMBER(10,0), 123::NUMBER(10,0), -456::NUMBER(10,0),
         # 999999::NUMBER(10,0)" is executed
@@ -53,6 +54,7 @@ class TestNumberNumPy:
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_should_cast_number_scale3_to_numpy_float64(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
+        pass
 
         # When Query "SELECT 0.000::NUMBER(15,3), 123.456::NUMBER(15,3),
         # -789.012::NUMBER(15,3)" is executed
@@ -69,6 +71,7 @@ class TestNumberNumPy:
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_handles_high_precision_integers_within_int64_range(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
+        pass
 
         # When Query with 18-digit integer (within int64 range) is executed
         sql = "SELECT 123456789012345678::NUMBER(18,0)"

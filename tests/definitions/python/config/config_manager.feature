@@ -60,29 +60,3 @@ Feature: ConfigManager Python Wrapper
     Given A ConfigManager with an option having a default value
     When Accessing the option via bracket notation
     Then The default value should be returned
-
-  @python_int
-  Scenario: clear cache
-    Given A ConfigManager with cached config
-    When clear_cache is called
-    Then Cache should be None
-
-  @python_int
-  Scenario: config parser alias
-    When Importing CONFIG_PARSER from config_manager
-    Then DeprecationWarning should be raised
-    And CONFIG_PARSER should reference CONFIG_MANAGER
-
-  @python_int
-  Scenario: sub parsers property
-    Given A ConfigManager instance with a submanager
-    When Accessing _sub_parsers property
-    Then DeprecationWarning should be raised
-    And _sub_parsers should reference _sub_managers
-
-  @python_int
-  Scenario: add subparser method
-    Given A ConfigManager instance and a child
-    When Calling add_subparser method
-    Then DeprecationWarning should be raised
-    And The child should be in _sub_managers

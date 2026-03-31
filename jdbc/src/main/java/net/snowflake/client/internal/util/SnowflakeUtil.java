@@ -13,6 +13,4 @@ public class SnowflakeUtil {
   public static final String DATE_STR = "date";
   public static final String BYTE_STR = "byte";
   public static final String BYTES_STR = "byte array";
-
-  private SnowflakeUtil() {}
 }

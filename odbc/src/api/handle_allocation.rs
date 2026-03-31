@@ -1,19 +1,25 @@
+use crate::api::error::{DisconnectedSnafu, InvalidHandleSnafu, OdbcRuntimeSnafu, Required};
 use crate::api::{
-    ArdDescriptor, Connection, ConnectionState, Environment, IrdDescriptor, OdbcResult, Statement,
-    StatementState, conn_from_handle,
+    ApdDescriptor, ArdDescriptor, Connection, ConnectionState, Environment, IpdDescriptor,
+    IrdDescriptor, OdbcResult, Statement, StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
-    error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
+    runtime::{env_allocated, env_freed, global},
 };
 use odbc_sys as sql;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf::generated::database_driver_v1::StatementNewRequest;
+use sf_core::protobuf::generated::database_driver_v1::{
+    StatementNewRequest, StatementReleaseRequest,
+};
+use snafu::ResultExt;
 use tracing;
 
 /// Allocate a new environment handle
 pub fn alloc_environment() -> OdbcResult<*mut Environment> {
     tracing::info!("Allocating new environment handle");
+    env_allocated().context(OdbcRuntimeSnafu)?;
     let env = Box::new(Environment {
         odbc_version: 3,
+        connection_pooling: sql::AttrConnectionPooling::Off,
+        connection_pool_match: sql::AttrCpMatch::Strict,
         diagnostic_info: DiagnosticInfo::default(),
     });
     Ok(Box::into_raw(env))
@@ -40,8 +46,11 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
             db_handle: _,
             conn_handle,
         } => {
-            let response = DatabaseDriverClient::statement_new(StatementNewRequest {
-                conn_handle: Some(*conn_handle),
+            let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                c.statement_new(StatementNewRequest {
+                    conn_handle: Some(*conn_handle),
+                })
+                .await
             })?;
             let stmt_handle = response
                 .stmt_handle
@@ -51,14 +60,16 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 conn,
                 stmt_handle,
                 state: StatementState::Created.into(),
-                parameter_bindings: std::collections::HashMap::new(),
                 ard: ArdDescriptor::new(),
                 ird: IrdDescriptor::new(),
+                apd: ApdDescriptor::new(),
+                ipd: IpdDescriptor::new(),
                 diagnostic_info: DiagnosticInfo::default(),
                 get_data_state: None,
                 cursor_type: crate::api::CursorType::ForwardOnly,
                 max_length: 0,
                 used_extended_fetch: false,
+                last_query_id: None,
             });
             Ok(Box::into_raw(stmt))
         }
@@ -79,6 +90,7 @@ pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
     unsafe {
         drop(Box::from_raw(handle as *mut Environment));
     }
+    env_freed().context(OdbcRuntimeSnafu)?;
     Ok(())
 }
 
@@ -102,9 +114,13 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     }
 
     tracing::info!("Freeing statement handle");
-    unsafe {
-        drop(Box::from_raw(handle as *mut Statement));
-    }
+    let stmt = unsafe { Box::from_raw(handle as *mut Statement) };
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.statement_release(StatementReleaseRequest {
+            stmt_handle: Some(stmt.stmt_handle),
+        })
+        .await
+    })?;
     Ok(())
 }
 
@@ -117,7 +133,7 @@ pub fn init_logging() {
     static LOGGING_RESULT: LazyLock<Result<(), sf_core::logging::LogError>> = LazyLock::new(|| {
         sf_core::logging::init(sf_core::logging::LoggingConfig::new(
             Some("odbc.log".into()),
-            true,
+            false,
             false,
         ))
     });
@@ -165,7 +181,6 @@ pub fn sql_alloc_handle(
             Ok(())
         }
         sql::HandleType::Desc => {
-            // Not implemented yet
             tracing::warn!(
                 "SQLAllocHandle: Desc handle type not implemented: {:?}",
                 handle_type
@@ -198,10 +213,7 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
             tracing::info!("Freeing stmt: SQLFreeHandle: handle_type={:?}", handle_type);
             free_statement(handle)
         }
-        sql::HandleType::Desc => {
-            // Not implemented yet
-            InvalidHandleSnafu.fail()
-        }
+        sql::HandleType::Desc => InvalidHandleSnafu.fail(),
         _ => InvalidHandleSnafu.fail(),
     }
 }

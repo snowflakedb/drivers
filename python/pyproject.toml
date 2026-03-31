@@ -28,6 +28,7 @@ dependencies = [
     "cryptography>=44.0.1",
     "protobuf>=6.32.1",
     "pytz",
+    "tomlkit>=0.13",
 ]
 
 [project.urls]
@@ -37,6 +38,14 @@ dependencies = [
 "Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
 
 [project.optional-dependencies]
+pyarrow = [
+    "pyarrow>=14.0.1",
+]
+pandas = [
+    "pyarrow>=14.0.1",
+    "pandas>=1.0.0,<3.0.0; python_version < '3.13'",
+    "pandas>=2.1.2; python_version >= '3.13'",
+]
 test = [
     "pytest>=8",
     "pytest-json-report",
@@ -49,6 +58,8 @@ test = [
     "requests",
     "brotli",
     "zstandard",
+    "tomlkit",
+    "tzdata",
 ]
 dev = [
     "ruff",
@@ -182,6 +193,10 @@ module = "tests.*"
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*", "pandas", "pandas.*"]
+ignore_missing_imports = true
+
 # ===== Hatch Configuration =====
 
 [tool.hatch.envs.default]
@@ -241,6 +256,8 @@ e2e = "pytest tests/e2e {args}"
 all = "pytest tests/ --ignore=tests/packaging {args}"
 # All tests with coverage
 all-cov = "pytest tests/ --ignore=tests/packaging --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+# Pandas-specific tests only (requires pandas extra)
+pandas-cov = "pytest tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # This environment skips installing the ud version from sources,
 # installs from wheel via install-wheel
@@ -255,6 +272,18 @@ python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 [tool.hatch.envs.test.scripts]
 # Install from wheel
 install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
+cov = "pytest tests/ --ignore=tests/packaging --ignore=tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+
+# Pandas-specific CI test environment
+[tool.hatch.envs.test-pandas]
+template = "test"
+features = ["test", "dev", "pandas"]
+
+[[tool.hatch.envs.test-pandas.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+
+[tool.hatch.envs.test-pandas.scripts]
+cov = "pytest tests/e2e/pandas --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # Packaging tests environment - tests sdist build and installation
 [tool.hatch.envs.packaging]
@@ -268,15 +297,25 @@ python = ["3.13"]
 [tool.hatch.envs.packaging.scripts]
 test = "pytest tests/packaging {args}"
 
-# Reference connector environment installs only reference connector
+# Reference connector environments install only the reference connector.
+# UD driver is uninstalled; only the old driver is present.
 [tool.hatch.envs.reference]
 template = "test"
 
 [tool.hatch.envs.reference.scripts]
-# This environment runs with old driver only. UD driver is not installed.
 test = [
     "uv pip uninstall snowflake-connector-python-ud",
-    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
-    "pytest tests/integ tests/e2e {args}"
+    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.3.0}",
+    "pytest tests/integ tests/e2e --ignore=tests/e2e/pandas {args}",
 ]
 compare = "python ci/reference_tests/compare_reports.py {args}"
+
+[tool.hatch.envs.reference-pandas]
+template = "test"
+
+[tool.hatch.envs.reference-pandas.scripts]
+test = [
+    "uv pip uninstall snowflake-connector-python-ud",
+    "uv pip install snowflake-connector-python[pandas]=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.3.0}",
+    "pytest tests/e2e/pandas {args}",
+]

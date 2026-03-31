@@ -61,7 +61,9 @@ public class SecretDetector {
 
   private static final Pattern CONNECTION_TOKEN_PATTERN =
       Pattern.compile(
-          "(token|assertion content)" + "(['\"\\s:=]+)" + "([a-z0-9=/_\\-+]{8,})",
+          "(token|assertion content)"
+              + "(['\"\\s:=]*[\"':=]['\"\\s:=]*)"
+              + "([a-z0-9=/_\\-+:]{8,})",
           Pattern.CASE_INSENSITIVE);
 
   private static final Pattern ENCRYPTION_MATERIAL_PATTERN =

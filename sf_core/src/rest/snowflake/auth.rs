@@ -1,3 +1,4 @@
+use crate::sensitive::SensitiveString;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -47,16 +48,21 @@ pub struct AuthRequestData {
     #[serde(rename = "LOGIN_NAME", skip_serializing_if = "Option::is_none")]
     pub login_name: Option<String>,
     #[serde(rename = "PASSWORD", skip_serializing_if = "Option::is_none")]
-    pub password: Option<String>,
+    pub password: Option<SensitiveString>,
     #[serde(rename = "RAW_SAML_RESPONSE", skip_serializing_if = "Option::is_none")]
-    pub raw_saml_response: Option<String>,
+    pub raw_saml_response: Option<SensitiveString>,
     #[serde(
         rename = "EXT_AUTHN_DUO_METHOD",
         skip_serializing_if = "Option::is_none"
     )]
     pub ext_authn_duo_method: Option<String>,
+    #[serde(
+        rename = "CLIENT_REQUEST_MFA_TOKEN",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub client_request_mfa_token: Option<bool>,
     #[serde(rename = "PASSCODE", skip_serializing_if = "Option::is_none")]
-    pub passcode: Option<String>,
+    pub passcode: Option<SensitiveString>,
     #[serde(rename = "AUTHENTICATOR", skip_serializing_if = "Option::is_none")]
     pub authenticator: Option<String>,
     #[serde(rename = "SESSION_PARAMETERS", skip_serializing_if = "Option::is_none")]
@@ -69,9 +75,9 @@ pub struct AuthRequestData {
     )]
     pub browser_mode_redirect_port: Option<String>,
     #[serde(rename = "PROOF_KEY", skip_serializing_if = "Option::is_none")]
-    pub proof_key: Option<String>,
+    pub proof_key: Option<SensitiveString>,
     #[serde(rename = "TOKEN", skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
+    pub token: Option<SensitiveString>,
     #[serde(rename = "OAUTH_TYPE", skip_serializing_if = "Option::is_none")]
     pub oauth_type: Option<String>,
     #[serde(rename = "PROVIDER", skip_serializing_if = "Option::is_none")]
@@ -94,16 +100,16 @@ pub struct NameValueParameter {
 #[derive(Debug, Deserialize)]
 pub struct AuthResponseSessionInfo {
     #[serde(rename = "databaseName")]
-    pub _database_name: Option<String>,
+    pub database_name: Option<String>,
     #[serde(rename = "schemaName")]
-    pub _schema_name: Option<String>,
+    pub schema_name: Option<String>,
     #[serde(rename = "warehouseName")]
-    pub _warehouse_name: Option<String>,
+    pub warehouse_name: Option<String>,
     #[serde(rename = "roleName")]
-    pub _role_name: Option<String>,
+    pub role_name: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct AuthResponseMain {
     /// Session token for authenticating requests
     pub token: Option<String>,
@@ -125,9 +131,7 @@ pub struct AuthResponseMain {
     )]
     pub master_validity: Option<Duration>,
     #[serde(rename = "mfaToken")]
-    pub _mfa_token: Option<String>,
-    #[serde(rename = "mfaTokenValidityInSeconds")]
-    pub _mfa_token_validity: Option<u64>,
+    pub mfa_token: Option<String>,
     #[serde(rename = "idToken")]
     pub _id_token: Option<String>,
     #[serde(rename = "idTokenValidityInSeconds")]
@@ -152,7 +156,7 @@ pub struct AuthResponseMain {
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "sessionInfo")]
-    pub _session_info: Option<AuthResponseSessionInfo>,
+    pub session_info: Option<AuthResponseSessionInfo>,
     #[serde(rename = "tokenUrl")]
     pub _token_url: Option<String>,
     #[serde(rename = "ssoUrl")]
@@ -163,6 +167,7 @@ pub struct AuthResponseMain {
 
 #[derive(Debug, Deserialize)]
 pub struct AuthResponse {
+    #[serde(default)]
     pub data: AuthResponseMain,
     pub message: Option<String>,
     #[serde(rename = "code")]

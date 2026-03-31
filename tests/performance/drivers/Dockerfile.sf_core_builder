@@ -39,10 +39,10 @@ COPY proto_utils/ ./proto_utils/
 COPY proto_generator/ ./proto_generator/
 COPY jdbc_bridge/ ./jdbc_bridge/
 COPY protobuf/ ./protobuf/
-COPY thrift/ ./thrift/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY proto_generator/ ./proto_generator/
+COPY odbc_trace_tool/ ./odbc_trace_tool/
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: Build sf_core and ODBC
@@ -53,10 +53,10 @@ COPY --from=planner /workdir/recipe.json recipe.json
 COPY build_common.rs ./build_common.rs
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY protobuf/ ./protobuf/
-COPY thrift/ ./thrift/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
 COPY proto_generator/ ./proto_generator/
+COPY odbc_trace_tool/ ./odbc_trace_tool/
 
 # Build dependencies - this is the caching layer
 # Compiles ALL external crates (AWS SDK, tokio, etc.)
@@ -78,6 +78,7 @@ COPY proto_generator/src/ ./proto_generator/src/
 COPY jdbc_bridge/src/ ./jdbc_bridge/src/
 COPY error_trace/src/ ./error_trace/src/
 COPY error_trace_derive/src/ ./error_trace_derive/src/
+COPY odbc_trace_tool/src/ ./odbc_trace_tool/src/
 
 # Build sf_core
 RUN cargo build --release --package sf_core && \

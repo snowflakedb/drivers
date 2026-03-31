@@ -9,6 +9,7 @@
 
 #include "HandleWrapper.hpp"
 #include "MetaOfSqlCTypes.hpp"
+#include "odbc_matchers.hpp"
 
 template <int SQL_C_TYPE>
 inline std::optional<typename MetaOfSqlCType<SQL_C_TYPE>::type> get_data_optional(const StatementHandleWrapper& stmt,
@@ -16,7 +17,7 @@ inline std::optional<typename MetaOfSqlCType<SQL_C_TYPE>::type> get_data_optiona
   typename MetaOfSqlCType<SQL_C_TYPE>::type value;
   SQLLEN indicator;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_TYPE, &value, sizeof(value), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   if (indicator == SQL_NULL_DATA) {
     return std::nullopt;
   }
@@ -29,7 +30,7 @@ inline std::optional<std::string> get_data_optional<SQL_C_CHAR>(const StatementH
   char buffer[8192];
   SQLLEN indicator;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   if (indicator == SQL_NULL_DATA) {
     return std::nullopt;
   }
@@ -42,7 +43,7 @@ inline std::optional<std::u16string> get_data_optional<SQL_C_WCHAR>(const Statem
   char16_t buffer[8192];
   SQLLEN indicator;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
-  CHECK_ODBC(ret, stmt);
+  REQUIRE_ODBC(ret, stmt);
   if (indicator == SQL_NULL_DATA) {
     return std::nullopt;
   }

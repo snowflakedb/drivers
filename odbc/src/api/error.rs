@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
+    conversion::error::JsonBindingError,
     conversion::{ConversionError, error::WriteOdbcError},
-    write_arrow::ArrowBindingError,
 };
 use arrow::error::ArrowError;
 use odbc_sys as sql;
@@ -63,6 +63,20 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid parameter type: {value}"))]
+    InvalidParameterType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid SQL data type: {value}"))]
+    InvalidSqlDataType {
+        value: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid record number: {number}"))]
     InvalidRecordNumber {
         number: sql::SmallInt,
@@ -98,9 +112,24 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Attribute {attribute} is read-only and cannot be set"))]
+    ReadOnlyAttribute {
+        attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Unsupported attribute: {attribute}"))]
     UnsupportedAttribute {
         attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid attribute value {value} for attribute {attribute}"))]
+    InvalidAttributeValue {
+        attribute: i32,
+        value: i64,
         #[snafu(implicit)]
         location: Location,
     },
@@ -138,6 +167,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("COUNT field incorrect: {reason}"))]
+    CountFieldIncorrect {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid cursor state: no result set associated with the statement"))]
     InvalidCursorState {
         #[snafu(implicit)]
@@ -152,12 +188,6 @@ pub enum OdbcError {
 
     #[snafu(display("Data not fetched yet"))]
     DataNotFetched {
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("Statement execution is done"))]
-    ExecutionDone {
         #[snafu(implicit)]
         location: Location,
     },
@@ -184,6 +214,12 @@ pub enum OdbcError {
 
     #[snafu(display("Optional feature not implemented"))]
     UnsupportedFeature {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Fetch type out of range"))]
+    FetchTypeOutOfRange {
         #[snafu(implicit)]
         location: Location,
     },
@@ -245,9 +281,9 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("Error binding arrow parameters: {source:?}"))]
-    ArrowBinding {
-        source: ArrowBindingError,
+    #[snafu(display("Error binding JSON parameters: {source:?}"))]
+    JsonBinding {
+        source: JsonBindingError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -302,6 +338,27 @@ pub enum OdbcError {
     #[snafu(display("[Core] Required field missing: {message}"))]
     ProtoRequiredFieldMissing {
         message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid FreeStmt option: {option}"))]
+    InvalidFreeStmtOption {
+        option: u16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("ODBC runtime error"))]
+    OdbcRuntime {
+        source: crate::api::runtime::OdbcRuntimeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Data source name not found: {dsn}"))]
+    DataSourceNotFound {
+        dsn: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -367,6 +424,8 @@ impl OdbcError {
             OdbcError::InvalidApplicationBufferType { .. } => {
                 SqlState::InvalidApplicationBufferType
             }
+            OdbcError::InvalidParameterType { .. } => SqlState::InvalidParameterType,
+            OdbcError::InvalidSqlDataType { .. } => SqlState::InvalidSqlDataType,
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
@@ -374,19 +433,22 @@ impl OdbcError {
             OdbcError::InvalidDescriptorIndex { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidPrecisionOrScale { .. } => SqlState::InvalidPrecisionOrScaleValue,
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::ReadOnlyAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::InvalidAttributeValue { .. } => SqlState::InvalidAttributeValue,
             OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::UnknownInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
-            OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::InvalidParameterNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
+            OdbcError::CountFieldIncorrect { .. } => SqlState::CountFieldIncorrect,
             OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
-            OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::FetchTypeOutOfRange { .. } => SqlState::FetchTypeOutOfRange,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
@@ -408,6 +470,7 @@ impl OdbcError {
                     | WriteOdbcError::IndicatorVariableRequired { .. } => {
                         SqlState::IndicatorVariableRequiredButNotSupplied
                     }
+                    WriteOdbcError::IntervalFieldOverflow { .. } => SqlState::IntervalFieldOverflow,
                     WriteOdbcError::UnsupportedOdbcType { .. } => {
                         SqlState::RestrictedDataTypeAttributeViolation
                     }
@@ -420,7 +483,7 @@ impl OdbcError {
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
+            OdbcError::JsonBinding { .. } => SqlState::GeneralError,
             OdbcError::CoreError {
                 source: CoreProtobufError::Application { error, message, .. },
                 ..
@@ -465,6 +528,11 @@ impl OdbcError {
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
+            OdbcError::InvalidFreeStmtOption { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::OdbcRuntime { .. } => SqlState::FunctionSequenceError,
+            OdbcError::DataSourceNotFound { .. } => {
+                SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
+            }
         }
     }
 
