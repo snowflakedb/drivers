@@ -173,15 +173,16 @@ Feature: Session Logout - Python-specific behavior
     And All exceptions during atexit close are suppressed
     And Session is logged out if conditions allow
 
-  Scenario: should emit deprecation warning on first auto-cleanup run per process
-    # Phase 2 (doc for: SNOW-2314152): log whenever auto-cleanup runs
-    # to prepare users for explicit close() requirement.
-    Given Two Snowflake Python connections are created with auto_cleanup enabled
-    And Neither connection is explicitly closed
-    And No auto-cleanup has run yet in this process
-    When Process exits
-    Then atexit handler cleans up both connections
-    And Exactly one deprecation warning is emitted
+Scenario: should emit deprecation warning only once when multiple auto-cleanup handlers run during process exit
+  # Phase 1 (doc for: SNOW-2314152) deprecation. Prepares users for explicit close() requirement.
+  # Run this scenario in a dedicated Python subprocess to isolate process-global atexit state.
+  Given A separate Python subprocess is spawned
+  And 10 Snowflake clients are created within with auto_cleanup enabled
+  And None of the connections are explicitly closed
+  When The subprocess exits
+  Then Auto-cleanup is triggered for all 10 leaked connections
+  And Each auto-cleanup close is invoked with retry false
+  And Deprecation warning is emitted only once per process
 
   Scenario: should not register atexit handler when auto-cleanup explicitly disabled
     # Phase 2 (doc for: SNOW-2314152): auto_cleanup can be disabled with param.

@@ -71,11 +71,11 @@ void verify_okta_simple_query_execution(ConnectionHandleWrapper& dbc) {
 
 TEST_CASE("should authenticate using native okta", "[native_okta]") {
   REQUIRE_VPN("Native Okta E2E tests need access to preprod Snowflake account");
+  std::string connection_string = get_okta_connection_string();
 
   // Given Okta authentication is configured with valid credentials
   auto env = setup_okta_environment();
   auto dbc = get_okta_connection_handle(env);
-  std::string connection_string = get_okta_connection_string();
 
   // When Trying to Connect
   attempt_okta_connection(dbc, connection_string);
