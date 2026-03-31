@@ -190,7 +190,7 @@ jobs:
   # (aws-lc-sys vs aws-lc-fips-sys).
   test_windows_arm64_nonfips:
     needs: detect-changes
-    if: needs.detect-changes.outputs.run_rust_core == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: windows-11-arm
     name: test (Windows ARM64, non-FIPS)
     env:

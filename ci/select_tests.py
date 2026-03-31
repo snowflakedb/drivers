@@ -10,7 +10,7 @@ Key principle:
   - Tests are grouped by level: unit, integ, e2e
 
 CI integration:
-  - GHA: always runs ALL unit tests; uses detect-changes run_* flags for skip/run
+  - GHA: when a suite runs it runs the full unit-test group; uses detect-changes run_* flags to decide which suites run or skip
   - Buildkite: uses this script with --group integ,e2e for per-feature filtering
 
 Usage:
@@ -107,7 +107,7 @@ def _ensure_base_ref_available(base_ref: str) -> None:
 
 
 def get_changed_files(base_ref: str) -> Optional[List[str]]:
-    """Get changed files from git diff. Returns None if diff fails (run all)."""
+    """Get changed files from git diff. Returns [] when no files changed, None if diff fails (run all)."""
     _ensure_base_ref_available(base_ref)
     for cmd in [
         ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
@@ -116,9 +116,7 @@ def get_changed_files(base_ref: str) -> Optional[List[str]]:
         try:
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        universal_newlines=True, check=True)
-            files = [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
-            if files:
-                return files
+            return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
         except subprocess.CalledProcessError:
             continue
     print("WARNING: git diff failed, running all tests", file=sys.stderr)

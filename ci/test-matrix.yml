@@ -79,10 +79,11 @@ core:
         - "sf_core/src/arrow_utils.rs"
         - "sf_core/src/query_types.rs"
         - "sf_core/tests/e2e/query/**"
+        - "sf_core/tests/integration/query/**"
       tests:
         rust:
           unit: "query|async_exec|chunks|arrow_utils"
-          integ: "http"
+          integ: "query"
           e2e: "query"
         odbc:
           e2e: "e2e_query|basic_execute|sql_fetch|sql_get_data|sql_bind_col|sql_row_count"
@@ -198,6 +199,7 @@ core:
     - "sf_core/src/rest/snowflake/error.rs"
     - "sf_core/Cargo.toml"
     - "sf_core/build.rs"
+    - "sf_core/tests/common/**"
 
 
 # =============================================================================

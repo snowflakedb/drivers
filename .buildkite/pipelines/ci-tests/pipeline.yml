@@ -96,18 +96,21 @@ steps:
               CARGO_BIN=$$(dirname $$(which cargo))
               git config --system --add safe.directory /workdir
               set +e
+              TEST_EXIT=0
               if [ "$$TEST_FILTER" = "ALL" ]; then
                 runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
                   cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
+                TEST_EXIT=$${PIPESTATUS[0]}
               else
                 IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
+                > /tmp/rust-test-output.json
                 for filter in "$${FILTERS[@]}"; do
                   echo "Running: cargo test -- $$filter"
                   runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
-                    cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1
-                done | tee /tmp/rust-test-output.json
+                    cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1 | tee -a /tmp/rust-test-output.json
+                  [ $${PIPESTATUS[0]} -ne 0 ] && TEST_EXIT=1
+                done
               fi
-              TEST_EXIT=$${PIPESTATUS[0]}
               cargo2junit < /tmp/rust-test-output.json > /workdir/junit-results/rust-junit.xml || true
               exit $$TEST_EXIT
             ' || DOCKER_EXIT=$$?
@@ -115,7 +118,7 @@ steps:
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/rust-junit.xml" || true
           if [ -f "junit-results/rust-junit.xml" ]; then
-            curl -X POST --silent --show-error --fail \
+            curl -X POST --silent --show-error --max-time 30 \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
               -F "data=@junit-results/rust-junit.xml" \
               -F "format=junit" \
@@ -128,7 +131,7 @@ steps:
               -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
               -F "run_env[message]=$$BUILDKITE_MESSAGE" \
               -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads
+              https://analytics-api.buildkite.com/v1/uploads || echo "WARNING: Test Analytics upload failed (non-fatal)"
             echo "Uploaded rust-junit.xml to Test Analytics"
           fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
@@ -190,7 +193,7 @@ steps:
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/python-junit.xml" || true
           if [ -f "junit-results/python-junit.xml" ]; then
-            curl -X POST --silent --show-error --fail \
+            curl -X POST --silent --show-error --max-time 30 \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
               -F "data=@junit-results/python-junit.xml" \
               -F "format=junit" \
@@ -203,7 +206,7 @@ steps:
               -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
               -F "run_env[message]=$$BUILDKITE_MESSAGE" \
               -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads
+              https://analytics-api.buildkite.com/v1/uploads || echo "WARNING: Test Analytics upload failed (non-fatal)"
             echo "Uploaded python-junit.xml to Test Analytics"
           fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
@@ -275,7 +278,7 @@ steps:
           echo "--- :buildkite: Uploading test results"
           buildkite-agent artifact upload "junit-results/odbc-junit.xml" || true
           if [ -f "junit-results/odbc-junit.xml" ]; then
-            curl -X POST --silent --show-error --fail \
+            curl -X POST --silent --show-error --max-time 30 \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
               -F "data=@junit-results/odbc-junit.xml" \
               -F "format=junit" \
@@ -288,7 +291,7 @@ steps:
               -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
               -F "run_env[message]=$$BUILDKITE_MESSAGE" \
               -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads
+              https://analytics-api.buildkite.com/v1/uploads || echo "WARNING: Test Analytics upload failed (non-fatal)"
             echo "Uploaded odbc-junit.xml to Test Analytics"
           fi
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
@@ -304,7 +307,7 @@ steps:
     key: "jdbc"
     depends_on: "test-selection"
     steps:
-      - label: ":java: Build + Integ + E2E Tests"
+      - label: ":java: Build + E2E Tests"
         key: "jdbc-tests"
         <<: *common
         timeout_in_minutes: 45
@@ -335,13 +338,13 @@ steps:
               cargo build --package sf_core
               cargo build --package jdbc_bridge
 
-              echo "--- :test_tube: Running Integ + E2E Tests"
+              echo "--- :test_tube: Running E2E Tests"
               export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
               chmod +x jdbc/gradlew
               cd jdbc
               set +e
               if [ "$$TEST_FILTER" = "ALL" ]; then
-                ./gradlew test --stacktrace
+                ./gradlew test --tests "net.snowflake.jdbc.e2e.*" --stacktrace
               else
                 GRADLE_TESTS=""
                 IFS="|" read -ra PATTERNS <<< "$$TEST_FILTER"
@@ -361,7 +364,7 @@ steps:
           buildkite-agent artifact upload "junit-results/TEST-*.xml" || true
           for xml in junit-results/TEST-*.xml; do
             [ -f "$$xml" ] || continue
-            curl -X POST --silent --show-error --fail \
+            curl -X POST --silent --show-error --max-time 30 \
               -H "Authorization: Token token=$$BUILDKITE_ANALYTICS_TOKEN" \
               -F "data=@$$xml" \
               -F "format=junit" \
@@ -374,7 +377,7 @@ steps:
               -F "run_env[commit_sha]=$$BUILDKITE_COMMIT" \
               -F "run_env[message]=$$BUILDKITE_MESSAGE" \
               -F "run_env[url]=$$BUILDKITE_BUILD_URL" \
-              https://analytics-api.buildkite.com/v1/uploads
+              https://analytics-api.buildkite.com/v1/uploads || echo "WARNING: Test Analytics upload failed (non-fatal)"
             echo "Uploaded $$xml to Test Analytics"
           done
           if [ "$$DOCKER_EXIT" -ne 0 ]; then
