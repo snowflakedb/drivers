@@ -3,8 +3,10 @@ use std::path::PathBuf;
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
+#[cfg(feature = "otlp_debug")]
 use crate::logging::opentelemetry::init_tracer;
 use tracing::level_filters::LevelFilter;
+#[cfg(feature = "otlp_debug")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
@@ -13,6 +15,7 @@ use tracing_subscriber::layer::SubscriberExt;
 pub mod c_api;
 mod callback_layer;
 mod error;
+#[cfg(feature = "otlp_debug")]
 mod opentelemetry;
 
 pub struct LoggingConfig {
@@ -60,13 +63,25 @@ where
     };
     let subscriber = subscriber.with(file_layer);
 
-    let opentelemetry_layer = if config.opentelemetry {
-        let tracer_layer = init_tracer()?;
-        Some(OpenTelemetryLayer::new(tracer_layer))
-    } else {
-        None
+    #[cfg(feature = "otlp_debug")]
+    let subscriber = {
+        let opentelemetry_layer = if config.opentelemetry {
+            let tracer_layer = init_tracer()?;
+            Some(OpenTelemetryLayer::new(tracer_layer))
+        } else {
+            None
+        };
+        subscriber.with(opentelemetry_layer)
     };
-    let subscriber = subscriber.with(opentelemetry_layer);
+    #[cfg(not(feature = "otlp_debug"))]
+    let subscriber = {
+        if config.opentelemetry {
+            tracing::warn!(
+                "OpenTelemetry tracing requested but sf_core was built without the `otlp_debug` feature"
+            );
+        }
+        subscriber.with(None::<tracing_subscriber::layer::Identity>)
+    };
 
     let stderr_layer = if config.stderr {
         Some(
