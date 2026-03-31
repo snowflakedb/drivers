@@ -12,7 +12,7 @@ from collections.abc import Generator, Iterable
 from io import StringIO
 from typing import Any, Callable, Union
 
-from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
+from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_NO_NUMPY
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
@@ -55,6 +55,7 @@ class Connection:
         *,
         paramstyle: str | None = None,
         autocommit: bool | None = None,
+        numpy: bool = False,
         **kwargs: ConnectionParamValue,
     ) -> None:
         """
@@ -76,6 +77,17 @@ class Connection:
         from snowflake.connector import paramstyle as default_paramstyle
 
         self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
+
+        # numpy
+        self._numpy = numpy
+        if self._numpy:
+            try:
+                import numpy as np  # noqa: F401
+            except ModuleNotFoundError:
+                raise ProgrammingError(
+                    msg="Numpy module is not installed. Cannot fetch data as numpy",
+                    errno=ER_NO_NUMPY,
+                )
 
         kwargs = self._rewrite_private_key_password(kwargs)
 

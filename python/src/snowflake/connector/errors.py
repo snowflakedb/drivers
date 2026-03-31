@@ -104,6 +104,12 @@ class NotSupportedError(DatabaseError):
     pass
 
 
+class RevocationCheckError(OperationalError):
+    """Exception for errors during certificate revocation check."""
+
+    pass
+
+
 class MissingDependencyError(Error):
     """Exception for missing extras dependencies."""
 
@@ -114,13 +120,7 @@ class MissingDependencyError(Error):
 # Configuration-related errors (for ConfigManager)
 
 
-class ConfigManagerError(Error):
-    """Exception raised for configuration manager errors."""
-
-    pass
-
-
-class ConfigSourceError(ConfigManagerError):
+class ConfigSourceError(Error):
     """Exception raised when a configuration source has invalid values."""
 
     pass
@@ -132,16 +132,109 @@ class MissingConfigOptionError(ConfigSourceError):
     pass
 
 
-###### BACK-COMPAT  ######
+class ConfigManagerError(Error):
+    """Exception raised for configuration manager errors."""
+
+    pass
 
 
-class BadRequest(Error):
-    """Exception for 400 HTTP error for retry."""
+# HTTP/retry errors
+
+
+class HttpError(Error):
+    """Exception for HTTP errors."""
+
+    pass
+
+
+class InternalServerError(Error):
+    """Exception for 500 HTTP code for retry."""
+
+    pass
+
+
+class ServiceUnavailableError(Error):
+    """Exception for 503 HTTP code for retry."""
+
+    pass
+
+
+class GatewayTimeoutError(Error):
+    """Exception for 504 HTTP error for retry."""
+
+    pass
 
 
 class ForbiddenError(Error):
     """Exception for 403 HTTP error for retry."""
 
+    pass
+
+
+class RequestTimeoutError(Error):
+    """Exception for 408 HTTP error for retry."""
+
+    pass
+
+
+class BadRequest(Error):
+    """Exception for 400 HTTP error for retry."""
+
+    pass
+
 
 class BadGatewayError(Error):
     """Exception for 502 HTTP error for retry."""
+
+    pass
+
+
+class MethodNotAllowed(Error):
+    """Exception for 405 HTTP error for retry."""
+
+    pass
+
+
+class TooManyRequests(Error):
+    """Exception for 429 HTTP error for retry."""
+
+    pass
+
+
+class RefreshTokenError(Error):
+    """Exception for token refresh required."""
+
+    pass
+
+
+class OtherHTTPRetryableError(Error):
+    """Exception for other HTTP error for retry."""
+
+    pass
+
+
+# Storage/binding errors
+
+
+class BindUploadError(Error):
+    """Exception for bulk array binding stage optimization fails."""
+
+    pass
+
+
+class RequestExceedMaxRetryError(Error):
+    """Exception for exceeding maximum retries with transient errors."""
+
+    pass
+
+
+class TokenExpiredError(Error):
+    """Exception for expired authentication token."""
+
+    pass
+
+
+class PresignedUrlExpiredError(Error):
+    """Exception for expired presigned URL."""
+
+    pass
