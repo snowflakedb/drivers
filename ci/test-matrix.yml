@@ -1,4 +1,4 @@
-# Test Selection Mapping
+# Test Matrix
 #
 # Maps source file paths to test filters, organized by component.
 # Each rule's tests are grouped by level: unit, integ, e2e.
@@ -28,8 +28,8 @@
 #
 # Test filter formats:
 #   rust unit:   cargo test --package sf_core --lib <filter>
-#   rust integ:  cargo test --package sf_core --test integration <filter>
-#   rust e2e:    cargo test --package sf_core --test e2e <filter>
+#   rust integ:  cargo test --package sf_core --test integration_tests <filter>
+#   rust e2e:    cargo test --package sf_core --test e2e_tests <filter>
 #   odbc unit:   cargo test --package odbc (no ctest filter — Rust inline tests only)
 #   odbc integ:  ctest -R <filter> (C++ integration tests)
 #   odbc e2e:    ctest -R <filter> (C++ e2e tests)
@@ -57,8 +57,8 @@ core:
       tests:
         rust:
           unit: "auth"
-          integ: "integration::authentication"
-          e2e: "e2e::authentication"
+          integ: "authentication"
+          e2e: "authentication"
         odbc:
           integ: "integration_authentication"
           e2e: "e2e_authentication"
@@ -82,8 +82,8 @@ core:
       tests:
         rust:
           unit: "query|async_exec|chunks|arrow_utils"
-          integ: "integration::http"
-          e2e: "e2e::query"
+          integ: "http"
+          e2e: "query"
         odbc:
           e2e: "e2e_query|basic_execute|sql_fetch|sql_get_data|sql_bind_col|sql_row_count"
         python:
@@ -103,7 +103,7 @@ core:
       tests:
         rust:
           unit: "tls|crl"
-          e2e: "e2e::tls"
+          e2e: "tls"
         odbc:
           e2e: "e2e_tls|crl"
         python:
@@ -118,8 +118,8 @@ core:
         - "sf_core/tests/integration/put_get/**"
       tests:
         rust:
-          integ: "integration::put_get"
-          e2e: "e2e::put_get"
+          integ: "put_get"
+          e2e: "put_get"
         odbc:
           e2e: "e2e_put_get|put_get"
         python:
@@ -133,8 +133,10 @@ core:
         - "sf_core/tests/integration/session/**"
       tests:
         rust:
-          integ: "integration::session"
-          e2e: "e2e::session"
+          integ: "session"
+          e2e: "session"
+        python:
+          integ: "tests/integ/test_session_parameters.py"
 
     - name: http
       paths:
@@ -142,7 +144,7 @@ core:
         - "sf_core/tests/integration/http/**"
       tests:
         rust:
-          integ: "integration::http|http_retry|retry|sync_retry"
+          integ: "http|http_retry|retry|sync_retry"
 
     - name: config
       paths:
@@ -151,7 +153,7 @@ core:
       tests:
         rust:
           unit: "config"
-          integ: "integration::config"
+          integ: "config"
         python:
           unit: "tests/unit/test_config_manager.py"
           integ: "tests/integ/config"
@@ -479,6 +481,8 @@ shared_fallback_paths:
   - "Cargo.lock"
   - "build_common.rs"
   - "rust-toolchain.toml"
+  - "error_trace/**"
+  - "error_trace_derive/**"
   - "protobuf/**"
   - "thrift/**"
   - "proto_utils/**"

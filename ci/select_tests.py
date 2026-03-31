@@ -40,10 +40,13 @@ Output:
 
 import argparse
 import fnmatch
+import functools
 import json
 import os
+import re
 import subprocess
 import sys
+from typing import Dict, List, Optional, Set
 
 try:
     import yaml
@@ -60,7 +63,7 @@ DRIVER_SOURCES = {
 }
 
 
-def detect_base_ref(explicit_base_ref=None):
+def detect_base_ref(explicit_base_ref: Optional[str] = None) -> str:
     """Determine the git base ref from CI environment or explicit override.
 
     Priority: explicit --base-ref flag > Buildkite env > default (origin/main).
@@ -75,8 +78,8 @@ def detect_base_ref(explicit_base_ref=None):
     return "origin/main"
 
 
-def load_config(config_path):
-    """Load the test-selection YAML config."""
+def load_config(config_path: str) -> Dict:
+    """Load the test matrix YAML config."""
     if yaml is None:
         print("ERROR: PyYAML required. Install: pip install pyyaml", file=sys.stderr)
         sys.exit(1)
@@ -84,7 +87,7 @@ def load_config(config_path):
         return yaml.safe_load(f)
 
 
-def _ensure_base_ref_available(base_ref):
+def _ensure_base_ref_available(base_ref: str) -> None:
     """Fetch the base ref if not already available (handles shallow clones)."""
     try:
         subprocess.run(
@@ -103,8 +106,8 @@ def _ensure_base_ref_available(base_ref):
             print("WARNING: failed to fetch {}".format(remote_branch), file=sys.stderr)
 
 
-def get_changed_files(base_ref):
-    """Get changed files from git diff."""
+def get_changed_files(base_ref: str) -> Optional[List[str]]:
+    """Get changed files from git diff. Returns None if diff fails (run all)."""
     _ensure_base_ref_available(base_ref)
     for cmd in [
         ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
@@ -122,27 +125,46 @@ def get_changed_files(base_ref):
     return None
 
 
-def matches_pattern(filepath, pattern):
-    """Check if a filepath matches a glob pattern (supports **)."""
-    if "**" in pattern:
-        # Split on ** and check prefix + suffix
-        parts = pattern.split("**", 1)
-        prefix = parts[0].rstrip("/")
-        suffix = parts[1].lstrip("/") if len(parts) > 1 else ""
+@functools.lru_cache(maxsize=256)
+def _glob_to_regex(pattern: str) -> "re.Pattern[str]":
+    """Convert a glob pattern to a compiled regex, with proper ** semantics.
 
-        if prefix and not filepath.startswith(prefix.rstrip("*").rstrip("/")):
-            return False
+    Results are cached so repeated calls with the same pattern avoid
+    redundant regex compilation.
 
-        if suffix:
-            remaining = filepath[len(prefix.rstrip("*").rstrip("/")):]
-            return fnmatch.fnmatch(remaining.lstrip("/"), f"*{suffix}")
+    - ``*``  matches anything except ``/``
+    - ``**`` matches zero or more path components
+    - ``?``  matches a single non-``/`` character
+    """
+    result = ""
+    i = 0
+    while i < len(pattern):
+        if pattern[i:i + 3] == "**/":
+            result += "(?:.+/)?"
+            i += 3
+        elif pattern[i:i + 2] == "**":
+            result += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            result += "[^/]*"
+            i += 1
+        elif pattern[i] == "?":
+            result += "[^/]"
+            i += 1
         else:
-            return filepath.startswith(prefix.rstrip("*").rstrip("/"))
+            result += re.escape(pattern[i])
+            i += 1
+    return re.compile("^" + result + "$")
 
-    return fnmatch.fnmatch(filepath, pattern)
+
+def matches_pattern(filepath: str, pattern: str) -> bool:
+    """Check if a filepath matches a glob pattern (supports **)."""
+    if "**" not in pattern:
+        return fnmatch.fnmatch(filepath, pattern)
+    return bool(_glob_to_regex(pattern).match(filepath))
 
 
-def file_matches_any(filepath, patterns):
+def file_matches_any(filepath: str, patterns: List[str]) -> bool:
     """Check if a file matches any pattern in the list."""
     return any(matches_pattern(filepath, p) for p in patterns)
 
@@ -163,7 +185,7 @@ DRIVER_SEPARATOR = {
 }
 
 
-def _parse_group(group_str):
+def _parse_group(group_str: str) -> List[str]:
     """Parse a group string into a list of individual groups.
 
     Accepts: "all", a single group name, or comma-separated (e.g. "integ,e2e").
@@ -173,7 +195,7 @@ def _parse_group(group_str):
     return [g.strip() for g in group_str.split(",")]
 
 
-def _extract_filters_for_group(driver_tests, groups):
+def _extract_filters_for_group(driver_tests: Optional[Dict], groups: List[str]) -> List[str]:
     """Extract test filter(s) from a driver's test config for the requested groups.
 
     Args:
@@ -199,13 +221,13 @@ def _extract_filters_for_group(driver_tests, groups):
     return filters
 
 
-def select_tests(driver, changed_files, config, group="all"):
+def select_tests(driver: str, changed_files: Optional[List[str]], config: Dict, group: str = "all") -> str:
     """Determine which tests to run for a driver given changed files.
 
     Args:
         driver: "rust", "odbc", "python", or "java"
         changed_files: list of changed file paths, or None (run all)
-        config: parsed test-selection.yml
+        config: parsed test-matrix.yml
         group: "all", a single group, or comma-separated (e.g. "integ,e2e")
 
     Returns:
@@ -249,13 +271,16 @@ def select_tests(driver, changed_files, config, group="all"):
 
             for f in changed_files:
                 if file_matches_any(f, rule_paths):
-                    claimed_files.add(f)
-                    if not already_matched:
-                        matched_rules.add(rule_name)
-                        driver_tests = rule.get("tests", {}).get(driver)
-                        filters = _extract_filters_for_group(driver_tests, groups)
-                        collected_filters.extend(filters)
-                        already_matched = True
+                    driver_tests = rule.get("tests", {}).get(driver)
+                    filters = _extract_filters_for_group(driver_tests, groups)
+                    if filters:
+                        claimed_files.add(f)
+                        if not already_matched:
+                            matched_rules.add(rule_name)
+                            collected_filters.extend(filters)
+                            already_matched = True
+                    else:
+                        return "ALL"
 
     if collected_filters:
         separator = DRIVER_SEPARATOR.get(driver, "|")
@@ -302,7 +327,7 @@ def select_tests(driver, changed_files, config, group="all"):
     return "SKIP"
 
 
-def _validate_group(value):
+def _validate_group(value: str) -> str:
     """Validate --group value: 'all', a single group, or comma-separated."""
     valid = set(SINGLE_GROUPS) | {"all"}
     for g in value.split(","):
@@ -322,7 +347,7 @@ def main():
                              "(e.g. integ,e2e). Default: all")
     parser.add_argument("--base-ref", default=None,
                         help="Git base ref for diff. Auto-detected from CI env if omitted")
-    parser.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "test-selection.yml"))
+    parser.add_argument("--config", default=os.path.join(os.path.dirname(__file__), "test-matrix.yml"))
     parser.add_argument("--stdin", action="store_true", help="Read changed files from stdin")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--verbose", action="store_true", help="Print debug info to stderr")

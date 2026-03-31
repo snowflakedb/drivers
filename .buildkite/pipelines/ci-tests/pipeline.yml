@@ -76,7 +76,7 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              yum install -y unzip
+              command -v unzip >/dev/null || yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
 
               echo "--- :hammer: Building sf_core"
@@ -85,7 +85,9 @@ steps:
 
               echo "--- :test_tube: Running Tests"
               mkdir -p /workdir/junit-results
+              # Run tests as non-root so ownership-sensitive tests work correctly
               useradd -m testuser 2>/dev/null || true
+              # RUSTC_BOOTSTRAP=1 enables -Z unstable-options for JSON test output
               export RUSTC_BOOTSTRAP=1
               cargo test --package sf_core --no-run 2>&1
               chmod a+rx /root
@@ -166,7 +168,7 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              yum install -y unzip
+              command -v unzip >/dev/null || yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
               cd python
 
@@ -241,7 +243,7 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              yum install -y unzip
+              command -v unzip >/dev/null || yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
               export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
 
@@ -326,7 +328,7 @@ steps:
               set -euo pipefail
               rm -rf /workdir/junit-results
               ./scripts/decode_secrets.sh
-              yum install -y unzip
+              command -v unzip >/dev/null || yum install -y unzip
               export PARAMETER_PATH=/workdir/parameters.json
 
               echo "--- :hammer: Building JDBC Bridge"
