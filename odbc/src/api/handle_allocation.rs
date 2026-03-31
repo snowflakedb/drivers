@@ -133,7 +133,7 @@ pub fn init_logging() {
     static LOGGING_RESULT: LazyLock<Result<(), sf_core::logging::LogError>> = LazyLock::new(|| {
         sf_core::logging::init(sf_core::logging::LoggingConfig::new(
             Some("odbc.log".into()),
-            true,
+            false,
             false,
         ))
     });

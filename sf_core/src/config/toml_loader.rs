@@ -58,8 +58,8 @@ pub fn check_file_permissions(path: &Path) -> Result<(), ConfigError> {
         if mode & 0o044 != 0
             && std::env::var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE").is_err()
         {
-            eprintln!(
-                "Warning: Config file {} is readable by group or others",
+            tracing::warn!(
+                "Config file {} is readable by group or others",
                 path.display()
             );
         }
