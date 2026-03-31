@@ -19,6 +19,7 @@ mod nullable;
 mod number;
 #[cfg(test)]
 mod number_tests;
+mod numeric_helpers;
 mod real;
 #[cfg(test)]
 mod real_tests;
