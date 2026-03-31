@@ -102,7 +102,7 @@ class BuildHook(BuildHookInterface):
         """Initialize the build hook: generate protobuf code and compile extensions."""
         self._generate_protobuf()
 
-        if self.target_name != "wheel":
+        if self.target_name not in ("wheel", "editable"):
             return
 
         if os.environ.get(self.DISABLE_COMPILE_ENV_VAR, "false").lower() in self.POSITIVE_VALUES:
