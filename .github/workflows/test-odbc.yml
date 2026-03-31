@@ -373,6 +373,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo registry (RPM build)
+        uses: actions/cache@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-
+
+      - name: Cache Rust target (RPM build)
+        uses: actions/cache@v5
+        with:
+          path: .cargo-target-rpm
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-
+
+      - name: Prepare cache directories
+        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-rpm
+
       - name: Build Docker image
         run: docker build -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
 
@@ -380,6 +399,9 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
+            -v ${{ github.workspace }}/.cargo-cache/registry:/root/.cargo/registry \
+            -v ${{ github.workspace }}/.cargo-cache/git:/root/.cargo/git \
+            -v ${{ github.workspace }}/.cargo-target-rpm:/workspace/target \
             -w /workspace \
             -e PLATFORM=${{ matrix.platform }} \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \

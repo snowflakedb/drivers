@@ -59,6 +59,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-jdbc-target-
 
+      - name: Cache Gradle packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
@@ -97,6 +107,16 @@ jobs:
         with:
           java-version: '8'
           distribution: 'temurin'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
