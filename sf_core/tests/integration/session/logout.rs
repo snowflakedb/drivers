@@ -367,6 +367,7 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     // This tests what users experience "by default" through language wrappers
     // (Core's internal default is None, but wrappers configure it)
     let retry_policy = RetryPolicy {
+        max_attempts: 1, // Timeout scenario: single attempt, no retries
         max_elapsed: config.logout_total_timeout,
         per_request_timeout: Some(Duration::from_secs(5)), // User-facing default via Python
         ..Default::default()
@@ -517,6 +518,8 @@ async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
     let retry_policy = RetryPolicy {
         max_attempts: 10,
         max_elapsed: total_timeout,
+        // Cap per-request at the total budget so in-flight requests can't overrun the deadline
+        per_request_timeout: Some(total_timeout),
         ..Default::default()
     };
 
