@@ -6,6 +6,7 @@ pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
+pub mod telemetry;
 
 use std::collections::HashMap;
 
