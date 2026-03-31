@@ -337,16 +337,22 @@ class Connection:
         # Connection is leaked (not explicitly closed) - emit deprecation warning
         # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
         # Use lock to prevent race conditions when multiple connections close concurrently
-        with self.__class__._class_state.lock:
-            if self.__class__._class_state.first_auto_cleanup_warning_pending:
-                warnings.warn(
-                    "Connection was not explicitly closed before process exit. "
-                    "Auto-cleanup at exit will be disabled by default in a future version. "
-                    "Please explicitly call connection.close() or use context manager.",
-                    FutureWarning,
-                    stacklevel=2,
-                )
-                self.__class__._class_state.first_auto_cleanup_warning_pending = False
+        # Wrapped in try/except to guard against interpreter shutdown: during CPython
+        # teardown, module globals (including `warnings`) may already be set to None,
+        # causing AttributeError/TypeError that would otherwise escape through atexit.
+        try:
+            with self.__class__._class_state.lock:
+                if self.__class__._class_state.first_auto_cleanup_warning_pending:
+                    warnings.warn(
+                        "Connection was not explicitly closed before process exit. "
+                        "Auto-cleanup at exit will be disabled by default in a future version. "
+                        "Please explicitly call connection.close() or use context manager.",
+                        FutureWarning,
+                        stacklevel=2,
+                    )
+                    self.__class__._class_state.first_auto_cleanup_warning_pending = False
+        except Exception:
+            pass  # Interpreter shutting down; warning emission is best-effort
 
         # Attempt cleanup for leaked connection
         try:
