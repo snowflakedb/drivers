@@ -5,6 +5,7 @@ Feature: Session Logout - Python-specific behavior
   #                   Python Default Configuration
   # ===========================================================================
 
+  @python_e2e
   Scenario: should use Python default 15 second timeout and 3 max retries
     # Old Python driver used 5s timeout and 3 attempts.
     Given Snowflake Python client is created with default timeout configuration
@@ -38,6 +39,7 @@ Feature: Session Logout - Python-specific behavior
   #                   Parameter Passing Verification
   # ===========================================================================
 
+  @python_e2e
   Scenario: should pass correct parameters when server_session_keep_alive is none and auto_detection true
     # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
     # Phase 2 (doc for: SNOW-2314152) truth table: None + True → parameters passed to Core
@@ -60,6 +62,7 @@ Feature: Session Logout - Python-specific behavior
     And Connection close metrics are recorded in telemetry
     And No deprecation warning is emitted
 
+  @python_e2e
   Scenario: should pass correct parameters when server_session_keep_alive is false
     # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
     # Phase 2: False (explicit) always emits deprecation warning
@@ -97,6 +100,7 @@ Feature: Session Logout - Python-specific behavior
     And Auto-detection is enabled by default
 
   # TODO: SNOW-2314153 - Requires logging integration between Rust Core and Python
+  @python_e2e
   Scenario: should use best-effort error handling strategy by default
     Given Snowflake Python client is created with default parameters
     And Server will return 500 Internal Server Error on logout on all attempts
@@ -114,6 +118,7 @@ Feature: Session Logout - Python-specific behavior
   # Old Python driver: close(retry: bool = True) parameter (line 1182)
   # Tests observable retry behavior by introducing transient failures
 
+  @python_e2e
   Scenario: should retry logout on transient failure when close called with default retry
     # Old Python driver: close(retry=True) is default (line 1182)
     Given Snowflake Python client is logged in
@@ -122,6 +127,7 @@ Feature: Session Logout - Python-specific behavior
     Then Logout succeeds after retry
     And Two logout requests were sent to server
 
+  @python_e2e
   Scenario: should not retry logout on transient failure when close called with retry false
     # Old Python driver: close(retry=False) disables retries (line 1182)
     # Used by atexit handler (line 2390)

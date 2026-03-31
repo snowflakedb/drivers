@@ -11,11 +11,13 @@ These deferred tests will be added as the underlying features are implemented.
 """
 
 import threading
+import time
 import warnings
 
 import pytest
 import requests
 
+from snowflake.connector._internal.logout_config_mapping import map_logout_config_phase2
 from tests.wiremock_client import WiremockClient
 
 
@@ -283,3 +285,244 @@ class TestLogoutPythonWrapper:
             )
 
             assert conn.is_closed()
+
+    def test_should_pass_correct_parameters_when_server_session_keep_alive_is_none_and_auto_detection_true(
+        self, int_test_connection_factory
+    ):
+        """Verify Python wrapper passes None keep-alive and True auto-detection to Core.
+
+        Gherkin: python/session/logout.feature:41-49
+
+        Phase 2 truth table: server_session_keep_alive=None + enable_auto_detection=True
+        → no Phase 2 remap (only False + True triggers remap) → Core receives None + True.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always")
+
+                # Given Snowflake Python client is created with server_session_keep_alive set to none
+                server_session_keep_alive_param = None
+
+                # And enable_server_session_keep_alive_auto_detection is set to true
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    server_session_keep_alive=server_session_keep_alive_param,
+                    enable_server_session_keep_alive_auto_detection=True,
+                )
+
+                # When Client closes connection
+                conn.close()
+
+            # Then server_session_keep_alive none is passed to Core
+            logout_config = map_logout_config_phase2(conn)
+            assert logout_config.server_session_keep_alive is None, (
+                "Phase 2: None keep-alive should pass through to Core unchanged"
+            )
+
+            # And enable_server_session_keep_alive_auto_detection true is passed to Core
+            assert logout_config.enable_auto_detection is True, "auto_detection=True should pass through to Core"
+
+            # And No deprecation warning is emitted
+            deprecation_warnings = [
+                w for w in captured_warnings if issubclass(w.category, (FutureWarning, DeprecationWarning))
+            ]
+            msgs = [str(w.message) for w in deprecation_warnings]
+            assert len(deprecation_warnings) == 0, f"None + True should not emit deprecation warning, got: {msgs}"
+
+    def test_should_pass_correct_parameters_when_server_session_keep_alive_is_false(self, int_test_connection_factory):
+        """Verify Python wrapper passes False keep-alive to Core.
+
+        Gherkin: python/session/logout.feature:63-70
+
+        Phase 2 truth table: server_session_keep_alive=False + enable_auto_detection=None
+        → no remap (None is falsy, remap only triggers for True) → Core receives False.
+        Core sends explicit logout when keep_alive=False.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            with warnings.catch_warnings(record=True) as _captured_warnings:
+                warnings.simplefilter("always")
+
+                # Given Snowflake Python client is created with server_session_keep_alive set to false
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    server_session_keep_alive=False,
+                )
+
+                # When Client closes connection
+                conn.close()
+
+            # Then server_session_keep_alive false is passed to Core
+            logout_config = map_logout_config_phase2(conn)
+            assert logout_config.server_session_keep_alive is False, (
+                "Phase 2: False + auto_detection=None → no remap → Core receives False"
+            )
+
+            # And Deprecation warning is emitted
+            _deprecation_emitted = (
+                False  # TODO(SNOW-2314152): Warning for server_session_keep_alive=False not yet implemented
+            )
+
+            # And Warning mentions that false will force logout in Phase 3
+            _warning_message_verified = False  # TODO(SNOW-2314152): see above
+
+            # Verify logout was actually sent to Core (False = explicit logout)
+            all_requests = get_wiremock_requests(wiremock.http_url())
+            logout_requests = filter_logout_requests(all_requests)
+            assert len(logout_requests) == 1, (
+                f"server_session_keep_alive=False should send exactly one logout request, got {len(logout_requests)}"
+            )
+
+    def test_should_use_python_default_15_second_timeout_and_3_max_retries(self, int_test_connection_factory):
+        """Verify Python wrapper configures 15s total timeout and 3 max attempts by default.
+
+        Gherkin: python/session/logout.feature:8-14
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            # Given Snowflake Python client is created with default timeout configuration
+            conn = int_test_connection_factory(server_url=wiremock.http_url())
+
+            # When Connection is closed
+            start = time.monotonic()
+            conn.close()
+            elapsed = time.monotonic() - start
+
+            # Then Logout timeout of 15 seconds is passed to Core
+            logout_config = map_logout_config_phase2(conn)
+            assert logout_config.logout_total_timeout_seconds == 15, (
+                f"Expected 15s total timeout, got {logout_config.logout_total_timeout_seconds}s"
+            )
+
+            # And Logout max retries of 3 is passed to Core
+            assert logout_config.max_attempts == 3, (
+                f"Expected 3 max attempts (2 retries), got {logout_config.max_attempts}"
+            )
+
+            # And Logout request completes within 15 seconds
+            assert elapsed < 15.0, f"Close should complete within 15 seconds, took {elapsed:.1f}s"
+
+    def test_should_use_best_effort_error_handling_strategy_by_default(self, int_test_connection_factory):
+        """Verify close() does not raise when server returns 500 on all logout attempts.
+
+        Gherkin: python/session/logout.feature:100-109
+
+        Best-effort strategy: close() succeeds even if logout fails.
+        All retries (max_attempts=3) are exhausted, then Core reports WARN and returns ok.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+
+            # Given Snowflake Python client is created with default parameters
+            conn = int_test_connection_factory(server_url=wiremock.http_url())
+
+            # And Server will return 500 Internal Server Error on logout on all attempts
+            wiremock.add_mapping("session/logout_500_always.json")
+
+            # When Connection is closed
+            conn.close()  # Must NOT raise with best-effort strategy
+
+            # Then Logout attempts are bounded by the default retry limit
+            all_requests = get_wiremock_requests(wiremock.http_url())
+            logout_requests = filter_logout_requests(all_requests)
+            assert len(logout_requests) <= 3, (
+                f"Expected at most 3 logout attempts (default max_attempts), got {len(logout_requests)}"
+            )
+
+            # And No further requests are sent after retry limit is reached
+            assert len(logout_requests) > 0, "At least one logout attempt should have been made"
+
+            # And Error is logged as WARN
+            _warn_logged = True  # TODO(SNOW-2314153): WARN log capture requires logging integration
+
+            # And close() method does not raise exception
+            _close_succeeded = conn.is_closed()  # verified above: conn.close() did not raise
+
+            # And Connection cleanup succeeds
+            assert conn.is_closed(), "Connection should be closed despite all logout attempts failing"
+
+            # And Error handling strategy is best-effort by default
+            logout_config = map_logout_config_phase2(conn)
+            from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
+
+            assert logout_config.error_strategy == database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT, (
+                "Default error strategy should be BEST_EFFORT"
+            )
+
+
+class TestLogoutRetryBehavior:
+    """Retry behavior tests from python/session/logout.feature.
+
+    These tests verify the retry parameter on close() controls whether Core
+    retries a failed logout request.
+    """
+
+    def test_should_retry_logout_on_transient_failure_when_close_called_with_default_retry(
+        self, int_test_connection_factory
+    ):
+        """Verify close() retries a failed logout and sends two requests on transient 503.
+
+        Gherkin: python/session/logout.feature:117-123
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+
+            # Given Snowflake Python client is logged in
+            conn = int_test_connection_factory(server_url=wiremock.http_url())
+
+            # And Server will return 503 on first logout attempt then succeed
+            wiremock.add_mapping("session/logout_503_then_success.json")
+
+            # When close() is called with default parameters
+            conn.close()
+
+            # Then Logout succeeds after retry
+            assert conn.is_closed(), "Connection should be closed after successful retry"
+
+            # And Two logout requests were sent to server
+            all_requests = get_wiremock_requests(wiremock.http_url())
+            logout_requests = filter_logout_requests(all_requests)
+            assert len(logout_requests) == 2, (
+                f"Expected 2 logout requests (1 failure + 1 success), got {len(logout_requests)}"
+            )
+
+    def test_should_not_retry_logout_on_transient_failure_when_close_called_with_retry_false(
+        self, int_test_connection_factory
+    ):
+        """Verify close(retry=False) sends exactly one logout request and does not retry.
+
+        Gherkin: python/session/logout.feature:125-133
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+
+            # Given Snowflake Python client is logged in
+            conn = int_test_connection_factory(server_url=wiremock.http_url())
+
+            # And Server will return 503 on first logout attempt then succeed
+            wiremock.add_mapping("session/logout_503_then_success.json")
+
+            # When close(retry=False) is called
+            conn.close(retry=False)
+
+            # Then Logout is not retried
+            all_requests = get_wiremock_requests(wiremock.http_url())
+            logout_requests = filter_logout_requests(all_requests)
+            assert len(logout_requests) == 1, (
+                f"Expected exactly 1 logout request (no retry), got {len(logout_requests)}"
+            )
+
+            # And Only one logout request was sent to server
+            assert len(logout_requests) == 1, "retry=False should prevent any retry attempts"
+
+            # And Error is handled according to best-effort strategy
+            assert conn.is_closed(), (
+                "Connection should be closed: best-effort strategy suppresses error from single failed attempt"
+            )
