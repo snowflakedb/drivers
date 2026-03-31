@@ -121,6 +121,7 @@ class BuildHook(BuildHookInterface):
         self._build_core()
 
         build_data["pure_python"] = False
+        build_data["infer_tag"] = True
 
     def _generate_protobuf(self) -> None:
         """Generate Python protobuf code using the Rust proto_generator binary."""
