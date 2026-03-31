@@ -521,6 +521,16 @@ class TestIsAnError:
 class TestConnectionArrowProperties:
     """Unit tests for Connection properties (getters/setters)."""
 
+    def test_arrow_number_to_decimal_initialized_in_init(self, connection):
+        # Regression: _arrow_number_to_decimal was previously in dead code after a `return`
+        # statement inside _map_logout_config(), making it unreachable during __init__.
+        # This test catches that regression — AttributeError would occur if the attribute
+        # is not initialized before the property getter is accessed.
+        assert hasattr(connection, "_arrow_number_to_decimal"), (
+            "_arrow_number_to_decimal must be initialized in __init__, not in unreachable code"
+        )
+        assert connection._arrow_number_to_decimal is False
+
     def test_arrow_number_to_decimal_default_is_false(self, connection):
         assert connection.arrow_number_to_decimal is False
 

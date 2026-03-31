@@ -138,42 +138,46 @@ impl LogoutConfig {
 /// Strategy for error handling during logout.
 ///
 /// Controls how errors are surfaced after all retry mechanisms have been exhausted.
-/// Uses #[repr(i64)] to directly map enum discriminants to protobuf values.
+/// Uses #[repr(i64)] to directly map enum discriminants to the protobuf wire format
+/// values shared across all language drivers (Python, Go, JDBC, ODBC).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i64)]
 pub enum ErrorStrategy {
     /// Strict strategy: surface errors to the caller (close() may fail)
     #[default]
-    Strict = Self::STRICT_PROTOBUF,
+    Strict = Self::STRICT_VALUE,
 
     /// Best-effort strategy: suppress errors, log WARN (close() always succeeds)
-    BestEffort = Self::BEST_EFFORT_PROTOBUF,
+    BestEffort = Self::BEST_EFFORT_VALUE,
 }
 
 impl ErrorStrategy {
-    const UNSPECIFIED_PROTOBUF: i64 = 0;
-    const BEST_EFFORT_PROTOBUF: i64 = 1;
-    const STRICT_PROTOBUF: i64 = 2;
+    /// Protobuf wire format value for "unspecified" — treated as the default (Strict).
+    const UNSPECIFIED_VALUE: i64 = 0;
+    /// Protobuf wire format value for BestEffort error strategy.
+    const BEST_EFFORT_VALUE: i64 = 1;
+    /// Protobuf wire format value for Strict error strategy.
+    const STRICT_VALUE: i64 = 2;
 
-    /// Explicitly convert to the protobuf value.
+    /// Explicitly convert to the protobuf wire format value.
     pub fn to_protobuf_value(self) -> i64 {
         self as i64
     }
 
-    /// Explicitly create from a protobuf value.
+    /// Explicitly create from a protobuf wire format value.
     pub fn from_protobuf_value(value: i64) -> Result<Self, ConfigError> {
         match value {
-            Self::UNSPECIFIED_PROTOBUF => Ok(Self::default()),
-            Self::BEST_EFFORT_PROTOBUF => Ok(Self::BestEffort),
-            Self::STRICT_PROTOBUF => Ok(Self::Strict),
+            Self::UNSPECIFIED_VALUE => Ok(Self::default()),
+            Self::BEST_EFFORT_VALUE => Ok(Self::BestEffort),
+            Self::STRICT_VALUE => Ok(Self::Strict),
             _ => InvalidParameterValueSnafu {
                 parameter: "logout_error_strategy",
                 value: value.to_string(),
                 explanation: format!(
                     "Must be {} (UNSPECIFIED), {} (BestEffort), or {} (Strict)",
-                    Self::UNSPECIFIED_PROTOBUF,
-                    Self::BEST_EFFORT_PROTOBUF,
-                    Self::STRICT_PROTOBUF
+                    Self::UNSPECIFIED_VALUE,
+                    Self::BEST_EFFORT_VALUE,
+                    Self::STRICT_VALUE
                 ),
             }
             .fail(),

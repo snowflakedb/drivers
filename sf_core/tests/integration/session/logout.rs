@@ -10,14 +10,9 @@ use crate::common::test_server::{
     json_error_response, json_response, service_unavailable_response, spawn_test_server,
 };
 use serde_json::json;
-use sf_core::apis::database_driver_v1::{
-    connection_close, connection_is_closed, connection_new, connection_release, database_init,
-    database_new, database_release,
-};
 use sf_core::config::logout::{ErrorStrategy, LogoutConfig};
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::logout::logout_session;
 use std::sync::Arc;
@@ -59,14 +54,9 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
     .unwrap();
 
     //When Logout is initiated
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
+    let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+        .await
+        .unwrap();
 
     //Then Logout succeeds
     assert!(result.is_ok(), "Close should succeed: {:?}", result.err());
@@ -162,14 +152,33 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
 
 #[test]
 fn should_not_send_logout_when_connection_was_never_established() {
+    use sf_core::protobuf::apis::database_driver_v1::{
+        DatabaseDriverClientBlockingExt, database_driver_client,
+    };
+
     //Given Connection handle created but never initialized
-    let db_handle = database_new();
-    database_init(db_handle).unwrap();
-    let conn_handle = connection_new();
+    let client = database_driver_client();
+    let db_handle = client
+        .database_new_blocking(DatabaseNewRequest {})
+        .unwrap()
+        .db_handle
+        .unwrap();
+    client
+        .database_init_blocking(DatabaseInitRequest {
+            db_handle: Some(db_handle),
+        })
+        .unwrap();
+    let conn_handle = client
+        .connection_new_blocking(ConnectionNewRequest {})
+        .unwrap()
+        .conn_handle
+        .unwrap();
     // Note: connection_init() NOT called - connection remains uninitialized
 
     //When Connection close is attempted
-    let result = connection_close(conn_handle);
+    let result = client.connection_close_blocking(ConnectionCloseRequest {
+        conn_handle: Some(conn_handle),
+    });
 
     //Then Close succeeds without sending HTTP request
     assert!(
@@ -179,13 +188,26 @@ fn should_not_send_logout_when_connection_was_never_established() {
 
     //And Connection is marked as closed
     assert!(
-        connection_is_closed(conn_handle).unwrap(),
+        client
+            .connection_is_closed_blocking(ConnectionIsClosedRequest {
+                conn_handle: Some(conn_handle),
+            })
+            .unwrap()
+            .is_closed,
         "Connection should be marked closed"
     );
 
     // Cleanup
-    connection_release(conn_handle).unwrap();
-    database_release(db_handle).unwrap();
+    client
+        .connection_release_blocking(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .unwrap();
+    client
+        .database_release_blocking(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        })
+        .unwrap();
 }
 
 // ===========================================================================
@@ -213,11 +235,7 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
         client.set_connection_option_bool("server_session_keep_alive", true);
 
         // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
-        .unwrap();
+        client.connection_init_blocking().unwrap();
 
         client.set_temp_key_file(temp_key_file);
         client
@@ -226,14 +244,9 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
     .unwrap();
 
     //When Connection is closed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
+    let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+        .await
+        .unwrap();
 
     //Then No logout HTTP request is sent to server
     assert!(result.is_ok(), "Close should succeed");
@@ -294,11 +307,7 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
         client.set_connection_option_bool("server_session_keep_alive", false);
 
         // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
-        .unwrap();
+        client.connection_init_blocking().unwrap();
 
         client.set_temp_key_file(temp_key_file);
         client
@@ -307,14 +316,9 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
     .unwrap();
 
     //When Connection is closed
-    let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
+    let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+        .await
+        .unwrap();
 
     //Then Logout HTTP request is sent to server
     assert!(result.is_ok(), "Close should succeed");
@@ -383,7 +387,7 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     //Then Logout request times out after approximately 5 seconds
     assert!(result.is_err(), "Should timeout");
 
-    //And Close throws timeout error
+    //Then Close throws timeout error
     let error_msg = format!("{:?}", result.unwrap_err());
     let error_lower = error_msg.to_lowercase();
     assert!(
@@ -492,11 +496,6 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
     server.await.unwrap();
 }
 
-// TODO(gherkin): Two issues:
-// 1. "And UD Core connection is logged in" is an empty step — the next line is also a step
-//    comment ("And Total retry budget timeout..."). These two are batched before the code.
-// 2. Step text mismatch: feature says "The last attempt times out" but test says
-//    "The last attempt timeouts" (typo: "timeouts" should be "times out").
 #[tokio::test]
 async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
     //Given Mock HTTP server responds with 503 after 2 second delay on each attempt
@@ -506,11 +505,11 @@ async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
     })
     .await;
 
+    //And UD Core connection is logged in
     let server_url = format!("http://{}", addr);
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let client_info = test_client_info();
 
-    //And UD Core connection is logged in
     //And Total retry budget timeout is set to 5 seconds
     let total_timeout = Duration::from_secs(5);
 
@@ -541,7 +540,7 @@ async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
         attempt_count
     );
 
-    //And The last attempt timeouts because remaining budget is less than server response time
+    //And The last attempt times out because remaining budget is less than server response time
     assert!(result.is_err(), "Should fail due to timeout/exhaustion");
 
     //And Total wall-clock time does not exceed 7 seconds for closing the connection
@@ -623,11 +622,6 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
     }
 }
 
-// TODO(gherkin): Empty steps in both the HTTP-error and connection-reset blocks:
-// "Given Core logout function called with <strategy_type> strategy" and
-// "And Mock HTTP server returns <error_type> on attempt 1" both have no code immediately
-// following them — server setup is batched after the third step comment.
-// Refactor: move strategy and error-type setup so each step comment has its own code.
 #[tokio::test]
 async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
     // Scenario Outline: Examples (error_type, strategy_type)
@@ -657,10 +651,17 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
             ),
         ] {
             //Given Core logout function called with <strategy_type> strategy
+            let _config = LogoutConfig {
+                error_strategy,
+                ..Default::default()
+            };
+
             //And Mock HTTP server returns <error_type> on attempt 1
+            let attempt_1_response_fn = error_response_fn;
+
             //And Mock HTTP server returns 200 on attempt 2
             let (addr, attempts, server) = spawn_test_server(2, move |attempt| {
-                let error_fn = error_response_fn;
+                let error_fn = attempt_1_response_fn;
                 async move {
                     if attempt == 1 {
                         error_fn()
@@ -674,11 +675,6 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
             let server_url = format!("http://{}", addr);
             let client = reqwest::Client::builder().no_proxy().build().unwrap();
             let client_info = test_client_info();
-
-            let _config = LogoutConfig {
-                error_strategy,
-                ..Default::default()
-            };
 
             //When Logout is executed
             let result = logout_session(
@@ -714,21 +710,27 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
         {
             let error_type = "connection reset";
             //Given Core logout function called with <strategy_type> strategy
+            let _config = LogoutConfig {
+                error_strategy,
+                ..Default::default()
+            };
+
             //And Mock HTTP server resets connection on first attempt
-            //And Mock HTTP server succeeds on second attempt
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             let attempts = Arc::new(AtomicUsize::new(0));
             let attempts_clone = attempts.clone();
 
+            //And Mock HTTP server succeeds on second attempt
             let server = tokio::spawn(async move {
                 loop {
                     let (mut stream, _) = listener.accept().await.unwrap();
                     let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
 
                     if attempt == 1 {
-                        drop(stream); // Reset connection
+                        drop(stream); // Reset connection on first attempt
                     } else {
+                        // Second attempt: succeed
                         let mut buf = vec![0u8; 4096];
                         let _ = stream.read(&mut buf).await;
                         let response = json_response(r#"{"success":true}"#);
@@ -742,11 +744,6 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
             let server_url = format!("http://{}", addr);
             let client = reqwest::Client::builder().no_proxy().build().unwrap();
             let client_info = test_client_info();
-
-            let _config = LogoutConfig {
-                error_strategy,
-                ..Default::default()
-            };
 
             //When Logout is executed
             let result = logout_session(
@@ -780,12 +777,6 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
     }
 }
 
-// TODO(gherkin): Empty steps — "Given", "And Mock HTTP server returns SESSION_TOKEN_EXPIRED",
-// and "And Mock HTTP server returns 200 after token refresh" all have no code immediately
-// following them; server mock setup is batched after all three comments.
-// Also: "Then Token refresh request is sent to server" and "And Logout is retried with new
-// session token" are empty — assertions are batched after "And Close succeeds".
-// Refactor: split setup and assertions so each step comment precedes its own code.
 #[tokio::test]
 async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_strategy_type() {
     // Scenario Outline: Examples (strategy_type)
@@ -795,12 +786,9 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         ("best-effort", ErrorStrategy::BestEffort),
     ] {
         //Given Core logout function called with <strategy_type> strategy
-        //And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
-        //And Mock HTTP server returns 200 after token refresh
-        //And Retry policy allows 1 retry
         let server = MockServer::start().await;
 
-        // Login: returns initial tokens with master token for refresh
+        // Login mock: initial tokens
         Mock::given(method("POST"))
             .and(path_regex(r"/session/v1/login-request.*"))
             .and(body_partial_json(json!({
@@ -821,7 +809,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
             .mount(&server)
             .await;
 
-        // First logout attempt: returns 390112 SESSION_TOKEN_EXPIRED
+        //And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
         Mock::given(method("POST"))
             .and(path("/session"))
             .and(query_param("delete", "true"))
@@ -842,7 +830,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
             .mount(&server)
             .await;
 
-        // Token refresh: returns new session token
+        //And Mock HTTP server returns 200 after token refresh
         Mock::given(method("POST"))
             .and(path_regex(r"/session/token-request.*"))
             .and(header(
@@ -880,30 +868,23 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
             .mount(&server)
             .await;
 
-        //And UD Core connection is configured and logged in
+        //And Retry policy allows 1 retry
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
 
-            // Configure JWT authentication
             client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
             let temp_key_file = private_key_helper::get_test_private_key_file()
                 .expect("Failed to create test private key file");
             client
                 .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-            // Configure logout behavior BEFORE connection_init
             client.set_connection_option_bool("server_session_keep_alive", false);
             client.set_logout_error_strategy(error_strategy);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
-            client.set_connection_option_int("logout_max_attempts", 1); // 1 attempt (0 retries)
+            client.set_connection_option_int("logout_max_attempts", 1); // Token refresh retry is "free"
 
-            // Initialize connection
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.connection_init_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -912,28 +893,14 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         .unwrap();
 
         //When Logout is executed
-        let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
-
-        //Then Token refresh request is sent to server
-        //And Logout is retried with new session token
-        //And Close succeeds
-        assert!(
-            result.is_ok(),
-            "Close should succeed after token refresh for {}: {:?}",
-            strategy_name,
-            result.err()
-        );
+        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+            .await
+            .unwrap();
 
         // Verify requests: login + logout(390112) + token-refresh + logout(success)
         let received_requests = server.received_requests().await.unwrap();
 
+        //Then Token refresh request is sent to server
         assert!(
             received_requests
                 .iter()
@@ -942,6 +909,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
             strategy_name,
         );
 
+        //And Logout is retried with new session token
         let logout_count = received_requests
             .iter()
             .filter(|r| is_logout_request(r))
@@ -951,6 +919,14 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
             "Should have made at least 2 logout requests for {}, got {}",
             strategy_name,
             logout_count,
+        );
+
+        //And Close succeeds
+        assert!(
+            result.is_ok(),
+            "Close should succeed after token refresh for {}: {:?}",
+            strategy_name,
+            result.err()
         );
     }
 }
@@ -1030,11 +1006,7 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
             client.set_connection_option_int("logout_max_attempts", 1); // 1 attempt (0 retries)
 
             // Initialize connection
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.connection_init_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1043,14 +1015,9 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
         .unwrap();
 
         //When Connection close is initiated
-        let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+            .await
+            .unwrap();
 
         if should_succeed {
             //Then BestEffort: Close succeeds (error suppressed)
@@ -1075,10 +1042,6 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
 //                  Retry and Timeout Configuration
 // ===========================================================================
 
-// TODO(gherkin): "Given Core logout function called with <strategy_type> strategy" and
-// "And Retry policy configured with <max_attempts> max attempts" are empty steps — both are
-// configured in the RetryPolicy/LogoutConfig setup below the third step comment.
-// Refactor: extract strategy and retry config before their respective step comments.
 #[tokio::test]
 async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type() {
     // Scenario Outline: Examples (strategy_type, max_attempts, failures)
@@ -1088,9 +1051,19 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
         ("best-effort", ErrorStrategy::BestEffort, 3, 1),
     ] {
         //Given Core logout function called with <strategy_type> strategy
+        let _config = LogoutConfig {
+            error_strategy,
+            ..Default::default()
+        };
+
         //And Retry policy configured with <max_attempts> max attempts
-        //And Mock HTTP server fails <failures> times then returns 200
         let expected_attempts = num_failures + 1;
+        let retry_policy = RetryPolicy {
+            max_attempts: expected_attempts as u32,
+            ..Default::default()
+        };
+
+        //And Mock HTTP server fails <failures> times then returns 200
         let (addr, attempts, server) =
             spawn_test_server(expected_attempts, move |attempt| async move {
                 if attempt <= num_failures {
@@ -1104,16 +1077,6 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
         let server_url = format!("http://{}", addr);
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let client_info = test_client_info();
-
-        let _config = LogoutConfig {
-            error_strategy,
-            ..Default::default()
-        };
-
-        let retry_policy = RetryPolicy {
-            max_attempts: expected_attempts as u32, // Use the calculated value from loop
-            ..Default::default()
-        };
 
         //When Logout is executed
         let result = logout_session(
@@ -1141,13 +1104,6 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
     }
 }
 
-// TODO(gherkin): Two issues:
-// 1. "Given Core logout function called with <strategy_type> strategy" and
-//    "And Timeout configured to <timeout_seconds> seconds" are empty steps — both are
-//    configured in the LogoutConfig setup below the third step comment.
-// 2. Feature step is "Then Close succeeds" but test uses "//And Close succeeds" —
-//    keyword mismatch (And vs Then). The validator cannot match "Then Close succeeds".
-// Refactor: extract strategy/timeout config before their step comments; fix keyword.
 #[tokio::test]
 async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type() {
     // Scenario Outline: Examples (strategy_type, timeout_seconds, delay_seconds)
@@ -1158,7 +1114,18 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
         ("best-effort", ErrorStrategy::BestEffort, 10, 5),
     ] {
         //Given Core logout function called with <strategy_type> strategy
+        let _config = LogoutConfig {
+            error_strategy,
+            ..Default::default()
+        };
+
         //And Timeout configured to <timeout_seconds> seconds
+        let timeout = Duration::from_secs(timeout_seconds);
+        let retry_policy = RetryPolicy {
+            max_elapsed: timeout,
+            ..Default::default()
+        };
+
         //And Mock HTTP server delays response by <delay_seconds> seconds then returns 200
         let (addr, _, server) = spawn_test_server(1, move |_| {
             let delay = delay_seconds;
@@ -1173,12 +1140,6 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let client_info = test_client_info();
 
-        let _config = LogoutConfig {
-            error_strategy,
-            logout_total_timeout: Duration::from_secs(timeout_seconds),
-            ..Default::default()
-        };
-
         //When Logout is executed
         let start = Instant::now();
         let result = logout_session(
@@ -1186,7 +1147,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
             &server_url,
             "test_token",
             &client_info,
-            &RetryPolicy::default(),
+            &retry_policy,
         )
         .await;
         let elapsed = start.elapsed();
@@ -1198,7 +1159,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
             strategy_name
         );
 
-        //And Close succeeds
+        //Then Close succeeds
         assert!(result.is_ok(), "Should succeed for {}", strategy_name);
 
         server.await.unwrap();
@@ -1221,19 +1182,18 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 // These tests verify error strategy behavior at the connection layer,
 // testing connection_close() with different ErrorStrategy configurations.
 
-// TODO(gherkin): Empty steps — "Given Core logout function called with strict strategy" and
-// "And Retry policy configured with <max_attempts> max attempts" have no code immediately
-// following them; setup is batched in SnowflakeTestClient block after the third step.
-// Also: "Then Exactly <max_attempts> attempts are made", "And No further retries after max
-// reached", and "And WARN log is emitted" are batched before assertions. WARN log is also
-// not verified at all. Refactor: split setup/assertions per step; implement log capture.
 #[tokio::test]
+#[tracing_test::traced_test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     // Scenario Outline with Examples: max_attempts = 2, 3
 
     for max_attempts in [2u64, 3] {
         //Given Core logout function called with strict strategy
+        let error_strategy = ErrorStrategy::Strict;
+
         //And Retry policy configured with <max_attempts> max attempts
+        let configured_max_attempts = max_attempts as i64;
+
         //And Mock HTTP server returns 503 on all attempts
         let server = MockServer::start().await;
         mount_jwt_login_success(&server).await;
@@ -1246,7 +1206,6 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
             .mount(&server)
             .await;
 
-        //And UD Core connection is configured and logged in
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
@@ -1257,15 +1216,11 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
                 .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_logout_error_strategy(ErrorStrategy::Strict);
+            client.set_logout_error_strategy(error_strategy);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
-            client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
+            client.set_connection_option_int("logout_max_attempts", configured_max_attempts);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.connection_init_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1274,49 +1229,58 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         .unwrap();
 
         //When Logout is executed
-        let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+            .await
+            .unwrap();
+
+        let received_requests = server.received_requests().await.unwrap();
+        let logout_count = received_requests
+            .iter()
+            .filter(|r| is_logout_request(r))
+            .count();
 
         //Then Exactly <max_attempts> attempts are made
+        assert_eq!(
+            logout_count, max_attempts as usize,
+            "Should have made exactly {} logout attempts",
+            max_attempts
+        );
+
         //And No further retries after max reached
+        assert_eq!(
+            logout_count, max_attempts as usize,
+            "No extra attempts beyond max_attempts={}",
+            max_attempts
+        );
+
         //And WARN log is emitted
+        assert!(
+            logs_contain("Logout failed after retries exhausted"),
+            "Should emit error/warn log when retries exhausted (max_attempts={})",
+            max_attempts
+        );
+
         //And Close throws error
         assert!(
             result.is_err(),
             "Close should fail with strict strategy after exhausted retries (max_attempts={})",
             max_attempts
         );
-
-        let received_requests = server.received_requests().await.unwrap();
-        let logout_count = received_requests
-            .iter()
-            .filter(|r| is_logout_request(r))
-            .count();
-        assert_eq!(
-            logout_count, max_attempts as usize,
-            "Should have made exactly {} logout attempts",
-            max_attempts
-        );
     }
 }
 
-// TODO(gherkin): Same issues as strict strategy above — "Given", "And Retry policy...",
-// "Then Exactly <max_attempts>...", "And No further retries...", and "And WARN log is
-// emitted" are all empty steps (batched setup/assertions). WARN log is not verified.
-// Refactor: split per step; implement log capture.
 #[tokio::test]
+#[tracing_test::traced_test]
 async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy() {
     // Scenario Outline with Examples: max_attempts = 2, 3
 
     for max_attempts in [2u64, 3] {
         //Given Core logout function called with best-effort strategy
+        let error_strategy = ErrorStrategy::BestEffort;
+
         //And Retry policy configured with <max_attempts> max attempts
+        let configured_max_attempts = max_attempts as i64;
+
         //And Mock HTTP server returns 503 on all attempts
         let server = MockServer::start().await;
         mount_jwt_login_success(&server).await;
@@ -1329,7 +1293,6 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
             .mount(&server)
             .await;
 
-        //And UD Core connection is configured and logged in
         let server_uri = server.uri();
         let client = tokio::task::spawn_blocking(move || {
             let mut client = SnowflakeTestClient::with_int_tests_params(Some(&server_uri));
@@ -1340,15 +1303,11 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
                 .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
             client.set_connection_option_bool("server_session_keep_alive", false);
-            client.set_logout_error_strategy(ErrorStrategy::BestEffort);
+            client.set_logout_error_strategy(error_strategy);
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
-            client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
+            client.set_connection_option_int("logout_max_attempts", configured_max_attempts);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.connection_init_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1357,35 +1316,43 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         .unwrap();
 
         //When Logout is executed
-        let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
-
-        //Then Exactly <max_attempts> attempts are made
-        //And No further retries after max reached
-        //And WARN log is emitted
-        //And Close succeeds
-        assert!(
-            result.is_ok(),
-            "Close should succeed with best-effort strategy despite failures (max_attempts={}): {:?}",
-            max_attempts,
-            result.err()
-        );
+        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+            .await
+            .unwrap();
 
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
             .iter()
             .filter(|r| is_logout_request(r))
             .count();
+
+        //Then Exactly <max_attempts> attempts are made
         assert_eq!(
             logout_count, max_attempts as usize,
             "Should have made exactly {} logout attempts",
             max_attempts
+        );
+
+        //And No further retries after max reached
+        assert_eq!(
+            logout_count, max_attempts as usize,
+            "No extra attempts beyond max_attempts={}",
+            max_attempts
+        );
+
+        //And WARN log is emitted
+        assert!(
+            logs_contain("Logout failed after retries exhausted"),
+            "Should emit warn log when retries exhausted with best-effort (max_attempts={})",
+            max_attempts
+        );
+
+        //And Close succeeds
+        assert!(
+            result.is_ok(),
+            "Close should succeed with best-effort strategy despite failures (max_attempts={}): {:?}",
+            max_attempts,
+            result.err()
         );
     }
 }
@@ -1448,11 +1415,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 3);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.connection_init_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1461,18 +1424,11 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
         .unwrap();
 
         //When Logout is executed
-        let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+            .await
+            .unwrap();
 
         //Then Close throws error immediately
-        //And Error is surfaced to caller
-        //And No retries are attempted
         assert!(
             result.is_err(),
             "Close should fail with strict strategy for non-retryable error {}: {:?}",
@@ -1485,6 +1441,16 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
             .iter()
             .filter(|r| is_logout_request(r))
             .count();
+
+        //And Error is surfaced to caller
+        let error = result.unwrap_err();
+        assert!(
+            !format!("{error:?}").is_empty(),
+            "Error should be surfaced to caller for non-retryable error {}",
+            error_code
+        );
+
+        //And No retries are attempted
         assert_eq!(
             logout_count, 1,
             "Should have made exactly 1 logout attempt (no retries for non-retryable error {})",
@@ -1494,6 +1460,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
 }
 
 #[tokio::test]
+#[tracing_test::traced_test]
 async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strategy() {
     // Scenario Outline with Examples: error_code = 400, 403, 404, 390114
 
@@ -1551,11 +1518,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 3);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.connection_init_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1564,18 +1527,24 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         .unwrap();
 
         //When Logout is executed
-        let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+            .await
+            .unwrap();
+
+        let received_requests = server.received_requests().await.unwrap();
+        let logout_count = received_requests
+            .iter()
+            .filter(|r| is_logout_request(r))
+            .count();
 
         //Then Error is logged as WARN
+        assert!(
+            logs_contain("Logout failed after retries exhausted"),
+            "Should emit warn log for non-retryable error {} with best-effort strategy",
+            error_code
+        );
+
         //And Close succeeds without throwing
-        //And No retries are attempted
         assert!(
             result.is_ok(),
             "Close should succeed with best-effort strategy despite non-retryable error {}: {:?}",
@@ -1583,11 +1552,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
             result.err()
         );
 
-        let received_requests = server.received_requests().await.unwrap();
-        let logout_count = received_requests
-            .iter()
-            .filter(|r| is_logout_request(r))
-            .count();
+        //And No retries are attempted
         assert_eq!(
             logout_count, 1,
             "Should have made exactly 1 logout attempt (no retries for non-retryable error {})",
@@ -1600,18 +1565,15 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
 //                      Timeout Failure Scenarios
 // ===========================================================================
 
-// TODO(gherkin): Two issues:
-// 1. "Given Core logout function called with strict strategy" is an empty step — the next
-//    line is also a step comment ("And Timeout configured..."). Strategy is set in
-//    LogoutConfig below both comments. Refactor: set strategy before the And comment.
-// 2. Feature step is "Then Close throws timeout error" but test uses
-//    "//And Close throws timeout error" — keyword mismatch (And vs Then).
 #[tokio::test]
 async fn should_throw_on_timeout_with_strict_strategy() {
     // Scenario Outline: Examples (timeout_seconds=3, delay_seconds=5)
     //Given Core logout function called with strict strategy
+    let _error_strategy = ErrorStrategy::Strict;
+
     //And Timeout configured to <timeout_seconds> seconds
     let timeout = Duration::from_secs(3);
+
     //And Mock HTTP server delays response by <delay_seconds> seconds
     let delay = Duration::from_secs(5);
 
@@ -1664,7 +1626,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
         elapsed
     );
 
-    //And Close throws timeout error
+    //Then Close throws timeout error
     assert!(result.is_err(), "Strict strategy should fail on timeout");
 
     let error_msg = format!("{:?}", result.unwrap_err());
@@ -1685,8 +1647,14 @@ async fn should_throw_on_timeout_with_strict_strategy() {
 async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     // Scenario Outline: Examples (timeout_seconds=3, delay_seconds=5)
     //Given Core logout function called with best-effort strategy
+    let config = LogoutConfig {
+        error_strategy: ErrorStrategy::BestEffort,
+        ..Default::default()
+    };
+
     //And Timeout configured to <timeout_seconds> seconds
     let timeout = Duration::from_secs(3);
+
     //And Mock HTTP server delays response by <delay_seconds> seconds
     let delay = Duration::from_secs(5);
 
@@ -1705,12 +1673,6 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     let server_url = format!("http://{}", addr);
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let client_info = test_client_info();
-
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::BestEffort,
-        logout_total_timeout: timeout,
-        ..Default::default()
-    };
 
     let retry_policy = RetryPolicy {
         max_attempts: 1,
@@ -1749,7 +1711,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         );
     let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
-    //And Close succeeds
+    //Then Close succeeds
     assert!(
         handled_result.is_ok(),
         "BestEffort should succeed despite timeout, raw result: {:?}",
@@ -1790,11 +1752,9 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
     .unwrap();
 
     //When Connection is closed
-    let conn_handle = client.conn_handle;
-    let close_result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
+    let (close_result, client) = tokio::task::spawn_blocking(move || {
+        let result = client.connection_close_blocking();
+        (result, client)
     })
     .await
     .unwrap();

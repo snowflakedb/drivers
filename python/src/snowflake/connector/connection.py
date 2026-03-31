@@ -265,6 +265,7 @@ class Connection:
         self._closed = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
+        self._arrow_number_to_decimal: bool = False
 
         # Register atexit handler if auto_cleanup is enabled
         if self.auto_cleanup:
@@ -279,9 +280,6 @@ class Connection:
         Related: SNOW-2314152
         """
         return map_logout_config_phase2(self)
-
-        # other connection properties
-        self._arrow_number_to_decimal: bool = False
 
     @pep249
     def close(self, retry: bool = True) -> None:

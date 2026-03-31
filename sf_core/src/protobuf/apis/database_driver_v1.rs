@@ -1631,6 +1631,18 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementSetOptionBoolRequest,
     ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_set_option_bool_blocking(
+        &self,
+        input: ConnectionSetOptionBoolRequest,
+    ) -> Result<ConnectionSetOptionBoolResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, proto_utils::ProtoError<DriverException>>;
     fn connection_release_blocking(
         &self,
         input: ConnectionReleaseRequest,
@@ -1739,6 +1751,27 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: StatementSetOptionBoolRequest,
     ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>> {
         BLOCKING_CLIENT_RUNTIME.block_on(self.statement_set_option_bool(input))
+    }
+
+    fn connection_set_option_bool_blocking(
+        &self,
+        input: ConnectionSetOptionBoolRequest,
+    ) -> Result<ConnectionSetOptionBoolResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_set_option_bool(input))
+    }
+
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_close(input))
+    }
+
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_is_closed(input))
     }
 
     fn connection_release_blocking(
