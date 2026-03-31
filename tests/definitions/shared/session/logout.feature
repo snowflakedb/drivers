@@ -11,7 +11,7 @@ Feature: Session Logout
   Scenario Outline: should cleanup all tokens on close regardless of whether logout was sent
     # Tests that tokens are cleared regardless of logout decision
     Given Snowflake client is logged in
-    And <server_session_keep_alive> is set to any value
+    And server_session_keep_alive is set to <server_session_keep_alive>
     When Connection is closed
     Then Session token in Connection.tokens is null
     And Master token in Connection.tokens is null
