@@ -65,8 +65,9 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
           restore-keys: |
+            ${{ runner.os }}-gradle-jdbc-
             ${{ runner.os }}-gradle-
 
       - name: Decode secrets
@@ -114,8 +115,9 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
           restore-keys: |
+            ${{ runner.os }}-gradle-jdbc-reference-
             ${{ runner.os }}-gradle-
 
       - name: Decode secrets
