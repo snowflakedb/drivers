@@ -38,7 +38,6 @@ try {
     $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=NEW")
     if (Get-Command ccache -ErrorAction SilentlyContinue) {
         $cmakeArgs += @("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", "-DCMAKE_C_COMPILER_LAUNCHER=ccache")
-        $env:CCACHE_DIR = Join-Path $PSScriptRoot ".ccache"
     }
     $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } elseif ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { $null }
     if ($vcpkgRoot) {

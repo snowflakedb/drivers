@@ -105,7 +105,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ github.sha }}
+          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-ccache-odbc-
 
@@ -276,7 +276,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .ccache
-          key: ${{ runner.os }}-ccache-odbc-${{ github.sha }}
+          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-ccache-odbc-
 

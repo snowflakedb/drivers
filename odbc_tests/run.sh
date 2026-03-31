@@ -19,7 +19,6 @@ export PARAMETER_PATH=${PARAMETER_PATH:-$(pwd)/parameters.json}
 CCACHE_ARGS=""
 if command -v ccache &>/dev/null; then
     CCACHE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
-    export CCACHE_DIR="$(pwd)/odbc_tests/.ccache"
 fi
 
 pushd odbc_tests

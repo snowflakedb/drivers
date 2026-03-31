@@ -13,7 +13,7 @@ Before running tests, ensure you have:
 - coreutils (for `nproc`), unixodbc (for `odbc_config`) from `brew`
 - (Optional) ccache for faster rebuilds: `brew install ccache`
 
-When ccache is installed, the build scripts automatically use it. The cache is stored in `odbc_tests/.ccache/` and persists across builds.
+When ccache is installed, the build scripts automatically use it as the compiler launcher.
 
 ### Local Testing (macOS/Linux)
 
