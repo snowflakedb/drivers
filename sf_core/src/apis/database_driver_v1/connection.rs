@@ -551,6 +551,10 @@ pub struct RefreshContext {
     server_url: String,
     client_info: ClientInfo,
     state: RefreshState,
+    /// Shared closed-state flag. When true, refresh_token() returns ConnectionClosed
+    /// rather than attempting a new HTTP refresh. Prevents token refresh for queries
+    /// in flight when close() has been called.
+    is_closed: Arc<AtomicBool>,
 }
 
 impl RefreshContext {
@@ -575,6 +579,7 @@ impl RefreshContext {
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
             state: RefreshState::Initial,
+            is_closed: conn.is_closed.clone(),
         })
     }
 
@@ -590,6 +595,12 @@ impl RefreshContext {
         &mut self,
         last_error: Option<RestError>,
     ) -> Result<SensitiveString, ApiError> {
+        // Abort token refresh if connection has been closed. This prevents in-flight
+        // queries from performing a token refresh after close() has been called.
+        if self.is_closed.load(Ordering::SeqCst) {
+            return Err(ConnectionClosedSnafu {}.build());
+        }
+
         match &self.state {
             // No token issued yet - read the current session token
             RefreshState::Initial => {

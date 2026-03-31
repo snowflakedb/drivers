@@ -382,6 +382,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ConnectionNotInitialized { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::ConnectionClosed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
         ApiError::TlsClientCreation { source, .. } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: source.to_string(),
@@ -542,6 +545,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
         ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
         ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
+        ApiError::ConnectionClosed { .. } => StatusCode::InternalError,
         ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
         ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
         ApiError::Statement { .. } => StatusCode::InternalError,

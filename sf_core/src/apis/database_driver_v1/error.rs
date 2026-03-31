@@ -51,6 +51,11 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Connection is closed"))]
+    ConnectionClosed {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("TLS client creation failed: {source}"))]
     TlsClientCreation {
         source: TlsError,

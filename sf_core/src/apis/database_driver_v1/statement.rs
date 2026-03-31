@@ -21,6 +21,7 @@ use crate::rest::snowflake::{
 
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
+use std::sync::atomic::Ordering;
 use std::{collections::HashMap, sync::Arc};
 
 #[cfg(test)]
@@ -332,6 +333,10 @@ impl DatabaseDriverV1 {
 
         let (query_parameters, http_client, retry_policy) = {
             let conn = stmt.conn.lock().await;
+            // Reject query execution if close() has been called
+            if conn.is_closed.load(Ordering::SeqCst) {
+                return Err(ConnectionClosedSnafu {}.build());
+            }
             (
                 conn.query_transport_parameters()?,
                 conn.http_client
