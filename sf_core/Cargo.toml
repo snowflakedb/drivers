@@ -101,7 +101,7 @@ reqwest = { version = "0.12.23", features = ["blocking"] }
 wiremock = "0.6"
 rcgen = "0.13"
 tokio-rustls = "0.26"
-tracing-test = "0.2"
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
 
 [[test]]
 name = "integration_tests"

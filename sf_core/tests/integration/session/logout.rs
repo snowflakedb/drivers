@@ -394,6 +394,7 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     assert!(
         error_lower.contains("timeout")
             || error_lower.contains("timed out")
+            || error_lower.contains("timedout")
             || error_lower.contains("deadline"),
         "Error should be timeout-related, got: {}",
         error_msg
@@ -1231,10 +1232,17 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         .await
         .unwrap();
 
+        // Enter the test's tracing span on the blocking thread so that logs_contain()
+        // (which filters by span scope) captures logs from connection_close_blocking().
+        let span = tracing::Span::current();
+
         //When Logout is executed
-        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
-            .await
-            .unwrap();
+        let result = tokio::task::spawn_blocking(move || {
+            let _enter = span.enter();
+            client.connection_close_blocking()
+        })
+        .await
+        .unwrap();
 
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
@@ -1318,10 +1326,17 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         .await
         .unwrap();
 
+        // Enter the test's tracing span on the blocking thread so that logs_contain()
+        // (which filters by span scope) captures logs from connection_close_blocking().
+        let span = tracing::Span::current();
+
         //When Logout is executed
-        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
-            .await
-            .unwrap();
+        let result = tokio::task::spawn_blocking(move || {
+            let _enter = span.enter();
+            client.connection_close_blocking()
+        })
+        .await
+        .unwrap();
 
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
@@ -1529,10 +1544,17 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         .await
         .unwrap();
 
+        // Enter the test's tracing span on the blocking thread so that logs_contain()
+        // (which filters by span scope) captures logs from connection_close_blocking().
+        let span = tracing::Span::current();
+
         //When Logout is executed
-        let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
-            .await
-            .unwrap();
+        let result = tokio::task::spawn_blocking(move || {
+            let _enter = span.enter();
+            client.connection_close_blocking()
+        })
+        .await
+        .unwrap();
 
         let received_requests = server.received_requests().await.unwrap();
         let logout_count = received_requests
