@@ -77,7 +77,8 @@ class TestUserPasswordMfaAuthentication:
     def test_should_authenticate_using_username_password_with_appended_totp_passcode(
         self, connection_factory, mfa_params, mfa_passcode
     ):
-        # Given Authentication is set to username_password_mfa and user, password with appended passcode are provided and passcodeInPassword is set
+        # Given Authentication is set to username_password_mfa and user, password with appended
+        # passcode are provided and passcodeInPassword is set
         combined_password = mfa_params["password"] + mfa_passcode
 
         # When Trying to Connect
