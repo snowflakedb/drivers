@@ -35,7 +35,7 @@ class LogoutConfig:
 
     Attributes:
         server_session_keep_alive: Final value for Core (already mapped)
-        enable_auto_detection: Final value for Core (None = treat as False in Core)
+        enable_logout_auto_detection: Final value for Core (None = treat as False in Core)
         error_strategy: Error handling strategy (BEST_EFFORT or STRICT)
         logout_total_timeout_seconds: Total timeout budget for logout operation (all retries)
         max_attempts: Maximum total attempts (NOT retry count: 1 = no retries, 3 = 2 retries)
@@ -43,7 +43,7 @@ class LogoutConfig:
     """
 
     server_session_keep_alive: Optional[bool]
-    enable_auto_detection: Optional[bool]
+    enable_logout_auto_detection: Optional[bool]
     error_strategy: int
     logout_total_timeout_seconds: int
     max_attempts: Optional[int]  # Total attempts (1 = no retries, 3 = 2 retries)
@@ -58,7 +58,7 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
     - server_session_keep_alive=False + auto-detection disabled/None → Core receives False
     - server_session_keep_alive=True → Core receives True
     - server_session_keep_alive=None → Core receives None
-    - enable_auto_detection: passed through as-is
+    - enable_logout_auto_detection: passed through as-is
     - error_strategy: BEST_EFFORT (backward compatible)
 
     Note: If enable_server_session_keep_alive_auto_detection is not set by the caller,
@@ -71,16 +71,16 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
         LogoutConfig with all final values ready for Core
     """
     server_session_keep_alive = connection.server_session_keep_alive
-    enable_auto_detection = connection.enable_server_session_keep_alive_auto_detection
+    enable_logout_auto_detection = connection.enable_server_session_keep_alive_auto_detection
 
     # Phase 2 special mapping: False + auto-detection enabled → map to None
     # This makes Core check the registry (legacy Python behavior)
-    if server_session_keep_alive is False and enable_auto_detection:
+    if server_session_keep_alive is False and enable_logout_auto_detection:
         server_session_keep_alive = None
 
     return LogoutConfig(
         server_session_keep_alive=server_session_keep_alive,
-        enable_auto_detection=enable_auto_detection,
+        enable_logout_auto_detection=enable_logout_auto_detection,
         error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,
         logout_total_timeout_seconds=15,  # 15 second total budget with 3 max attempts = ~5s per attempt
         max_attempts=3,  # 3 total attempts (2 retries) for faster failure feedback

@@ -323,7 +323,7 @@ class TestLogoutPythonWrapper:
             )
 
             # And enable_server_session_keep_alive_auto_detection true is passed to Core
-            assert logout_config.enable_auto_detection is True, "auto_detection=True should pass through to Core"
+            assert logout_config.enable_logout_auto_detection is True, "auto_detection=True should pass through to Core"
 
             # And No deprecation warning is emitted
             deprecation_warnings = [

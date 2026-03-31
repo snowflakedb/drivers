@@ -345,7 +345,7 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_logout_error_strategy(&self, strategy: ErrorStrategy) {
-        self.set_connection_option_int("logout_error_strategy", strategy.to_protobuf_value());
+        self.set_connection_option_int("logout_error_strategy", strategy.as_i64());
     }
 
     /// Initialize this connection (call after configuring options, before queries).

@@ -245,12 +245,12 @@ class Connection:
                 )
             )
 
-        if logout_config.enable_auto_detection is not None:
+        if logout_config.enable_logout_auto_detection is not None:
             self.db_api.connection_set_option_bool(
                 ConnectionSetOptionBoolRequest(
                     conn_handle=self.conn_handle,
                     key=LogoutOptionKeys.ENABLE_LOGOUT_AUTO_DETECTION,
-                    value=logout_config.enable_auto_detection,
+                    value=logout_config.enable_logout_auto_detection,
                 )
             )
 

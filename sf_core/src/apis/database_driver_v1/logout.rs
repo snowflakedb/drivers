@@ -6,7 +6,8 @@
 //! - HTTP logout request execution with token refresh
 //!
 //! The module exports a clean interface to connection.rs:
-//! - `prepare_logout()`: Returns Option<LogoutData> after validation and decision
+//! - `prepare_logout_from_conn()`: Synchronous; called while holding the connection lock
+//! - `execute_logout_with_strategy()`: Async; called after the lock is released
 //! - `send_logout_request()`: Sends the HTTP logout request
 
 use super::async_query_registry::AsyncQueryRegistry;
@@ -17,8 +18,6 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::RestError;
 use crate::rest::snowflake::logout::logout_session;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Data extracted from a locked connection needed to perform HTTP logout.
 pub(super) struct LogoutData {
@@ -33,7 +32,7 @@ pub(super) struct LogoutData {
 ///
 /// Implements Phase 3 unified truth table (SNOW-2314152):
 ///
-/// | server_session_keep_alive | enable_auto_detection | Auto-detect result | Logout? |
+/// | server_session_keep_alive | enable_logout_auto_detection | Auto-detect result | Logout? |
 /// |---------------------------|----------------------|-------------------|---------|
 /// | Some(true)                | any                  | not consulted     | No      |
 /// | Some(false)               | any                  | not consulted     | Yes     |
@@ -71,7 +70,7 @@ pub fn should_send_logout(
     }
 
     // server_session_keep_alive is None - check auto-detection setting
-    match config.enable_auto_detection {
+    match config.enable_logout_auto_detection {
         Some(true) => {
             // Auto-detection enabled - check registry
             if let Some(reg) = registry {
@@ -111,8 +110,8 @@ pub fn should_send_logout(
         Some(false) | None => {
             // Auto-detection disabled or not set - default to logout (Phase 3 - SNOW-2314152)
             tracing::info!(
-                "Sending logout: auto-detection disabled (enable_auto_detection={:?})",
-                config.enable_auto_detection
+                "Sending logout: auto-detection disabled (enable_logout_auto_detection={:?})",
+                config.enable_logout_auto_detection
             );
             (true, None)
         }
@@ -137,20 +136,21 @@ fn validate_config(config: &LogoutConfig) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Prepare logout: validate config, make decision, extract data.
+/// Prepare logout while the caller already holds the connection lock.
+///
+/// Called with `&conn` already extracted from the mutex so the caller can
+/// consolidate all pre-network synchronous work into a single lock acquisition.
 ///
 /// Returns:
 /// - `Ok(Some(LogoutData))`: Logout should be sent with this data
 /// - `Ok(None)`: Logout should be skipped (explicit config or missing fields)
-/// - `Err(ApiError)`: Validation failed or preparation error (error_strategy decides propagation)
-pub(super) async fn prepare_logout(
-    conn_ptr: &Arc<Mutex<Connection>>,
+/// - `Err(ApiError)`: Validation failed or preparation error
+pub(super) fn prepare_logout_from_conn(
+    conn: &Connection,
     config: &LogoutConfig,
 ) -> Result<Option<LogoutData>, ApiError> {
-    // Validate config first
+    // Validate config first (no lock needed — operates on config only)
     validate_config(config)?;
-
-    let conn = conn_ptr.lock().await;
 
     tracing::info!("Closing connection");
 
@@ -158,7 +158,6 @@ pub(super) async fn prepare_logout(
     let (send_logout, skip_reason) = should_send_logout(config, Some(&conn.async_query_registry));
 
     if !send_logout {
-        // Logout explicitly skipped by configuration or state
         tracing::info!(
             reason = skip_reason.as_deref().unwrap_or("unknown"),
             "Skipping logout based on configuration or state"
@@ -166,15 +165,14 @@ pub(super) async fn prepare_logout(
         return Ok(None);
     }
 
-    // Logout should be sent - extract required data
+    // Logout should be sent - extract required data (all pure reads from conn)
     match (
         conn.http_client.clone(),
         conn.server_url.clone(),
         conn.client_info.clone(),
     ) {
         (Some(client), Some(url), Some(info)) => {
-            // Try to create RefreshContext - if it fails, this is a preparation failure
-            let refresh_ctx = RefreshContext::new(&conn)?;
+            let refresh_ctx = RefreshContext::new(conn)?;
 
             let mut retry_policy = conn.retry_policy.clone();
             if let Some(max_attempts) = config.max_attempts {
@@ -315,7 +313,7 @@ mod tests {
         // Given server_session_keep_alive = Some(true)
         let config = LogoutConfig {
             server_session_keep_alive: Some(true),
-            enable_auto_detection: None,
+            enable_logout_auto_detection: None,
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -333,7 +331,7 @@ mod tests {
         // Given server_session_keep_alive = Some(false)
         let config = LogoutConfig {
             server_session_keep_alive: Some(false),
-            enable_auto_detection: Some(true), // Should be ignored
+            enable_logout_auto_detection: Some(true), // Should be ignored
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -349,10 +347,10 @@ mod tests {
 
     #[test]
     fn test_auto_detection_enabled_with_running_queries() {
-        // Given server_session_keep_alive = None, enable_auto_detection = Some(true)
+        // Given server_session_keep_alive = None, enable_logout_auto_detection = Some(true)
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_auto_detection: Some(true),
+            enable_logout_auto_detection: Some(true),
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -368,10 +366,10 @@ mod tests {
 
     #[test]
     fn test_auto_detection_enabled_with_no_queries() {
-        // Given server_session_keep_alive = None, enable_auto_detection = Some(true)
+        // Given server_session_keep_alive = None, enable_logout_auto_detection = Some(true)
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_auto_detection: Some(true),
+            enable_logout_auto_detection: Some(true),
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -387,10 +385,10 @@ mod tests {
 
     #[test]
     fn test_auto_detection_disabled() {
-        // Given enable_auto_detection = Some(false)
+        // Given enable_logout_auto_detection = Some(false)
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_auto_detection: Some(false),
+            enable_logout_auto_detection: Some(false),
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -424,7 +422,7 @@ mod tests {
         // Given auto-detection enabled but no registry provided
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_auto_detection: Some(true),
+            enable_logout_auto_detection: Some(true),
             ..Default::default()
         };
 

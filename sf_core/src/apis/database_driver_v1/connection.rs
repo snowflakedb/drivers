@@ -999,25 +999,41 @@ impl DatabaseDriverV1 {
                 argument: "Connection handle not found".to_string(),
             })?;
 
-        // Check if already closed (idempotent close)
-        let was_already_closed = mark_connection_closed(&conn_ptr).await?;
-        if was_already_closed {
-            tracing::debug!("Connection already closed, skipping duplicate close");
+        // Single lock acquisition for all pre-network synchronous work:
+        // atomically mark closed, capture config, and extract logout data.
+        // Holding the lock here prevents a concurrent set_option_int from racing
+        // between the "mark closed" and "read config" steps.
+        let prepare_result = {
+            let conn = conn_ptr.lock().await;
+
+            // Atomic swap returns true if connection was already closed (idempotent guard)
+            let was_already_closed = conn.is_closed.swap(true, Ordering::SeqCst);
+            if was_already_closed {
+                tracing::debug!("Connection already closed, skipping duplicate close");
+                // Return None to signal early exit after the block
+                None
+            } else {
+                // Read config at close()-time so options set via set_option_int take effect
+                let config = conn.logout_config.clone();
+                let error_strategy = config.error_strategy;
+
+                // TODO: SNOW-2912513 - Record telemetry for logout decision
+
+                // Prepare logout data while holding the lock (pure reads, no network I/O)
+                let logout_data = logout::prepare_logout_from_conn(&conn, &config)?;
+
+                Some((logout_data, error_strategy))
+            }
+        };
+
+        let Some((logout_data, error_strategy)) = prepare_result else {
             return Ok(());
-        }
+        };
 
-        // Get logout config — read at close()-time (not cached from init), so
-        // close(retry=False) overrides via set_option_int take effect correctly.
-        let config = get_logout_config(&conn_ptr).await?;
+        // Execute logout — network I/O, lock must not be held
+        let logout_result = logout::execute_logout_with_strategy(logout_data, error_strategy).await;
 
-        // TODO: SNOW-2912513 - Record telemetry for logout decision
-
-        // Prepare logout and send if needed - all failures go through error_strategy
-        let logout_data = logout::prepare_logout(&conn_ptr, &config).await?;
-        let logout_result =
-            logout::execute_logout_with_strategy(logout_data, config.error_strategy).await;
-
-        // Cleanup connection resources
+        // Cleanup connection resources (separate lock acquisition after I/O)
         cleanup_connection(&conn_ptr).await?;
 
         if logout_result.is_ok() {
@@ -1039,25 +1055,6 @@ async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), Api
     // TODO: Implement QCC (query result cache) clearing
 
     Ok(())
-}
-
-/// Atomically mark connection as closed.
-///
-/// Returns true if the connection was already closed (duplicate close attempt).
-/// This provides idempotent close() behavior — multiple calls are safe.
-async fn mark_connection_closed(conn_ptr: &Arc<Mutex<Connection>>) -> Result<bool, ApiError> {
-    let conn = conn_ptr.lock().await;
-    // Atomic swap returns the previous value (true = was already closed)
-    Ok(conn.is_closed.swap(true, Ordering::SeqCst))
-}
-
-/// Get logout configuration from a connection.
-///
-/// Reads at close()-time rather than caching from init, so options set via
-/// connection_set_option_int after init (e.g. retry=False override) take effect.
-async fn get_logout_config(conn_ptr: &Arc<Mutex<Connection>>) -> Result<LogoutConfig, ApiError> {
-    let conn = conn_ptr.lock().await;
-    Ok(conn.logout_config.clone())
 }
 
 #[cfg(test)]

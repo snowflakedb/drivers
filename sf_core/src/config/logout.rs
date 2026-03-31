@@ -27,7 +27,7 @@ pub struct LogoutConfig {
     /// - Some(true): Check async query registry before logout
     /// - Some(false): Don't check registry
     /// - None: Treated as false (no auto-detection)
-    pub enable_auto_detection: Option<bool>,
+    pub enable_logout_auto_detection: Option<bool>,
 
     /// Error handling strategy for logout failures
     pub error_strategy: ErrorStrategy,
@@ -55,7 +55,7 @@ impl Default for LogoutConfig {
     fn default() -> Self {
         Self {
             server_session_keep_alive: None,
-            enable_auto_detection: None,
+            enable_logout_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
             logout_total_timeout: Duration::from_secs(5),
             max_attempts: None,
@@ -70,9 +70,9 @@ impl LogoutConfig {
     /// All validation happens here, once, at connection_init time.
     /// This follows the same pattern as LoginParameters::from_settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
-        // Parse and validate error_strategy (sent as protobuf enum int value)
+        // Parse and validate error_strategy (integer discriminant: 0=Unspecified, 1=BestEffort, 2=Strict)
         let error_strategy = match settings.get_int("logout_error_strategy") {
-            Some(v) => ErrorStrategy::from_protobuf_value(v)?,
+            Some(v) => ErrorStrategy::from_i64(v)?,
             None => ErrorStrategy::Strict, // default
         };
 
@@ -126,7 +126,7 @@ impl LogoutConfig {
 
         Ok(Self {
             server_session_keep_alive: settings.get_bool("server_session_keep_alive"),
-            enable_auto_detection: settings.get_bool("enable_logout_auto_detection"),
+            enable_logout_auto_detection: settings.get_bool("enable_logout_auto_detection"),
             error_strategy,
             logout_total_timeout,
             max_attempts,
@@ -138,8 +138,9 @@ impl LogoutConfig {
 /// Strategy for error handling during logout.
 ///
 /// Controls how errors are surfaced after all retry mechanisms have been exhausted.
-/// Uses #[repr(i64)] to directly map enum discriminants to the protobuf wire format
-/// values shared across all language drivers (Python, Go, JDBC, ODBC).
+/// Uses #[repr(i64)] to map enum discriminants to shared integer values (0=Unspecified,
+/// 1=BestEffort, 2=Strict) that all language drivers agree on when calling
+/// connection_set_option_int("logout_error_strategy", value).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i64)]
 pub enum ErrorStrategy {
@@ -152,20 +153,20 @@ pub enum ErrorStrategy {
 }
 
 impl ErrorStrategy {
-    /// Protobuf wire format value for "unspecified" — treated as the default (Strict).
+    /// Integer value for "unspecified" — treated as the default (Strict).
     const UNSPECIFIED_VALUE: i64 = 0;
-    /// Protobuf wire format value for BestEffort error strategy.
+    /// Integer value for BestEffort error strategy.
     const BEST_EFFORT_VALUE: i64 = 1;
-    /// Protobuf wire format value for Strict error strategy.
+    /// Integer value for Strict error strategy.
     const STRICT_VALUE: i64 = 2;
 
-    /// Explicitly convert to the protobuf wire format value.
-    pub fn to_protobuf_value(self) -> i64 {
+    /// Convert to the shared integer discriminant value.
+    pub fn as_i64(self) -> i64 {
         self as i64
     }
 
-    /// Explicitly create from a protobuf wire format value.
-    pub fn from_protobuf_value(value: i64) -> Result<Self, ConfigError> {
+    /// Create from a shared integer discriminant value.
+    pub fn from_i64(value: i64) -> Result<Self, ConfigError> {
         match value {
             Self::UNSPECIFIED_VALUE => Ok(Self::default()),
             Self::BEST_EFFORT_VALUE => Ok(Self::BestEffort),
@@ -223,7 +224,7 @@ mod tests {
     fn test_default_config() {
         let config = LogoutConfig::default();
         assert_eq!(config.server_session_keep_alive, None);
-        assert_eq!(config.enable_auto_detection, None);
+        assert_eq!(config.enable_logout_auto_detection, None);
         assert_eq!(config.error_strategy, ErrorStrategy::Strict);
         assert_eq!(config.logout_total_timeout, Duration::from_secs(5));
     }
@@ -268,37 +269,31 @@ mod tests {
     }
 
     #[test]
-    fn test_error_strategy_from_protobuf_value() {
-        // Test protobuf enum parsing
+    fn test_error_strategy_from_i64() {
+        // Test integer discriminant parsing
         assert_eq!(
-            ErrorStrategy::from_protobuf_value(0).unwrap(),
+            ErrorStrategy::from_i64(0).unwrap(),
             ErrorStrategy::Strict,
             "UNSPECIFIED (0) should default to Strict"
         );
         assert_eq!(
-            ErrorStrategy::from_protobuf_value(1).unwrap(),
+            ErrorStrategy::from_i64(1).unwrap(),
             ErrorStrategy::BestEffort,
             "BEST_EFFORT (1) should map to BestEffort"
         );
         assert_eq!(
-            ErrorStrategy::from_protobuf_value(2).unwrap(),
+            ErrorStrategy::from_i64(2).unwrap(),
             ErrorStrategy::Strict,
             "STRICT (2) should map to Strict"
         );
     }
 
     #[test]
-    fn test_error_strategy_from_protobuf_value_invalid() {
-        let result = ErrorStrategy::from_protobuf_value(999);
-        assert!(
-            result.is_err(),
-            "from_protobuf_value should reject invalid values"
-        );
+    fn test_error_strategy_from_i64_invalid() {
+        let result = ErrorStrategy::from_i64(999);
+        assert!(result.is_err(), "from_i64 should reject invalid values");
 
-        let result = ErrorStrategy::from_protobuf_value(-1);
-        assert!(
-            result.is_err(),
-            "from_protobuf_value should reject negative values"
-        );
+        let result = ErrorStrategy::from_i64(-1);
+        assert!(result.is_err(), "from_i64 should reject negative values");
     }
 }
