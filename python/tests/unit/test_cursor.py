@@ -993,12 +993,12 @@ class TestCheckCanUseArrowResultset:
 
     def test_no_error_when_pyarrow_installed(self, cursor):
         """check_can_use_arrow_resultset does not raise when pyarrow is available."""
-        with patch("snowflake.connector.cursor.pyarrow", MagicMock()):
+        with patch("snowflake.connector.cursor._base.pyarrow", MagicMock()):
             cursor.check_can_use_arrow_resultset()
 
     def test_raises_programming_error_when_pyarrow_missing(self, cursor):
         """check_can_use_arrow_resultset raises ProgrammingError when pyarrow is not installed."""
-        with patch("snowflake.connector.cursor.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_arrow_resultset()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -1006,7 +1006,7 @@ class TestCheckCanUseArrowResultset:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_arrow_resultset()
 
@@ -1024,12 +1024,12 @@ class TestCheckCanUsePandas:
 
     def test_no_error_when_pandas_installed(self, cursor):
         """check_can_use_pandas does not raise when pandas is available."""
-        with patch("snowflake.connector.cursor.pandas", MagicMock()):
+        with patch("snowflake.connector.cursor._base.pandas", MagicMock()):
             cursor.check_can_use_pandas()
 
     def test_raises_programming_error_when_pandas_missing(self, cursor):
         """check_can_use_pandas raises ProgrammingError when pandas is not installed."""
-        with patch("snowflake.connector.cursor.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_pandas()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -1037,7 +1037,7 @@ class TestCheckCanUsePandas:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_pandas()
 
@@ -1058,7 +1058,7 @@ class TestFetchArrowBatches:
         mock_pa = MagicMock()
         with (
             patch("snowflake.connector._internal.extras.check_dependency"),
-            patch("snowflake.connector.cursor.pyarrow", new=mock_pa),
+            patch("snowflake.connector.cursor._base.pyarrow", new=mock_pa),
         ):
             self.pa = mock_pa
             yield
@@ -1113,7 +1113,7 @@ class TestFetchArrowAll:
         mock_pa = MagicMock()
         with (
             patch("snowflake.connector._internal.extras.check_dependency"),
-            patch("snowflake.connector.cursor.pyarrow", new=mock_pa),
+            patch("snowflake.connector.cursor._base.pyarrow", new=mock_pa),
         ):
             self.pa = mock_pa
             yield
@@ -1280,8 +1280,8 @@ class TestFetchModeValidation:
     def _patch_deps(self):
         with (
             patch("snowflake.connector._internal.extras.check_dependency"),
-            patch("snowflake.connector.cursor.pyarrow", new=MagicMock()),
-            patch("snowflake.connector.cursor.pandas", new=MagicMock()),
+            patch("snowflake.connector.cursor._base.pyarrow", new=MagicMock()),
+            patch("snowflake.connector.cursor._base.pandas", new=MagicMock()),
         ):
             yield
 
@@ -1344,7 +1344,7 @@ class TestFetchModeValidation:
         with (
             patch("snowflake.connector._internal.query_utils.StatementNewRequest"),
             patch("snowflake.connector._internal.query_utils.StatementSetSqlQueryRequest"),
-            patch("snowflake.connector.cursor.StatementExecuteQueryRequest"),
+            patch("snowflake.connector.cursor._base.StatementExecuteQueryRequest"),
             patch("snowflake.connector._internal.query_utils.StatementReleaseRequest"),
         ):
             cursor.execute("SELECT 1")
@@ -1680,7 +1680,7 @@ class TestDescribe:
         col.HasField = lambda f: f in ("precision", "scale")
         self._setup_prepare(mock_connection, columns=[col])
 
-        with patch("snowflake.connector.cursor.release_arrow_stream"):
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
             result = cursor.describe("SELECT 1 AS COL1")
 
         assert result is not None
@@ -1692,7 +1692,7 @@ class TestDescribe:
         """describe() returns None when the statement produces no result set."""
         self._setup_prepare(mock_connection, columns=[])
 
-        with patch("snowflake.connector.cursor.release_arrow_stream"):
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
             assert cursor.describe("INSERT INTO t VALUES (1)") is None
 
     def test_describe_side_effects(self, cursor, mock_connection):
@@ -1701,7 +1701,7 @@ class TestDescribe:
         cursor._fetch_mode = FetchMode.ARROW
         self._setup_prepare(mock_connection)
 
-        with patch("snowflake.connector.cursor.release_arrow_stream"):
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
             cursor.describe("SELECT 1")
 
         assert cursor.execute_result is None
@@ -1713,7 +1713,7 @@ class TestDescribe:
         """describe() allocates/releases statement handle and releases the arrow stream."""
         self._setup_prepare(mock_connection)
 
-        with patch("snowflake.connector.cursor.release_arrow_stream") as mock_iter:
+        with patch("snowflake.connector.cursor._base.release_arrow_stream") as mock_iter:
             cursor.describe("SELECT 1")
 
         mock_connection.db_api.statement_new.assert_called_once()

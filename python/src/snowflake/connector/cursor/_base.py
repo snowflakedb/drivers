@@ -1,12 +1,9 @@
 """
-PEP 249 Database API 2.0 Cursor Objects
+Base cursor class and supporting decorators.
 
-This module defines the cursor classes as specified in PEP 249.
-
-Hierarchy:
-    SnowflakeCursorBase
-    ├── SnowflakeCursor  — returns tuple rows
-    └── DictCursor       — returns dict rows
+This module defines the abstract base cursor class (``SnowflakeCursorBase``)
+and its associated helpers: ``FetchMode``, type aliases, and decorator
+functions for precondition checks.
 """
 
 from __future__ import annotations
@@ -17,124 +14,51 @@ import enum
 import functools
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_CURSOR_IS_CLOSED
 
-from ._internal.arrow_context import ArrowConverterContext
-from ._internal.arrow_stream_iterator import ArrowStreamIterator, ArrowStreamTableIterator
-from ._internal.binding_converters import (
+from .._internal.arrow_context import ArrowConverterContext
+from .._internal.arrow_stream_iterator import ArrowStreamIterator, ArrowStreamTableIterator
+from .._internal.binding_converters import (
     ClientSideBindingConverter,
     JsonBindingConverter,
     ParamStyle,
 )
-from ._internal.decorators import pep249
-from ._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
-from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+from .._internal.decorators import pep249
+from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
+from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ConnectionGetQueryResultRequest,
     ExecuteResult,
     PrepareResult,
     QueryBindings,
-    QueryStats,
     StatementExecuteQueryRequest,
     StatementHandle,
     StatementPrepareRequest,
 )
-from ._internal.query_utils import (
+from .._internal.query_utils import (
     create_statement,
     extract_rowcount,
     extract_sqlstate,
     get_stream_ptr,
     release_arrow_stream,
 )
-from ._internal.type_codes import FIXED, get_type_code
-from .errors import InterfaceError, NotSupportedError, ProgrammingError
+from .._internal.type_codes import FIXED
+from ..errors import InterfaceError, NotSupportedError, ProgrammingError
+from ._result_metadata import QueryResultStats, ResultMetadata
 
 
 if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Schema, Table
 
-    from .connection import Connection
+    from ..connection import Connection
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
 F = TypeVar("F", bound=Callable[..., Any])
-
-
-class ResultMetadata(NamedTuple):
-    """PEP 249 column description entry.
-
-    Each item in ``Cursor.description`` is a ``ResultMetadata`` instance.
-    Being a :class:`~typing.NamedTuple` it is fully tuple-compatible as
-    required by the spec, while also providing named attribute access.
-    """
-
-    name: str
-    type_code: int
-    display_size: int | None
-    internal_size: int | None
-    precision: int | None
-    scale: int | None
-    is_nullable: bool | None
-
-    @classmethod
-    def from_column(cls, col: Any) -> ResultMetadata:
-        """Create a ``ResultMetadata`` from a protobuf ``ColumnMetadata``."""
-        type_code = get_type_code(col.type)
-
-        display_size = (
-            col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
-        )
-        internal_size = col.byte_length if col.HasField("byte_length") else None
-        precision = col.precision if col.HasField("precision") else None
-        scale = col.scale if col.HasField("scale") else None
-
-        return cls(
-            name=col.name,
-            type_code=type_code,
-            display_size=display_size,
-            internal_size=internal_size,
-            precision=precision,
-            scale=scale,
-            is_nullable=col.nullable,
-        )
-
-    @classmethod
-    def create_description(cls, result: ExecuteResult | PrepareResult | None) -> list[ResultMetadata] | None:
-        """Extract description from execute result column metadata."""
-        if result and result.columns:
-            return [cls.from_column(col) for col in result.columns]
-        return None
-
-
-# Backward compatibility alias
-ResultMetadataV2 = ResultMetadata
-
-
-class QueryResultStats(NamedTuple):
-    """DML operation statistics returned by Snowflake.
-
-    Exposes per-operation row counts for INSERT, UPDATE, DELETE,
-    and the number of duplicate rows skipped during DML.
-    """
-
-    num_rows_inserted: int | None = None
-    num_rows_deleted: int | None = None
-    num_rows_updated: int | None = None
-    num_dml_duplicates: int | None = None
-
-    @classmethod
-    def from_query_stats(cls, s: QueryStats) -> QueryResultStats:
-        """Create a ``QueryResultStats`` from a protobuf ``QueryStats``."""
-        return cls(
-            num_rows_inserted=s.num_rows_inserted if s.HasField("num_rows_inserted") else None,
-            num_rows_deleted=s.num_rows_deleted if s.HasField("num_rows_deleted") else None,
-            num_rows_updated=s.num_rows_updated if s.HasField("num_rows_updated") else None,
-            num_dml_duplicates=s.num_dml_duplicates if s.HasField("num_dml_duplicates") else None,
-        )
 
 
 class FetchMode(enum.Enum):
@@ -499,7 +423,6 @@ class SnowflakeCursorBase(abc.ABC):
             raise
 
     def _populate_state_from_execute_result(self, result: ExecuteResult | None) -> None:
-        # populate cursor state from the result
         self._description = ResultMetadata.create_description(result)
         self._rowcount = extract_rowcount(result)
         self._sqlstate = extract_sqlstate(result)
@@ -610,7 +533,6 @@ class SnowflakeCursorBase(abc.ABC):
         stream_ptr = get_stream_ptr(result)
         release_arrow_stream(stream_ptr)
 
-        # populate cursor state from the result
         result_metadata = ResultMetadata.create_description(result)
         if result_metadata:
             self._description = result_metadata  # shallow copy
@@ -1042,109 +964,3 @@ class SnowflakeCursorBase(abc.ABC):
     def get_result_batches(self) -> list[Any] | None:
         """Get the previously executed query's ResultBatches if available."""
         raise NotImplementedError("get_result_batches is not yet implemented")
-
-
-# ======================================================================
-# Concrete cursor classes
-# ======================================================================
-
-
-class SnowflakeCursor(SnowflakeCursorBase):
-    """Cursor returning results as tuples (default).
-
-    This is the standard cursor returned by ``connection.cursor()``.
-    """
-
-    @property
-    def _use_dict_result(self) -> bool:
-        return False
-
-    def fetchone(self) -> Row | None:
-        """
-        Fetch the next row of a query result set.
-
-        Returns:
-            tuple: Next row, or None when no more data is available
-        """
-        row = self._fetchone()
-        if not (row is None or isinstance(row, tuple)):
-            raise TypeError(f"fetchone got unexpected result: {row}")
-        return row
-
-    def fetchmany(self, size: int | None = None) -> list[Row]:
-        """
-        Fetch the next set of rows of a query result.
-
-        Args:
-            size (int): Number of rows to fetch (defaults to arraysize)
-
-        Returns:
-            list[tuple]: List of rows as tuples
-        """
-        return super().fetchmany(size)
-
-    def fetchall(self) -> list[Row]:
-        """
-        Fetch all (remaining) rows of a query result.
-
-        Returns:
-            list[tuple]: List of all remaining rows as tuples
-        """
-        return super().fetchall()
-
-
-class DictCursor(SnowflakeCursorBase):
-    """Cursor returning results as dictionaries with column names as keys.
-
-    Usage::
-
-        with connection.cursor(DictCursor) as cur:
-            cur.execute("SELECT 1 AS id, 'hello' AS name")
-            row = cur.fetchone()
-            # row == {"ID": 1, "NAME": "hello"}
-    """
-
-    @property
-    def _use_dict_result(self) -> bool:
-        return True
-
-    def fetchone(self) -> DictRow | None:
-        """
-        Fetch the next row of a query result set as a dictionary.
-
-        Returns:
-            dict: Next row as a dictionary with column names as keys,
-                  or None when no more data is available
-        """
-        row = self._fetchone()
-        if not (row is None or isinstance(row, dict)):
-            raise TypeError(f"fetchone got unexpected result: {row}")
-        return row
-
-    def fetchmany(self, size: int | None = None) -> list[DictRow]:
-        """
-        Fetch the next set of rows as dictionaries.
-
-        Args:
-            size (int): Number of rows to fetch (defaults to arraysize)
-
-        Returns:
-            list[dict]: List of rows as dictionaries
-        """
-        return super().fetchmany(size)
-
-    def fetchall(self) -> list[DictRow]:
-        """
-        Fetch all (remaining) rows as dictionaries.
-
-        Returns:
-            list[dict]: List of all remaining rows as dictionaries
-        """
-        return super().fetchall()
-
-
-CursorType = Union[type[SnowflakeCursor], type[DictCursor]]
-CursorInstance = Union[SnowflakeCursor, DictCursor]
-
-
-__all__ = ["SnowflakeCursor", "SnowflakeCursorBase", "DictCursor", "QueryResultStats"]
