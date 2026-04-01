@@ -51,6 +51,7 @@ from .._internal.statement_utils import (
 )
 from ..errors import InterfaceError, NotSupportedError, ProgrammingError
 from ..result_batch import ResultBatch
+from ._query_result_waiter import QueryResultWaiter
 from ._result_metadata import QueryResultStats, ResultMetadata
 
 
@@ -85,6 +86,18 @@ def _requires_open(func: F) -> F:
         if self.is_closed():
             raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
 
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
+
+
+def _with_prefetch_hook(func: F) -> F:
+    """Invoke the cursor's prefetch hook (if set) before entering the wrapped method."""
+
+    @functools.wraps(func)
+    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+        if self._prefetch_hook is not None:
+            self._prefetch_hook()
         return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
@@ -155,6 +168,8 @@ class SnowflakeCursorBase(abc.ABC):
         self._fetch_mode: FetchMode | None = None
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
+        # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
+        self._prefetch_hook: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
@@ -565,6 +580,7 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ROW)
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
@@ -619,6 +635,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @pep249
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ROW)
     def fetchall(self) -> list[Any]:
         """
@@ -758,6 +775,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._iterator = None
         self._fetch_mode = None
         self._binding_data = None
+        self._prefetch_hook = None
 
     @pep249
     def close(self) -> bool | None:
@@ -850,6 +868,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @requires_dependency(pyarrow)
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_batches(
         self,
@@ -866,6 +885,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @requires_dependency(pyarrow)
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_all(
         self,
@@ -947,9 +967,38 @@ class SnowflakeCursorBase(abc.ABC):
 
         return self
 
+    @_requires_open
     def get_results_from_sfqid(self, sfqid: str) -> None:
-        """Get results from a previously executed async query."""
-        raise NotImplementedError("get_results_from_sfqid is not yet implemented")
+        """Get results from a previously executed query.
+
+        Polls query status until completion, then loads results lazily
+        on first fetch call.
+
+        Before the first fetch triggers the prefetch hook, result-dependent
+        cursor attributes and methods such as ``description``, ``rowcount``,
+        and ``fetch*`` are not populated and MUST NOT be relied upon.
+
+        Args:
+            sfqid: Snowflake Query ID of the target query.
+
+        Raises:
+            ProgrammingError: If the query has already failed at call time,
+                or if it reaches a terminal error status while being polled
+                for completion.
+            DatabaseError: If the server stops returning status information
+                while polling for query completion.
+        """
+        self.reset()
+        self.connection.get_query_status_throw_if_error(sfqid)
+        self._sfqid = sfqid
+        waiter = QueryResultWaiter(self._connection, sfqid)
+
+        def prefetch_hook() -> None:
+            waiter.wait()
+            self._prefetch_hook = None
+            self.query_result(sfqid)
+
+        self._prefetch_hook = prefetch_hook
 
     def execute_async(
         self,

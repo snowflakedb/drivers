@@ -19,8 +19,10 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     StatementHandle,
 )
+from snowflake.connector.constants import QueryStatus
 from snowflake.connector.cursor import FetchMode, QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
-from snowflake.connector.errors import InterfaceError, ProgrammingError
+from snowflake.connector.cursor._query_result_waiter import QueryResultWaiter
+from snowflake.connector.errors import DatabaseError, InterfaceError, ProgrammingError
 
 
 class TestFetchone:
@@ -1989,3 +1991,139 @@ class TestQueryResult:
         mock_connection.db_api.connection_get_query_result.side_effect = ProgrammingError("Query has expired")
         with pytest.raises(ProgrammingError, match="Query has expired"):
             cursor.query_result("expired-qid")
+
+
+class TestQueryResultWaiter:
+    """Unit tests for QueryResultWaiter."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_still_running = MagicMock(side_effect=lambda s: s in (QueryStatus.RUNNING, QueryStatus.NO_DATA))
+        return conn
+
+    def test_returns_immediately_when_query_already_done(self, mock_connection):
+        """wait() returns without sleeping when query status is SUCCESS."""
+        mock_connection.get_query_status_throw_if_error.return_value = QueryStatus.SUCCESS
+        waiter = QueryResultWaiter(mock_connection, "qid")
+
+        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep") as mock_sleep:
+            waiter.wait()
+
+        mock_sleep.assert_not_called()
+
+    def test_polls_until_success(self, mock_connection):
+        """wait() polls with backoff until the query finishes."""
+        mock_connection.get_query_status_throw_if_error.side_effect = [
+            QueryStatus.RUNNING,
+            QueryStatus.RUNNING,
+            QueryStatus.SUCCESS,
+        ]
+        waiter = QueryResultWaiter(mock_connection, "qid")
+
+        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep") as mock_sleep:
+            waiter.wait()
+
+        assert mock_connection.get_query_status_throw_if_error.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    def test_raises_on_error_status(self, mock_connection):
+        """wait() propagates ProgrammingError from get_query_status_throw_if_error."""
+        mock_connection.get_query_status_throw_if_error.side_effect = ProgrammingError("Query failed")
+        waiter = QueryResultWaiter(mock_connection, "qid")
+
+        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep"):
+            with pytest.raises(ProgrammingError, match="Query failed"):
+                waiter.wait()
+
+    def test_raises_after_no_data_max_retry(self, mock_connection):
+        """wait() raises DatabaseError after too many NO_DATA responses."""
+        mock_connection.get_query_status_throw_if_error.return_value = QueryStatus.NO_DATA
+        waiter = QueryResultWaiter(mock_connection, "qid")
+
+        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep"):
+            with pytest.raises(DatabaseError, match="Cannot retrieve data"):
+                waiter.wait()
+
+
+class TestGetResultsFromSfqid:
+    """Unit tests for Cursor.get_results_from_sfqid."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.get_query_status_throw_if_error.return_value = QueryStatus.SUCCESS
+        conn.is_still_running.return_value = False
+        result = MagicMock()
+        result.columns = []
+        result.HasField = MagicMock(return_value=False)
+        result.sql_state = ""
+        conn.db_api.connection_get_query_result.return_value.result = result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_sets_sfqid_eagerly(self, cursor):
+        """get_results_from_sfqid sets sfqid immediately, before any fetch."""
+        cursor.get_results_from_sfqid("test-qid")
+
+        assert cursor.sfqid == "test-qid"
+
+    def test_installs_prefetch_hook(self, cursor):
+        """get_results_from_sfqid installs a prefetch hook that fires on fetch."""
+        cursor.get_results_from_sfqid("test-qid")
+
+        assert cursor._prefetch_hook is not None
+
+    def test_prefetch_hook_fires_on_fetch(self, cursor, mock_connection):
+        """First fetch triggers the hook, which calls query_result."""
+        with patch("snowflake.connector.cursor._query_result_waiter.time.sleep"):
+            cursor.get_results_from_sfqid("test-qid")
+
+        assert cursor._prefetch_hook is not None
+        with patch.object(cursor, "query_result") as mock_qr:
+            cursor._prefetch_hook()
+
+        mock_qr.assert_called_once_with("test-qid")
+        assert cursor._prefetch_hook is None
+
+    def test_raises_on_closed_cursor(self, cursor):
+        """get_results_from_sfqid raises InterfaceError when cursor is closed."""
+        cursor.close()
+
+        with pytest.raises(InterfaceError):
+            cursor.get_results_from_sfqid("qid")
+
+    def test_raises_when_query_already_failed(self, cursor, mock_connection):
+        """get_results_from_sfqid raises immediately if status check returns error."""
+        mock_connection.get_query_status_throw_if_error.side_effect = ProgrammingError("Query failed")
+
+        with pytest.raises(ProgrammingError, match="Query failed"):
+            cursor.get_results_from_sfqid("bad-qid")
+
+    def test_execute_clears_pending_hook(self, cursor, mock_connection):
+        """A new execute() cancels a pending prefetch hook."""
+        cursor.get_results_from_sfqid("test-qid")
+        assert cursor._prefetch_hook is not None
+
+        handle_resp = MagicMock()
+        handle_resp.stmt_handle = StatementHandle(id=1)
+        mock_connection.db_api.statement_new.return_value = handle_resp
+        result = MagicMock()
+        result.columns = []
+        result.HasField = MagicMock(return_value=False)
+        result.sql_state = ""
+        mock_connection.db_api.statement_execute_query.return_value.result = result
+        with (
+            patch("snowflake.connector._internal.statement_utils.StatementNewRequest"),
+            patch("snowflake.connector._internal.statement_utils.StatementSetSqlQueryRequest"),
+            patch("snowflake.connector.cursor._base.StatementExecuteQueryRequest"),
+            patch("snowflake.connector._internal.statement_utils.StatementReleaseRequest"),
+        ):
+            cursor.execute("SELECT 1")
+
+        assert cursor._prefetch_hook is None

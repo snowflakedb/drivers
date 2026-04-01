@@ -1978,3 +1978,48 @@ class TestCursorQueryResult:
             assert cur2.description[0].name == "ID"
             assert cur2.description[1].name == "LABEL"
             assert cur2.fetchall() == original_rows
+
+
+class TestGetResultsFromSfqid:
+    """Integration tests for Cursor.get_results_from_sfqid."""
+
+    def test_get_results_from_sfqid_retrieves_completed_query(self, connection):
+        """get_results_from_sfqid loads results from an already-completed query."""
+        with connection.cursor() as cur1:
+            cur1.execute("SELECT 1 AS a, 'hello' AS b")
+            qid = cur1.sfqid
+            expected_rows = cur1.fetchall()
+
+        with connection.cursor() as cur2:
+            cur2.get_results_from_sfqid(qid)
+
+            assert cur2.sfqid == qid
+            rows = cur2.fetchall()
+            assert rows == expected_rows
+            assert cur2.description is not None
+            assert cur2.description[0].name == "A"
+            assert cur2.description[1].name == "B"
+
+    @pytest.mark.skip_universal(reason="execute_async not yet implemented")
+    def test_get_results_from_sfqid_waits_for_async_query(self, connection):
+        """get_results_from_sfqid polls until an async query completes."""
+        with connection.cursor() as cur1:
+            cur1.execute_async("CALL SYSTEM$WAIT(3, 'SECONDS')")
+            qid = cur1.sfqid
+
+        with connection.cursor() as cur2:
+            cur2.get_results_from_sfqid(qid)
+
+            rows = cur2.fetchall()
+            assert len(rows) == 1
+
+    def test_get_results_from_sfqid_raises_on_failed_query(self, connection):
+        """get_results_from_sfqid raises when the query failed on the server."""
+        with connection.cursor() as cur1:
+            with pytest.raises(ProgrammingError):
+                cur1.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+            qid = cur1.sfqid
+
+        with connection.cursor() as cur2:
+            with pytest.raises(ProgrammingError):
+                cur2.get_results_from_sfqid(qid)
