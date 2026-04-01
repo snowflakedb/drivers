@@ -93,6 +93,9 @@ class ConnectionClassState:
     lock: threading.Lock = threading.Lock()
 
 
+_UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
+
+
 class Connection:
     """Connection objects represent a database connection."""
 
@@ -165,8 +168,10 @@ class Connection:
 
         # Extract logout configuration parameters before passing to Core
         self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
-        self.enable_server_session_keep_alive_auto_detection: bool | None = cast(
-            "bool | None", kwargs.pop("enable_server_session_keep_alive_auto_detection", True)
+        _auto_detection_raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
+        self._auto_detection_explicitly_set: bool = _auto_detection_raw is not _UNSET
+        self.enable_server_session_keep_alive_auto_detection: bool | None = (
+            True if _auto_detection_raw is _UNSET else cast("bool | None", _auto_detection_raw)
         )
         self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
 
@@ -218,11 +223,20 @@ class Connection:
     def _map_logout_config(self) -> LogoutConfig:
         """Map logout parameters to Core configuration.
 
-        Returns logout configuration with all values resolved (defaults applied,
-        phase-specific mapping done).
-
-        Related: SNOW-2314152
+        Backward-compat factory (SNOW-2314152): dispatches to map_logout_config_phase2().
+        Emits a FutureWarning if the user relies on the implicit auto_detection=True
+        default, which will change to None in a future version (SNOW-2314152).
         """
+        if not self._auto_detection_explicitly_set:
+            warnings.warn(
+                "enable_server_session_keep_alive_auto_detection defaults to True "
+                "(async query registry is checked before logout). In a future version, "
+                "the default will change to None (always logout on close). "
+                "To preserve current behavior, explicitly pass "
+                "enable_server_session_keep_alive_auto_detection=True.",
+                FutureWarning,
+                stacklevel=4,
+            )
         return map_logout_config_phase2(self)
 
     def _setup_logout_config(self) -> None:

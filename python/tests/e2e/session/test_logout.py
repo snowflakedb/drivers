@@ -165,16 +165,18 @@ class TestLogoutPythonWrapper:
     ):
         """Verify enable_server_session_keep_alive_auto_detection defaults to True.
 
-        Default True is required for Phase 2 backward compat (SNOW-2314152): the old
-        Python driver always checked _async_sfqids before logout. Without this default,
+        Default True is required for backward compat (SNOW-2314152): the old Python
+        driver always checked _async_sfqids before logout. Without this default,
         Core receives enable_logout_auto_detection=None → always logout → kills async queries.
+        A FutureWarning is emitted because this default will change in a future version.
         """
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
             wiremock.add_mapping("session/logout_success.json")
 
             # Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
-            conn = int_test_connection_factory(server_url=wiremock.http_url())
+            with pytest.warns(FutureWarning, match="enable_server_session_keep_alive_auto_detection defaults to True"):
+                conn = int_test_connection_factory(server_url=wiremock.http_url())
 
             # When Connection configuration is checked
             logout_config = map_logout_config_phase2(conn)
@@ -186,9 +188,48 @@ class TestLogoutPythonWrapper:
             )
 
             # And Auto-detection is enabled by default
-            logout_config = map_logout_config_phase2(conn)
             assert logout_config.enable_logout_auto_detection is True, (
                 "Default True must flow through to Core so registry check is performed"
+            )
+
+            # And FutureWarning is emitted about auto_detection default changing
+            assert conn._auto_detection_explicitly_set is False  # pytest.warns above verifies the warning
+
+            conn.close()
+
+    def test_should_not_emit_auto_detection_deprecation_warning_when_explicitly_set_to_true(
+        self, int_test_connection_factory
+    ):
+        """Verify no FutureWarning when user explicitly passes auto_detection=True.
+
+        Explicit True means the user has made a conscious choice — no deprecation warning.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            # Given Snowflake Python client is created with enable_server_session_keep_alive_auto_detection set to true
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    enable_server_session_keep_alive_auto_detection=True,
+                )
+
+            # When Connection configuration is checked
+            logout_config = map_logout_config_phase2(conn)
+
+            # Then enable_server_session_keep_alive_auto_detection is true
+            assert conn.enable_server_session_keep_alive_auto_detection is True
+            assert logout_config.enable_logout_auto_detection is True
+
+            # And No FutureWarning is emitted about auto_detection default
+            auto_detection_warnings = [
+                x for x in w if issubclass(x.category, FutureWarning) and "auto_detection" in str(x.message)
+            ]
+            assert len(auto_detection_warnings) == 0, (
+                f"No FutureWarning expected when auto_detection is explicitly True, "
+                f"got: {[str(x.message) for x in auto_detection_warnings]}"
             )
 
             conn.close()
