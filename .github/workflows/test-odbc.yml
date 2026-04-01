@@ -264,9 +264,9 @@ jobs:
         with:
 
           path: target
-          key: ${{ runner.os }}-rust-odbc-target-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-odbc-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-rust-odbc-target-
+            ${{ runner.os }}-${{ runner.arch }}-rust-odbc-target-
 
       - name: Cache Test dependencies
         uses: actions/cache@v5
@@ -410,6 +410,8 @@ jobs:
             # ARM64 ODBC: smoke test only (1 of ~103 tests). The full suite has
             # not been validated on ARM64. Expand coverage incrementally.
             $env:CTEST_FILTER = "e2e_query_basic_execute_query"
+            # Ensure CMake generates ARM64 targets (default generator on Windows is x64).
+            $env:CMAKE_GENERATOR_PLATFORM = "ARM64"
           } else {
             dir target\debug\
             $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
