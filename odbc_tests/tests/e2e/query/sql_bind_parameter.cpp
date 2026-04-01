@@ -1556,12 +1556,8 @@ TEST_CASE("should bind negative SQL_C_NUMERIC with scale to SQL_VARCHAR.", "[que
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
   auto result = get_data<SQL_C_CHAR>(stmt, 1);
-  NEW_DRIVER_ONLY("BD#33") {
-    CHECK(result == "-123.45");
-  }
-  OLD_DRIVER_ONLY("BD#33") {
-    CHECK(result == "-12345");
-  }
+  NEW_DRIVER_ONLY("BD#33") { CHECK(result == "-123.45"); }
+  OLD_DRIVER_ONLY("BD#33") { CHECK(result == "-12345"); }
 }
 
 TEST_CASE("should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
@@ -1585,12 +1581,8 @@ TEST_CASE("should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.", "[que
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
   auto result = get_data<SQL_C_CHAR>(stmt, 1);
-  NEW_DRIVER_ONLY("BD#33") {
-    CHECK(result == "12300");
-  }
-  OLD_DRIVER_ONLY("BD#33") {
-    CHECK(result == "123");
-  }
+  NEW_DRIVER_ONLY("BD#33") { CHECK(result == "12300"); }
+  OLD_DRIVER_ONLY("BD#33") { CHECK(result == "123"); }
 }
 
 TEST_CASE("should bind SQL_C_BINARY to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
@@ -1611,7 +1603,5 @@ TEST_CASE("should bind SQL_C_BINARY to SQL_VARCHAR.", "[query][bind_parameter][c
     // Then the result should be the expected string
     CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "deadbeef");
   }
-  OLD_DRIVER_ONLY("BD#34") {
-    CHECK(ret == SQL_ERROR);
-  }
+  OLD_DRIVER_ONLY("BD#34") { CHECK(ret == SQL_ERROR); }
 }
