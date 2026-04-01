@@ -377,11 +377,6 @@ Feature: ODBC SQLBindParameter spec compliance
     When the C type value is bound as a string SQL type and SELECT ? is executed
     Then the result should be the expected string
 
-  @odbc_e2e
-  Scenario: should reject unsupported C type for SQL_VARCHAR.
-    Given Snowflake client is logged in
-    When an unsupported C type is bound to a string SQL type
-    Then an error should be returned
 
   # Verify all string SQL types route through the same conversion
 

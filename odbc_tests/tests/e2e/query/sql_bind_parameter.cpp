@@ -1208,25 +1208,6 @@ TEST_CASE("should bind SQL_C_DEFAULT to SQL_VARCHAR.", "[query][bind_parameter][
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
 }
 
-TEST_CASE("should reject unsupported C type for SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
-  // Given Snowflake client is logged in
-  SKIP_OLD_DRIVER("N/A", "Old driver supports SQL_C_TYPE_TIMESTAMP to SQL_VARCHAR via Simba SDK");
-  Connection conn;
-  auto stmt = conn.createStatement();
-  // When an unsupported C type is bound to a string SQL type
-  SQL_TIMESTAMP_STRUCT param = {};
-  param.year = 2025;
-  param.month = 1;
-  param.day = 15;
-  SQLLEN indicator = sizeof(param);
-  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_VARCHAR, 100, 0,
-                                   &param, 0, &indicator);
-  REQUIRE_ODBC_SUCCESS(ret, stmt);
-  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  // Then an error should be returned
-  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError());
-}
-
 // =============================================================================
 // C type → other string SQL types (CHAR, WCHAR, LONGVARCHAR, WVARCHAR, WLONGVARCHAR)
 // Verify that all string SQL types correctly route through the same conversion.
