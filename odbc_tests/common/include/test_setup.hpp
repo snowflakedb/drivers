@@ -147,6 +147,11 @@ inline void configure_driver_string(std::stringstream& ss) {
 #endif
 }
 
+inline void ensure_driver_installed() {
+  std::stringstream ss;
+  configure_driver_string(ss);
+}
+
 inline void read_default_params(std::stringstream& ss, const picojson::object& params,
                                 const std::set<std::string>& skip_conn_keys = {}) {
   auto req = [&](const std::string& cfg, const std::string& conn) {

@@ -45,6 +45,7 @@ std::string get_mfa_connection_string_without_password() {
 }
 
 EnvironmentHandleWrapper setup_mfa_environment() {
+  ensure_driver_installed();
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
   REQUIRE_ODBC(ret, env);
@@ -56,8 +57,20 @@ ConnectionHandleWrapper get_mfa_connection_handle(EnvironmentHandleWrapper& env)
 }
 
 SQLRETURN attempt_mfa_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
-  return SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
-                          SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                                   SQL_DRIVER_NOPROMPT);
+  // connection failure is expected as the test is not E2E test
+  REQUIRE(ret == SQL_ERROR);
+
+  // however driver/environment setup error is unwanted
+  auto records = get_diag_rec(dbc);
+  using Catch::Matchers::ContainsSubstring;
+  for (const auto& record : records) {
+    CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
+    CHECK_THAT(record.messageText, !ContainsSubstring("Data source name not found and no default driver specified"));
+  }
+
+  return ret;
 }
 
 // =============================================================================
@@ -80,7 +93,6 @@ TEST_CASE("should forward USERNAME_PASSWORD_MFA parameters to core", "[mfa_auth]
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
-      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
@@ -106,7 +118,6 @@ TEST_CASE("should forward PASSCODE parameter to core", "[mfa_auth]") {
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
-      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
@@ -132,7 +143,6 @@ TEST_CASE("should forward PASSCODEINPASSWORD parameter to core", "[mfa_auth]") {
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
-      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
@@ -182,7 +192,6 @@ TEST_CASE("should forward CLIENT_STORE_TEMPORARY_CREDENTIAL parameter to core", 
     auto records = get_diag_rec(dbc);
     for (const auto& record : records) {
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
-      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
 }
