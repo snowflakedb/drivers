@@ -1031,7 +1031,10 @@ impl DatabaseDriverV1 {
                 // post-init overrides (e.g. retry=False sets logout_max_attempts=1)
                 // take effect. Falls back to init-time defaults for unset keys.
                 let config = LogoutConfig::from_settings(&conn.connection_seed)
-                    .unwrap_or_else(|_| conn.logout_config.clone());
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
+                        conn.logout_config.clone()
+                    });
                 let error_strategy = config.error_strategy;
 
                 // TODO: SNOW-2912513 - Record telemetry for logout decision

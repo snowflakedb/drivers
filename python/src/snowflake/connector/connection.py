@@ -54,12 +54,9 @@ from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
-logger = logging.getLogger(__name__)
-
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, SessionParameters]
 ConnectionParameters = dict[str, ConnectionParamValue]
-
 
 # Module-level logger
 logger = logging.getLogger(__name__)
