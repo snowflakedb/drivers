@@ -71,7 +71,7 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
     - error_strategy: BEST_EFFORT (backward compatible)
 
     Note: If enable_server_session_keep_alive_auto_detection is not set by the caller,
-    it defaults to True (Phase 2 backward compat: mirrors old Python driver which always
+    it defaults to True (Phase 2 (SNOW-2314152) backward compat: mirrors old Python driver which always
     checked the async query registry before logout).
 
     Args:
@@ -83,7 +83,7 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
     server_session_keep_alive = connection.server_session_keep_alive
     enable_logout_auto_detection = connection.enable_server_session_keep_alive_auto_detection
 
-    # Phase 2 special mapping: False + auto-detection enabled → map to None
+    # Phase 2 (SNOW-2314152) special mapping: False + auto-detection enabled → map to None
     # This makes Core check the registry (legacy Python behavior)
     if server_session_keep_alive is False and enable_logout_auto_detection:
         server_session_keep_alive = None
