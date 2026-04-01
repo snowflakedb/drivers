@@ -71,6 +71,7 @@ fn test_connection_is_closed_after_close() {
     client
         .connection_close_blocking(ConnectionCloseRequest {
             conn_handle: Some(conn_handle),
+            ..Default::default()
         })
         .unwrap();
 
@@ -113,6 +114,7 @@ fn test_connection_is_closed_idempotent() {
     client
         .connection_close_blocking(ConnectionCloseRequest {
             conn_handle: Some(conn_handle),
+            ..Default::default()
         })
         .unwrap();
 
@@ -130,6 +132,7 @@ fn test_connection_is_closed_idempotent() {
     client
         .connection_close_blocking(ConnectionCloseRequest {
             conn_handle: Some(conn_handle),
+            ..Default::default()
         })
         .unwrap();
 

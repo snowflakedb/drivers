@@ -367,6 +367,7 @@ impl SnowflakeTestClient {
         self.client
             .connection_close_blocking(ConnectionCloseRequest {
                 conn_handle: Some(self.conn_handle),
+                ..Default::default()
             })
     }
 

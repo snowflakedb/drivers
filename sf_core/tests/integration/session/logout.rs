@@ -178,6 +178,7 @@ fn should_not_send_logout_when_connection_was_never_established() {
     //When Connection close is attempted
     let result = client.connection_close_blocking(ConnectionCloseRequest {
         conn_handle: Some(conn_handle),
+        ..Default::default()
     });
 
     //Then Close succeeds without sending HTTP request
@@ -195,6 +196,114 @@ fn should_not_send_logout_when_connection_was_never_established() {
             .unwrap()
             .is_closed,
         "Connection should be marked closed"
+    );
+
+    // Cleanup
+    client
+        .connection_release_blocking(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .unwrap();
+    client
+        .database_release_blocking(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        })
+        .unwrap();
+}
+
+// ===========================================================================
+//                   Close-Time Override Wiring (Proto → Core)
+// ===========================================================================
+
+#[test]
+fn should_accept_valid_close_time_overrides_through_proto_layer() {
+    use sf_core::protobuf::apis::database_driver_v1::{
+        DatabaseDriverClientBlockingExt, database_driver_client,
+    };
+
+    //Given Connection handle created but never initialized
+    let client = database_driver_client();
+    let db_handle = client
+        .database_new_blocking(DatabaseNewRequest {})
+        .unwrap()
+        .db_handle
+        .unwrap();
+    client
+        .database_init_blocking(DatabaseInitRequest {
+            db_handle: Some(db_handle),
+        })
+        .unwrap();
+    let conn_handle = client
+        .connection_new_blocking(ConnectionNewRequest {})
+        .unwrap()
+        .conn_handle
+        .unwrap();
+
+    //When Connection close is called with valid override fields
+    let result = client.connection_close_blocking(ConnectionCloseRequest {
+        conn_handle: Some(conn_handle),
+        max_retry_attempts: Some(0), // 0 retries = 1 total attempt
+        logout_total_timeout_seconds: Some(10),
+        logout_request_timeout_seconds: Some(3),
+        error_strategy: Some(1), // BestEffort
+        ..Default::default()
+    });
+
+    //Then Close succeeds (overrides are wired through proto → handler → merge)
+    assert!(
+        result.is_ok(),
+        "Close with valid overrides should succeed: {:?}",
+        result.err()
+    );
+
+    // Cleanup
+    client
+        .connection_release_blocking(ConnectionReleaseRequest {
+            conn_handle: Some(conn_handle),
+        })
+        .unwrap();
+    client
+        .database_release_blocking(DatabaseReleaseRequest {
+            db_handle: Some(db_handle),
+        })
+        .unwrap();
+}
+
+#[test]
+fn should_reject_negative_max_retry_attempts_through_proto_layer() {
+    use sf_core::protobuf::apis::database_driver_v1::{
+        DatabaseDriverClientBlockingExt, database_driver_client,
+    };
+
+    //Given Connection handle created but never initialized
+    let client = database_driver_client();
+    let db_handle = client
+        .database_new_blocking(DatabaseNewRequest {})
+        .unwrap()
+        .db_handle
+        .unwrap();
+    client
+        .database_init_blocking(DatabaseInitRequest {
+            db_handle: Some(db_handle),
+        })
+        .unwrap();
+    let conn_handle = client
+        .connection_new_blocking(ConnectionNewRequest {})
+        .unwrap()
+        .conn_handle
+        .unwrap();
+
+    //When Connection close is called with negative max_retry_attempts
+    let result = client.connection_close_blocking(ConnectionCloseRequest {
+        conn_handle: Some(conn_handle),
+        max_retry_attempts: Some(-1), // Invalid: negative retries
+        ..Default::default()
+    });
+
+    //Then Close fails with validation error (not silent wraparound)
+    assert!(
+        result.is_err(),
+        "Close with negative max_retry_attempts must be rejected"
     );
 
     // Cleanup

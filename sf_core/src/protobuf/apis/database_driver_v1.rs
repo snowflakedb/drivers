@@ -1025,9 +1025,20 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: ConnectionCloseRequest,
     ) -> Result<ConnectionCloseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let error_strategy = input
+            .error_strategy
+            .and_then(crate::config::logout::ErrorStrategy::from_proto_i32);
 
         self.driver
-            .connection_close(conn_handle.into())
+            .connection_close(
+                conn_handle.into(),
+                input.server_session_keep_alive,
+                input.enable_logout_auto_detection,
+                error_strategy,
+                input.logout_total_timeout_seconds,
+                input.max_retry_attempts,
+                input.logout_request_timeout_seconds,
+            )
             .await
             .to_protobuf()?;
         Ok(ConnectionCloseResponse {})

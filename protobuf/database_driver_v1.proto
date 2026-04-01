@@ -52,7 +52,7 @@ enum InfoCode {
 }
 
 enum ErrorStrategy {
-  ERROR_STRATEGY_UNSPECIFIED = 0;  // Defaults to STRICT
+  ERROR_STRATEGY_UNSPECIFIED = 0;  // Use connection-wide value
   ERROR_STRATEGY_BEST_EFFORT = 1;  // Log errors, always succeed
   ERROR_STRATEGY_STRICT = 2;       // Raise errors (except SESSION_GONE)
 }
@@ -360,6 +360,15 @@ message ConnectionReleaseResponse {
 
 message ConnectionCloseRequest {
   ConnectionHandle conn_handle = 1;
+
+  // Optional close-time overrides.
+  // Hierarchy: override here > connection-wide (set at init) > Core defaults
+  optional bool server_session_keep_alive = 2;
+  optional bool enable_logout_auto_detection = 3;
+  optional ErrorStrategy error_strategy = 4;
+  optional int32 logout_total_timeout_seconds = 5;
+  optional int32 max_retry_attempts = 6;             // retries (0 = no retry = 1 total attempt)
+  optional int32 logout_request_timeout_seconds = 7;
 }
 
 message ConnectionCloseResponse {

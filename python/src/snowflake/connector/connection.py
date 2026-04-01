@@ -232,8 +232,8 @@ class Connection:
         """Apply logout configuration to Core via ConnectionSetOption* RPCs.
 
         Called at init time, before connection_init. Writes values to Core's
-        connection_seed. Core re-derives LogoutConfig from connection_seed at
-        close() time, so post-init overrides (e.g. retry=False) take effect.
+        connection_seed. Config is frozen at init; close-time overrides use
+        ConnectionCloseRequest fields (not connection_seed mutation).
         """
         logout_config = self._map_logout_config()
 
@@ -299,23 +299,16 @@ class Connection:
         then cleans up resources.
 
         Args:
-            retry: If False, overrides max_attempts to 1 (no retries) before closing.
-                   If True (default), uses init-time configuration.
+            retry: If False, passes max_retry_attempts=0 (no retries) atomically in the
+                   close request. If True (default), uses init-time configuration.
         """
         atexit.unregister(self._close_at_process_exit)
-
-        if not retry:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS,
-                    value=1,
-                )
-            )
-
+        # retry=False → 0 retries (1 total attempt); retry=True → None (use init-time value)
+        max_retry_override = None if retry else 0
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
+                max_retry_attempts=max_retry_override,
             )
         )
 
