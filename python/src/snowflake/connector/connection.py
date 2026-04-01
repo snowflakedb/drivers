@@ -62,6 +62,34 @@ logger = logging.getLogger(__name__)
 
 _UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
 
+# Keys handled by _setup_logout_config, not connection_set_options
+_LOGOUT_PARAM_KEYS = frozenset(
+    {
+        "server_session_keep_alive",
+        "enable_server_session_keep_alive_auto_detection",
+        "auto_cleanup",
+    }
+)
+
+
+def _parse_auto_detection(kwargs: dict[str, Any]) -> bool | None:
+    """Parse enable_server_session_keep_alive_auto_detection from connection kwargs.
+
+    If not provided, defaults to True and logs a deprecation warning:
+    the default will change to None in a future version (SNOW-2314152).
+    """
+    raw = kwargs.get("enable_server_session_keep_alive_auto_detection", _UNSET)
+    if raw is _UNSET:
+        logger.warning(
+            "enable_server_session_keep_alive_auto_detection defaults to True "
+            "(async query registry is checked before logout). In a future version, "
+            "the default will change to None (always logout on close). "
+            "To preserve current behavior, explicitly pass "
+            "enable_server_session_keep_alive_auto_detection=True."
+        )
+        return True
+    return cast("bool | None", raw)
+
 
 class Connection:
     """Connection objects represent a database connection."""
@@ -127,26 +155,17 @@ class Connection:
         if "private_key" in kwargs:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
 
-        # Extract logout configuration parameters before passing to Core.
-        # These are popped from kwargs so they don't get sent to Core via
-        # connection_set_options — they have their own dedicated _setup_logout_config path.
-        self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
-        _auto_detection_raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
-        if _auto_detection_raw is _UNSET:
-            self.enable_server_session_keep_alive_auto_detection: bool | None = True
-            logger.warning(
-                "enable_server_session_keep_alive_auto_detection defaults to True "
-                "(async query registry is checked before logout). In a future version, "
-                "the default will change to None (always logout on close). "
-                "To preserve current behavior, explicitly pass "
-                "enable_server_session_keep_alive_auto_detection=True."
-            )
-        else:
-            self.enable_server_session_keep_alive_auto_detection = cast("bool | None", _auto_detection_raw)
-        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
+        # Extract logout configuration parameters. These are handled by
+        # _setup_logout_config (not connection_set_options), so they're
+        # filtered out of the options dict below.
+        self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.get("server_session_keep_alive"))
+        self.enable_server_session_keep_alive_auto_detection: bool | None = _parse_auto_detection(kwargs)
+        self.auto_cleanup: bool = cast(bool, kwargs.get("auto_cleanup", True))
 
         options = {}
         for key, value in kwargs.items():
+            if key in _LOGOUT_PARAM_KEYS:
+                continue
             if isinstance(value, bool):
                 options[key] = ConfigSetting(bool_value=value)
             elif isinstance(value, int):
