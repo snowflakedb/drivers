@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import atexit
 import logging
-import threading
 import warnings
 
 from collections.abc import Generator, Iterable
-from dataclasses import dataclass
 from io import StringIO
 from typing import Any, Callable, Union, cast
 
@@ -62,48 +60,11 @@ ConnectionParameters = dict[str, ConnectionParamValue]
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ConnectionClassConfig:
-    """Static configuration flags for Connection class behavior.
-
-    Immutable configuration that controls Connection behavior across all instances.
-    """
-
-    # Internal flag for logout semantics migration (SNOW-2314152)
-    # False (default): Phase 2 (SNOW-2314152) - server_session_keep_alive=False respects auto-detection
-    # True: Phase 3 (SNOW-2314152) - Pass parameters directly to Core without mapping
-    # WARNING: Phase 3 (SNOW-2314152) will become default in future release (Breaking Change)
-    USE_PHASE3_LOGOUT_SEMANTICS: bool = False
-
-
-@dataclass
-class ConnectionClassState:
-    """Mutable class-level state shared across all Connection instances in the process.
-
-    This is static/class-level state, NOT instance state.
-    Thread-safety: The lock protects concurrent access to shared state during process exit.
-    """
-
-    # Track if first auto-cleanup warning has been emitted in this process
-    # False = warning already emitted, True = warning not yet emitted
-    first_auto_cleanup_warning_pending: bool = True
-
-    # Lock to protect concurrent access to class state during process exit
-    # This prevents race conditions when multiple connections close simultaneously
-    lock: threading.Lock = threading.Lock()
-
-
 _UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
 
 
 class Connection:
     """Connection objects represent a database connection."""
-
-    # Protected static configuration (immutable class-level settings)
-    _class_config = ConnectionClassConfig()
-
-    # Protected static state (mutable class-level state, shared across all instances)
-    _class_state = ConnectionClassState()
 
     def __init__(
         self,
@@ -189,8 +150,6 @@ class Connection:
                 options[key] = ConfigSetting(bytes_value=value)
 
         if options:
-            import warnings as py_warnings
-
             response = self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
@@ -198,7 +157,7 @@ class Connection:
                 )
             )
             for warning in response.warnings:
-                py_warnings.warn(warning.message, stacklevel=2)
+                warnings.warn(warning.message, stacklevel=2)
 
         # Set session parameters if provided (before connection_init)
         if session_params:
@@ -221,21 +180,18 @@ class Connection:
             atexit.register(self._close_at_process_exit)
 
     def _map_logout_config(self) -> LogoutConfig:
-        """Map logout parameters to Core configuration.
+        """Map logout parameters to Core configuration (SNOW-2314152).
 
-        Backward-compat factory (SNOW-2314152): dispatches to map_logout_config_phase2().
         Emits a FutureWarning if the user relies on the implicit auto_detection=True
         default, which will change to None in a future version (SNOW-2314152).
         """
         if not self._auto_detection_explicitly_set:
-            warnings.warn(
+            logger.warning(
                 "enable_server_session_keep_alive_auto_detection defaults to True "
                 "(async query registry is checked before logout). In a future version, "
                 "the default will change to None (always logout on close). "
                 "To preserve current behavior, explicitly pass "
-                "enable_server_session_keep_alive_auto_detection=True.",
-                FutureWarning,
-                stacklevel=4,
+                "enable_server_session_keep_alive_auto_detection=True."
             )
         return map_logout_config_phase2(self)
 
@@ -346,23 +302,16 @@ class Connection:
             )
             return
 
-        # Connection is leaked (not explicitly closed) - emit deprecation warning
-        # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
-        # Use lock to prevent race conditions when multiple connections close concurrently
-        # Wrapped in try/except to guard against interpreter shutdown: during CPython
-        # teardown, module globals (including `warnings`) may already be set to None,
-        # causing AttributeError/TypeError that would otherwise escape through atexit.
+        # Connection is leaked (not explicitly closed) — log deprecation warning.
+        # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
+        # try/except guards against interpreter shutdown: module globals (including
+        # `logger`) may already be None during CPython teardown.
         try:
-            with self.__class__._class_state.lock:
-                if self.__class__._class_state.first_auto_cleanup_warning_pending:
-                    warnings.warn(
-                        "Connection was not explicitly closed before process exit. "
-                        "Auto-cleanup at exit will be disabled by default in a future version. "
-                        "Please explicitly call connection.close() or use context manager.",
-                        FutureWarning,
-                        stacklevel=2,
-                    )
-                    self.__class__._class_state.first_auto_cleanup_warning_pending = False
+            logger.warning(
+                "Connection was not explicitly closed before process exit. "
+                "Auto-cleanup at exit will be disabled by default in a future version. "
+                "Please explicitly call connection.close() or use context manager."
+            )
         except Exception:
             pass  # Interpreter shutting down; warning emission is best-effort
 
