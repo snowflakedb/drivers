@@ -16,6 +16,7 @@ use crate::api::{
     types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
 };
 use crate::conversion::warning::{Warning, Warnings};
+use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use snafu::ResultExt;
@@ -821,8 +822,41 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::ConnectionDead | ConnectionAttribute::AutoIpd => {
-            // Read-only attributes — cannot be set
             ReadOnlyAttributeSnafu {
+                attribute: attr.as_raw(),
+            }
+            .fail()
+        }
+        ConnectionAttribute::Autocommit => {
+            let value = value_ptr as sql::ULen;
+            let autocommit = match AutocommitValue::from_raw(value as sql::UInteger) {
+                Some(v) => v,
+                None => {
+                    return crate::api::error::InvalidAttributeValueSnafu {
+                        attribute,
+                        value: value as i64,
+                    }
+                    .fail();
+                }
+            };
+
+            tracing::debug!("set_connect_attr: Autocommit={:?}", autocommit);
+            connection.cached_autocommit = autocommit;
+
+            if let ConnectionState::Connected { conn_handle, .. } = &connection.state {
+                let conn_handle = *conn_handle;
+                let sql = match autocommit {
+                    AutocommitValue::On => "ALTER SESSION SET AUTOCOMMIT=TRUE",
+                    AutocommitValue::Off => "ALTER SESSION SET AUTOCOMMIT=FALSE",
+                };
+                execute_session_sql(conn_handle, sql)?;
+            }
+
+            Ok(())
+        }
+        ConnectionAttribute::CurrentCatalog => {
+            tracing::warn!("set_connect_attr: CurrentCatalog is not yet implemented");
+            crate::api::error::UnsupportedAttributeSnafu {
                 attribute: attr.as_raw(),
             }
             .fail()
@@ -1170,6 +1204,174 @@ pub fn get_info<E: OdbcEncoding>(
             Ok(())
         }
     }
+}
+
+/// Execute a session-level SQL statement (e.g. ALTER SESSION) on the sf_core
+/// connection by creating a temporary internal statement, executing, and
+/// releasing it.
+fn execute_session_sql(
+    conn_handle: sf_core::protobuf::generated::database_driver_v1::ConnectionHandle,
+    sql: &str,
+) -> OdbcResult<()> {
+    let sql = sql.to_owned();
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        let response = c
+            .statement_new(StatementNewRequest {
+                conn_handle: Some(conn_handle),
+            })
+            .await?;
+        let stmt_handle = response
+            .stmt_handle
+            .required("Statement handle is required")?;
+
+        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            query: sql,
+        })
+        .await?;
+
+        c.statement_execute_query(StatementExecuteQueryRequest {
+            stmt_handle: Some(stmt_handle),
+            bindings: None,
+        })
+        .await?;
+
+        c.statement_release(StatementReleaseRequest {
+            stmt_handle: Some(stmt_handle),
+        })
+        .await?;
+
+        Ok::<_, crate::api::error::OdbcError>(())
+    })
+}
+
+/// SQLEndTran implementation.
+pub fn end_tran(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    completion_type: sql::SmallInt,
+) -> OdbcResult<()> {
+    const SQL_COMMIT: sql::SmallInt = 0;
+    const SQL_ROLLBACK: sql::SmallInt = 1;
+
+    tracing::debug!("end_tran: handle_type={handle_type:?}, completion_type={completion_type}");
+
+    match completion_type {
+        SQL_COMMIT | SQL_ROLLBACK => {}
+        _ => {
+            return crate::api::error::InvalidCompletionTypeSnafu { completion_type }.fail();
+        }
+    }
+
+    match handle_type {
+        sql::HandleType::Dbc => end_tran_dbc(handle, completion_type),
+        sql::HandleType::Env => {
+            // The Driver Manager decomposes SQL_HANDLE_ENV into per-connection
+            // SQL_HANDLE_DBC calls before reaching the driver, so this branch
+            // is normally unreachable. Return success for safety.
+            Ok(())
+        }
+        _ => crate::api::error::InvalidHandleTypeSnafu {
+            handle_type: handle_type as i32,
+        }
+        .fail(),
+    }
+}
+
+fn end_tran_dbc(connection_handle: sql::Handle, completion_type: sql::SmallInt) -> OdbcResult<()> {
+    let connection = conn_from_handle(connection_handle);
+
+    let conn_handle = match &connection.state {
+        ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+        ConnectionState::Disconnected => return crate::api::error::DisconnectedSnafu.fail(),
+    };
+
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        if completion_type == 0 {
+            c.connection_commit(ConnectionCommitRequest {
+                conn_handle: Some(conn_handle),
+            })
+            .await?;
+        } else {
+            c.connection_rollback(ConnectionRollbackRequest {
+                conn_handle: Some(conn_handle),
+            })
+            .await?;
+        }
+        Ok::<_, crate::api::error::OdbcError>(())
+    })?;
+
+    // Close open cursors on all statements owned by this connection.
+    // Per ODBC spec, SQL_CURSOR_COMMIT_BEHAVIOR / SQL_CURSOR_ROLLBACK_BEHAVIOR
+    // = SQL_CB_CLOSE (already reported by SQLGetInfo).
+    let connection = conn_from_handle(connection_handle);
+    let stmt_ptrs: Vec<_> = connection.statements.clone();
+    for stmt_ptr in stmt_ptrs {
+        let stmt = unsafe { &mut *stmt_ptr };
+        close_cursor_for_transaction(&mut stmt.state);
+    }
+
+    Ok(())
+}
+
+/// Transition a statement's cursor state after commit/rollback.
+/// Open cursors are closed; prepared statements survive.
+fn close_cursor_for_transaction(state: &mut crate::api::types::State<crate::api::StatementState>) {
+    use crate::api::StatementState;
+    let _: Result<(), ()> = state.transition_or_err(|current| match current {
+        StatementState::QueryExecuted {
+            reader, prepared, ..
+        } => {
+            if prepared {
+                Ok((
+                    StatementState::Prepared {
+                        schema: reader.schema(),
+                    },
+                    (),
+                ))
+            } else {
+                Ok((StatementState::Created, ()))
+            }
+        }
+        StatementState::Fetching {
+            reader, prepared, ..
+        } => {
+            if prepared {
+                Ok((
+                    StatementState::Prepared {
+                        schema: reader.schema(),
+                    },
+                    (),
+                ))
+            } else {
+                Ok((StatementState::Created, ()))
+            }
+        }
+        StatementState::Done { schema, prepared } => {
+            if prepared {
+                Ok((StatementState::Prepared { schema }, ()))
+            } else {
+                Ok((StatementState::Created, ()))
+            }
+        }
+        StatementState::DdlExecuted { schema, prepared } => {
+            if prepared {
+                Ok((StatementState::Prepared { schema }, ()))
+            } else {
+                Ok((StatementState::Created, ()))
+            }
+        }
+        StatementState::DmlExecuted {
+            schema, prepared, ..
+        } => {
+            if prepared {
+                Ok((StatementState::Prepared { schema }, ()))
+            } else {
+                Ok((StatementState::Created, ()))
+            }
+        }
+        other => Ok((other, ())),
+    });
 }
 
 #[cfg(test)]

@@ -511,6 +511,28 @@ pub unsafe extern "C" fn SQLDriverConnectW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLEndTran(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    completion_type: sql::SmallInt,
+) -> sql::RetCode {
+    if handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    let diag_handle_type = match handle_type {
+        sql::HandleType::Dbc => sql::HandleType::Dbc,
+        sql::HandleType::Env => sql::HandleType::Env,
+        _ => return sql::SqlReturn::ERROR.0,
+    };
+    api::diagnostic::clear_diag_info(diag_handle_type, handle);
+    let result = api::connection::end_tran(handle_type, handle, completion_type);
+    api::diagnostic::set_diag_info_from_result(diag_handle_type, handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::RetCode {
     api::connection::disconnect(connection_handle).to_sql_code()
 }

@@ -381,6 +381,20 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Invalid transaction operation code: {completion_type}"))]
+    InvalidCompletionType {
+        completion_type: i16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid handle type for this operation: {handle_type}"))]
+    InvalidHandleType {
+        handle_type: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -602,6 +616,8 @@ impl OdbcError {
                 SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
             }
             OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
+            OdbcError::InvalidCompletionType { .. } => SqlState::InvalidTransactionOperationCode,
+            OdbcError::InvalidHandleType { .. } => SqlState::InvalidAttributeOptionIdentifier,
         }
     }
 
