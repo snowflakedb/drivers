@@ -5,7 +5,7 @@ mod tests {
     use crate::conversion::decfloat::{
         SnowflakeDecfloat, format_decfloat, i128_from_big_endian_signed,
     };
-    use crate::conversion::error::ReadArrowError;
+    use crate::conversion::error::{ReadArrowError, WriteOdbcError};
     use crate::conversion::test_utils::helpers::binding_for_wchar_buffer;
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::Warning;
@@ -448,18 +448,273 @@ mod tests {
     }
 
     // ======================================================================
+    // WriteODBCType — extreme exponents to SQL_C_CHAR
+    // ======================================================================
+
+    #[test]
+    fn write_char_extreme_negative_exponent() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; 64];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+
+        let warnings = df
+            .write_odbc_type((1, -16383), &binding, &mut None)
+            .unwrap();
+
+        assert!(warnings.is_empty());
+        let expected = b"1e-16383";
+        assert_eq!(str_len, expected.len() as sql::Len);
+        assert_eq!(&buffer[..expected.len()], expected);
+    }
+
+    #[test]
+    fn write_char_38_digit_with_large_positive_exponent() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; 128];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+
+        let sig: i128 = 12345678901234567890123456789012345678;
+        let warnings = df.write_odbc_type((sig, 63), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        let expected = b"1.2345678901234567890123456789012345678e100";
+        assert_eq!(str_len, expected.len() as sql::Len);
+        assert_eq!(&buffer[..expected.len()], expected);
+    }
+
+    #[test]
+    fn write_char_38_digit_with_large_negative_exponent() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; 128];
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
+
+        let sig: i128 = 12345678901234567890123456789012345678;
+        let warnings = df
+            .write_odbc_type((sig, -137), &binding, &mut None)
+            .unwrap();
+
+        assert!(warnings.is_empty());
+        let expected = b"1.2345678901234567890123456789012345678e-100";
+        assert_eq!(str_len, expected.len() as sql::Len);
+        assert_eq!(&buffer[..expected.len()], expected);
+    }
+
+    // ======================================================================
+    // Extreme exponents to integer type (regression: overflow panic)
+    // ======================================================================
+
+    #[test]
+    fn write_long_extreme_negative_exponent_truncates_to_zero() {
+        let df = decfloat();
+        let mut value: i32 = 99;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Long, &mut value, &mut str_len);
+
+        let warnings = df
+            .write_odbc_type((1, -16383), &binding, &mut None)
+            .unwrap();
+
+        assert_eq!(value, 0);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+    }
+
+    #[test]
+    fn write_long_extreme_negative_exponent_zero_sig() {
+        let df = decfloat();
+        let mut value: i32 = 99;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Long, &mut value, &mut str_len);
+
+        let warnings = df
+            .write_odbc_type((0, -16383), &binding, &mut None)
+            .unwrap();
+
+        assert_eq!(value, 0);
+        assert!(warnings.is_empty());
+    }
+
+    // ======================================================================
+    // WriteODBCType — interval types
+    // ======================================================================
+
+    fn binding_for_interval(
+        target_type: CDataType,
+        value: &mut sql::IntervalStruct,
+        str_len: &mut sql::Len,
+    ) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
+            buffer_length: 0,
+            octet_length_ptr: str_len as *mut sql::Len,
+            indicator_ptr: str_len as *mut sql::Len,
+            ..Default::default()
+        }
+    }
+
+    fn zero_interval() -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0,
+            interval_sign: 0,
+            interval_value: sql::IntervalUnion {
+                day_second: sql::DaySecond::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn write_interval_year_positive() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((5, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn write_interval_year_negative() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((-3, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 1);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 3);
+    }
+
+    #[test]
+    fn write_interval_month() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalMonth, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((10, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Month as i32);
+        assert_eq!(unsafe { interval.interval_value.year_month.month }, 10);
+    }
+
+    #[test]
+    fn write_interval_day() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalDay, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((15, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Day as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.day }, 15);
+    }
+
+    #[test]
+    fn write_interval_second_integer() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((45, 0), &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Second as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { interval.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn write_interval_year_fractional_truncation() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = df.write_odbc_type((57, -1), &binding, &mut None).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn write_interval_second_with_fraction() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = df
+            .write_odbc_type((45500, -3), &binding, &mut None)
+            .unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 45);
+        assert_eq!(
+            unsafe { interval.interval_value.day_second.fraction },
+            500000
+        );
+    }
+
+    #[test]
+    fn write_interval_multi_field_returns_error() {
+        let df = decfloat();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+
+        for target_type in [
+            CDataType::IntervalYearToMonth,
+            CDataType::IntervalDayToHour,
+            CDataType::IntervalDayToMinute,
+            CDataType::IntervalDayToSecond,
+            CDataType::IntervalHourToMinute,
+            CDataType::IntervalHourToSecond,
+            CDataType::IntervalMinuteToSecond,
+        ] {
+            let binding = binding_for_interval(target_type, &mut interval, &mut str_len);
+            let result = df.write_odbc_type((42, 0), &binding, &mut None);
+            assert!(matches!(
+                result,
+                Err(WriteOdbcError::IntervalFieldOverflow { .. })
+            ));
+        }
+    }
+
+    // ======================================================================
     // WriteODBCType — unsupported types
     // ======================================================================
 
     #[test]
-    fn write_unsupported_type_returns_error() {
+    fn write_unsupported_date_type_returns_error() {
         let df = decfloat();
-        let mut value: f64 = 0.0;
+        let mut value = [0u8; 32];
         let mut str_len: sql::Len = 0;
         let binding = Binding {
-            target_type: CDataType::Double,
-            target_value_ptr: &mut value as *mut f64 as sql::Pointer,
-            buffer_length: 0,
+            target_type: CDataType::TypeDate,
+            target_value_ptr: value.as_mut_ptr() as sql::Pointer,
+            buffer_length: value.len() as sql::Len,
             octet_length_ptr: &mut str_len as *mut sql::Len,
             indicator_ptr: &mut str_len as *mut sql::Len,
             ..Default::default()
@@ -468,8 +723,239 @@ mod tests {
         assert!(df.write_odbc_type((123, 0), &binding, &mut None).is_err());
     }
 
+    // ======================================================================
+    // WriteODBCType — SQL_C_DOUBLE
+    // ======================================================================
+
+    fn binding_for_fixed<T>(
+        target_type: CDataType,
+        value: &mut T,
+        str_len: &mut sql::Len,
+    ) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: value as *mut T as sql::Pointer,
+            buffer_length: std::mem::size_of::<T>() as sql::Len,
+            octet_length_ptr: str_len as *mut sql::Len,
+            indicator_ptr: str_len as *mut sql::Len,
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn write_unsupported_numeric_type_returns_error() {
+    fn write_double_integer() {
+        let df = decfloat();
+        let mut value: f64 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Double, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert!((value - 42.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn write_double_fractional() {
+        let df = decfloat();
+        let mut value: f64 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Double, &mut value, &mut str_len);
+        let warnings = df
+            .write_odbc_type((123456, -3), &binding, &mut None)
+            .unwrap();
+        assert!(warnings.is_empty());
+        assert!((value - 123.456).abs() < 1e-10);
+    }
+
+    #[test]
+    fn write_double_negative() {
+        let df = decfloat();
+        let mut value: f64 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Double, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((-425, -1), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert!((value - (-42.5)).abs() < f64::EPSILON);
+    }
+
+    // ======================================================================
+    // WriteODBCType — SQL_C_FLOAT
+    // ======================================================================
+
+    #[test]
+    fn write_float_integer() {
+        let df = decfloat();
+        let mut value: f32 = 0.0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Float, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert!((value - 42.0f32).abs() < f32::EPSILON);
+    }
+
+    // ======================================================================
+    // WriteODBCType — integer types
+    // ======================================================================
+
+    #[test]
+    fn write_long_integer() {
+        let df = decfloat();
+        let mut value: i32 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Long, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn write_long_fractional_truncation() {
+        let df = decfloat();
+        let mut value: i32 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Long, &mut value, &mut str_len);
+        let warnings = df
+            .write_odbc_type((123456, -3), &binding, &mut None)
+            .unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(value, 123);
+    }
+
+    #[test]
+    fn write_long_overflow_returns_error() {
+        let df = decfloat();
+        let mut value: i32 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Long, &mut value, &mut str_len);
+        assert!(
+            df.write_odbc_type((99999999999999999, 0), &binding, &mut None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn write_sbigint() {
+        let df = decfloat();
+        let mut value: i64 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::SBigInt, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn write_ubigint_negative_returns_error() {
+        let df = decfloat();
+        let mut value: u64 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::UBigInt, &mut value, &mut str_len);
+        assert!(df.write_odbc_type((-1, 0), &binding, &mut None).is_err());
+    }
+
+    #[test]
+    fn write_short() {
+        let df = decfloat();
+        let mut value: i16 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Short, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn write_tinyint() {
+        let df = decfloat();
+        let mut value: i8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::TinyInt, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn write_integer_with_positive_exponent() {
+        let df = decfloat();
+        let mut value: i32 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Long, &mut value, &mut str_len);
+        // 42 * 10^2 = 4200
+        let warnings = df.write_odbc_type((42, 2), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, 4200);
+    }
+
+    // ======================================================================
+    // WriteODBCType — SQL_C_BIT
+    // ======================================================================
+
+    #[test]
+    fn write_bit_zero() {
+        let df = decfloat();
+        let mut value: u8 = 0xFF;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Bit, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((0, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn write_bit_one() {
+        let df = decfloat();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Bit, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((1, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value, 1);
+    }
+
+    #[test]
+    fn write_bit_out_of_range() {
+        let df = decfloat();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Bit, &mut value, &mut str_len);
+        assert!(df.write_odbc_type((2, 0), &binding, &mut None).is_err());
+    }
+
+    #[test]
+    fn write_bit_negative_returns_error() {
+        let df = decfloat();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Bit, &mut value, &mut str_len);
+        assert!(df.write_odbc_type((-1, 0), &binding, &mut None).is_err());
+    }
+
+    #[test]
+    fn write_bit_fractional_truncation() {
+        let df = decfloat();
+        let mut value: u8 = 0;
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Bit, &mut value, &mut str_len);
+        // 0.5 = 5 * 10^-1
+        let warnings = df.write_odbc_type((5, -1), &binding, &mut None).unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(value, 0);
+    }
+
+    // ======================================================================
+    // WriteODBCType — SQL_C_NUMERIC
+    // ======================================================================
+
+    #[test]
+    fn write_numeric_positive_integer() {
         let df = decfloat();
         let mut value = sql::Numeric {
             precision: 0,
@@ -478,16 +964,92 @@ mod tests {
             val: [0; 16],
         };
         let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 1);
+        assert_eq!(value.val[0], 42);
+        assert!(value.val[1..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn write_numeric_negative() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        let warnings = df.write_odbc_type((-123, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 0);
+        assert_eq!(value.val[0], 123);
+    }
+
+    #[test]
+    fn write_numeric_fractional_truncation() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // 123.456 = 123456 * 10^-3, default scale=0 -> truncate to 123
+        let warnings = df
+            .write_odbc_type((123456, -3), &binding, &mut None)
+            .unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(value.val[0], 123);
+    }
+
+    // ======================================================================
+    // WriteODBCType — SQL_C_BINARY
+    // ======================================================================
+
+    #[test]
+    fn write_binary_integer() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
         let binding = Binding {
-            target_type: CDataType::Numeric,
-            target_value_ptr: &mut value as *mut sql::Numeric as sql::Pointer,
-            buffer_length: 0,
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
             octet_length_ptr: &mut str_len as *mut sql::Len,
             indicator_ptr: &mut str_len as *mut sql::Len,
             ..Default::default()
         };
+        let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
+        assert_eq!(numeric.sign, 1);
+        assert_eq!(numeric.val[0], 42);
+    }
 
-        assert!(df.write_odbc_type((123, 0), &binding, &mut None).is_err());
+    #[test]
+    fn write_binary_buffer_too_small_returns_error() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; 4]; // too small for sql::Numeric
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        assert!(df.write_odbc_type((42, 0), &binding, &mut None).is_err());
     }
 
     // ======================================================================
@@ -814,5 +1376,177 @@ mod tests {
         let (sig, exp) = df.read_arrow_type(&struct_array, 0).unwrap();
         assert_eq!(sig, -42);
         assert_eq!(exp, 0);
+    }
+
+    // ======================================================================
+    // Overflow safety — SQL_C_NUMERIC (checked pow/mul)
+    // ======================================================================
+
+    #[test]
+    fn write_numeric_large_positive_exponent_overflows_returns_error() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // sig=1, exp=100 → adjusted_exp=100 → 10^100 overflows u128
+        let result = df.write_odbc_type((1, 100), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_numeric_multiplication_overflow_returns_error() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // 10^38 * 10^1 overflows u128 (u128 max ~ 3.4e38)
+        let sig: i128 = 10i128.pow(37);
+        let result = df.write_odbc_type((sig, 2), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_numeric_large_negative_adjusted_exp_truncates_to_zero() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // sig=42, exp=-100 → adjusted_exp=-100 → 10^100 overflows u128 → (0, true)
+        let warnings = df.write_odbc_type((42, -100), &binding, &mut None).unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert!(value.val.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn write_numeric_small_positive_exponent_succeeds() {
+        let df = decfloat();
+        let mut value = sql::Numeric {
+            precision: 0,
+            scale: 0,
+            sign: 0,
+            val: [0; 16],
+        };
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_fixed(CDataType::Numeric, &mut value, &mut str_len);
+        // sig=5, exp=2 → adjusted_exp=2 → 5 * 100 = 500, fits fine
+        let warnings = df.write_odbc_type((5, 2), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(value.sign, 1);
+        let stored = u128::from_le_bytes(value.val);
+        assert_eq!(stored, 500);
+    }
+
+    // ======================================================================
+    // Overflow safety — SQL_C_BINARY (clamped value detection)
+    // ======================================================================
+
+    #[test]
+    fn write_binary_extreme_positive_exponent_returns_error() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // sig=1, exp=100 → 10^100 overflows i128 → should return 22003
+        let result = df.write_odbc_type((1, 100), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_binary_negative_extreme_exponent_returns_error() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // sig=-1, exp=100 → overflows → should return 22003
+        let result = df.write_odbc_type((-1, 100), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_binary_large_sig_with_exponent_returns_error() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // sig * 10^exp overflows i128 via checked_mul
+        let sig: i128 = i128::MAX / 5;
+        let result = df.write_odbc_type((sig, 1), &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn write_binary_max_representable_value_succeeds() {
+        let df = decfloat();
+        let mut buffer = vec![0u8; std::mem::size_of::<sql::Numeric>()];
+        let mut str_len: sql::Len = 0;
+        let binding = Binding {
+            target_type: CDataType::Binary,
+            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            buffer_length: buffer.len() as sql::Len,
+            octet_length_ptr: &mut str_len as *mut sql::Len,
+            indicator_ptr: &mut str_len as *mut sql::Len,
+            ..Default::default()
+        };
+        // Large value that fits in i128: sig=99, exp=0
+        let warnings = df.write_odbc_type((99, 0), &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        let numeric: &sql::Numeric = unsafe { &*(buffer.as_ptr() as *const sql::Numeric) };
+        assert_eq!(numeric.sign, 1);
+        assert_eq!(numeric.val[0], 99);
     }
 }

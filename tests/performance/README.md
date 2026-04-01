@@ -119,6 +119,38 @@ hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
 | `--preserve-mappings` | Keep WireMock mappings after tests (for debugging) | `false` (enabled in local runs) |
 | `--reuse-mappings` | Reuse existing mappings directory (e.g., `run_20260115_120000`) | None (runs recording phase) |
 
+### Local Performance Compare
+
+When running locally via `hatch run *-local` scripts, a session summary is printed at the end of the run (after `✓ TESTS COMPLETED`). UD vs OLD comparisons are always shown when both drivers ran. `PERF_LOCAL_COMPARE=1` (set in those scripts) additionally enables comparisons against previous local runs and single-driver summaries.
+
+**What is shown:**
+
+- **UD vs OLD** (when `--driver-type=both`): percentage difference between Universal and Old driver from the current run. Always shown when both drivers ran, regardless of `PERF_LOCAL_COMPARE`.
+- **vs last run** (requires `PERF_LOCAL_COMPARE=1` and at least 1 previous run): current median compared to the previous run's median.
+- **vs all prev** (requires `PERF_LOCAL_COMPARE=1` and at least 2 previous runs): current median compared to the median across all previous runs.
+
+History comparisons are silently skipped when there are no previous runs for `vs last run`, or fewer than 2 previous runs for `vs all prev`.
+
+Metric used: `fetch_s` for SELECT tests, `query_s` for PUT/GET tests. Per-run values use the median over all iterations.
+
+**Session summary format:**
+```
+================================================================================
+SUMMARY
+================================================================================
+
+  select_string_1M_arrow_recorded_http  (python universal)
+    UD vs OLD:    fetch_s  UD=0.327s  OLD=0.459s  UD is -28.7% (faster) than OLD
+    vs last run:  fetch_s  0.459s -> 0.327s  -28.7%  faster  (run_20260326_122102)
+    vs all prev:  fetch_s  median 0.367s -> 0.327s  -10.8%  faster  [N=17]
+
+================================================================================
+```
+
+Previous runs are read from the local `results/` directory. Use `hatch run clean` to reset it.
+
+---
+
 #### Examples with Custom Arguments
 
 ```bash
@@ -176,12 +208,12 @@ def test_with_additional_setup(perf_test):
         ]
     )
 
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 
 def test_put_files_12mx100(perf_test):
     """PUT/GET test: Upload files to Snowflake stage"""
     perf_test(
-        test_type=TestType.PUT_GET,
+        test_type=PerfTestType.PUT_GET,
         s3_download_url="s3://sfc-eng-data/ecosystem/12Mx100/",
         setup_queries=[
             "CREATE TEMPORARY STAGE put_test_stage"
@@ -196,7 +228,7 @@ def test_put_files_12mx100(perf_test):
 **Notes**: 
 - **SELECT tests**: ARROW format (`ALTER SESSION SET QUERY_RESULT_FORMAT = 'ARROW'`) is added to any provided `setup_queries`.
 - **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
-- PUT/GET tests use `test_type=TestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
+- PUT/GET tests use `test_type=PerfTestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
 - The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
 
 ### Test Configuration Priority
@@ -352,8 +384,8 @@ The `PARAMETERS_JSON` environment variable must contain a JSON object with a `te
 
 Each driver container must generate:
 
-1. **CSV Results File**: `/results/<test_name>_<driver>_<type>_<timestamp>.csv`
-   
+1. **CSV Results File**: `/results/<driver_type>/<test_name>/<test_name>_<driver>_<type>_<timestamp>.csv`
+
    See [CSV Format](#csv-format) section for detailed format specification.
 
 2. **Metadata File**: `/results/run_metadata_<driver>_<type>.json`
@@ -377,16 +409,27 @@ Each driver container must generate:
 ```
 results/
 └── run_20251030_113045/
-    ├── select_string_1M_arrow_python_universal_1761734615.csv
-    ├── select_string_1M_arrow_python_old_1761734627.csv
-    ├── memory_timeline_select_string_1M_arrow_python_universal_1761734615.csv
-    ├── memory_timeline_select_string_1M_arrow_python_old_1761734627.csv
-    ├── select_number_1M_arrow_python_universal_1761734660.csv
-    ├── select_number_1M_arrow_python_old_1761734671.csv
-    ├── memory_timeline_select_number_1M_arrow_python_universal_1761734660.csv
-    ├── memory_timeline_select_number_1M_arrow_python_old_1761734671.csv
     ├── run_metadata_python_universal.json
-    └── run_metadata_python_old.json
+    ├── run_metadata_python_old.json
+    ├── wiremock/
+    │   ├── wiremock_stats_select_string_1M_arrow_recorded_http_record_universal_1761734600.csv
+    │   └── wiremock_logs_select_string_1M_arrow_recorded_http_replay_universal_1761734610.log
+    ├── universal/
+    │   ├── _record/
+    │   │   └── select_string_1M_arrow_recorded_http_record_python_universal_1761734605.csv
+    │   ├── select_string_1M_arrow/
+    │   │   ├── select_string_1M_arrow_python_universal_1761734615.csv
+    │   │   └── memory_timeline_select_string_1M_arrow_python_universal_1761734615.csv
+    │   └── select_number_1M_arrow/
+    │       ├── select_number_1M_arrow_python_universal_1761734660.csv
+    │       └── memory_timeline_select_number_1M_arrow_python_universal_1761734660.csv
+    └── old/
+        ├── select_string_1M_arrow/
+        │   ├── select_string_1M_arrow_python_old_1761734627.csv
+        │   └── memory_timeline_select_string_1M_arrow_python_old_1761734627.csv
+        └── select_number_1M_arrow/
+            ├── select_number_1M_arrow_python_old_1761734671.csv
+            └── memory_timeline_select_number_1M_arrow_python_old_1761734671.csv
 ```
 
 ### CSV Format
@@ -395,22 +438,22 @@ Results CSV files contain per-iteration timing, CPU, and memory data with actual
 
 **For SELECT tests:**
 ```csv
-timestamp,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb
-1762522370,0.005432,1.583121,1000000,1.571032,236.2
-1762522372,0.005118,1.812228,1000000,1.798445,237.4
-1762522374,0.004987,1.799454,1000000,1.785123,236.1
+timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb
+1762522370000,0.005432,1.583121,1000000,1.571032,236.2
+1762522372000,0.005118,1.812228,1000000,1.798445,237.4
+1762522374000,0.004987,1.799454,1000000,1.785123,236.1
 ```
 
 **For PUT/GET tests:**
 ```csv
-timestamp,query_s,cpu_time_s,peak_rss_mb
-1762522254,6.595445,0.312456,85.3
-1762522271,4.385419,0.298234,85.1
-1762522288,5.123456,0.305678,85.2
+timestamp_ms,query_s,cpu_time_s,peak_rss_mb
+1762522254000,6.595445,0.312456,85.3
+1762522271000,4.385419,0.298234,85.1
+1762522288000,5.123456,0.305678,85.2
 ```
 
 **Columns**:
-- `timestamp`: Unix timestamp (seconds since epoch) when the iteration completed
+- `timestamp_ms`: Unix timestamp in milliseconds when the iteration completed
 - `query_s`: Wall-clock time to execute the query (`cursor.execute()`) and get initial response (seconds)
 - `fetch_s`: Wall-clock time to fetch all result rows via `fetchmany()` (seconds) — **SELECT tests only**
 - `row_count`: Number of rows fetched — **SELECT tests only**

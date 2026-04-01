@@ -30,6 +30,7 @@ EXPORTS
     SQLGetInfoW
     SQLGetStmtAttrW
     SQLMoreResults
+    SQLNativeSqlW
     SQLNumParams
     SQLNumResultCols
     SQLDescribeParam

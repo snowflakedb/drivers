@@ -40,6 +40,9 @@ log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 # Suppress pytest section headers by using short traceback and disabling verbosity for log headers
 addopts = "--tb=short --show-capture=no"
+filterwarnings = [
+    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning",
+]
 markers = [
     "iterations(n): set number of test iterations for this test",
     "warmup_iterations(n): set number of warmup iterations for this test"
@@ -56,15 +59,15 @@ build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh &&
 
 # Local (always builds before execution, including WireMock for tests that need it)
 # Preserves WireMock mappings for debugging
-core-local = ["build-core", "build-wiremock", "python -m pytest {args:tests/} --driver=core --preserve-mappings -s -v"]
+core-local = ["build-core", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=core --preserve-mappings -s -v"]
 # Core with local binary (no Docker, no build needed)
-core-local-no-docker = "python -m pytest {args:tests/} --driver=core --use-local-binary --preserve-mappings -s -v"
-python-universal-local = ["build-python", "build-wiremock", "python -m pytest {args:tests/} --driver=python --driver-type=universal --preserve-mappings -s -v"]
-python-old-local = ["build-python", "build-wiremock", "python -m pytest {args:tests/} --driver=python --driver-type=old --preserve-mappings -s -v"]
-python-both-local = ["build-python", "build-wiremock", "python -m pytest {args:tests/} --driver=python --driver-type=both --preserve-mappings -s -v"]
-odbc-universal-local = ["build-odbc", "build-wiremock", "python -m pytest {args:tests/} --driver=odbc --driver-type=universal --preserve-mappings -s -v"]
-odbc-old-local = ["build-odbc", "build-wiremock", "python -m pytest {args:tests/} --driver=odbc --driver-type=old --preserve-mappings -s -v"]
-odbc-both-local = ["build-odbc", "build-wiremock", "python -m pytest {args:tests/} --driver=odbc --driver-type=both --preserve-mappings -s -v"]
+core-local-no-docker = "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=core --use-local-binary --preserve-mappings -s -v"
+python-universal-local = ["build-python", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=python --driver-type=universal --preserve-mappings -s -v"]
+python-old-local = ["build-python", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=python --driver-type=old --preserve-mappings -s -v"]
+python-both-local = ["build-python", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=python --driver-type=both --preserve-mappings -s -v"]
+odbc-universal-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=universal --preserve-mappings -s -v"]
+odbc-old-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=old --preserve-mappings -s -v"]
+odbc-both-local = ["build-odbc", "build-wiremock", "PERF_LOCAL_COMPARE=1 python -m pytest {args:tests/} --driver=odbc --driver-type=both --preserve-mappings -s -v"]
 
 # CI
 core = "python -m pytest {args:tests/} --driver=core --upload-to-benchstore -s -v"

@@ -1,7 +1,8 @@
 use proto_utils::ProtoError;
-use sf_core::protobuf::apis::database_driver_v1::{DatabaseDriverClient, database_driver_client};
+use sf_core::protobuf::apis::database_driver_v1::{
+    DatabaseDriverClient, DatabaseDriverClientBlockingExt, database_driver_client,
+};
 use sf_core::protobuf::generated::database_driver_v1::*;
-use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 
 use super::config::{Parameters, get_parameters, setup_logging};
 use super::private_key_helper::{self, PrivateKeyFile};
@@ -13,42 +14,27 @@ pub struct SnowflakeTestClient {
     pub parameters: Parameters,
     private_key_file: Option<PrivateKeyFile>,
     client: DatabaseDriverClient,
-    rt: tokio::runtime::Runtime,
 }
 
 impl SnowflakeTestClient {
-    fn new_runtime() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create test tokio runtime")
-    }
-
     /// Creates a client with default parameters (no authentication parameters set)
     pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();
         let client = database_driver_client();
-        let rt = Self::new_runtime();
+        let db_response = client.database_new_blocking(DatabaseNewRequest {}).unwrap();
+        let db_handle = db_response.db_handle.unwrap();
 
-        let (db_handle, conn_handle) = rt.block_on(async {
-            let db_response = client.database_new(DatabaseNewRequest {}).await.unwrap();
-            let db_handle = db_response.db_handle.unwrap();
+        client
+            .database_init_blocking(DatabaseInitRequest {
+                db_handle: Some(db_handle),
+            })
+            .unwrap();
 
-            client
-                .database_init(DatabaseInitRequest {
-                    db_handle: Some(db_handle),
-                })
-                .await
-                .unwrap();
-
-            let conn_response = client
-                .connection_new(ConnectionNewRequest {})
-                .await
-                .unwrap();
-            let conn_handle = conn_response.conn_handle.unwrap();
-            (db_handle, conn_handle)
-        });
+        let conn_response = client
+            .connection_new_blocking(ConnectionNewRequest {})
+            .unwrap();
+        let conn_handle = conn_response.conn_handle.unwrap();
 
         let test_client = Self {
             conn_handle,
@@ -56,7 +42,6 @@ impl SnowflakeTestClient {
             parameters,
             private_key_file: None,
             client,
-            rt,
         };
 
         test_client.set_options_from_parameters();
@@ -79,16 +64,13 @@ impl SnowflakeTestClient {
 
         let temp_key_file = test_client.setup_jwt_auth();
 
-        test_client.rt.block_on(async {
-            test_client
-                .client
-                .connection_init(ConnectionInitRequest {
-                    conn_handle: Some(test_client.conn_handle),
-                    db_handle: Some(test_client.db_handle),
-                })
-                .await
-                .unwrap();
-        });
+        test_client
+            .client
+            .connection_init_blocking(ConnectionInitRequest {
+                conn_handle: Some(test_client.conn_handle),
+                db_handle: Some(test_client.db_handle),
+            })
+            .unwrap();
 
         test_client.private_key_file = Some(temp_key_file);
         test_client
@@ -114,26 +96,20 @@ impl SnowflakeTestClient {
         };
 
         let client = database_driver_client();
-        let rt = Self::new_runtime();
 
-        let (db_handle, conn_handle) = rt.block_on(async {
-            let db_response = client.database_new(DatabaseNewRequest {}).await.unwrap();
-            let db_handle = db_response.db_handle.unwrap();
+        let db_response = client.database_new_blocking(DatabaseNewRequest {}).unwrap();
+        let db_handle = db_response.db_handle.unwrap();
 
-            client
-                .database_init(DatabaseInitRequest {
-                    db_handle: Some(db_handle),
-                })
-                .await
-                .unwrap();
+        client
+            .database_init_blocking(DatabaseInitRequest {
+                db_handle: Some(db_handle),
+            })
+            .unwrap();
 
-            let conn_response = client
-                .connection_new(ConnectionNewRequest {})
-                .await
-                .unwrap();
-            let conn_handle = conn_response.conn_handle.unwrap();
-            (db_handle, conn_handle)
-        });
+        let conn_response = client
+            .connection_new_blocking(ConnectionNewRequest {})
+            .unwrap();
+        let conn_handle = conn_response.conn_handle.unwrap();
 
         let test_client = Self {
             conn_handle,
@@ -141,7 +117,6 @@ impl SnowflakeTestClient {
             parameters: test_parameters,
             private_key_file: None,
             client,
-            rt,
         };
 
         test_client.set_options_from_parameters();
@@ -157,16 +132,13 @@ impl SnowflakeTestClient {
         test_client
             .set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
-        test_client.rt.block_on(async {
-            test_client
-                .client
-                .connection_init(ConnectionInitRequest {
-                    conn_handle: Some(test_client.conn_handle),
-                    db_handle: Some(test_client.db_handle),
-                })
-                .await
-                .unwrap();
-        });
+        test_client
+            .client
+            .connection_init_blocking(ConnectionInitRequest {
+                conn_handle: Some(test_client.conn_handle),
+                db_handle: Some(test_client.db_handle),
+            })
+            .unwrap();
 
         test_client.private_key_file = Some(temp_key_file);
         test_client
@@ -174,16 +146,13 @@ impl SnowflakeTestClient {
 
     /// Creates a new statement handle
     pub fn new_statement(&self) -> StatementHandle {
-        self.rt.block_on(async {
-            let response = self
-                .client
-                .statement_new(StatementNewRequest {
-                    conn_handle: Some(self.conn_handle),
-                })
-                .await
-                .unwrap();
-            response.stmt_handle.unwrap()
-        })
+        let response = self
+            .client
+            .statement_new_blocking(StatementNewRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+            .unwrap();
+        response.stmt_handle.unwrap()
     }
 
     pub fn execute_statement_query(&self, stmt: &StatementHandle) -> ExecuteResult {
@@ -204,29 +173,23 @@ impl SnowflakeTestClient {
                 })),
             }
         });
-        self.rt.block_on(async {
-            self.client
-                .statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(*stmt),
-                    bindings,
-                })
-                .await
-                .unwrap()
-                .result
-                .unwrap()
-        })
+        self.client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(*stmt),
+                bindings,
+            })
+            .unwrap()
+            .result
+            .unwrap()
     }
 
     pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
-        self.rt.block_on(async {
-            self.client
-                .statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(*stmt),
-                    query: query.to_string(),
-                })
-                .await
-                .unwrap();
-        });
+        self.client
+            .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
+                stmt_handle: Some(*stmt),
+                query: query.to_string(),
+            })
+            .unwrap();
     }
 
     /// Builds a JSON bindings string for integer parameters.
@@ -248,98 +211,80 @@ impl SnowflakeTestClient {
     }
 
     pub fn result_chunks(&self, stmt: &StatementHandle) -> ResultChunksResult {
-        self.rt.block_on(async {
-            self.client
-                .statement_result_chunks(StatementResultChunksRequest {
-                    stmt_handle: Some(*stmt),
-                })
-                .await
-                .unwrap()
-                .result
-                .unwrap()
-        })
+        self.client
+            .statement_result_chunks_blocking(StatementResultChunksRequest {
+                stmt_handle: Some(*stmt),
+            })
+            .unwrap()
+            .result
+            .unwrap()
     }
 
     pub fn fetch_chunk(&self, chunk: ResultChunk) -> DatabaseFetchChunkResponse {
-        self.rt.block_on(async {
-            self.client
-                .database_fetch_chunk(DatabaseFetchChunkRequest {
-                    db_handle: Some(self.db_handle),
-                    chunk: Some(chunk),
-                })
-                .await
-                .unwrap()
-        })
+        self.client
+            .database_fetch_chunk_blocking(DatabaseFetchChunkRequest {
+                db_handle: Some(self.db_handle),
+                chunk: Some(chunk),
+            })
+            .unwrap()
     }
 
     pub fn release_statement(&self, stmt: &StatementHandle) {
-        self.rt.block_on(async {
-            self.client
-                .statement_release(StatementReleaseRequest {
-                    stmt_handle: Some(*stmt),
-                })
-                .await
-                .unwrap();
-        });
+        self.client
+            .statement_release_blocking(StatementReleaseRequest {
+                stmt_handle: Some(*stmt),
+            })
+            .unwrap();
     }
 
     /// Executes a SQL query and returns the result
     pub fn execute_query(&self, sql: &str) -> ExecuteResult {
         let stmt_handle = self.new_statement();
 
-        self.rt.block_on(async {
-            self.client
-                .statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: sql.to_string(),
-                })
-                .await
-                .unwrap();
+        self.client
+            .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                query: sql.to_string(),
+            })
+            .unwrap();
 
-            let response = self
-                .client
-                .statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings: None,
-                })
-                .await
-                .unwrap();
+        let response = self
+            .client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings: None,
+            })
+            .unwrap();
 
-            response.result.unwrap()
-        })
+        response.result.unwrap()
     }
 
     pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
         let stmt_handle = self.new_statement();
 
-        self.rt.block_on(async {
-            if let Err(e) = self
-                .client
-                .statement_set_sql_query(StatementSetSqlQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    query: sql.to_string(),
-                })
-                .await
-            {
-                return Err(format!("Failed to set SQL query: {e:?}"));
-            }
+        if let Err(e) = self
+            .client
+            .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                query: sql.to_string(),
+            })
+        {
+            return Err(format!("Failed to set SQL query: {e:?}"));
+        }
 
-            match self
-                .client
-                .statement_execute_query(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings: None,
-                })
-                .await
-            {
-                Ok(response) => {
-                    let proto_result = response.result.unwrap();
-                    Ok(proto_result)
-                }
-                Err(ProtoError::Application(e)) => Err(format!("Failed to execute query: {e:?}")),
-                Err(ProtoError::Transport(e)) => Err(format!("Transport error: {e:?}")),
+        match self
+            .client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings: None,
+            }) {
+            Ok(response) => {
+                let proto_result = response.result.unwrap();
+                Ok(proto_result)
             }
-        })
+            Err(ProtoError::Application(e)) => Err(format!("Failed to execute query: {e:?}")),
+            Err(ProtoError::Transport(e)) => Err(format!("Transport error: {e:?}")),
+        }
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
@@ -349,71 +294,53 @@ impl SnowflakeTestClient {
     }
 
     pub fn connect(&self) -> Result<(), String> {
-        self.rt.block_on(async {
-            match self
-                .client
-                .connection_init(ConnectionInitRequest {
-                    conn_handle: Some(self.conn_handle),
-                    db_handle: Some(self.db_handle),
-                })
-                .await
-            {
-                Ok(_) => Ok(()),
-                Err(e) => Err(format!("Connection failed: {e:?}")),
-            }
-        })
+        match self.client.connection_init_blocking(ConnectionInitRequest {
+            conn_handle: Some(self.conn_handle),
+            db_handle: Some(self.db_handle),
+        }) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Connection failed: {e:?}")),
+        }
     }
 
     pub fn set_connection_option(&self, option_name: &str, option_value: &str) {
-        self.rt.block_on(async {
-            self.client
-                .connection_set_option_string(ConnectionSetOptionStringRequest {
-                    conn_handle: Some(self.conn_handle),
-                    key: option_name.to_string(),
-                    value: option_value.to_string(),
-                })
-                .await
-                .unwrap();
-        });
+        self.client
+            .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
+                conn_handle: Some(self.conn_handle),
+                key: option_name.to_string(),
+                value: option_value.to_string(),
+            })
+            .unwrap();
     }
 
     pub fn set_connection_option_int(&self, option_name: &str, option_value: i64) {
-        self.rt.block_on(async {
-            self.client
-                .connection_set_option_int(ConnectionSetOptionIntRequest {
-                    conn_handle: Some(self.conn_handle),
-                    key: option_name.to_string(),
-                    value: option_value,
-                })
-                .await
-                .unwrap();
-        });
+        self.client
+            .connection_set_option_int_blocking(ConnectionSetOptionIntRequest {
+                conn_handle: Some(self.conn_handle),
+                key: option_name.to_string(),
+                value: option_value,
+            })
+            .unwrap();
     }
 
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
-        self.rt.block_on(async {
-            self.client
-                .connection_set_option_bytes(ConnectionSetOptionBytesRequest {
-                    conn_handle: Some(self.conn_handle),
-                    key: option_name.to_string(),
-                    value: option_value.to_vec(),
-                })
-                .await
-                .unwrap();
-        });
+        self.client
+            .connection_set_option_bytes_blocking(ConnectionSetOptionBytesRequest {
+                conn_handle: Some(self.conn_handle),
+                key: option_name.to_string(),
+                value: option_value.to_vec(),
+            })
+            .unwrap();
     }
 
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
-        self.rt.block_on(async {
-            self.client
-                .statement_set_option_bool(StatementSetOptionBoolRequest {
-                    stmt_handle: Some(*stmt),
-                    key: STATEMENT_ASYNC_EXECUTION_OPTION.to_string(),
-                    value: enabled,
-                })
-                .await
-                .unwrap();
-        });
+        self.client
+            .statement_set_option_bool_blocking(StatementSetOptionBoolRequest {
+                stmt_handle: Some(*stmt),
+                key: "async_execution".to_string(),
+                value: enabled,
+            })
+            .unwrap();
     }
 
     /// Stores a temporary private key file to keep it alive for the duration of the test.
@@ -508,27 +435,23 @@ impl SnowflakeTestClient {
 
 impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
-        self.rt.block_on(async {
-            // Release the connection when the client is dropped
-            if let Err(e) = self
-                .client
-                .connection_release(ConnectionReleaseRequest {
-                    conn_handle: Some(self.conn_handle),
-                })
-                .await
-            {
-                tracing::warn!("Failed to release connection in Drop: {e:?}");
-            }
-            // Release the database handle
-            if let Err(e) = self
-                .client
-                .database_release(DatabaseReleaseRequest {
-                    db_handle: Some(self.db_handle),
-                })
-                .await
-            {
-                tracing::warn!("Failed to release database handle in Drop: {e:?}");
-            }
-        });
+        // Release the connection when the client is dropped
+        if let Err(e) = self
+            .client
+            .connection_release_blocking(ConnectionReleaseRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+        {
+            tracing::warn!("Failed to release connection in Drop: {e:?}");
+        }
+        // Release the database handle
+        if let Err(e) = self
+            .client
+            .database_release_blocking(DatabaseReleaseRequest {
+                db_handle: Some(self.db_handle),
+            })
+        {
+            tracing::warn!("Failed to release database handle in Drop: {e:?}");
+        }
     }
 }

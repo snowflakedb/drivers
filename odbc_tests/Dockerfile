@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 # Install dependencies
 RUN apt-get update && apt-get install -y unixodbc unixodbc-dev curl odbcinst wget build-essential git gdb \
-    zlib1g-dev libssl-dev jq
+    zlib1g-dev libssl-dev jq ccache
 
 # Install CMake (detect architecture automatically)
 RUN ARCH=$(dpkg --print-architecture) && \

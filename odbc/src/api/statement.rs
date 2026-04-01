@@ -43,7 +43,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, false)?;
             let stmt_handle = stmt.stmt_handle;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
@@ -108,6 +108,19 @@ fn update_numeric_settings(
             let bool_value = value.eq_ignore_ascii_case("true");
             settings.treat_big_number_as_string = bool_value;
             tracing::info!("Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {bool_value}");
+        }
+
+        if let Ok(resp) = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: "VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT".to_string(),
+            })
+            .await
+            && let Some(value) = resp.value
+            && let Ok(size) = value.parse::<u64>()
+        {
+            settings.max_varchar_size = size;
+            tracing::info!("Server parameter VARCHAR_AND_BINARY_MAX_SIZE_IN_RESULT = {size}");
         }
     });
     Ok(())
@@ -179,6 +192,20 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             let reader = reader_from_protobuf_stream(stream_ptr)?;
             let schema = reader.schema();
             stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
+
+            let param_count = result.number_of_binds.max(0) as usize;
+            let max_varchar = stmt.conn.numeric_settings.max_varchar_size;
+            stmt.ipd.records.retain(|&k, _| (k as usize) <= param_count);
+            for i in 1..=param_count {
+                stmt.ipd
+                    .records
+                    .entry(i as u16)
+                    .or_insert_with(|| IpdRecord::with_varchar_size(max_varchar));
+            }
+            tracing::info!(
+                "prepare: auto-IPD populated {param_count} parameter markers (from server)"
+            );
+
             stmt.state.set(StatementState::Prepared { schema });
             tracing::info!("prepare: Successfully prepared statement");
             Ok(())
@@ -216,7 +243,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle,
         } => {
-            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd)?;
+            let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, prepared)?;
 
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_execute_query(StatementExecuteQueryRequest {
@@ -321,15 +348,46 @@ fn create_execute_state(
 
 /// Build JSON query bindings from ODBC parameter bindings.
 ///
-/// Returns `(bindings, json_owner)`. The caller **must** keep `json_owner` alive
-/// until after the bindings have been consumed by `statement_execute_query`,
-/// because `BinaryDataPtr` holds a raw pointer into the owned `String`.
+/// When `prepared` is true (SQLPrepare+SQLExecute flow), the IPD has server-
+/// provided parameter count and we validate that the APD covers every marker.
+/// When `prepared` is false (SQLExecDirect), the IPD only has records from
+/// SQLBindParameter — we send whatever the APD has and let the server validate.
 fn apply_parameter_bindings(
     apd: &crate::api::ApdDescriptor,
     ipd: &crate::api::IpdDescriptor,
+    prepared: bool,
 ) -> OdbcResult<(Option<QueryBindings>, Option<String>)> {
     if apd.records.is_empty() {
+        if prepared {
+            let ipd_count = ipd.desc_count() as usize;
+            if ipd_count > 0 {
+                return crate::api::error::CountFieldIncorrectSnafu {
+                    reason: format!(
+                        "parameter 1 is not bound (statement has {ipd_count} parameter markers)"
+                    ),
+                }
+                .fail();
+            }
+        }
         return Ok((None, None));
+    }
+
+    let ipd_count = ipd.desc_count() as usize;
+    if ipd_count == 0 && !prepared {
+        return Ok((None, None));
+    }
+
+    if prepared {
+        for i in 1..=ipd_count {
+            if !apd.records.contains_key(&(i as u16)) {
+                return crate::api::error::CountFieldIncorrectSnafu {
+                    reason: format!(
+                        "parameter {i} is not bound (statement has {ipd_count} parameter markers)"
+                    ),
+                }
+                .fail();
+            }
+        }
     }
     tracing::info!(
         "apply_parameter_bindings: Found {} bound parameters",
@@ -508,9 +566,8 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
             stmt.ard.unbind_all();
         }
         FreeStmtOption::ResetParams => {
-            tracing::info!("free_stmt: Resetting all parameters");
+            tracing::info!("free_stmt: Resetting all parameter bindings (APD)");
             stmt.apd.clear();
-            stmt.ipd.clear();
         }
     }
 
@@ -518,8 +575,9 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
 }
 
 /// Return the number of parameters in the statement via the IPD descriptor.
-// TODO: Once auto-IPD is implemented (parsing ? markers during SQLPrepare),
-// this will also work for statements that haven't had SQLBindParameter called.
+///
+/// After `SQLPrepare`, auto-IPD populates the IPD with one record per `?`
+/// marker, so this works even without prior `SQLBindParameter` calls.
 pub fn num_params(
     statement_handle: sql::Handle,
     param_count_ptr: *mut sql::SmallInt,
@@ -544,9 +602,10 @@ pub fn num_params(
     Ok(())
 }
 
-/// Describe a bound parameter via the IPD descriptor.
-// TODO: Once auto-IPD is implemented, this will also work for parameters
-// that were not explicitly bound but inferred from ? markers in SQLPrepare.
+/// Describe a parameter via the IPD descriptor.
+///
+/// Works for both explicitly bound parameters and auto-IPD markers
+/// populated during `SQLPrepare`.
 pub fn describe_param(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
@@ -567,7 +626,13 @@ pub fn describe_param(
 
     let stmt = stmt_from_handle(statement_handle);
 
-    if matches!(stmt.state.as_ref(), StatementState::Created) {
+    let allowed = matches!(
+        stmt.state.as_ref(),
+        StatementState::Prepared { .. }
+            | StatementState::NoResultSet { prepared: true, .. }
+            | StatementState::Done { prepared: true, .. }
+    );
+    if !allowed {
         return StatementNotExecutedSnafu.fail();
     }
     let ipd_rec = stmt.ipd.records.get(&parameter_number).ok_or_else(|| {

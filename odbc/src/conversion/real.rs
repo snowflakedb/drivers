@@ -8,6 +8,7 @@ use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::numeric_helpers::{whole_digits_len, write_numeric_as_binary};
 use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -52,13 +53,6 @@ fn check_float_range(value: f64, min: f64, max: f64) -> Result<(), WriteOdbcErro
         .fail()
     } else {
         Ok(())
-    }
-}
-
-fn whole_digits_len(num_str: &str) -> usize {
-    match num_str.find('.') {
-        Some(pos) => pos,
-        None => num_str.len(),
     }
 }
 
@@ -274,32 +268,7 @@ impl WriteODBCType for SnowflakeReal {
                     },
                     val: magnitude.to_le_bytes(),
                 };
-                let numeric_size = std::mem::size_of::<sql::Numeric>();
-                if (binding.buffer_length as usize) < numeric_size {
-                    return NumericValueOutOfRangeSnafu {
-                        reason: format!(
-                            "Buffer size {} is too small for SQL_C_BINARY (need {numeric_size} bytes)",
-                            binding.buffer_length
-                        ),
-                    }
-                    .fail();
-                }
-                let numeric_bytes: &[u8] = unsafe {
-                    std::slice::from_raw_parts(
-                        &numeric as *const sql::Numeric as *const u8,
-                        numeric_size,
-                    )
-                };
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        numeric_bytes.as_ptr(),
-                        binding.target_value_ptr as *mut u8,
-                        numeric_size,
-                    );
-                }
-                let _ = binding.write_length_or_null(
-                    crate::conversion::traits::LengthOrNull::Length(numeric_size as sql::Len),
-                );
+                write_numeric_as_binary(&numeric, binding)?;
                 Ok(fractional_warning(snowflake_value))
             }
             _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),

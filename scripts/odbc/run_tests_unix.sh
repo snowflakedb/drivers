@@ -17,11 +17,17 @@ else
     NPROC=$(nproc)
 fi
 
+CCACHE_ARGS=""
+if command -v ccache &>/dev/null; then
+    CCACHE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
+fi
+
 mkdir -p cmake-build
 cmake -B cmake-build \
     -D ODBC_LIBRARY="${ODBC_LIBRARY}" \
     -D ODBC_INCLUDE_DIR="${ODBC_INCLUDE_DIR}" \
     -D DRIVER_TYPE="${DRIVER_TYPE}" \
+    ${CCACHE_ARGS} \
     .
 cmake --build cmake-build -- -j $((NPROC * 2))
 ctest -j $((NPROC * 4)) -C Debug --test-dir cmake-build --output-on-failure

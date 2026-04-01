@@ -19,6 +19,7 @@ mod nullable;
 mod number;
 #[cfg(test)]
 mod number_tests;
+mod numeric_helpers;
 mod real;
 #[cfg(test)]
 mod real_tests;
@@ -41,7 +42,7 @@ pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCT
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,
 };
-pub use number::NumericSettings;
+pub use number::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN};
 
 use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,

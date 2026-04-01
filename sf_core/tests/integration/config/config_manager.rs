@@ -1,11 +1,11 @@
 use sf_core::apis::database_driver_v1::Setting;
-use sf_core::apis::database_driver_v1::connection::{
-    Connection, connection_load_from_config_with_paths,
-};
 use sf_core::config::config_manager::{
     load_all_config_sections_with_paths, load_config_section_with_paths,
 };
+use sf_core::config::param_names;
+use sf_core::config::param_store::ParamStore;
 use sf_core::config::path_resolver::ConfigPaths;
+use sf_core::config::resolver;
 use std::fs;
 use tempfile::TempDir;
 
@@ -26,6 +26,14 @@ fn write_config(dir: &TempDir, filename: &str, content: &str) {
     }
 }
 
+fn make_explicit(pairs: &[(&str, &str)]) -> ParamStore {
+    let mut store = ParamStore::new();
+    for (k, v) in pairs {
+        store.insert(k.to_string(), Setting::String(v.to_string()));
+    }
+    store
+}
+
 #[test]
 fn connection_load_from_config_basic() {
     // Given A connections.toml file with test_connection defined
@@ -43,11 +51,22 @@ warehouse = "mywarehouse"
     );
 
     // When sf_core loads the connection config
-    let mut conn = Connection::new();
-    let result = connection_load_from_config_with_paths(&mut conn, "testconn", &paths);
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let resolved = resolver::resolve_with_paths(&explicit, &paths).unwrap();
 
     // Then The connection settings should be loaded
-    assert!(result.is_ok());
+    assert_eq!(
+        resolved.get(param_names::ACCOUNT),
+        Some(&Setting::String("myaccount".into()))
+    );
+    assert_eq!(
+        resolved.get(param_names::USER),
+        Some(&Setting::String("myuser".into()))
+    );
+    assert_eq!(
+        resolved.get(param_names::WAREHOUSE),
+        Some(&Setting::String("mywarehouse".into()))
+    );
 }
 
 #[test]
@@ -66,17 +85,22 @@ user = "config_user"
     );
 
     // And An explicit account setting on the connection
-    let mut conn = Connection::new();
-    conn.set_option(
-        "account".to_string(),
-        Setting::String("explicit_account".to_string()),
-    );
+    let explicit = make_explicit(&[
+        ("connection_name", "testconn"),
+        ("account", "explicit_account"),
+    ]);
 
     // When sf_core loads the connection config
-    let result = connection_load_from_config_with_paths(&mut conn, "testconn", &paths);
+    let result = resolver::resolve_with_paths(&explicit, &paths);
 
     // Then The explicit setting should take precedence
     assert!(result.is_ok());
+    let resolved = result.unwrap();
+    if let Some(Setting::String(account)) = resolved.get(param_names::ACCOUNT) {
+        assert_eq!(account, "explicit_account");
+    } else {
+        panic!("Expected account setting");
+    }
 }
 
 #[test]
@@ -86,8 +110,8 @@ fn connection_not_found_in_config() {
     let paths = make_paths(&temp_dir);
 
     // When sf_core loads connection named nonexistent
-    let mut conn = Connection::new();
-    let result = connection_load_from_config_with_paths(&mut conn, "nonexistent", &paths);
+    let explicit = make_explicit(&[("connection_name", "nonexistent")]);
+    let result = resolver::resolve_with_paths(&explicit, &paths);
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
@@ -122,11 +146,17 @@ warehouse = "connections_wh"
     );
 
     // When sf_core loads the connection config
-    let mut conn = Connection::new();
-    let result = connection_load_from_config_with_paths(&mut conn, "testconn", &paths);
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let result = resolver::resolve_with_paths(&explicit, &paths);
 
     // Then connections.toml values should override config.toml
     assert!(result.is_ok());
+    let resolved = result.unwrap();
+    if let Some(Setting::String(account)) = resolved.get(param_names::ACCOUNT) {
+        assert_eq!(account, "connections_account");
+    } else {
+        panic!("Expected account setting");
+    }
 }
 
 #[cfg(unix)]
@@ -149,8 +179,8 @@ account = "myaccount"
     fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o666)).unwrap();
 
     // When sf_core loads the connection config
-    let mut conn = Connection::new();
-    let result = connection_load_from_config_with_paths(&mut conn, "testconn", &paths);
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let result = resolver::resolve_with_paths(&explicit, &paths);
 
     // Then An insecure permissions error should be returned
     assert!(result.is_err());
@@ -175,8 +205,8 @@ validate_certs = true
     );
 
     // When sf_core loads the connection config
-    let mut conn = Connection::new();
-    let result = connection_load_from_config_with_paths(&mut conn, "testconn", &paths);
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let result = resolver::resolve_with_paths(&explicit, &paths);
 
     // Then Each value should be parsed to the correct Setting type
     assert!(result.is_ok());
@@ -191,8 +221,8 @@ fn empty_config_files() {
     write_config(&temp_dir, "config.toml", "");
 
     // When sf_core loads connection named testconn
-    let mut conn = Connection::new();
-    let result = connection_load_from_config_with_paths(&mut conn, "testconn", &paths);
+    let explicit = make_explicit(&[("connection_name", "testconn")]);
+    let result = resolver::resolve_with_paths(&explicit, &paths);
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());

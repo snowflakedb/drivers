@@ -2,6 +2,7 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
@@ -21,7 +22,7 @@ use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use crate::token_cache::{TokenCache, TokenType};
-use reqwest::{self, header};
+use reqwest::{self, Method, header};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
@@ -932,6 +933,29 @@ async fn execute_sync_with_retry<'a>(
     Err(last_error.expect("last_error must be set after retry loop"))
 }
 
+/// Map a Snowflake query response into a `Result`, converting
+/// `response.success == false` into `RestError::QueryFailed` with
+/// the server's message, error code, and SQL state.
+fn into_query_result(
+    response: query_response::Response,
+) -> Result<query_response::Response, RestError> {
+    if !response.success {
+        let message = response
+            .message
+            .unwrap_or_else(|| "Unknown error".to_owned());
+        let code = response.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+        let sql_state = response.data.sql_state.clone();
+
+        return QueryFailedSnafu {
+            message,
+            code,
+            sql_state,
+        }
+        .fail();
+    }
+    Ok(response)
+}
+
 /// Execute a single sync query request.
 async fn execute_sync_query<'a>(
     client: &reqwest::Client,
@@ -1000,23 +1024,7 @@ async fn execute_sync_query<'a>(
         "Sync query completed"
     );
 
-    if !query_response.success {
-        let message = query_response
-            .message
-            .unwrap_or_else(|| "Unknown error".to_owned());
-        let code = query_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok());
-        let sql_state = query_response.data.sql_state.clone();
-        return QueryFailedSnafu {
-            message,
-            code,
-            sql_state,
-        }
-        .fail();
-    }
-    Ok(query_response)
+    into_query_result(query_response)
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -1044,7 +1052,179 @@ pub async fn snowflake_query_async_style<'a, S: AsRef<str>>(
     .context(AsyncQuerySnafu)
 }
 
-async fn read_response_json<T>(response: reqwest::Response) -> Result<T, SnowflakeResponseError>
+/// Fetch the result of a previously executed query by its Snowflake Query ID.
+///
+/// Issues `GET /queries/{query_id}/result` using the connection's session token,
+/// validates the response, and returns the parsed query response on success.
+/// Returns `RestError` so callers can use `RefreshContext` for token refresh.
+#[tracing::instrument(skip(client, query_parameters, session_token))]
+pub async fn snowflake_get_query_result(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    query_id: &str,
+    retry_policy: &RetryPolicy,
+) -> Result<query_response::Response, RestError> {
+    let result_url = format!(
+        "{}/queries/{}/result",
+        query_parameters.server_url, query_id
+    );
+    let query_response = async_exec::poll_query_status(
+        client,
+        &query_parameters.client_info,
+        session_token,
+        &result_url,
+        retry_policy,
+    )
+    .await
+    .context(AsyncQuerySnafu)?;
+
+    into_query_result(query_response)
+}
+
+/// Result of a query status check via the monitoring endpoint.
+#[derive(Debug)]
+pub struct QueryStatusResult {
+    pub status_name: String,
+    pub error_code: Option<i32>,
+    pub error_message: Option<String>,
+}
+
+const MONITORING_QUERIES_PATH: &str = "/monitoring/queries/";
+
+/// Check the status of a query by its ID via the `/monitoring/queries/{query_id}` endpoint.
+#[tracing::instrument(skip(client, client_info, session_token))]
+pub async fn get_query_status(
+    client: &reqwest::Client,
+    server_url: &str,
+    client_info: &ClientInfo,
+    session_token: &SensitiveString,
+    query_id: &str,
+    retry_policy: &RetryPolicy,
+) -> Result<QueryStatusResult, RestError> {
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
+    let mut url = Url::parse(server_url)
+        .and_then(|base| base.join(MONITORING_QUERIES_PATH))
+        .context(UrlJoinSnafu {
+            path: MONITORING_QUERIES_PATH,
+        })?;
+
+    {
+        let url_str = url.to_string();
+        url.path_segments_mut()
+            .map_err(|()| InvalidUrlSnafu { url: url_str }.build())?
+            .push(query_id);
+    }
+
+    let token_str = session_token.reveal();
+    let build_request = || {
+        apply_query_headers(client.get(url.clone()), client_info, token_str.as_ref()).query(&[
+            ("requestId", uuid::Uuid::new_v4().to_string()),
+            ("request_guid", uuid::Uuid::new_v4().to_string()),
+        ])
+    };
+
+    let ctx = HttpContext::new(Method::GET, MONITORING_QUERIES_PATH);
+    let response = execute_with_retry(build_request, &ctx, retry_policy, |r| async move { Ok(r) })
+        .await
+        .context(HttpRetrySnafu {
+            context: "query status",
+        })?;
+
+    let body: QueryStatusResponse = read_response_json(response)
+        .await
+        .context(InvalidSnowflakeResponseSnafu)?;
+
+    if !body.success {
+        let message = body.message.unwrap_or_else(|| "Unknown error".to_owned());
+        let code = body.code.as_deref().and_then(|c| c.parse::<i32>().ok());
+        return QueryFailedSnafu {
+            message,
+            code,
+            sql_state: None::<String>,
+        }
+        .fail();
+    }
+
+    let data = body.data.context(MissingResponseFieldSnafu {
+        field: "data in monitoring response",
+    })?;
+
+    let query_entry = data
+        .queries
+        .into_iter()
+        .next()
+        .context(MissingResponseFieldSnafu {
+            field: "queries[0] in monitoring response",
+        })?;
+
+    let error_code = query_entry
+        .error_code
+        .as_deref()
+        .and_then(|c| c.parse::<i32>().ok())
+        .and_then(|c| if c == 0 { None } else { Some(c) });
+
+    let error_message = if error_code.is_some() {
+        query_entry.error_message.filter(|m| !m.is_empty())
+    } else {
+        None
+    };
+
+    Ok(QueryStatusResult {
+        status_name: query_entry.status,
+        error_code,
+        error_message,
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct QueryStatusResponse {
+    success: bool,
+    message: Option<String>,
+    code: Option<String>,
+    data: Option<QueryStatusResponseData>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct QueryStatusResponseData {
+    queries: Vec<QueryStatusEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct QueryStatusEntry {
+    status: String,
+    #[serde(
+        rename = "errorCode",
+        default,
+        deserialize_with = "deserialize_string_or_int"
+    )]
+    error_code: Option<String>,
+    #[serde(rename = "errorMessage")]
+    error_message: Option<String>,
+}
+
+/// Snowflake returns `errorCode` as either a JSON string (`"002003"`) or an
+/// integer (`0`). This deserializer accepts both and normalises to `Option<String>`.
+fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(serde_json::Value::Null) | None => Ok(None),
+        Some(other) => Err(serde::de::Error::custom(format!(
+            "expected string or number for errorCode, got {other}"
+        ))),
+    }
+}
+
+pub(crate) async fn read_response_json<T>(
+    response: reqwest::Response,
+) -> Result<T, SnowflakeResponseError>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -1173,6 +1353,13 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Heartbeat failed: {message} (code: {code})"))]
+    Heartbeat {
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Missing response field: {field}"))]
     MissingResponseField {
         field: &'static str,
@@ -1186,6 +1373,19 @@ pub enum RestError {
         code: Option<i32>,
         /// ANSI SQL state code (e.g. "42000" for syntax error).
         sql_state: Option<String>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("HTTP request failed after retries: {context}"))]
+    HttpRetry {
+        context: &'static str,
+        source: crate::http::retry::HttpError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Invalid URL: {url}"))]
+    InvalidUrl {
+        url: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -1392,5 +1592,218 @@ mod tests {
             let cache = StubTokenCache::new();
             remove_mfa_token_from_cache("not-a-url", "alice", Some(&cache));
         }
+    }
+
+    mod into_query_result_tests {
+        use super::*;
+        use serde_json::json;
+
+        fn response_from_json(value: serde_json::Value) -> query_response::Response {
+            serde_json::from_value(value).expect("valid response JSON")
+        }
+
+        #[test]
+        fn success_returns_response_unchanged() {
+            let resp = response_from_json(json!({
+                "success": true,
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null
+                }
+            }));
+
+            match into_query_result(resp) {
+                Ok(r) => assert!(r.success),
+                Err(e) => panic!("expected Ok, got {:?}", e),
+            }
+        }
+
+        #[test]
+        fn failure_returns_query_failed_with_all_fields() {
+            let resp = response_from_json(json!({
+                "success": false,
+                "message": "SQL compilation error",
+                "code": "1003",
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null,
+                    "sqlState": "42000"
+                }
+            }));
+
+            match into_query_result(resp) {
+                Err(RestError::QueryFailed {
+                    message,
+                    code,
+                    sql_state,
+                    ..
+                }) => {
+                    assert_eq!(message, "SQL compilation error");
+                    assert_eq!(code, Some(1003));
+                    assert_eq!(sql_state, Some("42000".to_owned()));
+                }
+                Err(other) => panic!("expected QueryFailed, got {:?}", other),
+                Ok(_) => panic!("expected Err, got Ok"),
+            }
+        }
+
+        #[test]
+        fn failure_with_missing_optional_fields() {
+            let resp = response_from_json(json!({
+                "success": false,
+                "data": {
+                    "rowset": null,
+                    "rowsetBase64": null
+                }
+            }));
+
+            match into_query_result(resp) {
+                Err(RestError::QueryFailed {
+                    message,
+                    code,
+                    sql_state,
+                    ..
+                }) => {
+                    assert_eq!(message, "Unknown error");
+                    assert_eq!(code, None);
+                    assert_eq!(sql_state, None);
+                }
+                Err(other) => panic!("expected QueryFailed, got {:?}", other),
+                Ok(_) => panic!("expected Err, got Ok"),
+            }
+        }
+    }
+
+    #[test]
+    fn deserialize_query_status_success_response() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "SUCCESS",
+                    "errorCode": 0,
+                    "errorMessage": "No error reported"
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries.len(), 1);
+        assert_eq!(data.queries[0].status, "SUCCESS");
+        assert_eq!(data.queries[0].error_code.as_deref(), Some("0"));
+        assert_eq!(
+            data.queries[0].error_message.as_deref(),
+            Some("No error reported")
+        );
+    }
+
+    #[test]
+    fn deserialize_query_status_running_response() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "RUNNING",
+                    "errorCode": 0,
+                    "errorMessage": ""
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        assert_eq!(response.data.unwrap().queries[0].status, "RUNNING");
+    }
+
+    #[test]
+    fn deserialize_query_status_error_response_with_int_code() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "FAILED_WITH_ERROR",
+                    "errorCode": 2003,
+                    "errorMessage": "SQL compilation error:\nObject 'NONEXISTENTTABLE' does not exist or not authorized."
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries[0].status, "FAILED_WITH_ERROR");
+        assert_eq!(data.queries[0].error_code.as_deref(), Some("2003"));
+        assert!(
+            data.queries[0]
+                .error_message
+                .as_ref()
+                .unwrap()
+                .contains("NONEXISTENTTABLE")
+        );
+    }
+
+    #[test]
+    fn deserialize_query_status_error_response_with_string_code() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "FAILED_WITH_ERROR",
+                    "errorCode": "002003",
+                    "errorMessage": "SQL compilation error"
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries[0].status, "FAILED_WITH_ERROR");
+        assert_eq!(data.queries[0].error_code.as_deref(), Some("002003"));
+    }
+
+    #[test]
+    fn deserialize_query_status_missing_optional_fields() {
+        let json = r#"{
+            "success": true,
+            "data": {
+                "queries": [{
+                    "status": "QUEUED"
+                }]
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(response.success);
+        let data = response.data.unwrap();
+        assert_eq!(data.queries[0].status, "QUEUED");
+        assert_eq!(data.queries[0].error_code, None);
+        assert_eq!(data.queries[0].error_message, None);
+    }
+
+    #[test]
+    fn deserialize_query_status_server_error_response() {
+        let json = r#"{
+            "success": false,
+            "message": "Query not found",
+            "code": "000707",
+            "data": {
+                "queries": []
+            }
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.success);
+        assert_eq!(response.message.as_deref(), Some("Query not found"));
+        assert_eq!(response.code.as_deref(), Some("000707"));
+    }
+
+    #[test]
+    fn deserialize_query_status_error_without_data() {
+        let json = r#"{
+            "success": false,
+            "message": "Unauthorized",
+            "code": "000401"
+        }"#;
+        let response: QueryStatusResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.success);
+        assert!(response.data.is_none());
+        assert_eq!(response.message.as_deref(), Some("Unauthorized"));
     }
 }

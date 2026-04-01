@@ -2,8 +2,8 @@ use crate::api::bitmask::Bitmask;
 use crate::api::error::InvalidDescriptorKindSnafu;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::conversion::Binding;
-use crate::conversion::NumericSettings;
 use crate::conversion::warning::Warnings;
+use crate::conversion::{NumericSettings, SF_DEFAULT_VARCHAR_MAX_LEN};
 use arrow::{array::RecordBatch, datatypes::SchemaRef, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
@@ -691,10 +691,6 @@ impl IpdDescriptor {
     pub fn desc_count(&self) -> u16 {
         self.records.keys().copied().max().unwrap_or(0)
     }
-
-    pub fn clear(&mut self) {
-        self.records.clear();
-    }
 }
 
 /// A resolved descriptor reference returned by `desc_ref_from_handle`.
@@ -835,15 +831,23 @@ pub struct IpdRecord {
     pub nullable: sql::SmallInt,
 }
 
-impl Default for IpdRecord {
-    fn default() -> Self {
+impl IpdRecord {
+    /// Create a default IPD record for an untyped `?` marker, using the
+    /// server-provided max VARCHAR size as `column_size`.
+    pub fn with_varchar_size(max_varchar_size: u64) -> Self {
         Self {
             sql_data_type: sql::SqlDataType::VARCHAR,
-            column_size: 0,
+            column_size: max_varchar_size.min(sql::ULen::MAX as u64) as sql::ULen,
             decimal_digits: 0,
             direction: sql::ParamType::Input as sql::SmallInt,
-            nullable: 1, // SQL_NULLABLE — per ODBC spec: "dynamic parameters are always nullable"
+            nullable: 1, // SQL_NULLABLE — per ODBC spec
         }
+    }
+}
+
+impl Default for IpdRecord {
+    fn default() -> Self {
+        Self::with_varchar_size(SF_DEFAULT_VARCHAR_MAX_LEN)
     }
 }
 

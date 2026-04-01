@@ -66,8 +66,10 @@ fn main() {
         let def_path = std::path::Path::new(&manifest_dir).join("exports.def");
         // Rebuild when the export list changes so the DLL export table stays in sync.
         println!("cargo:rerun-if-changed={}", def_path.display());
-        // No quoting: cargo passes rustc-link-arg as a single OS-level token
-        // (via a response file), so the linker receives the path verbatim.
+        // No quoting: rustc passes this as a single token to the MSVC linker
+        // (using a response file internally), so the linker receives the path verbatim.
+        // Adding quotes makes them literal characters in the path, which both
+        // lld-link and MSVC link.exe reject.
         println!("cargo:rustc-link-arg=/DEF:{}", def_path.display());
     }
 

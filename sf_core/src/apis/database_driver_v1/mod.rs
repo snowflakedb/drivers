@@ -14,5 +14,5 @@ pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_sess
 pub use database::FetchChunkInput;
 pub use error::ApiError;
 pub use global_state::DatabaseDriverV1;
-pub use statement::{BindingType, ColumnMetadata, DataPtr, StoredChunkInfo};
+pub use statement::{BindingType, ColumnMetadata, DataPtr, ExecuteResult, StoredChunkInfo};
 pub use validation::{ValidationCode, ValidationIssue, ValidationSeverity};

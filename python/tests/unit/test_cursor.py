@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.errorcode import ER_NO_PYARROW
 from snowflake.connector._internal.extras import (
     MissingOptionalDependency,
@@ -18,8 +19,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     StatementHandle,
 )
-from snowflake.connector.cursor import FetchMode, SnowflakeCursor, SnowflakeCursorBase
-from snowflake.connector.errors import ProgrammingError
+from snowflake.connector.cursor import FetchMode, QueryResultStats, SnowflakeCursor, SnowflakeCursorBase
+from snowflake.connector.errors import InterfaceError, ProgrammingError
 
 
 class TestFetchone:
@@ -614,6 +615,246 @@ class TestSqlstate:
         assert cursor.sqlstate is None
 
 
+class TestQueryResultStats:
+    """Unit tests for QueryResultStats NamedTuple."""
+
+    def test_default_all_none(self):
+        """All fields default to None."""
+        stats = QueryResultStats()
+        assert stats.num_rows_inserted is None
+        assert stats.num_rows_deleted is None
+        assert stats.num_rows_updated is None
+        assert stats.num_dml_duplicates is None
+
+    def test_positional_construction(self):
+        """Fields can be set by position."""
+        stats = QueryResultStats(10, 20, 30, 5)
+        assert stats.num_rows_inserted == 10
+        assert stats.num_rows_deleted == 20
+        assert stats.num_rows_updated == 30
+        assert stats.num_dml_duplicates == 5
+
+    def test_keyword_construction(self):
+        """Fields can be set by keyword."""
+        stats = QueryResultStats(num_rows_inserted=1, num_rows_updated=2)
+        assert stats.num_rows_inserted == 1
+        assert stats.num_rows_deleted is None
+        assert stats.num_rows_updated == 2
+        assert stats.num_dml_duplicates is None
+
+    def test_is_named_tuple(self):
+        """QueryResultStats is a proper NamedTuple with tuple semantics."""
+        stats = QueryResultStats(1, 2, 3, 4)
+        assert isinstance(stats, tuple)
+        assert len(stats) == 4
+        assert stats[0] == 1
+        assert stats._fields == ("num_rows_inserted", "num_rows_deleted", "num_rows_updated", "num_dml_duplicates")
+
+    def test_equality(self):
+        """Two instances with identical values are equal."""
+        a = QueryResultStats(1, 2, 3, 4)
+        b = QueryResultStats(1, 2, 3, 4)
+        assert a == b
+
+    def test_all_none_equality(self):
+        """Default instance equals explicit all-None instance."""
+        assert QueryResultStats() == QueryResultStats(None, None, None, None)
+
+    def test_from_query_stats_all_fields_present(self):
+        """from_query_stats maps all present protobuf fields."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 10
+        mock_stats.num_rows_deleted = 5
+        mock_stats.num_rows_updated = 3
+        mock_stats.num_dml_duplicates = 1
+        mock_stats.HasField.return_value = True
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats(10, 5, 3, 1)
+
+    def test_from_query_stats_partial_fields(self):
+        """from_query_stats returns None for absent protobuf fields."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 42
+        mock_stats.HasField.side_effect = lambda name: name == "num_rows_inserted"
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats(
+            num_rows_inserted=42, num_rows_deleted=None, num_rows_updated=None, num_dml_duplicates=None
+        )
+
+    def test_from_query_stats_no_fields_present(self):
+        """from_query_stats returns all None when no fields are set."""
+        mock_stats = MagicMock()
+        mock_stats.HasField.return_value = False
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats()
+
+    def test_from_query_stats_zero_values(self):
+        """from_query_stats preserves zero values (distinct from absent)."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 0
+        mock_stats.num_rows_deleted = 0
+        mock_stats.num_rows_updated = 0
+        mock_stats.num_dml_duplicates = 0
+        mock_stats.HasField.return_value = True
+
+        result = QueryResultStats.from_query_stats(mock_stats)
+
+        assert result == QueryResultStats(0, 0, 0, 0)
+
+
+class TestStats:
+    """Unit tests for Cursor.stats property."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_stats_returns_all_none_before_execute(self, cursor):
+        """stats returns QueryResultStats with all None fields on a fresh cursor."""
+        result = cursor.stats
+        assert result == QueryResultStats(None, None, None, None)
+
+    def test_stats_returns_all_none_when_no_stats_field(self, cursor):
+        """stats returns all-None when execute_result has no stats field."""
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = False
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result == QueryResultStats(None, None, None, None)
+        mock_result.HasField.assert_called_with("stats")
+
+    def test_stats_returns_all_fields_when_present(self, cursor):
+        """stats returns all populated fields from execute_result."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 10
+        mock_stats.num_rows_deleted = 5
+        mock_stats.num_rows_updated = 3
+        mock_stats.num_dml_duplicates = 1
+        mock_stats.HasField.return_value = True
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result == QueryResultStats(
+            num_rows_inserted=10,
+            num_rows_deleted=5,
+            num_rows_updated=3,
+            num_dml_duplicates=1,
+        )
+
+    def test_stats_returns_partial_fields(self, cursor):
+        """stats returns None for fields not present in the protobuf."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 10
+        mock_stats.num_rows_deleted = 0
+        mock_stats.num_rows_updated = 0
+        mock_stats.num_dml_duplicates = 0
+
+        def has_field(name):
+            return name == "num_rows_inserted"
+
+        mock_stats.HasField.side_effect = has_field
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result.num_rows_inserted == 10
+        assert result.num_rows_deleted is None
+        assert result.num_rows_updated is None
+        assert result.num_dml_duplicates is None
+
+    def test_stats_distinguishes_zero_from_absent(self, cursor):
+        """A field present with value 0 is returned as 0, not None."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 0
+        mock_stats.num_rows_deleted = 0
+        mock_stats.num_rows_updated = 0
+        mock_stats.num_dml_duplicates = 0
+        mock_stats.HasField.return_value = True
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+
+        assert result == QueryResultStats(0, 0, 0, 0)
+
+    def test_stats_returns_query_result_stats_type(self, cursor):
+        """stats always returns a QueryResultStats instance."""
+        assert isinstance(cursor.stats, QueryResultStats)
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = False
+        cursor.execute_result = mock_result
+        assert isinstance(cursor.stats, QueryResultStats)
+
+    def test_stats_updates_on_subsequent_execute(self, cursor):
+        """stats reflects the most recent execute_result."""
+        first_stats = MagicMock()
+        first_stats.num_rows_inserted = 5
+        first_stats.HasField.return_value = True
+
+        first_result = MagicMock()
+        first_result.HasField.return_value = True
+        first_result.stats = first_stats
+        cursor.execute_result = first_result
+
+        assert cursor.stats.num_rows_inserted == 5
+
+        second_stats = MagicMock()
+        second_stats.num_rows_inserted = 20
+        second_stats.HasField.return_value = True
+
+        second_result = MagicMock()
+        second_result.HasField.return_value = True
+        second_result.stats = second_stats
+        cursor.execute_result = second_result
+
+        assert cursor.stats.num_rows_inserted == 20
+
+    def test_stats_only_insert_field(self, cursor):
+        """stats correctly returns only num_rows_inserted when only that field is present."""
+        mock_stats = MagicMock()
+        mock_stats.num_rows_inserted = 42
+
+        def has_field(name):
+            return name == "num_rows_inserted"
+
+        mock_stats.HasField.side_effect = has_field
+
+        mock_result = MagicMock()
+        mock_result.HasField.return_value = True
+        mock_result.stats = mock_stats
+        cursor.execute_result = mock_result
+
+        result = cursor.stats
+        assert result == QueryResultStats(
+            num_rows_inserted=42, num_rows_deleted=None, num_rows_updated=None, num_dml_duplicates=None
+        )
+
+
 class TestFetchmanyArraysizeAttribute:
     """Tests for arraysize attribute interaction with fetchmany."""
 
@@ -752,12 +993,12 @@ class TestCheckCanUseArrowResultset:
 
     def test_no_error_when_pyarrow_installed(self, cursor):
         """check_can_use_arrow_resultset does not raise when pyarrow is available."""
-        with patch("snowflake.connector.cursor.pyarrow", MagicMock()):
+        with patch("snowflake.connector.cursor._base.pyarrow", MagicMock()):
             cursor.check_can_use_arrow_resultset()
 
     def test_raises_programming_error_when_pyarrow_missing(self, cursor):
         """check_can_use_arrow_resultset raises ProgrammingError when pyarrow is not installed."""
-        with patch("snowflake.connector.cursor.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_arrow_resultset()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -765,7 +1006,7 @@ class TestCheckCanUseArrowResultset:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor.pyarrow", MissingOptionalDependency(dep="pyarrow")):
+        with patch("snowflake.connector.cursor._base.pyarrow", MissingOptionalDependency(dep="pyarrow")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_arrow_resultset()
 
@@ -783,12 +1024,12 @@ class TestCheckCanUsePandas:
 
     def test_no_error_when_pandas_installed(self, cursor):
         """check_can_use_pandas does not raise when pandas is available."""
-        with patch("snowflake.connector.cursor.pandas", MagicMock()):
+        with patch("snowflake.connector.cursor._base.pandas", MagicMock()):
             cursor.check_can_use_pandas()
 
     def test_raises_programming_error_when_pandas_missing(self, cursor):
         """check_can_use_pandas raises ProgrammingError when pandas is not installed."""
-        with patch("snowflake.connector.cursor.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError) as excinfo:
                 cursor.check_can_use_pandas()
             assert excinfo.value.errno == ER_NO_PYARROW
@@ -796,7 +1037,7 @@ class TestCheckCanUsePandas:
 
     def test_error_message_contains_install_link(self, cursor):
         """The error message includes the documentation link for installation."""
-        with patch("snowflake.connector.cursor.pandas", MissingOptionalDependency(dep="pandas")):
+        with patch("snowflake.connector.cursor._base.pandas", MissingOptionalDependency(dep="pandas")):
             with pytest.raises(ProgrammingError, match="python-connector-pandas"):
                 cursor.check_can_use_pandas()
 
@@ -817,7 +1058,7 @@ class TestFetchArrowBatches:
         mock_pa = MagicMock()
         with (
             patch("snowflake.connector._internal.extras.check_dependency"),
-            patch("snowflake.connector.cursor.pyarrow", new=mock_pa),
+            patch("snowflake.connector.cursor._base.pyarrow", new=mock_pa),
         ):
             self.pa = mock_pa
             yield
@@ -872,7 +1113,7 @@ class TestFetchArrowAll:
         mock_pa = MagicMock()
         with (
             patch("snowflake.connector._internal.extras.check_dependency"),
-            patch("snowflake.connector.cursor.pyarrow", new=mock_pa),
+            patch("snowflake.connector.cursor._base.pyarrow", new=mock_pa),
         ):
             self.pa = mock_pa
             yield
@@ -1039,8 +1280,8 @@ class TestFetchModeValidation:
     def _patch_deps(self):
         with (
             patch("snowflake.connector._internal.extras.check_dependency"),
-            patch("snowflake.connector.cursor.pyarrow", new=MagicMock()),
-            patch("snowflake.connector.cursor.pandas", new=MagicMock()),
+            patch("snowflake.connector.cursor._base.pyarrow", new=MagicMock()),
+            patch("snowflake.connector.cursor._base.pandas", new=MagicMock()),
         ):
             yield
 
@@ -1101,11 +1342,483 @@ class TestFetchModeValidation:
 
         cursor._fetch_mode = FetchMode.ARROW
         with (
-            patch("snowflake.connector.cursor.StatementNewRequest"),
-            patch("snowflake.connector.cursor.StatementSetSqlQueryRequest"),
-            patch("snowflake.connector.cursor.StatementExecuteQueryRequest"),
-            patch("snowflake.connector.cursor.StatementReleaseRequest"),
+            patch("snowflake.connector._internal.query_utils.StatementNewRequest"),
+            patch("snowflake.connector._internal.query_utils.StatementSetSqlQueryRequest"),
+            patch("snowflake.connector.cursor._base.StatementExecuteQueryRequest"),
+            patch("snowflake.connector._internal.query_utils.StatementReleaseRequest"),
         ):
             cursor.execute("SELECT 1")
 
         assert cursor._fetch_mode is None
+
+
+class TestReset:
+    """Unit tests for Cursor.reset method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_reset_clears_all_state_together(self, cursor):
+        """reset() frees heavy result data but preserves lightweight metadata."""
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+        cursor._binding_data = b"data"
+        cursor._rownumber = 10
+        mock_desc = [MagicMock()]
+        cursor._description = mock_desc
+        cursor._sqlstate = "42601"
+        cursor._sfqid = "abc-123"
+        cursor._query = "SELECT 1"
+        cursor._fetch_mode = FetchMode.ROW
+        cursor._rowcount = 100
+
+        cursor.reset()
+
+        # Cleared by reset
+        assert cursor.execute_result is None
+        assert cursor._iterator is None
+        assert cursor._binding_data is None
+        assert cursor._fetch_mode is None
+        assert cursor._rowcount is None
+        # Preserved by reset (matches old driver)
+        assert cursor._rownumber == 10
+        assert cursor._description is mock_desc
+        assert cursor._sqlstate == "42601"
+        assert cursor._sfqid == "abc-123"
+        assert cursor._query == "SELECT 1"
+
+    def test_reset_is_idempotent(self, cursor):
+        """Calling reset() twice produces the same state as calling it once."""
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+        cursor._fetch_mode = FetchMode.ROW
+        cursor._rowcount = 42
+
+        cursor.reset()
+        cursor.reset()
+
+        assert cursor.execute_result is None
+        assert cursor._iterator is None
+        assert cursor._fetch_mode is None
+        assert cursor._rowcount is None
+        assert cursor._rownumber == -1
+
+    def test_reset_on_fresh_cursor_is_noop(self, cursor):
+        """reset() on a freshly created cursor doesn't break anything."""
+        cursor.reset()
+
+        assert cursor.execute_result is None
+        assert cursor._iterator is None
+        assert cursor._sqlstate is None
+        assert cursor._fetch_mode is None
+        assert cursor._binding_data is None
+        assert cursor._rownumber == -1
+        assert cursor._rowcount is None
+
+    def test_reset_closing_true_clears_everything_except_rowcount(self, cursor):
+        """reset(closing=True) preserves _rowcount in addition to the usual preserved fields."""
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+        cursor._binding_data = b"data"
+        cursor._rownumber = 10
+        mock_desc = [MagicMock()]
+        cursor._description = mock_desc
+        cursor._sqlstate = "42601"
+        cursor._sfqid = "abc-123"
+        cursor._query = "SELECT 1"
+        cursor._fetch_mode = FetchMode.ARROW
+        cursor._rowcount = 100
+
+        cursor.reset(closing=True)
+
+        # Cleared by reset
+        assert cursor.execute_result is None
+        assert cursor._iterator is None
+        assert cursor._binding_data is None
+        assert cursor._fetch_mode is None
+        # Preserved by reset (always)
+        assert cursor._rownumber == 10
+        assert cursor._description is mock_desc
+        assert cursor._sqlstate == "42601"
+        assert cursor._sfqid == "abc-123"
+        assert cursor._query == "SELECT 1"
+        # Preserved by reset(closing=True) specifically
+        assert cursor._rowcount == 100
+
+    def test_reset_preserves_query_and_sfqid(self, cursor):
+        """After reset(), query and sfqid are preserved (matches old driver)."""
+        cursor._sfqid = "abc-123"
+        cursor._query = "SELECT 1"
+
+        assert cursor.query == "SELECT 1"
+        assert cursor.sfqid == "abc-123"
+
+        cursor.reset()
+
+        assert cursor.query == "SELECT 1"
+        assert cursor.sfqid == "abc-123"
+
+
+class TestClose:
+    """Unit tests for Cursor.close method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_close_returns_true_on_success(self, cursor):
+        """close() returns True when the cursor was open and is now closed."""
+        assert cursor.close() is True
+
+    def test_close_returns_false_when_already_closed(self, cursor):
+        """close() returns False when the cursor was already closed."""
+        cursor.close()
+        assert cursor.close() is False
+
+    def test_close_sets_closed_flag(self, cursor):
+        """close() sets _closed to True."""
+        cursor.close()
+        assert cursor._closed is True
+
+    def test_close_clears_messages(self, cursor):
+        """close() empties the messages list."""
+        cursor._messages.append((ProgrammingError, {"msg": "test"}))
+        cursor.close()
+        assert cursor._messages == []
+
+    def test_close_preserves_rowcount(self, cursor):
+        """close() preserves _rowcount via reset(closing=True)."""
+        cursor._rowcount = 42
+        cursor.close()
+        assert cursor._rowcount == 42
+
+    def test_close_clears_result_state(self, cursor):
+        """close() clears result-related state via reset (except description)."""
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+        mock_desc = [MagicMock()]
+        cursor._description = mock_desc
+        cursor._fetch_mode = FetchMode.ROW
+
+        cursor.close()
+
+        assert cursor.execute_result is None
+        assert cursor._iterator is None
+        assert cursor._description is mock_desc
+        assert cursor._fetch_mode is None
+
+    def test_close_returns_none_on_exception(self, cursor):
+        """close() returns None when reset() raises an exception."""
+        with patch.object(cursor, "reset", side_effect=RuntimeError("boom")):
+            assert cursor.close() is None
+
+    def test_close_exception_leaves_cursor_unclosed(self, cursor):
+        """When close() fails, the cursor stays open so the caller can retry or clean up."""
+        original_conn = cursor._connection
+        with patch.object(cursor, "reset", side_effect=RuntimeError("boom")):
+            cursor.close()
+
+        assert cursor._closed is False
+        assert cursor._connection is original_conn
+
+    def test_close_via_context_manager(self, mock_connection):
+        """Exiting a context manager calls close()."""
+        with SnowflakeCursor(mock_connection) as cur:
+            assert not cur._closed
+        assert cur._closed is True
+
+
+class TestResetIntegration:
+    """Integration tests for reset() with other cursor methods."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        conn.db_api.statement_execute_query.return_value.result = execute_result
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_close_calls_reset_with_closing_true(self, cursor):
+        """close() calls reset(closing=True) to preserve rowcount."""
+        cursor._rowcount = 42
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+
+        cursor.close()
+
+        # Rowcount should be preserved
+        assert cursor._rowcount == 42
+        # Other state should be cleared
+        assert cursor.execute_result is None
+        assert cursor._iterator is None
+        assert cursor._closed is True
+
+    def test_execute_calls_reset_before_executing(self, cursor, mock_connection):
+        """execute() calls reset() before executing to clear old state."""
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+        cursor._description = [MagicMock()]
+        cursor._rowcount = 100
+
+        cursor.execute("SELECT 1")
+
+        # Old state should have been cleared by reset()
+        # New execute_result will be set by the execution
+        assert cursor._iterator is None
+        assert cursor._binding_data is None
+
+    def test_executemany_calls_reset_once_before_loop(self, cursor, mock_connection):
+        """executemany() calls reset() once before the loop, not for each execute."""
+        mock_connection.paramstyle = ParamStyle.PYFORMAT
+        cursor._rowcount = 100
+
+        with patch.object(cursor, "reset") as mock_reset:
+            with patch.object(cursor, "_execute") as mock_execute:
+                mock_execute.return_value = cursor
+                cursor._rowcount = 1  # simulate execute setting rowcount
+                cursor.executemany("INSERT INTO t VALUES (%s)", [(1,), (2,), (3,)])
+
+        # reset should be called once, not 3 times
+        mock_reset.assert_called_once()
+        # _execute should be called 3 times
+        assert mock_execute.call_count == 3
+
+    def test_execute_resets_fetch_mode_allowing_mode_switch(self, cursor, mock_connection):
+        """After execute(), the fetch mode is cleared so a different fetch strategy can be used."""
+        cursor._fetch_mode = FetchMode.ARROW
+
+        cursor.execute("SELECT 1")
+
+        assert cursor._fetch_mode is None
+
+    def test_execute_overwrites_sqlstate_with_new_result(self, cursor, mock_connection):
+        """execute() overwrites sqlstate from the new query result."""
+        cursor._sqlstate = "42601"
+
+        cursor.execute("SELECT 1")
+
+        assert cursor._sqlstate is None
+
+    def test_execute_resets_description_before_new_query(self, cursor, mock_connection):
+        """execute() clears old description; new one is populated from the result."""
+        cursor._description = [MagicMock()]
+
+        cursor.execute("SELECT 1")
+
+        # Mock has no columns, so description becomes None
+        assert cursor._description is None
+
+    def test_executemany_server_side_binding_delegates_reset_to_execute(self, cursor, mock_connection):
+        """executemany() with server-side (qmark) binding delegates to execute(), which performs its own reset."""
+        mock_connection.paramstyle = ParamStyle.QMARK
+        cursor._fetch_mode = FetchMode.ARROW
+        cursor._sqlstate = "42601"
+
+        cursor.executemany("INSERT INTO t VALUES (?)", [(1,), (2,), (3,)])
+
+        assert cursor._fetch_mode is None
+        assert cursor._sqlstate is None
+
+    def test_executemany_empty_params_does_not_reset(self, cursor, mock_connection):
+        """executemany() with empty seq_of_parameters returns early without calling reset."""
+        cursor._fetch_mode = FetchMode.ARROW
+        cursor._rowcount = 42
+        cursor.execute_result = MagicMock()
+
+        cursor.executemany("INSERT INTO t VALUES (?)", [])
+
+        assert cursor._fetch_mode == FetchMode.ARROW
+        assert cursor._rowcount == 42
+        assert cursor.execute_result is not None
+
+
+class TestDescribe:
+    """Unit tests for Cursor.describe method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def _setup_prepare(self, mock_connection, columns=None):
+        result = MagicMock()
+        result.columns = columns or []
+        result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
+        mock_connection.db_api.statement_prepare.return_value.result = result
+        return result
+
+    def test_describe_returns_column_metadata(self, cursor, mock_connection):
+        """describe() returns ResultMetadata and updates cursor.description."""
+        col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
+        col.name = "COL1"
+        col.HasField = lambda f: f in ("precision", "scale")
+        self._setup_prepare(mock_connection, columns=[col])
+
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
+            result = cursor.describe("SELECT 1 AS COL1")
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].name == "COL1"
+        assert cursor.description == result
+
+    def test_describe_returns_none_for_no_columns(self, cursor, mock_connection):
+        """describe() returns None when the statement produces no result set."""
+        self._setup_prepare(mock_connection, columns=[])
+
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
+            assert cursor.describe("INSERT INTO t VALUES (1)") is None
+
+    def test_describe_side_effects(self, cursor, mock_connection):
+        """describe() resets state, does NOT set execute_result/sfqid, sets rowcount to None."""
+        cursor._rowcount = 42
+        cursor._fetch_mode = FetchMode.ARROW
+        self._setup_prepare(mock_connection)
+
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
+            cursor.describe("SELECT 1")
+
+        assert cursor.execute_result is None
+        assert cursor.sfqid is None
+        assert cursor.rowcount is None
+        assert cursor._fetch_mode is None
+
+    def test_describe_releases_handle_and_stream(self, cursor, mock_connection):
+        """describe() allocates/releases statement handle and releases the arrow stream."""
+        self._setup_prepare(mock_connection)
+
+        with patch("snowflake.connector.cursor._base.release_arrow_stream") as mock_iter:
+            cursor.describe("SELECT 1")
+
+        mock_connection.db_api.statement_new.assert_called_once()
+        mock_connection.db_api.statement_release.assert_called_once()
+        mock_iter.assert_called_once()
+
+    def test_describe_raises_when_closed(self, cursor, mock_connection):
+        """describe() raises InterfaceError on closed cursor or connection."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor.describe("SELECT 1")
+
+        fresh = SnowflakeCursor(mock_connection)
+        mock_connection.is_closed.return_value = True
+        with pytest.raises(InterfaceError):
+            fresh.describe("SELECT 1")
+
+    def test_describe_propagates_prepare_error(self, cursor, mock_connection):
+        """describe() propagates ProgrammingError and captures sqlstate."""
+        mock_connection.db_api.statement_prepare.side_effect = ProgrammingError("syntax error", sqlstate="42601")
+
+        with pytest.raises(ProgrammingError):
+            cursor.describe("INVALID SQL")
+
+        assert cursor.sqlstate == "42601"
+
+
+class TestQueryResult:
+    """Unit tests for Cursor.query_result method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def _stub_result(self, mock_connection, **overrides):
+        """Set up the mock RPC to return a result with the given overrides."""
+        result = MagicMock()
+        result.columns = overrides.get("columns", [])
+        result.rows_affected = overrides.get("rows_affected", 0)
+        result.HasField = MagicMock(return_value=overrides.get("has_rows_affected", False))
+        result.sql_state = overrides.get("sql_state", "")
+        mock_connection.db_api.connection_get_query_result.return_value.result = result
+        return result
+
+    def test_query_result_populates_cursor_state(self, cursor, mock_connection):
+        """query_result returns self, sends correct RPC args, and populates all cursor fields."""
+        col = MagicMock()
+        col.name = "ID"
+        col.HasField = MagicMock(return_value=False)
+        col.nullable = True
+
+        result = self._stub_result(
+            mock_connection,
+            columns=[col],
+            rows_affected=42,
+            has_rows_affected=True,
+            sql_state="02000",
+        )
+
+        ret = cursor.query_result("01234567-abcd-ef01-0000-000000000001")
+
+        assert ret is cursor
+        assert cursor.execute_result is result
+        assert cursor.description is not None
+        assert len(cursor.description) == 1
+        assert cursor.description[0].name == "ID"
+        assert cursor.rowcount == 42
+        assert cursor.sqlstate == "02000"
+
+        request = mock_connection.db_api.connection_get_query_result.call_args.args[0]
+        assert request.conn_handle == ConnectionHandle(id=1)
+        assert request.query_id == "01234567-abcd-ef01-0000-000000000001"
+
+    def test_query_result_resets_prior_state(self, cursor, mock_connection):
+        """query_result clears iterator and fetch mode from a previous execute."""
+        cursor.execute_result = MagicMock()
+        cursor._iterator = iter([(1,)])
+        cursor._fetch_mode = FetchMode.ROW
+
+        self._stub_result(mock_connection)
+        cursor.query_result("qid")
+
+        assert cursor._fetch_mode is None
+        assert cursor._iterator is None
+
+    def test_query_result_raises_on_closed_cursor_or_connection(self, cursor, mock_connection):
+        """query_result raises InterfaceError when cursor or connection is closed."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor.query_result("qid")
+
+        fresh = SnowflakeCursor(mock_connection)
+        mock_connection.is_closed.return_value = True
+        with pytest.raises(InterfaceError):
+            fresh.query_result("qid")
+
+    def test_query_result_propagates_rpc_error(self, cursor, mock_connection):
+        """query_result propagates ProgrammingError from the RPC layer."""
+        mock_connection.db_api.connection_get_query_result.side_effect = ProgrammingError("Query has expired")
+        with pytest.raises(ProgrammingError, match="Query has expired"):
+            cursor.query_result("expired-qid")

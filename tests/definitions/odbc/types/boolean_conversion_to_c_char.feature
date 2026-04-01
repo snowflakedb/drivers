@@ -24,6 +24,16 @@ Feature: ODBC boolean to character type conversions
     Then SQL_C_WCHAR should return "1" for TRUE and "0" for FALSE
 
   # ============================================================================
+  # CONVERSION WITH SQLBindCol
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should convert boolean using SQLBindCol for SQL_C_CHAR
+    Given Snowflake client is logged in
+    When Query "SELECT TRUE::BOOLEAN, FALSE::BOOLEAN" is executed with SQLBindCol for SQL_C_CHAR
+    Then Bound buffers should contain "1" for TRUE and "0" for FALSE
+
+  # ============================================================================
   # NULL VALUE HANDLING
   # ============================================================================
 

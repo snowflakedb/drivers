@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 from runner.utils import perf_tests_root, collect_node_info, log_node_info
 import pytest
 
@@ -15,6 +15,9 @@ _test_failures = []
 
 # Track current run directory (session-scoped)
 _current_run_dir = None
+
+# Track performance history comparisons for the session summary
+_perf_comparisons = []
 
 
 def pytest_configure():
@@ -305,7 +308,7 @@ def _validate_wiremock_old_driver(driver: str, driver_type: str):
         )
 
 
-def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_queries: list[str] = None) -> list[str]:
+def _prepare_setup_queries(test_type: PerfTestType, parameters_json: str, setup_queries: list[str] = None) -> list[str]:
     """
     Prepare setup queries based on test type.
     
@@ -318,12 +321,12 @@ def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_quer
         List of setup queries with test-type-specific prefixes
     """
     match test_type:
-        case TestType.SELECT | TestType.SELECT_RECORDED_HTTP:
+        case PerfTestType.SELECT | PerfTestType.SELECT_RECORDED_HTTP:
             # SELECT tests: always use ARROW format
             arrow_query = "alter session set query_result_format = 'ARROW'"
             return [arrow_query] + (setup_queries or [])
         
-        case TestType.PUT_GET:
+        case PerfTestType.PUT_GET:
             # PUT/GET tests: USE DATABASE is required for TEMPORARY STAGE
             params = json.loads(parameters_json)
             testconn = params.get("testconnection", {})
@@ -362,24 +365,24 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         )
     
     def _run_test(
-        sql_command: str, 
+        sql_command: str,
         setup_queries: list[str] = None,
         test_name: str = None,
-        test_type: TestType = TestType.SELECT,
+        test_type: PerfTestType = PerfTestType.SELECT,
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None  # Local directory for downloaded files
     ):
         # Prepare test parameters
         if test_name is None:
             test_name = _derive_test_name(request.node.name)
-        
+
         final_setup_queries = _prepare_setup_queries(test_type, parameters_json, setup_queries)
         s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
         is_comparison = _should_run_comparison(driver, driver_type)
-        
+
         # Route to appropriate runner based on test type
-        if test_type == TestType.SELECT_RECORDED_HTTP:
-            return _run_wiremock_test(
+        if test_type == PerfTestType.SELECT_RECORDED_HTTP:
+            result = _run_wiremock_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
@@ -387,7 +390,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 is_comparison=is_comparison,
             )
         else:
-            return _run_e2e_test(
+            result = _run_e2e_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
@@ -395,6 +398,11 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 s3_files_dir=s3_files_dir,
                 is_comparison=is_comparison,
             )
+
+        # Performance history comparison
+        _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir)
+
+        return result
     
     def _run_wiremock_test(
         test_name: str,
@@ -446,7 +454,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
         test_name: str,
         sql_command: str,
         setup_queries: list[str],
-        test_type: TestType,
+        test_type: PerfTestType,
         s3_files_dir,
         is_comparison: bool,
     ):
@@ -480,6 +488,55 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
                 s3_files_dir=s3_files_dir,
             )
     
+    def _compare_local_results(result, test_name, driver, driver_type, is_comparison, results_dir):
+        """Collect comparison data for the session summary."""
+        if result is None:
+            return
+
+        from runner.local_compare import compare_with_history, get_file_median
+
+        if is_comparison and isinstance(result, dict):
+            ud_files = result.get("universal", [])
+            old_files = result.get("old", [])
+
+            # Get OLD median for UD vs OLD section
+            old_result = get_file_median(old_files)
+            old_median = old_result[1] if old_result else None
+
+            if os.environ.get("PERF_LOCAL_COMPARE") == "1":
+                # Full comparison: UD vs OLD + history
+                comp = compare_with_history(ud_files, results_dir, test_name, driver, "universal", old_median=old_median)
+            else:
+                # UD vs OLD only
+                ud_result = get_file_median(ud_files)
+                if ud_result is None:
+                    return
+                comp = {
+                    "test_name": test_name,
+                    "driver": driver,
+                    "driver_type": "universal",
+                    "metric_col": ud_result[0],
+                    "current_median": ud_result[1],
+                    "old_median": old_median,
+                    "history": [],
+                    "last_median": None,
+                    "all_median": None,
+                }
+
+            if comp:
+                _perf_comparisons.append(comp)
+
+        else:
+            # Single driver mode: history for universal only, local runs only
+            if os.environ.get("PERF_LOCAL_COMPARE") != "1":
+                return
+            actual_driver_type = _normalize_driver_type(driver, driver_type)
+            if actual_driver_type == "old":
+                return
+            comp = compare_with_history(result, results_dir, test_name, driver, actual_driver_type)
+            if comp:
+                _perf_comparisons.append(comp)
+
     return _run_test
 
 
@@ -511,7 +568,7 @@ def pytest_runtest_makereport(item, call):
 def pytest_sessionfinish(session, exitstatus):
     """Hook to report all failures at the end of test session and optionally upload to Benchstore"""
     global _current_run_dir
-    
+
     if _test_failures:
         logger.error("\n" + "=" * 80)
         logger.error(f"❌ TEST FAILURES SUMMARY ({len(_test_failures)} failed)")
@@ -524,9 +581,14 @@ def pytest_sessionfinish(session, exitstatus):
         logger.info("\n" + "=" * 80)
         logger.info("✓ TESTS COMPLETED")
         logger.info("=" * 80)
-    
+
     if _current_run_dir:
         logger.info(f"\nResults saved to: {_current_run_dir}")
+
+    # Performance comparison summary
+    if _perf_comparisons:
+        from runner.local_compare import log_summary
+        log_summary(_perf_comparisons)
     
     upload_to_benchstore = session.config.getoption("--upload-to-benchstore")
     local_benchstore_upload = session.config.getoption("--local-benchstore-upload")

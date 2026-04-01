@@ -11,6 +11,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.QueryBindings;
 import org.junit.jupiter.api.Test;
@@ -19,25 +21,26 @@ public class PreparedStatementBindingSerializerTest {
 
   @Test
   public void testSerializeEmptyParametersReturnsNullBindings() throws Exception {
-    PreparedStatementBindingSerializer.ParameterValue[] params =
-        new PreparedStatementBindingSerializer.ParameterValue[0];
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
 
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serializeToNativeBindings(params)) {
+        PreparedStatementBindingSerializer.serialize(
+            SqlPlaceholderMetadata.analyze("SELECT 1"), params)) {
       assertNull(nativeBindings.bindings(), "Expected null bindings for empty parameter list");
     }
   }
 
   @Test
   public void testSerializeMissingParameterFailsWithIndex() {
-    PreparedStatementBindingSerializer.ParameterValue[] params =
-        new PreparedStatementBindingSerializer.ParameterValue[2];
-    params[0] = new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello");
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
+    params.put(1, new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello"));
 
     SQLException ex =
         assertThrows(
             SQLException.class,
-            () -> PreparedStatementBindingSerializer.serializeToNativeBindings(params));
+            () ->
+                PreparedStatementBindingSerializer.serialize(
+                    SqlPlaceholderMetadata.analyze("SELECT ?, ?"), params));
     assertTrue(
         ex.getMessage().contains("Missing value for parameter index: 2"),
         "Expected missing-parameter index in error message");
@@ -45,18 +48,17 @@ public class PreparedStatementBindingSerializerTest {
 
   @Test
   public void testSerializeCreatesJsonBindingsWithExpectedPointerMetadata() throws Exception {
-    PreparedStatementBindingSerializer.ParameterValue[] params =
-        new PreparedStatementBindingSerializer.ParameterValue[] {
-          new PreparedStatementBindingSerializer.ParameterValue("FIXED", "42"),
-          new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello")
-        };
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
+    params.put(1, new PreparedStatementBindingSerializer.ParameterValue("FIXED", "42"));
+    params.put(2, new PreparedStatementBindingSerializer.ParameterValue("TEXT", "hello"));
 
     String expectedJson =
         "{\"1\":{\"type\":\"FIXED\",\"value\":\"42\"},\"2\":{\"type\":\"TEXT\",\"value\":\"hello\"}}";
     byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
 
     try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
-        PreparedStatementBindingSerializer.serializeToNativeBindings(params)) {
+        PreparedStatementBindingSerializer.serialize(
+            SqlPlaceholderMetadata.analyze("SELECT ?, ?"), params)) {
       QueryBindings bindings = nativeBindings.bindings();
       assertNotNull(bindings, "Expected non-null bindings");
       assertTrue(bindings.hasJson(), "Expected JSON query bindings");
@@ -73,6 +75,28 @@ public class PreparedStatementBindingSerializerTest {
               .order(ByteOrder.LITTLE_ENDIAN)
               .getLong();
       assertNotEquals(0L, pointerValue, "Native pointer value should not be zero");
+    }
+  }
+
+  @Test
+  public void testSerializeNumericPlaceholdersUsesReferencedIndexes() throws Exception {
+    Map<Integer, PreparedStatementBindingSerializer.ParameterValue> params = new HashMap<>();
+    params.put(2, new PreparedStatementBindingSerializer.ParameterValue("TEXT", "two"));
+    params.put(4, new PreparedStatementBindingSerializer.ParameterValue("FIXED", "4"));
+
+    String expectedJson =
+        "{\"2\":{\"type\":\"TEXT\",\"value\":\"two\"},\"4\":{\"type\":\"FIXED\",\"value\":\"4\"}}";
+    byte[] expectedJsonBytes = expectedJson.getBytes(StandardCharsets.UTF_8);
+
+    try (PreparedStatementBindingSerializer.NativeBindings nativeBindings =
+        PreparedStatementBindingSerializer.serialize(
+            SqlPlaceholderMetadata.analyze("SELECT :4, :2, :4"), params)) {
+      QueryBindings bindings = nativeBindings.bindings();
+      assertNotNull(bindings, "Expected non-null bindings");
+      assertEquals(
+          expectedJsonBytes.length,
+          bindings.getJson().getLength(),
+          "JSON byte length should match numeric placeholder payload length");
     }
   }
 }

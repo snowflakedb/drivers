@@ -1,6 +1,6 @@
 import pytest
 
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 
 S3_TEST_DATA_12MX100 = "s3://sfc-eng-data/ecosystem/12Mx100/"
 S3_TEST_DATA_12MX1000 = "s3://sfc-eng-data/ecosystem/12Mx1000/"
@@ -13,7 +13,7 @@ def test_put_files_12mx100(perf_test):
     Total: 1.2GB across 100 files
     """
     perf_test(
-        test_type=TestType.PUT_GET,
+        test_type=PerfTestType.PUT_GET,
         s3_download_url=S3_TEST_DATA_12MX100,
         setup_queries=[
             "CREATE TEMPORARY STAGE put_test_stage"
@@ -32,7 +32,7 @@ def test_put_files_12mx1000(perf_test):
     Total: 12GB across 1000 files
     """
     perf_test(
-        test_type=TestType.PUT_GET,
+        test_type=PerfTestType.PUT_GET,
         s3_download_url=S3_TEST_DATA_12MX1000,
         setup_queries=[
             "CREATE TEMPORARY STAGE put_test_stage"
@@ -51,7 +51,7 @@ def test_put_files_1_2Gx10(perf_test):
     Total: 12GB across 10 files
     """
     perf_test(
-        test_type=TestType.PUT_GET,
+        test_type=PerfTestType.PUT_GET,
         s3_download_url=S3_TEST_DATA_1_2GX10,
         setup_queries=[
             "CREATE TEMPORARY STAGE put_test_stage"
@@ -69,7 +69,7 @@ def test_get_files_12mx100(perf_test):
     Total: 1.2GB across 100 files
     """
     perf_test(
-        test_type=TestType.PUT_GET,
+        test_type=PerfTestType.PUT_GET,
         s3_download_url=S3_TEST_DATA_12MX100,
         
         setup_queries=[

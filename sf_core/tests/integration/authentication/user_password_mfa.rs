@@ -349,10 +349,24 @@ fn should_fail_authentication_when_user_is_not_provided() {
 }
 
 #[test]
-fn should_fail_authentication_when_password_is_not_provided() {
+fn should_fail_authentication_when_password_is_implicitly_unset() {
     //Given Authentication is set to username_password_mfa and password is not provided
     let client = SnowflakeTestClient::with_int_tests_params(None);
     client.set_connection_option("authenticator", "USERNAME_PASSWORD_MFA");
+
+    //When Trying to Connect
+    let result = client.connect();
+
+    //Then There is error returned
+    client.assert_missing_parameter_error(result);
+}
+
+#[test]
+fn should_fail_authentication_when_password_is_explicitly_empty() {
+    //Given Authentication is set to username_password_mfa and password is explicitly set to empty
+    let client = SnowflakeTestClient::with_int_tests_params(None);
+    client.set_connection_option("authenticator", "USERNAME_PASSWORD_MFA");
+    client.set_connection_option("password", ""); // pragma: allowlist secret
 
     //When Trying to Connect
     let result = client.connect();

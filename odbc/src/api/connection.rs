@@ -6,7 +6,8 @@ use crate::api::encoding::{
 use crate::api::error::Required;
 use crate::api::error::{
     AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, InvalidBufferLengthSnafu,
-    InvalidPortSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
+    InvalidPortSnafu, NullPointerSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu,
+    UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -511,6 +512,59 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
             }
         });
     }
+
+    Ok(())
+}
+
+/// Translate SQL text to its native form (SQLNativeSql / SQLNativeSqlW).
+///
+/// Snowflake does not perform ODBC escape sequence translation, so this is
+/// a simple pass-through that copies the input SQL to the output buffer.
+pub fn native_sql<E: OdbcEncoding>(
+    connection_handle: sql::Handle,
+    in_statement_text: *const E::Char,
+    text_length1: sql::Integer,
+    out_statement_text: *mut E::Char,
+    buffer_length: sql::Integer,
+    text_length2_ptr: *mut sql::Integer,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    tracing::debug!("native_sql: connection_handle={connection_handle:?}");
+
+    if in_statement_text.is_null() {
+        return NullPointerSnafu.fail();
+    }
+    if text_length1 != sql::NTS as sql::Integer && text_length1 < 0 {
+        return InvalidBufferLengthSnafu {
+            length: text_length1 as i64,
+        }
+        .fail();
+    }
+    if !out_statement_text.is_null() && buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
+    let conn = conn_from_handle(connection_handle);
+    if matches!(conn.state, ConnectionState::Disconnected) {
+        return crate::api::error::DisconnectedSnafu.fail();
+    }
+
+    let sql_text = if text_length1 == 0 {
+        String::new()
+    } else {
+        E::read_string(in_statement_text, text_length1)?
+    };
+
+    write_string_bytes_i32::<E>(
+        &sql_text,
+        out_statement_text,
+        buffer_length,
+        text_length2_ptr,
+        Some(warnings),
+    );
 
     Ok(())
 }

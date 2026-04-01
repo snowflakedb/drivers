@@ -5,6 +5,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.Map;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.BinaryDataPtr;
@@ -61,19 +62,27 @@ final class PreparedStatementBindingSerializer {
 
   private PreparedStatementBindingSerializer() {}
 
-  static NativeBindings serializeToNativeBindings(ParameterValue[] parameterValues)
+  static NativeBindings serialize(
+      SqlPlaceholderMetadata placeholderMetadata, Map<Integer, ParameterValue> parameterValues)
       throws SQLException {
-    if (parameterValues.length == 0) {
+    if (!placeholderMetadata.hasBindings()) {
       logger.debug("No parameter placeholders found, skipping bindings serialization.");
       return new NativeBindings(null, null);
     }
-    logger.debug("Serializing prepared bindings: placeholders={}", parameterValues.length);
+    logger.debug(
+        "Serializing prepared bindings: placeholders={}", placeholderMetadata.placeholderCount());
 
+    byte[] jsonBytes = buildBindingsJson(placeholderMetadata, parameterValues);
+    return allocateNativeBindings(jsonBytes);
+  }
+
+  private static byte[] buildBindingsJson(
+      SqlPlaceholderMetadata placeholderMetadata, Map<Integer, ParameterValue> parameterValues)
+      throws SQLException {
     JSONStringer jsonStringer = new JSONStringer();
     jsonStringer.object();
-    for (int i = 0; i < parameterValues.length; i++) {
-      ParameterValue parameterValue = parameterValues[i];
-      int parameterIndex = i + 1;
+    for (int parameterIndex : placeholderMetadata.referencedParameterIndexes()) {
+      ParameterValue parameterValue = parameterValues.get(parameterIndex);
       if (parameterValue == null) {
         logger.warn(
             "Bindings serialization failed: missing parameter value for index {}", parameterIndex);
@@ -90,8 +99,10 @@ final class PreparedStatementBindingSerializer {
       jsonStringer.endObject();
     }
     jsonStringer.endObject();
+    return jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+  }
 
-    byte[] jsonBytes = jsonStringer.toString().getBytes(StandardCharsets.UTF_8);
+  private static NativeBindings allocateNativeBindings(byte[] jsonBytes) throws SQLException {
     NativeBuffer nativeBuffer = NativeBuffer.fromBytes(jsonBytes);
     boolean success = false;
     try {

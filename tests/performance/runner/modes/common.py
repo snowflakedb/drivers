@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from runner.container import create_perf_container, run_container
-from runner.test_types import TestType
+from runner.test_types import PerfTestType
 from runner.validation import verify_results
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ def execute_test(
     driver: str = "core",
     driver_type: str = None,
     setup_queries: list[str] = None,
-    test_type: TestType = TestType.SELECT,
+    test_type: PerfTestType = PerfTestType.SELECT,
     use_local_binary: bool = False,
     s3_files_dir: Path = None,
     env_vars: dict[str, str] = None,
@@ -39,7 +39,7 @@ def execute_test(
         driver: Driver to use (core, python, odbc, jdbc)
         driver_type: Driver type: 'universal' or 'old' (only 'universal' for core)
         setup_queries: Optional list of SQL queries to run before warmup/test iterations
-        test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
+        test_type: Type of test (PerfTestType.SELECT or PerfTestType.PUT_GET)
         use_local_binary: Use locally built binary instead of Docker (Core only)
         s3_files_dir: Optional directory with S3-downloaded files to mount (for PUT/GET tests)
         env_vars: Optional environment variables to pass to the test

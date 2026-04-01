@@ -4,8 +4,8 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    # Allow stacked PRs to trigger this workflow.
-    # detect-changes still decides whether ODBC jobs actually run.
+  # Allow stacked PRs to trigger this workflow.
+  # detect-changes still decides whether ODBC jobs actually run.
   merge_group:
     types: [ checks_requested ]
 
@@ -16,6 +16,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_MAXSIZE: 200M
 
 jobs:
   detect-changes:
@@ -90,6 +93,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Test dependencies
+        uses: actions/cache@v5
+        with:
+          path: odbc_tests/cmake-build/_deps
+          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-test-deps-
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-odbc-
+
       - name: Install dependencies (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -102,6 +121,8 @@ jobs:
 
           Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
           cmake --version
+
+          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
 
@@ -118,7 +139,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev
+          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev ccache
 
           pip install cmake>=4.0.3
           cmake --version
@@ -152,6 +173,8 @@ jobs:
               -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
               -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=OLD \
+              -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              -D CMAKE_C_COMPILER_LAUNCHER=ccache \
               .
           cmake --build cmake-build -- -j $(($(nproc) * 2))
           ctest -j $(($(nproc) * 4)) -C Debug --test-dir cmake-build --output-on-failure
@@ -194,17 +217,33 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
+            cloud_provider: aws
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
+            cloud_provider: aws
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+            cloud_provider: aws
           - os: windows-11-arm
             name: Windows ARM64
             driver_lib: sfodbc.dll
+            cloud_provider: aws
+          - os: ubuntu-latest
+            name: Linux x64
+            driver_lib: libsfodbc.so
+            cloud_provider: gcp
+          - os: macos-latest
+            name: macOS ARM64
+            driver_lib: libsfodbc.dylib
+            cloud_provider: gcp
+          - os: windows-latest
+            name: Windows x64
+            driver_lib: sfodbc.dll
+            cloud_provider: gcp
     runs-on: ${{ matrix.os }}
-    name: odbc_tests (${{ matrix.name }})
+    name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -229,12 +268,28 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-odbc-target-
 
+      - name: Cache Test dependencies
+        uses: actions/cache@v5
+        with:
+          path: odbc_tests/cmake-build/_deps
+          key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-test-deps-
+
+      - name: Cache ccache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-odbc-
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
@@ -245,7 +300,7 @@ jobs:
         run: |
           set -euxo pipefail
           # Go is required for building aws-lc-fips-sys (FIPS crypto)
-          brew install unixodbc cmake go
+          brew install unixodbc cmake go ccache
           cmake --version
           go version
           # Export ODBC paths dynamically (works for both ARM64 and Intel Macs)
@@ -263,6 +318,8 @@ jobs:
 
           Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
           cmake --version
+
+          Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
 
           if ('${{ matrix.os }}' -eq 'windows-11-arm') {
             # ARM64: pre-installed OpenSSL is x64-only; choco openssl not available for ARM64.
@@ -284,7 +341,7 @@ jobs:
           }
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
@@ -397,6 +454,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo registry (RPM build)
+        uses: actions/cache@v5
+        with:
+          path: .cargo-cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-
+
+      - name: Cache Rust target (RPM build)
+        uses: actions/cache@v5
+        with:
+          path: .cargo-target-rpm
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-rust-rpm-release-target-
+
+      - name: Prepare cache directories
+        run: mkdir -p .cargo-cache/registry .cargo-cache/git .cargo-target-rpm
+
       - name: Build Docker image
         run: docker build -t rpm-build -f ci/Dockerfile.rocky-rpm-build .
 
@@ -404,6 +480,9 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
+            -v ${{ github.workspace }}/.cargo-cache/registry:/root/.cargo/registry \
+            -v ${{ github.workspace }}/.cargo-cache/git:/root/.cargo/git \
+            -v ${{ github.workspace }}/.cargo-target-rpm:/workspace/target \
             -w /workspace \
             -e PLATFORM=${{ matrix.platform }} \
             -e RUSTFLAGS="-C link-arg=-fuse-ld=lld -C link-arg=-Wl,--undefined-version" \

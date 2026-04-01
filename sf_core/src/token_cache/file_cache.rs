@@ -164,11 +164,17 @@ impl FileLock {
     /// exists — that indicates contention rather than a permission problem on
     /// the parent directory.
     ///
+    /// `ERROR_PATH_NOT_FOUND` (3) can occur transiently on ARM64 Windows when
+    /// a parent directory is in the pending-delete state.  We only treat it as
+    /// transient when the parent directory exists, confirming the path itself
+    /// is not permanently absent.
+    ///
     /// See <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-removedirectoryw>
     #[cfg(windows)]
     fn is_transient_windows_error(e: &std::io::Error, lock_path: &Path) -> bool {
         // Win32 system error codes.
         // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+        const ERROR_PATH_NOT_FOUND: i32 = 3;
         const ERROR_ACCESS_DENIED: i32 = 5;
         const ERROR_SHARING_VIOLATION: i32 = 32;
         const ERROR_DELETE_PENDING: i32 = 303;
@@ -176,6 +182,7 @@ impl FileLock {
         match e.raw_os_error() {
             Some(ERROR_SHARING_VIOLATION | ERROR_DELETE_PENDING) => true,
             Some(ERROR_ACCESS_DENIED) => lock_path.exists(),
+            Some(ERROR_PATH_NOT_FOUND) => lock_path.parent().map_or(false, |p| p.exists()),
             _ => false,
         }
     }
@@ -674,14 +681,32 @@ mod tests {
         #[test]
         fn unrelated_error_codes_are_not_transient() {
             let path = Path::new("unused");
-            // ERROR_FILE_NOT_FOUND (2), ERROR_PATH_NOT_FOUND (3), ERROR_INVALID_HANDLE (6)
-            for code in [2, 3, 6, 123, 9999] {
+            // ERROR_FILE_NOT_FOUND (2), ERROR_INVALID_HANDLE (6)
+            for code in [2, 6, 123, 9999] {
                 let err = std::io::Error::from_raw_os_error(code);
                 assert!(
                     !FileLock::is_transient_windows_error(&err, path),
                     "expected code {code} to NOT be transient"
                 );
             }
+        }
+
+        #[test]
+        fn transient_error_path_not_found_only_when_parent_exists() {
+            let temp = tempfile::tempdir().expect("failed to create temp dir for test");
+            // lock_path whose parent (temp.path()) exists
+            let with_parent = temp.path().join("lock.lck");
+            // lock_path whose parent dir does not exist
+            let no_parent = temp.path().join("nonexistent_subdir").join("lock.lck");
+            let err = std::io::Error::from_raw_os_error(3); // ERROR_PATH_NOT_FOUND
+            assert!(
+                FileLock::is_transient_windows_error(&err, &with_parent),
+                "ERROR_PATH_NOT_FOUND should be transient when parent dir exists"
+            );
+            assert!(
+                !FileLock::is_transient_windows_error(&err, &no_parent),
+                "ERROR_PATH_NOT_FOUND should NOT be transient when parent dir is absent"
+            );
         }
     }
 
