@@ -1027,8 +1027,11 @@ impl DatabaseDriverV1 {
                 // Return None to signal early exit after the block
                 None
             } else {
-                // Read config at close()-time so options set via set_option_int take effect
-                let config = conn.logout_config.clone();
+                // Re-derive logout config from connection_seed at close()-time so
+                // post-init overrides (e.g. retry=False sets logout_max_attempts=1)
+                // take effect. Falls back to init-time defaults for unset keys.
+                let config = LogoutConfig::from_settings(&conn.connection_seed)
+                    .unwrap_or_else(|_| conn.logout_config.clone());
                 let error_strategy = config.error_strategy;
 
                 // TODO: SNOW-2912513 - Record telemetry for logout decision
