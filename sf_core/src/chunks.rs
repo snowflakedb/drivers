@@ -519,6 +519,13 @@ mod tests {
     }
 
     #[test]
+    fn decode_chunk_body_passes_through_when_no_encoding() {
+        let source = b"already decompressed data".to_vec();
+        let decoded = decode_chunk_body(source.clone(), None).expect("no encoding succeeds");
+        assert_eq!(decoded, source);
+    }
+
+    #[test]
     fn decode_chunk_body_rejects_unsupported_encoding() {
         let data = b"bytes".to_vec();
         let unsupported = header("br");
