@@ -156,12 +156,12 @@ pub async fn get_chunk_data(
             return match e {
                 HttpError::Transport { source, .. } => Err(source).context(CommunicationSnafu),
                 HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
-                    UnsuccessfulResponseHTTPSnafu {
+                    UnsuccessfulHttpStatusCodeSnafu {
                         status: reqwest::StatusCode::REQUEST_TIMEOUT,
                     }
                     .fail()
                 }
-                HttpError::MaxAttempts { last_status, .. } => UnsuccessfulResponseHTTPSnafu {
+                HttpError::MaxAttempts { last_status, .. } => UnsuccessfulHttpStatusCodeSnafu {
                     status: last_status,
                 }
                 .fail(),
@@ -170,7 +170,7 @@ pub async fn get_chunk_data(
     };
 
     if !response.status().is_success() {
-        UnsuccessfulResponseHTTPSnafu {
+        UnsuccessfulHttpStatusCodeSnafu {
             status: response.status(),
         }
         .fail()?;

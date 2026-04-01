@@ -380,6 +380,9 @@ impl ColumnBuilder {
     pub(super) fn push_value(&mut self, cell: &[u8]) -> Result<(), ArrowError> {
         match self {
             ColumnBuilder::Fixed { scale, storage, .. } => match storage {
+                // Start with i64 for compactness. On the first value that overflows i64,
+                // promote the entire column to Decimal128 and stay there for all
+                // subsequent values in this chunk.
                 FixedStorage::I64 { builder } => {
                     if cell.len() <= 18 {
                         let v = parse_i64_fixed_unchecked(cell, *scale);

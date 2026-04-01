@@ -16,6 +16,9 @@ use sf_core::chunks::mock::FileChunkDownloader;
 use sf_core::chunks::prefetch::{ArrowChunkParser, JsonChunkParser, PrefetchChunkReader};
 use sf_core::query_types::RowType;
 
+const DEFAULT_TEXT_MAX_LENGTH: u64 = 16_777_216; // 16 MiB
+const DEFAULT_BINARY_MAX_LENGTH: u64 = 8_388_608; // 8 MiB
+
 #[derive(serde::Deserialize)]
 struct Metadata {
     format: String,
@@ -63,8 +66,8 @@ impl RowTypeMeta {
             "TEXT" => RowType::text(
                 &self.name,
                 self.nullable,
-                self.length.unwrap_or(16777216),
-                self.byte_length.unwrap_or(16777216),
+                self.length.unwrap_or(DEFAULT_TEXT_MAX_LENGTH),
+                self.byte_length.unwrap_or(DEFAULT_TEXT_MAX_LENGTH),
             ),
             "REAL" => RowType::real(&self.name, self.nullable),
             "BOOLEAN" => RowType::boolean(&self.name, self.nullable),
@@ -82,8 +85,8 @@ impl RowTypeMeta {
             "BINARY" => RowType::binary(
                 &self.name,
                 self.nullable,
-                self.length.unwrap_or(8388608),
-                self.byte_length.unwrap_or(8388608),
+                self.length.unwrap_or(DEFAULT_BINARY_MAX_LENGTH),
+                self.byte_length.unwrap_or(DEFAULT_BINARY_MAX_LENGTH),
             ),
             "VARIANT" => RowType::variant(&self.name, self.nullable),
             "OBJECT" => RowType::object(&self.name, self.nullable),

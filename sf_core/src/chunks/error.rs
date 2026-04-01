@@ -25,7 +25,7 @@ pub enum ChunkError {
         location: Location,
     },
     #[snafu(display("Snowflake responded with non-successful HTTP status"))]
-    UnsuccessfulResponseHTTP {
+    UnsuccessfulHttpStatusCode {
         status: reqwest::StatusCode,
         #[snafu(implicit)]
         location: Location,
