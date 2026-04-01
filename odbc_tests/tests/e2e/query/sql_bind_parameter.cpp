@@ -1443,8 +1443,7 @@ TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP to SQL_VARCHAR.", "[query][bind_para
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "2024-01-15 10:30:45");
 }
 
-TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP with fraction to SQL_VARCHAR.",
-          "[query][bind_parameter][c_to_varchar]") {
+TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP with fraction to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1479,8 +1478,8 @@ TEST_CASE("should bind SQL_C_TYPE_DATE to SQL_VARCHAR.", "[query][bind_parameter
   param.day = 25;
   SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
-  SQLRETURN ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_VARCHAR, 100, 0, &param,
+                                   0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -1500,8 +1499,8 @@ TEST_CASE("should bind SQL_C_TYPE_TIME to SQL_VARCHAR.", "[query][bind_parameter
   param.second = 59;
   SQLLEN indicator = sizeof(param);
   // When the C type value is bound as a string SQL type and SELECT ? is executed
-  SQLRETURN ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_VARCHAR, 100, 0, &param,
+                                   0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -1556,7 +1555,13 @@ TEST_CASE("should bind negative SQL_C_NUMERIC with scale to SQL_VARCHAR.", "[que
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-123.45");
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  NEW_DRIVER_ONLY("BD#33") {
+    CHECK(result == "-123.45");
+  }
+  OLD_DRIVER_ONLY("BD#33") {
+    CHECK(result == "-12345");
+  }
 }
 
 TEST_CASE("should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
@@ -1579,7 +1584,13 @@ TEST_CASE("should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.", "[que
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12300");
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  NEW_DRIVER_ONLY("BD#33") {
+    CHECK(result == "12300");
+  }
+  OLD_DRIVER_ONLY("BD#33") {
+    CHECK(result == "123");
+  }
 }
 
 TEST_CASE("should bind SQL_C_BINARY to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
@@ -1593,9 +1604,14 @@ TEST_CASE("should bind SQL_C_BINARY to SQL_VARCHAR.", "[query][bind_parameter][c
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  // Then the result should be the expected string
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "deadbeef");
+  NEW_DRIVER_ONLY("BD#34") {
+    REQUIRE_ODBC(ret, stmt);
+    ret = SQLFetch(stmt.getHandle());
+    REQUIRE_ODBC(ret, stmt);
+    // Then the result should be the expected string
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "deadbeef");
+  }
+  OLD_DRIVER_ONLY("BD#34") {
+    CHECK(ret == SQL_ERROR);
+  }
 }

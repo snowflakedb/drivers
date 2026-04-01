@@ -337,3 +337,33 @@ behavior_differences:
       Spec reference: https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlcancel-function
       Impact: Applications relying on async cancel to abort long-running
       queries will not see cancellation take effect on the old driver.
+
+  33:
+    name: "SQL_C_NUMERIC to VARCHAR applies scale from SQL_NUMERIC_STRUCT instead of ignoring it"
+    type: "Bug Fix"
+    description: |
+      OLD driver: When binding SQL_C_NUMERIC to SQL_VARCHAR, the Simba SDK
+      ignores the scale field of SQL_NUMERIC_STRUCT and converts the raw
+      magnitude to a string without inserting a decimal point or appending
+      trailing zeros. For example, val=12345 with scale=2 produces "12345"
+      instead of "123.45", and val=123 with scale=-2 produces "123" instead
+      of "12300".
+      NEW driver: Honors the scale field per the ODBC specification. Positive
+      scale inserts a decimal point (val=12345, scale=2 → "123.45"). Negative
+      scale appends trailing zeros (val=123, scale=-2 → "12300").
+      Spec reference: The SQL_NUMERIC_STRUCT stores a "scaled integer" where
+      actual_value = val × 10^(−scale).
+      https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/c-data-types
+
+  34:
+    name: "SQL_C_BINARY to VARCHAR hex-encodes bytes instead of failing with HTTP 400"
+    type: "New Feature"
+    description: |
+      OLD driver: When binding SQL_C_BINARY to SQL_VARCHAR, the Simba SDK
+      passes the raw binary data to Snowflake, which rejects the request
+      with HTTP 400.
+      NEW driver: Hex-encodes the binary data before sending (e.g. 0xDEADBEEF
+      → "deadbeef"), which Snowflake accepts as a valid VARCHAR value.
+      Spec reference: ODBC "C to SQL: Character" conversion table lists
+      SQL_C_BINARY as a valid source type for SQL_VARCHAR.
+      https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
