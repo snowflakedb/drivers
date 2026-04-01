@@ -1210,6 +1210,7 @@ TEST_CASE("should bind SQL_C_DEFAULT to SQL_VARCHAR.", "[query][bind_parameter][
 
 TEST_CASE("should reject unsupported C type for SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
   // Given Snowflake client is logged in
+  SKIP_OLD_DRIVER("N/A", "Old driver supports SQL_C_TYPE_TIMESTAMP to SQL_VARCHAR via Simba SDK");
   Connection conn;
   auto stmt = conn.createStatement();
   // When an unsupported C type is bound to a string SQL type
