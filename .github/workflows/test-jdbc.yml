@@ -128,11 +128,9 @@ jobs:
           $targetDir = Join-Path "${{ github.workspace }}" "target\aarch64-pc-windows-msvc\debug"
           Get-ChildItem $targetDir
           $env:CORE_PATH = Join-Path $targetDir "jdbc_bridge.dll"
-          # Use vswhere to locate dumpbin; fail if unavailable so export gaps are not silently missed.
-          $vsPath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath 2>$null
-          if ($vsPath) {
-            $dumpbin = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Recurse -Filter "dumpbin.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          }
+          # Use vswhere -find to locate dumpbin deterministically (avoids slow -Recurse search).
+          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -products * -find "VC\Tools\MSVC\*\bin\Hostx64\arm64\dumpbin.exe" | Select-Object -First 1
           if (-not $dumpbin) {
             Write-Error "dumpbin not found — cannot verify jdbc_bridge.dll exports"
             exit 1
