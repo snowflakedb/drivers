@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import logging
+import re
 
 from collections.abc import Generator, Iterable
 from io import StringIO
@@ -43,6 +44,9 @@ from .telemetry import TelemetryClient
 
 
 logger = logging.getLogger(__name__)
+
+CLIENT_NAME = "PythonConnector"
+APPLICATION_RE = re.compile(r"^[\w\d_]+$")
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -102,6 +106,17 @@ class Connection:
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
+
+        application = kwargs.pop("application", None)
+        if application is None or (isinstance(application, str) and not application):
+            self._application = CLIENT_NAME
+        elif isinstance(application, str):
+            if not APPLICATION_RE.match(application):
+                raise ProgrammingError(f"Invalid application name: {application!r}")
+            self._application = application
+        else:
+            raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
+        kwargs["client_app_id"] = self._application
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
@@ -514,7 +529,7 @@ class Connection:
     @property
     def application(self) -> str:
         """The name of the client application connecting to Snowflake."""
-        raise NotImplementedError("application is not yet implemented")
+        return self._application
 
     @property
     @pep249

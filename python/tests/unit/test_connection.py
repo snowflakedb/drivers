@@ -260,7 +260,7 @@ class TestConnectionSetOptions:
 
         assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout"}
+        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}
 
     def test_validation_warnings_forwarded_via_warnings_warn(self, mock_db_api):
         """ValidationIssue warnings from the response should be surfaced via warnings.warn."""
@@ -284,14 +284,17 @@ class TestConnectionSetOptions:
         assert "param 'x' is deprecated" in str(caught[0].message)
         assert "param 'y' has no effect" in str(caught[1].message)
 
-    def test_no_options_skips_rpc(self, mock_db_api):
-        """When there are no typed kwargs, connection_set_options should not be called."""
+    def test_no_user_options_sends_only_client_app_id(self, mock_db_api):
+        """When there are no user-supplied kwargs, only the injected client_app_id is sent."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(session_parameters={"AUTOCOMMIT": "true"})
 
-        mock_db_api.connection_set_options.assert_not_called()
+        assert mock_db_api.connection_set_options.call_count == 1
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert set(request.options.keys()) == {"client_app_id"}
+        assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
 
 
 class TestContextManagerUnit:
@@ -517,6 +520,67 @@ class TestIsAnError:
         from snowflake.connector.connection import Connection
 
         assert Connection.is_an_error(status) == expected
+
+
+class TestApplicationProperty:
+    """Unit tests for the Connection.application property."""
+
+    def test_application_defaults_to_python_connector(self, connection):
+        assert connection.application == "PythonConnector"
+
+    def test_application_custom_value(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="MyApp")
+        assert conn.application == "MyApp"
+
+    def test_application_maps_to_client_app_id_option(self, mock_db_api):
+        """The application value should be forwarded to sf_core as client_app_id."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", application="CustomApp")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value="CustomApp")
+        assert "application" not in request.options
+
+    def test_application_none_defaults_to_client_name(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application=None)
+        assert conn.application == "PythonConnector"
+
+    def test_application_empty_string_defaults_to_client_name(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="")
+        assert conn.application == "PythonConnector"
+
+    def test_application_rejects_non_string(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            with pytest.raises(ProgrammingError, match="Invalid application parameter"):
+                Connection(user="u", account="a", application=123)
+
+    def test_application_rejects_invalid_characters(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            with pytest.raises(ProgrammingError, match="Invalid application name"):
+                Connection(user="u", account="a", application="My App!")
+
+    def test_application_not_in_stored_kwargs(self, mock_db_api):
+        """application should be popped from kwargs so it doesn't leak into stored kwargs."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="MyApp")
+        assert "application" not in conn.kwargs
 
 
 class TestConnectionArrowProperties:
