@@ -1253,8 +1253,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementPrepareResponse {
             result: Some(PrepareResult {
                 stream: Some(result_ptr),
+                query_id: result.query_id,
                 columns: result.columns.into_iter().map(|cm| cm.into()).collect(),
                 number_of_binds: result.number_of_binds,
+                query: result.query,
+                sql_state: result.sql_state,
             }),
         })
     }

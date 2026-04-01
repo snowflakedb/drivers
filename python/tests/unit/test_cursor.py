@@ -1742,10 +1742,13 @@ class TestDescribe:
     def cursor(self, mock_connection):
         return SnowflakeCursor(mock_connection)
 
-    def _setup_prepare(self, mock_connection, columns=None):
+    def _setup_prepare(self, mock_connection, columns=None, query_id="", query="", sql_state=None):
         result = MagicMock()
         result.columns = columns or []
         result.stream.value = (42).to_bytes(8, byteorder="little", signed=False)
+        result.query_id = query_id
+        result.query = query
+        result.sql_state = sql_state
         mock_connection.db_api.statement_prepare.return_value.result = result
         return result
 
@@ -1771,8 +1774,50 @@ class TestDescribe:
         with patch("snowflake.connector.cursor._base.release_arrow_stream"):
             assert cursor.describe("INSERT INTO t VALUES (1)") is None
 
-    def test_describe_side_effects(self, cursor, mock_connection):
-        """describe() resets state, does NOT set execute_result/sfqid, sets rowcount to None."""
+    def test_describe_side_effects_with_columns(self, cursor, mock_connection):
+        """describe() sets sfqid, query, sqlstate, rowcount when result has columns."""
+        col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
+        col.name = "COL1"  # `name` is reserved by MagicMock; must be set after init
+        col.HasField = lambda f: f in ("precision", "scale")
+        self._setup_prepare(
+            mock_connection,
+            columns=[col],
+            query_id="01abc-def",
+            query="SELECT 1",
+            sql_state="00000",
+        )
+
+        cursor._rowcount = 42
+        cursor._fetch_mode = FetchMode.ARROW
+
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
+            cursor.describe("SELECT 1")
+
+        assert cursor._execute_result is None
+        assert cursor.sfqid == "01abc-def"
+        assert cursor.query == "SELECT 1"
+        assert cursor.sqlstate is None  # "00000" is normalized to None
+        assert cursor.rowcount == 0
+        assert cursor._fetch_mode is None
+
+    def test_describe_forwards_non_success_sqlstate(self, cursor, mock_connection):
+        """describe() forwards sqlstate when it differs from '00000'."""
+        col = MagicMock(type="FIXED", nullable=True, precision=10, scale=0)
+        col.name = "COL1"  # `name` is reserved by MagicMock; must be set after init
+        col.HasField = lambda f: f in ("precision", "scale")
+        self._setup_prepare(
+            mock_connection,
+            columns=[col],
+            sql_state="02000",
+        )
+
+        with patch("snowflake.connector.cursor._base.release_arrow_stream"):
+            cursor.describe("SELECT 1")
+
+        assert cursor.sqlstate == "02000"
+
+    def test_describe_side_effects_without_columns(self, cursor, mock_connection):
+        """describe() resets state; sfqid/query/sqlstate are set from result even without columns."""
         cursor._rowcount = 42
         cursor._fetch_mode = FetchMode.ARROW
         self._setup_prepare(mock_connection)

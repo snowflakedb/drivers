@@ -490,8 +490,11 @@ message StatementSetSubstraitPlanResponse {
 
 message PrepareResult {
   ArrowArrayStreamPtr stream = 1;
+  string query_id = 3;
   repeated ColumnMetadata columns = 4;
   int32 number_of_binds = 5;
+  string query = 6;
+  optional string sql_state = 7;
 }
 
 message StatementPrepareRequest {

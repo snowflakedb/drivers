@@ -259,8 +259,11 @@ impl DatabaseDriverV1 {
 
 pub struct PrepareResult {
     pub stream: Box<FFI_ArrowArrayStream>,
+    pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
     pub number_of_binds: i32,
+    pub query: String,
+    pub sql_state: Option<String>,
 }
 
 impl DatabaseDriverV1 {
@@ -270,8 +273,11 @@ impl DatabaseDriverV1 {
             .await?;
         Ok(PrepareResult {
             stream: result.stream,
+            query_id: result.query_id,
             columns: result.columns,
             number_of_binds: result.number_of_binds,
+            query: result.query,
+            sql_state: result.sql_state,
         })
     }
 }
