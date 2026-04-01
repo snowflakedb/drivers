@@ -1183,14 +1183,11 @@ TEST_CASE("should bind SQL_C_DOUBLE negative zero to SQL_VARCHAR.", "[query][bin
 
 static std::string to_lower(const std::string& s) {
   std::string lower = s;
-  std::transform(lower.begin(), lower.end(), lower.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
   return lower;
 }
 
-static bool is_nan_str(const std::string& s) {
-  return to_lower(s) == "nan";
-}
+static bool is_nan_str(const std::string& s) { return to_lower(s) == "nan"; }
 
 static bool is_positive_infinity_str(const std::string& s) {
   auto l = to_lower(s);
