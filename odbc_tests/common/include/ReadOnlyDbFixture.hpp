@@ -113,7 +113,14 @@ inline std::string get_readonly_db_connection_string() {
   const auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params, {"DATABASE", "SCHEMA"});
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+#ifdef SNOWFLAKE_OLD_DRIVER
+  ss << "PRIV_KEY_FILE=" << get_or_create_private_key_file(params) << ";";
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
+#else
+  ss << "PRIV_KEY_BASE64=" << test_utils::base64_encode(read_private_key(params)) << ";";
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
+#endif
   ss << "DATABASE=" << READONLY_DB_NAME << ";";
   ss << "SCHEMA=" << READONLY_SCHEMA_NAME << ";";
   return ss.str();

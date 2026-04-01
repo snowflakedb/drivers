@@ -98,7 +98,7 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
     CHECK(records[0].sqlState == "01S00");
     CHECK(records[0].nativeError == 0);
     CHECK_THAT(records[0].messageText,
-               ContainsSubstring("Missing required parameter: private_key or private_key_file"));
+               ContainsSubstring("Missing required parameter: 'private_key' or 'private_key_file'"));
   }
 }
 

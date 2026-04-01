@@ -44,6 +44,10 @@ pub struct QueryParameters {
 }
 
 impl QueryParameters {
+    /// Build transport parameters from an arbitrary settings bag (e.g. tests, pre-connect paths).
+    ///
+    /// After login, prefer `Connection::query_transport_parameters` (transport snapshot)
+    /// instead of re-reading merged settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             server_url: get_server_url(settings)?,
@@ -97,6 +101,10 @@ pub struct LoginParameters {
 }
 
 impl LoginParameters {
+    /// Build login request fields from a resolved settings map (defaults + files + connection seed).
+    ///
+    /// Session defaults (`database`, `schema`, etc.) are included only when they are part of the
+    /// resolved connect seed (`used_at_connect` session fields in the registry).
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             account_name: {
@@ -296,18 +304,14 @@ impl LoginMethod {
             "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: settings
-                    .get_string("password")
-                    .context(MissingParameterSnafu {
-                        parameter: "password",
-                    })?
+                password: Self::non_empty_string(settings, "password")
+                    .context(MissingParameterSnafu { parameter: "password" })?
                     .into(),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                token: settings
-                    .get_string("token")
+                token: Self::non_empty_string(settings, "token")
                     .context(MissingParameterSnafu { parameter: "token" })?
                     .into(),
             }),
@@ -355,8 +359,7 @@ impl LoginMethod {
             "USERNAME_PASSWORD_MFA" => Ok(Self::UserPasswordMfa {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: settings
-                    .get_string("password")
+                password: Self::non_empty_string(settings, "password")
                     .context(MissingParameterSnafu { parameter: "password" })?
                     .into(),
                 passcode_in_password: settings

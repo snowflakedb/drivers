@@ -136,6 +136,14 @@ message ColumnMetadata {
   bool nullable = 7;
 }
 
+// DML operation statistics
+message QueryStats {
+  optional int64 num_rows_inserted = 1;
+  optional int64 num_rows_updated = 2;
+  optional int64 num_rows_deleted = 3;
+  optional int64 num_dml_duplicates = 4;
+}
+
 // Execute result
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
@@ -145,6 +153,7 @@ message ExecuteResult {
   optional int64 statement_type_id = 5;
   string query = 6;
   optional string sql_state = 7;
+  optional QueryStats stats = 8;
 }
 
 // Partitioned result
@@ -426,6 +435,24 @@ message ConnectionGetParameterResponse {
   optional string value = 1;
 }
 
+message ConnectionValidateOptionsRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionValidateOptionsResponse {
+  repeated ValidationIssue issues = 1;
+}
+
+// Fetch the result of a previously executed query by its Snowflake Query ID.
+message ConnectionGetQueryResultRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetQueryResultResponse {
+  ExecuteResult result = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -462,6 +489,7 @@ message StatementSetSubstraitPlanResponse {
 message PrepareResult {
   ArrowArrayStreamPtr stream = 1;
   repeated ColumnMetadata columns = 4;
+  int32 number_of_binds = 5;
 }
 
 message StatementPrepareRequest {
@@ -676,6 +704,18 @@ message ConfigLoadAllSectionsResponse {
   string config_json = 1;
 }
 
+message ConnectionGetQueryStatusRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetQueryStatusResponse {
+  // Status name as returned by the server (e.g. "RUNNING", "SUCCESS", "FAILED_WITH_ERROR")
+  string status_name = 1;
+  optional int32 error_code = 2;
+  optional string error_message = 3;
+}
+
 message ConfigGetPathsRequest {
 }
 
@@ -721,7 +761,11 @@ service DatabaseDriver {
   // gets cached session parameter. Cache is updated with subset of connection parameters
   // (chosen by server, included in HTTP response) after each query
   rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
-
+  // pre-flight validation of connection options - reports all issues at once
+  rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
+  // Fetch the result of a previously executed query by Snowflake Query ID
+  rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
+  rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);

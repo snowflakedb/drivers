@@ -1,45 +1,11 @@
 use std::collections::HashMap;
-use std::fmt;
 
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::ParamStore;
-use crate::config::param_registry::{self, ValueType, param_names};
+use crate::config::param_registry::{self, ParamScope, ValueType, param_names};
 use crate::config::settings::{Setting, Settings};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationSeverity {
-    Error,
-    Warning,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationCode {
-    Unspecified,
-    MissingRequired,
-    InvalidType,
-    InvalidValue,
-    UnknownParameter,
-    DeprecatedParameter,
-    ConflictingParameters,
-}
-
-#[derive(Debug, Clone)]
-pub struct ValidationIssue {
-    pub severity: ValidationSeverity,
-    pub parameter: String,
-    pub message: String,
-    pub code: ValidationCode,
-}
-
-impl fmt::Display for ValidationIssue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{:?}] {}: {}",
-            self.severity, self.parameter, self.message
-        )
-    }
-}
+pub use crate::config::connection_config::{ValidationCode, ValidationIssue, ValidationSeverity};
 
 fn setting_matches_value_type(setting: &Setting, expected: ValueType) -> bool {
     matches!(
@@ -52,6 +18,15 @@ fn setting_matches_value_type(setting: &Setting, expected: ValueType) -> bool {
     )
 }
 
+fn setting_matches_expected_types(
+    setting: &Setting,
+    primary: ValueType,
+    additional: Option<ValueType>,
+) -> bool {
+    setting_matches_value_type(setting, primary)
+        || additional.is_some_and(|value_type| setting_matches_value_type(setting, value_type))
+}
+
 fn value_type_name(vt: ValueType) -> &'static str {
     match vt {
         ValueType::String => "String",
@@ -59,6 +34,35 @@ fn value_type_name(vt: ValueType) -> &'static str {
         ValueType::Double => "Double",
         ValueType::Bytes => "Bytes",
         ValueType::Bool => "Bool",
+    }
+}
+
+fn value_type_names(primary: ValueType, additional: Option<ValueType>) -> String {
+    match additional {
+        Some(value_type) => format!(
+            "{} or {}",
+            value_type_name(primary),
+            value_type_name(value_type)
+        ),
+        None => value_type_name(primary).to_string(),
+    }
+}
+
+fn try_coerce_to_value_type(setting: &Setting, expected: ValueType) -> Option<Setting> {
+    let s = match setting {
+        Setting::String(s) => s,
+        _ => return None,
+    };
+
+    match expected {
+        ValueType::Int => s.parse::<i64>().ok().map(Setting::Int),
+        ValueType::Double => s.parse::<f64>().ok().map(Setting::Double),
+        ValueType::Bool => match s.to_lowercase().as_str() {
+            "true" => Some(Setting::Bool(true)),
+            "false" => Some(Setting::Bool(false)),
+            _ => None,
+        },
+        ValueType::String | ValueType::Bytes => None,
     }
 }
 
@@ -72,28 +76,20 @@ fn setting_type_name(setting: &Setting) -> &'static str {
     }
 }
 
-/// Attempt to coerce a `Setting::String` to the expected `ValueType`.
+/// Attempt to coerce a `Setting::String` to the primary or additional `ValueType`.
 ///
 /// Connection strings (ODBC, JDBC, TOML files) are inherently stringly-typed,
 /// so values like `"443"` (port) or `"true"` (verify_hostname) arrive as
 /// strings even when the registry expects Int or Bool.  This function
 /// converts them when the parse is unambiguous, returning `None` if the
 /// string cannot be parsed.
-fn try_coerce_setting(setting: &Setting, expected: ValueType) -> Option<Setting> {
-    let s = match setting {
-        Setting::String(s) => s,
-        _ => return None,
-    };
-    match expected {
-        ValueType::Int => s.parse::<i64>().ok().map(Setting::Int),
-        ValueType::Double => s.parse::<f64>().ok().map(Setting::Double),
-        ValueType::Bool => match s.to_lowercase().as_str() {
-            "true" => Some(Setting::Bool(true)),
-            "false" => Some(Setting::Bool(false)),
-            _ => None,
-        },
-        _ => None,
-    }
+fn try_coerce_setting(
+    setting: &Setting,
+    primary: ValueType,
+    additional: Option<ValueType>,
+) -> Option<Setting> {
+    try_coerce_to_value_type(setting, primary)
+        .or_else(|| additional.and_then(|value_type| try_coerce_to_value_type(setting, value_type)))
 }
 
 /// Validate and resolve a batch of options through the `ParamRegistry`.
@@ -137,9 +133,17 @@ pub fn resolve_options(
                     });
                 }
 
-                let final_value = if setting_matches_value_type(&value, param_def.value_type) {
+                let final_value = if setting_matches_expected_types(
+                    &value,
+                    param_def.value_type,
+                    param_def.additional_value_type,
+                ) {
                     value
-                } else if let Some(coerced) = try_coerce_setting(&value, param_def.value_type) {
+                } else if let Some(coerced) = try_coerce_setting(
+                    &value,
+                    param_def.value_type,
+                    param_def.additional_value_type,
+                ) {
                     coerced
                 } else {
                     issues.push(ValidationIssue {
@@ -147,7 +151,7 @@ pub fn resolve_options(
                         parameter: key.clone(),
                         message: format!(
                             "Expected type {} for parameter '{}', got {}",
-                            value_type_name(param_def.value_type),
+                            value_type_names(param_def.value_type, param_def.additional_value_type),
                             param_def.canonical_name,
                             setting_type_name(&value),
                         ),
@@ -291,6 +295,100 @@ pub fn resolve_and_apply_options(
         .into_iter()
         .filter(|i| i.severity == ValidationSeverity::Warning)
         .collect())
+}
+
+pub(crate) fn canonicalize_setting_key(
+    key: &str,
+) -> (String, Option<&'static param_registry::ParamDef>) {
+    let reg = param_registry::registry();
+    match reg.resolve(key) {
+        Some(d) => (d.canonical_name.to_string(), Some(d)),
+        None => (key.to_string(), None),
+    }
+}
+
+pub(crate) fn validate_connection_seed_write(
+    post_connect: bool,
+    def: Option<&param_registry::ParamDef>,
+) -> Result<(), ApiError> {
+    let Some(d) = def else {
+        return Ok(());
+    };
+    if d.scope == ParamScope::Statement {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is statement-scoped; set it on a statement handle",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    if post_connect {
+        if d.scope == ParamScope::Session {
+            return InvalidArgumentSnafu {
+                argument: format!(
+                    "Parameter '{}' is session-scoped; use connection_set_session_option after connect",
+                    d.canonical_name
+                ),
+            }
+            .fail();
+        }
+        if !d.mutable_after_connect {
+            return InvalidArgumentSnafu {
+                argument: format!(
+                    "Parameter '{}' cannot be changed after connect",
+                    d.canonical_name
+                ),
+            }
+            .fail();
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_session_override_write(
+    def: Option<&param_registry::ParamDef>,
+) -> Result<(), ApiError> {
+    let Some(d) = def else {
+        return Ok(());
+    };
+    if d.scope == ParamScope::Statement {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is statement-scoped; set it on a statement handle",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    if d.scope == ParamScope::Connection {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is connection-scoped; set it via connection options before connect",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_statement_option_write(
+    def: Option<&param_registry::ParamDef>,
+) -> Result<(), ApiError> {
+    let Some(d) = def else {
+        return Ok(());
+    };
+    if d.scope != ParamScope::Statement {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is not statement-scoped; set it on the connection or session",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -492,6 +590,65 @@ mod tests {
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
         assert_eq!(issues[0].code, ValidationCode::InvalidType);
         assert!(!resolved.contains_key("verify_hostname"));
+    }
+
+    #[test]
+    fn private_key_string_is_accepted() {
+        let mut options = HashMap::new();
+        options.insert(
+            "private_key".to_string(),
+            Setting::String("base64-encoded-key".to_string()),
+        );
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(
+            resolved.get("private_key"),
+            Some(&Setting::String("base64-encoded-key".to_string()))
+        );
+    }
+
+    #[test]
+    fn private_key_bytes_are_accepted() {
+        let mut options = HashMap::new();
+        options.insert(
+            "private_key".to_string(),
+            Setting::Bytes(vec![0x01, 0x02, 0x03]),
+        );
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(
+            resolved.get("private_key"),
+            Some(&Setting::Bytes(vec![0x01, 0x02, 0x03]))
+        );
+    }
+
+    #[test]
+    fn private_key_invalid_type_lists_all_supported_types() {
+        let mut options = HashMap::new();
+        options.insert("private_key".to_string(), Setting::Int(7));
+
+        let (resolved, issues) = resolve_options(options);
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, ValidationSeverity::Error);
+        assert_eq!(issues[0].code, ValidationCode::InvalidType);
+        assert_eq!(
+            issues[0].message,
+            "Expected type String or Bytes for parameter 'private_key', got Int"
+        );
+        assert!(!resolved.contains_key("private_key"));
     }
 
     #[test]

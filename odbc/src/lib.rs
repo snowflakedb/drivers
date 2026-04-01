@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod api;
 pub mod c_api;
 mod conversion;

@@ -70,8 +70,14 @@ pub fn write_memory_timeline(samples: &[MemorySample], test_name: &str) {
 
     let timestamp = current_unix_timestamp_ms();
     let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
-    let results_path = PathBuf::from(&results_dir);
+    let subdir = if test_name.ends_with("_record") { "_record" } else { test_name };
+    let results_path = PathBuf::from(&results_dir).join("universal").join(subdir);
     let filename = results_path.join(format!("memory_timeline_{test_name}_core_{timestamp}.csv"));
+
+    if let Err(e) = fs::create_dir_all(&results_path) {
+        eprintln!("⚠️  Warning: Could not create results directory: {e}");
+        return;
+    }
 
     let Ok(mut file) = fs::File::create(&filename) else {
         eprintln!("⚠️  Warning: Could not create memory timeline file");
@@ -221,7 +227,8 @@ where
 
     // Use RESULTS_DIR env var if set (for local execution), otherwise use /results (Docker)
     let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
-    let results_path = PathBuf::from(&results_dir);
+    let subdir = if test_name.ends_with("_record") { "_record" } else { test_name };
+    let results_path = PathBuf::from(&results_dir).join("universal").join(subdir);
     let filename = results_path.join(format!("{}_core_{}.csv", test_name, timestamp));
 
     fs::create_dir_all(&results_path)

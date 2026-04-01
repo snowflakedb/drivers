@@ -219,7 +219,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-arm64-nonfips-target-
 
+      - name: Capture vcpkg version for cache key
+        id: vcpkg-ver
+        shell: pwsh
+        run: |
+          $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
+            Select-String 'version\s+(\S+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Select-Object -First 1
+          if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
+          echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+
+      - name: Cache vcpkg ARM64 OpenSSL
+        id: vcpkg-cache
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows
+          key: windows-11-arm-vcpkg-openssl-${{ env.VCPKG_VER }}
+
       - name: Install ARM64 OpenSSL via vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           :: Build native ARM64 OpenSSL from source. The pre-installed OpenSSL is

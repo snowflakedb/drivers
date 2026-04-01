@@ -12,9 +12,9 @@ use crate::api::ParameterBinding;
 use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
-    RustParsingSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    RustParsingSnafu, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::{read_char_str, read_wchar_str};
+use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -380,8 +380,45 @@ impl ReadODBC for SnowflakeVarchar {
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, JsonBindingError> {
         let s = match binding.value_type {
+            CDataType::Default | CDataType::Char => read_char_str(binding)?,
             CDataType::WChar => read_wchar_str(binding)?,
-            _ => read_char_str(binding)?,
+            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding).to_string(),
+            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding).to_string(),
+            CDataType::SBigInt => read_unaligned::<i64>(binding).to_string(),
+            CDataType::ULong => read_unaligned::<u32>(binding).to_string(),
+            CDataType::UShort => read_unaligned::<u16>(binding).to_string(),
+            CDataType::UBigInt => read_unaligned::<u64>(binding).to_string(),
+            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding).to_string(),
+            CDataType::UTinyInt => read_unaligned::<u8>(binding).to_string(),
+            CDataType::Double => {
+                let v = read_unaligned::<f64>(binding);
+                if v == 0.0 {
+                    0.0_f64.to_string()
+                } else {
+                    v.to_string()
+                }
+            }
+            CDataType::Float => {
+                let v = read_unaligned::<f32>(binding);
+                if v == 0.0 {
+                    0.0_f32.to_string()
+                } else {
+                    v.to_string()
+                }
+            }
+            CDataType::Bit => {
+                if read_unaligned::<u8>(binding) != 0 {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
+            }
+            _ => {
+                return UnsupportedCDataTypeSnafu {
+                    c_type: binding.value_type,
+                }
+                .fail();
+            }
         };
         Ok(Cow::Owned(s))
     }

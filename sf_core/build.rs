@@ -68,6 +68,8 @@ fn main() {
         println!("cargo:rerun-if-changed={}", def_path.display());
         // No quoting: rustc passes this as a single token to the MSVC linker
         // (using a response file internally), so the linker receives the path verbatim.
+        // Adding quotes makes them literal characters in the path, which both
+        // lld-link and MSVC link.exe reject.
         println!("cargo:rustc-link-arg=/DEF:{}", def_path.display());
     }
 

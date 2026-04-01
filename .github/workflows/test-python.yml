@@ -19,6 +19,7 @@ env:
   REFERENCE_PYTHON_VERSION: "3.13"
   # OS version for consistent naming across jobs
   REFERENCE_OS_VERSION: "ubuntu-latest"
+  REFERENCE_CLOUD_PROVIDER: "aws"
 
 jobs:
   detect-changes:
@@ -180,15 +181,35 @@ jobs:
 
       # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
       # source via maturin. OpenSSL is needed for this dependency build.
-      - name: Cache vcpkg packages
+
+      # Capture vcpkg version so the cache key tracks runner image vcpkg baseline.
+      # When GitHub updates the runner's vcpkg (new runner image), the key changes
+      # automatically and the stale cache is not reused.
+      # Extract only the version token (e.g. "2024-09-01-eb982c5b...") so the
+      # cache key is short and fails loudly if vcpkg is missing or output changes.
+      - name: Capture vcpkg version for cache key (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
+        id: vcpkg-ver-build
+        shell: pwsh
+        run: |
+          $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
+            Select-String 'version\s+(\S+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Select-Object -First 1
+          if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
+          echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+
+      # Cache vcpkg OpenSSL: avoids rebuilding from C source (~7 min per run).
+      - name: Cache vcpkg ARM64 static OpenSSL (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        id: vcpkg-cache-build
         uses: actions/cache@v5
         with:
-          path: C:\vcpkg\installed
-          key: vcpkg-arm64-windows-static-md-openssl
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: matrix.os == 'windows-11-arm'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
@@ -293,38 +314,48 @@ jobs:
           - os: ubuntu-latest
             py: "3.9"
             hatch_env: "test"
+            cloud_provider: aws
           - os: ubuntu-latest
             py: "3.12"
             hatch_env: "test"
+            cloud_provider: gcp
           - os: ubuntu-latest
             py: "3.14"
             hatch_env: "test"
+            cloud_provider: aws
           - os: windows-11-arm
             py: "3.11"
             hatch_env: "test"
+            cloud_provider: gcp
           - os: windows-11-arm
             py: "3.12"
             hatch_env: "test"
+            cloud_provider: aws
           - os: windows-11-arm
             py: "3.13"
             hatch_env: "test"
+            cloud_provider: gcp
           - os: ubuntu-latest # Reference combination — keep in sync with REFERENCE_* env vars above
             py: "3.13"
             hatch_env: "test"
+            cloud_provider: aws
           # test integration with Pandas
           - os: ubuntu-latest
             py: "3.9"
             hatch_env: "test-pandas"
+            cloud_provider: gcp
           - os: ubuntu-latest # Reference combination for Pandas integration — keep in sync with REFERENCE_* env vars above
             py: "3.13"
             hatch_env: "test-pandas"
+            cloud_provider: aws
           - os: ubuntu-latest
             py: "3.14"
             hatch_env: "test-pandas"
+            cloud_provider: gcp
     runs-on: ${{ matrix.os }}
-    name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }})
+    name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
     env:
-      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}
+      MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}
     steps:
       - name: Set UV cache dir
         shell: bash
@@ -375,7 +406,7 @@ jobs:
           path: python/dist
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
@@ -384,15 +415,30 @@ jobs:
       # source via maturin. Use static OpenSSL (arm64-windows-static-md) so the
       # built _rust.pyd embeds OpenSSL rather than depending on DLLs at runtime —
       # the same reason we use static OpenSSL for sf_core in the build_wheel job.
-      - name: Cache vcpkg packages
+
+      - name: Capture vcpkg version for cache key (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
+        id: vcpkg-ver-test
+        shell: pwsh
+        run: |
+          $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
+            Select-String 'version\s+(\S+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Select-Object -First 1
+          if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
+          echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+
+      # Share the vcpkg cache with build_wheel so OpenSSL is not rebuilt here either.
+      - name: Cache vcpkg ARM64 static OpenSSL (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        id: vcpkg-cache-test
         uses: actions/cache@v5
         with:
-          path: C:\vcpkg\installed
-          key: vcpkg-arm64-windows-static-md-openssl
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Install ARM64 OpenSSL (static) via vcpkg (for dependency source builds)
-        if: matrix.os == 'windows-11-arm'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
@@ -529,7 +575,7 @@ jobs:
           path: python/dist
 
       - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
+        run: ./scripts/decode_secrets.sh ${{ env.REFERENCE_CLOUD_PROVIDER }}
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
@@ -586,7 +632,7 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with:
-          name: results-universal-${{ env.MATRIX_KEY }}
+          name: results-universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}
           path: ${{ github.workspace }}/universal-results
 
       - name: Download reference test results
@@ -605,7 +651,7 @@ jobs:
           hatch run reference:compare \
             --py ${{ env.REFERENCE_PYTHON_VERSION }} \
             --os ${{ env.REFERENCE_OS_VERSION }} \
-            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}.json \
+            --universal ${{ github.workspace }}/universal-results/universal-${{ env.MATRIX_KEY }}-${{ env.REFERENCE_CLOUD_PROVIDER }}.json \
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REF_MATRIX_KEY }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
 

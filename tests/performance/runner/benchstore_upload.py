@@ -427,7 +427,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     if not results_dir.exists():
         raise Exception(f"Results directory does not exist: {results_dir}")
     
-    csv_files = list(results_dir.glob("*.csv"))
+    csv_files = (
+        list(results_dir.glob("universal/**/*.csv")) +
+        list(results_dir.glob("old/**/*.csv"))
+    )
     if not csv_files:
         raise Exception(f"No CSV files found in: {results_dir}")
     

@@ -11,19 +11,20 @@ from test_types import TestType
 
 def write_csv_results(results, test_name, driver_type, test_type: TestType = TestType.SELECT):
     """Write test results to CSV file.
-    
+
     Args:
         results: List of result dictionaries
         test_name: Name of the test
         driver_type: Driver type (universal or old)
         test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
-    
+
     Returns:
         Path: Path to the created CSV file
     """
     timestamp = int(time.time())
-    results_dir = Path("/results")
-    results_dir.mkdir(exist_ok=True)
+    subdir = "_record" if test_name.endswith("_record") else test_name
+    results_dir = Path("/results") / driver_type / subdir
+    results_dir.mkdir(parents=True, exist_ok=True)
     
     filename = results_dir / f"{test_name}_python_{driver_type}_{timestamp}.csv"
     
@@ -73,8 +74,9 @@ def write_memory_timeline(memory_timeline, test_name, driver_type):
         return None
 
     timestamp = int(time.time())
-    results_dir = Path("/results")
-    results_dir.mkdir(exist_ok=True)
+    subdir = "_record" if test_name.endswith("_record") else test_name
+    results_dir = Path("/results") / driver_type / subdir
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     filename = results_dir / f"memory_timeline_{test_name}_python_{driver_type}_{timestamp}.csv"
 
