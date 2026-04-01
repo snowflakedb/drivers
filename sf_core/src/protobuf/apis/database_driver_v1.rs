@@ -1087,22 +1087,34 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_commit", skip(self, _input))]
+    #[instrument(name = "DatabaseDriverV1::connection_commit", skip(self, input))]
     async fn connection_commit(
         &self,
-        _input: ConnectionCommitRequest,
+        input: ConnectionCommitRequest,
     ) -> Result<ConnectionCommitResponse, DriverException> {
-        Err(not_implemented("connection_commit is not yet implemented"))
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        self.driver
+            .connection_commit(conn_handle.into())
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionCommitResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_rollback", skip(self, _input))]
+    #[instrument(name = "DatabaseDriverV1::connection_rollback", skip(self, input))]
     async fn connection_rollback(
         &self,
-        _input: ConnectionRollbackRequest,
+        input: ConnectionRollbackRequest,
     ) -> Result<ConnectionRollbackResponse, DriverException> {
-        Err(not_implemented(
-            "connection_rollback is not yet implemented",
-        ))
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        self.driver
+            .connection_rollback(conn_handle.into())
+            .await
+            .to_protobuf()?;
+
+        Ok(ConnectionRollbackResponse {})
     }
 
     #[instrument(
@@ -1738,6 +1750,14 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementSetOptionBoolRequest,
     ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_commit_blocking(
+        &self,
+        input: ConnectionCommitRequest,
+    ) -> Result<ConnectionCommitResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_rollback_blocking(
+        &self,
+        input: ConnectionRollbackRequest,
+    ) -> Result<ConnectionRollbackResponse, proto_utils::ProtoError<DriverException>>;
     fn connection_release_blocking(
         &self,
         input: ConnectionReleaseRequest,
@@ -1846,6 +1866,20 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: StatementSetOptionBoolRequest,
     ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>> {
         BLOCKING_CLIENT_RUNTIME.block_on(self.statement_set_option_bool(input))
+    }
+
+    fn connection_commit_blocking(
+        &self,
+        input: ConnectionCommitRequest,
+    ) -> Result<ConnectionCommitResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_commit(input))
+    }
+
+    fn connection_rollback_blocking(
+        &self,
+        input: ConnectionRollbackRequest,
+    ) -> Result<ConnectionRollbackResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_rollback(input))
     }
 
     fn connection_release_blocking(

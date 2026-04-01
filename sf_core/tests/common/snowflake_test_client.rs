@@ -287,6 +287,22 @@ impl SnowflakeTestClient {
         }
     }
 
+    pub fn commit(&self) {
+        self.client
+            .connection_commit_blocking(ConnectionCommitRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+            .unwrap();
+    }
+
+    pub fn rollback(&self) {
+        self.client
+            .connection_rollback_blocking(ConnectionRollbackRequest {
+                conn_handle: Some(self.conn_handle),
+            })
+            .unwrap();
+    }
+
     pub fn create_temporary_stage(&self, stage_name: &str) {
         self.execute_query(&format!(
             "create temporary stage if not exists {stage_name}"

@@ -470,6 +470,19 @@ impl Connection {
         })
     }
 
+    /// Snapshot of everything needed to issue a query against the server.
+    pub(crate) fn query_transport(
+        &self,
+    ) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
+        Ok((
+            self.query_transport_parameters()?,
+            self.http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            self.retry_policy.clone(),
+        ))
+    }
+
     /// Convenience setter for tests and direct call sites.
     pub fn set_option(&mut self, key: String, value: Setting) {
         self.connection_seed.insert(key, value);

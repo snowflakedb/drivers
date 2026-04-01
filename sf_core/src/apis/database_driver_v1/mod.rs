@@ -6,6 +6,7 @@ pub(crate) mod error;
 mod global_state;
 mod query;
 pub(crate) mod statement;
+pub(crate) mod transaction;
 pub(crate) mod validation;
 
 pub use crate::config::settings::Setting;

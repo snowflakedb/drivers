@@ -1,4 +1,4 @@
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu};
 use tokio::sync::Mutex;
 
 use super::connection::{Connection, RefreshContext};
@@ -338,13 +338,7 @@ impl DatabaseDriverV1 {
 
         let (query_parameters, http_client, retry_policy) = {
             let conn = stmt.conn.lock().await;
-            (
-                conn.query_transport_parameters()?,
-                conn.http_client
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.retry_policy.clone(),
-            )
+            conn.query_transport()?
         };
 
         let execution_mode = stmt.execution_mode(Some(&query));
@@ -458,13 +452,7 @@ impl DatabaseDriverV1 {
 
         let (query_parameters, http_client, retry_policy) = {
             let conn = conn_ptr.lock().await;
-            (
-                conn.query_transport_parameters()?,
-                conn.http_client
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.retry_policy.clone(),
-            )
+            conn.query_transport()?
         };
 
         let response = {
