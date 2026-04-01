@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from collections.abc import Generator, Iterable
+from functools import cached_property
 from io import StringIO
 from typing import Any, Callable, Union
 
@@ -604,10 +605,14 @@ class Connection:
         """Whether to cache the IdP token for browser-based SSO authentication."""
         raise NotImplementedError("consent_cache_id_token is not yet implemented")
 
-    @property
+    @cached_property
     def snowflake_version(self) -> str:
         """The current Snowflake server version string."""
-        raise NotImplementedError("snowflake_version is not yet implemented")
+        cur = self.cursor()
+        try:
+            return str(cur.execute("SELECT CURRENT_VERSION()").fetchall()[0][0]).split(" ")[0]
+        finally:
+            cur.close()
 
     def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""

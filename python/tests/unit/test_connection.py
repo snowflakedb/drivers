@@ -519,6 +519,39 @@ class TestIsAnError:
         assert Connection.is_an_error(status) == expected
 
 
+class TestSnowflakeVersionProperty:
+    """Unit tests for the Connection.snowflake_version cached property."""
+
+    def test_returns_version_string(self, connection):
+        mock_cursor = MagicMock()
+        mock_cursor.execute.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [("8.46.1",)]
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        assert connection.snowflake_version == "8.46.1"
+        mock_cursor.execute.assert_called_once_with("SELECT CURRENT_VERSION()")
+
+    def test_strips_suffix_after_space(self, connection):
+        """The legacy driver splits on space and takes the first part."""
+        mock_cursor = MagicMock()
+        mock_cursor.execute.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [("8.46.1 some extra info",)]
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        assert connection.snowflake_version == "8.46.1"
+
+    def test_result_is_cached(self, connection):
+        mock_cursor = MagicMock()
+        mock_cursor.execute.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [("8.46.1",)]
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        _ = connection.snowflake_version
+        _ = connection.snowflake_version
+
+        mock_cursor.execute.assert_called_once()
+
+
 class TestConnectionArrowProperties:
     """Unit tests for Connection properties (getters/setters)."""
 
