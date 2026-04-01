@@ -17,7 +17,10 @@ import warnings
 import pytest
 import requests
 
-from snowflake.connector._internal.logout_config_mapping import map_logout_config_phase2
+from snowflake.connector._internal.logout_config_mapping import (
+    ErrorStrategy,
+    map_logout_config_phase2,
+)
 from tests.wiremock_client import WiremockClient
 
 
@@ -450,9 +453,7 @@ class TestLogoutPythonWrapper:
 
             # And Error handling strategy is best-effort by default
             logout_config = map_logout_config_phase2(conn)
-            from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
-
-            assert logout_config.error_strategy == database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT, (
+            assert logout_config.error_strategy == ErrorStrategy.BEST_EFFORT, (
                 "Default error strategy should be BEST_EFFORT"
             )
 

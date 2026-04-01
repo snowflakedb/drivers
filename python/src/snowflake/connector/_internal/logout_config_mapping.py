@@ -7,8 +7,6 @@ including phase-specific defaults and error handling strategies.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
-
 
 if TYPE_CHECKING:
     from snowflake.connector.connection import Connection
@@ -29,6 +27,17 @@ class LogoutOptionKeys:
     LOGOUT_REQUEST_TIMEOUT_SECONDS = "logout_request_timeout_seconds"
 
 
+class ErrorStrategy:
+    """String constants for the logout_error_strategy option.
+
+    These map directly to Core's ErrorStrategy enum variants.
+    Pass via connection_set_option_string("logout_error_strategy", value).
+    """
+
+    BEST_EFFORT: str = "best_effort"
+    STRICT: str = "strict"
+
+
 @dataclass
 class LogoutConfig:
     """Final logout configuration for Core API.
@@ -36,7 +45,7 @@ class LogoutConfig:
     Attributes:
         server_session_keep_alive: Final value for Core (already mapped)
         enable_logout_auto_detection: Final value for Core (None = treat as False in Core)
-        error_strategy: Error handling strategy (BEST_EFFORT or STRICT)
+        error_strategy: Error handling strategy string ("best_effort" or "strict")
         logout_total_timeout_seconds: Total timeout budget for logout operation (all retries)
         max_attempts: Maximum total attempts (NOT retry count: 1 = no retries, 3 = 2 retries)
         logout_request_timeout_seconds: Per-request socket timeout (None = no per-request limit)
@@ -44,7 +53,7 @@ class LogoutConfig:
 
     server_session_keep_alive: Optional[bool]
     enable_logout_auto_detection: Optional[bool]
-    error_strategy: int
+    error_strategy: str
     logout_total_timeout_seconds: int
     max_attempts: Optional[int]  # Total attempts (1 = no retries, 3 = 2 retries)
     logout_request_timeout_seconds: Optional[int]
@@ -81,7 +90,7 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
     return LogoutConfig(
         server_session_keep_alive=server_session_keep_alive,
         enable_logout_auto_detection=enable_logout_auto_detection,
-        error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,
+        error_strategy=ErrorStrategy.BEST_EFFORT,
         logout_total_timeout_seconds=15,  # 15 second total budget with 3 max attempts = ~5s per attempt
         max_attempts=3,  # 3 total attempts (2 retries) for faster failure feedback
         logout_request_timeout_seconds=5,  # 5s per request (default), dynamically adjusted to min(5s, remaining)

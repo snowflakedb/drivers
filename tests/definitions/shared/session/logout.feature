@@ -49,7 +49,7 @@ Feature: Session Logout
   #                        Process Exit and Thread Management
   # ===========================================================================
 
-  @core_e2e
+  # @core_e2e — deferred: requires SNOW-2881763 (Heartbeat) and SNOW-2912513 (Telemetry)
   Scenario: should allow process to exit cleanly when session kept alive
     # Requires: SNOW-2881763 (Heartbeat), SNOW-2912513 (Telemetry)
     Given Connection with heartbeat enabled

@@ -7,6 +7,7 @@
 
 use crate::apis::database_driver_v1::error::ApiError;
 use crate::config::settings::Settings;
+use std::str::FromStr;
 use std::time::Duration;
 
 use super::{ConfigError, InvalidParameterValueSnafu};
@@ -70,9 +71,9 @@ impl LogoutConfig {
     /// All validation happens here, once, at connection_init time.
     /// This follows the same pattern as LoginParameters::from_settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
-        // Parse and validate error_strategy (integer discriminant: 0=Unspecified, 1=BestEffort, 2=Strict)
-        let error_strategy = match settings.get_int("logout_error_strategy") {
-            Some(v) => ErrorStrategy::from_i64(v)?,
+        // Parse error_strategy from string ("best_effort" or "strict")
+        let error_strategy = match settings.get_string("logout_error_strategy") {
+            Some(v) => v.parse::<ErrorStrategy>()?,
             None => ErrorStrategy::Strict, // default
         };
 
@@ -138,50 +139,29 @@ impl LogoutConfig {
 /// Strategy for error handling during logout.
 ///
 /// Controls how errors are surfaced after all retry mechanisms have been exhausted.
-/// Uses #[repr(i64)] to map enum discriminants to shared integer values (0=Unspecified,
-/// 1=BestEffort, 2=Strict) that all language drivers agree on when calling
-/// connection_set_option_int("logout_error_strategy", value).
+/// Configured via connection_set_option_string("logout_error_strategy", value)
+/// using the string constants defined below ("best_effort" or "strict").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(i64)]
 pub enum ErrorStrategy {
     /// Strict strategy: surface errors to the caller (close() may fail)
     #[default]
-    Strict = Self::STRICT_VALUE,
+    Strict,
 
     /// Best-effort strategy: suppress errors, log WARN (close() always succeeds)
-    BestEffort = Self::BEST_EFFORT_VALUE,
+    BestEffort,
 }
 
 impl ErrorStrategy {
-    /// Integer value for "unspecified" — treated as the default (Strict).
-    const UNSPECIFIED_VALUE: i64 = 0;
-    /// Integer value for BestEffort error strategy.
-    const BEST_EFFORT_VALUE: i64 = 1;
-    /// Integer value for Strict error strategy.
-    const STRICT_VALUE: i64 = 2;
+    /// String value for BestEffort error strategy.
+    pub const BEST_EFFORT: &'static str = "best_effort";
+    /// String value for Strict error strategy.
+    pub const STRICT: &'static str = "strict";
 
-    /// Convert to the shared integer discriminant value.
-    pub fn as_i64(self) -> i64 {
-        self as i64
-    }
-
-    /// Create from a shared integer discriminant value.
-    pub fn from_i64(value: i64) -> Result<Self, ConfigError> {
-        match value {
-            Self::UNSPECIFIED_VALUE => Ok(Self::default()),
-            Self::BEST_EFFORT_VALUE => Ok(Self::BestEffort),
-            Self::STRICT_VALUE => Ok(Self::Strict),
-            _ => InvalidParameterValueSnafu {
-                parameter: "logout_error_strategy",
-                value: value.to_string(),
-                explanation: format!(
-                    "Must be {} (UNSPECIFIED), {} (BestEffort), or {} (Strict)",
-                    Self::UNSPECIFIED_VALUE,
-                    Self::BEST_EFFORT_VALUE,
-                    Self::STRICT_VALUE
-                ),
-            }
-            .fail(),
+    /// Convert to the canonical string representation.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BestEffort => Self::BEST_EFFORT,
+            Self::Strict => Self::STRICT,
         }
     }
 
@@ -211,6 +191,28 @@ impl ErrorStrategy {
                     Ok(())
                 }
             },
+        }
+    }
+}
+
+impl FromStr for ErrorStrategy {
+    type Err = ConfigError;
+
+    /// Parse from a string value set via connection_set_option_string.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            Self::BEST_EFFORT => Ok(Self::BestEffort),
+            Self::STRICT => Ok(Self::Strict),
+            _ => InvalidParameterValueSnafu {
+                parameter: "logout_error_strategy",
+                value: value.to_string(),
+                explanation: format!(
+                    "Must be {:?} (BestEffort) or {:?} (Strict)",
+                    Self::BEST_EFFORT,
+                    Self::STRICT
+                ),
+            }
+            .fail(),
         }
     }
 }
@@ -269,31 +271,29 @@ mod tests {
     }
 
     #[test]
-    fn test_error_strategy_from_i64() {
-        // Test integer discriminant parsing
+    fn test_error_strategy_parse() {
         assert_eq!(
-            ErrorStrategy::from_i64(0).unwrap(),
-            ErrorStrategy::Strict,
-            "UNSPECIFIED (0) should default to Strict"
-        );
-        assert_eq!(
-            ErrorStrategy::from_i64(1).unwrap(),
+            "best_effort".parse::<ErrorStrategy>().unwrap(),
             ErrorStrategy::BestEffort,
-            "BEST_EFFORT (1) should map to BestEffort"
         );
         assert_eq!(
-            ErrorStrategy::from_i64(2).unwrap(),
+            "strict".parse::<ErrorStrategy>().unwrap(),
             ErrorStrategy::Strict,
-            "STRICT (2) should map to Strict"
         );
     }
 
     #[test]
-    fn test_error_strategy_from_i64_invalid() {
-        let result = ErrorStrategy::from_i64(999);
-        assert!(result.is_err(), "from_i64 should reject invalid values");
+    fn test_error_strategy_parse_invalid() {
+        let result = "unknown".parse::<ErrorStrategy>();
+        assert!(result.is_err(), "parse should reject unknown values");
 
-        let result = ErrorStrategy::from_i64(-1);
-        assert!(result.is_err(), "from_i64 should reject negative values");
+        let result = "".parse::<ErrorStrategy>();
+        assert!(result.is_err(), "parse should reject empty string");
+    }
+
+    #[test]
+    fn test_error_strategy_as_str() {
+        assert_eq!(ErrorStrategy::BestEffort.as_str(), "best_effort");
+        assert_eq!(ErrorStrategy::Strict.as_str(), "strict");
     }
 }

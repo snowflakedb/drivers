@@ -149,34 +149,3 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
         error_msg
     );
 }
-
-// ===========================================================================
-//                        Process Exit and Thread Management
-// ===========================================================================
-
-// TODO(gherkin): Heartbeat (SNOW-2881763) and Telemetry (SNOW-2912513) not yet implemented.
-// Steps are scaffolded with todo!() placeholders — test is #[ignore]d until both are ready.
-#[test]
-#[ignore = "Requires SNOW-2881763 (Heartbeat) and SNOW-2912513 (Telemetry)"]
-fn should_allow_process_to_exit_cleanly_when_session_kept_alive() {
-    //Given Connection with heartbeat enabled
-    todo!("SNOW-2881763: Heartbeat thread not yet implemented");
-
-    //And Telemetry cache is active
-    todo!("SNOW-2912513: Telemetry cache not yet implemented");
-
-    //And server_session_keep_alive is set to true
-    todo!("Set server_session_keep_alive before connection_init");
-
-    //When Connection is closed
-    todo!("Call connection_close()");
-
-    //Then Heartbeat is stopped
-    todo!("SNOW-2881763: Verify heartbeat thread is stopped");
-
-    //And Telemetry cache is flushed
-    todo!("SNOW-2912513: Verify telemetry cache is flushed");
-
-    //And Process can exit immediately without hanging
-    todo!("Verify process exits cleanly without hanging");
-}

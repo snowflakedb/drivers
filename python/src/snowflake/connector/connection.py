@@ -31,6 +31,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionSetOptionBoolRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionsRequest,
+    ConnectionSetOptionStringRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
@@ -255,8 +256,8 @@ class Connection:
             )
 
         # Error strategy: always set (has a default in Core)
-        self.db_api.connection_set_option_int(
-            ConnectionSetOptionIntRequest(
+        self.db_api.connection_set_option_string(
+            ConnectionSetOptionStringRequest(
                 conn_handle=self.conn_handle,
                 key=LogoutOptionKeys.LOGOUT_ERROR_STRATEGY,
                 value=logout_config.error_strategy,
