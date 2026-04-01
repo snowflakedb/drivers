@@ -210,7 +210,6 @@ class Connection:
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         _sensitive_keys = {"password", "private_key"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
-        self._closed = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
         self._arrow_number_to_decimal: bool = False
@@ -405,7 +404,7 @@ class Connection:
         return cursor_class(self)
 
     def _check_not_closed(self) -> None:
-        if self._closed:
+        if self.is_closed():
             raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
 
     # Context manager support
@@ -421,7 +420,7 @@ class Connection:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the runtime context. Commit on success / rollback on exception if autocommit is OFF."""
         try:
-            if not self._autocommit and not self._closed:
+            if not self._autocommit and not self.is_closed():
                 if exc_type is None:
                     self.commit()
                 else:

@@ -225,6 +225,41 @@ class TestLogoutPythonWrapper:
     server_session_keep_alive).
     """
 
+    def test_should_have_enable_server_session_keep_alive_auto_detection_default_to_true(
+        self, int_test_connection_factory
+    ):
+        """Verify enable_server_session_keep_alive_auto_detection defaults to True.
+
+        Gherkin: python/session/logout.feature:96-101
+
+        Default True is required for Phase 2 backward compat (SNOW-2314152): the old
+        Python driver always checked _async_sfqids before logout. Without this default,
+        Core receives enable_logout_auto_detection=None → always logout → kills async queries.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            # Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
+            conn = int_test_connection_factory(server_url=wiremock.http_url())
+
+            # When Connection configuration is checked
+            logout_config = map_logout_config_phase2(conn)
+
+            # Then enable_server_session_keep_alive_auto_detection defaults to true
+            assert conn.enable_server_session_keep_alive_auto_detection is True, (
+                "Default must be True for Phase 2 backward compat: mirrors old Python driver "
+                "which always checked async query registry before logout (SNOW-2314152)"
+            )
+
+            # And Auto-detection is enabled by default
+            logout_config = map_logout_config_phase2(conn)
+            assert logout_config.enable_logout_auto_detection is True, (
+                "Default True must flow through to Core so registry check is performed"
+            )
+
+            conn.close()
+
     # TODO(gherkin): Three empty steps:
     # 1. "Given Snowflake Python client is created with server_session_keep_alive set to none"
     #    is empty — Given and And are set together in int_test_connection_factory.
@@ -336,13 +371,13 @@ class TestLogoutPythonWrapper:
             assert len(deprecation_warnings) == 0, f"None + True should not emit deprecation warning, got: {msgs}"
 
     def test_should_pass_correct_parameters_when_server_session_keep_alive_is_false(self, int_test_connection_factory):
-        """Verify Python wrapper passes False keep-alive to Core.
+        """Verify Python wrapper remaps False keep-alive to None when auto-detection is True (default).
 
         Gherkin: python/session/logout.feature:63-70
 
-        Phase 2 truth table: server_session_keep_alive=False + enable_auto_detection=None
-        → no remap (None is falsy, remap only triggers for True) → Core receives False.
-        Core sends explicit logout when keep_alive=False.
+        Phase 2 truth table: server_session_keep_alive=False + enable_auto_detection=True (default)
+        → Phase 2 remap: False + True → None so Core checks registry (legacy Python behavior).
+        Default True is required for Phase 2 backward compat (SNOW-2314152).
         """
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
@@ -360,10 +395,10 @@ class TestLogoutPythonWrapper:
                 # When Client closes connection
                 conn.close()
 
-            # Then server_session_keep_alive false is passed to Core
+            # Then server_session_keep_alive is remapped to none by Phase 2 mapping
             logout_config = map_logout_config_phase2(conn)
-            assert logout_config.server_session_keep_alive is False, (
-                "Phase 2: False + auto_detection=None → no remap → Core receives False"
+            assert logout_config.server_session_keep_alive is None, (
+                "Phase 2: False + auto_detection=True (default) → remap → Core receives None to check registry"
             )
 
             # And Deprecation warning is emitted
