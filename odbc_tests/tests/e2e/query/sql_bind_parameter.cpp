@@ -14,6 +14,9 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
+// TODO(SNOW-3031761): Restructure binding tests to follow the same file-per-conversion
+// pattern used by the sql-to-c tests (e.g., real_conversion_to_c_char.cpp) for readability.
+
 // =============================================================================
 // ODBC SQLBindParameter spec-compliance tests
 // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindparameter-function
