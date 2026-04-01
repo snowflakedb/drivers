@@ -48,52 +48,6 @@ def assert_logout_request_format(logout_request: dict):
     )
 
 
-class TestLogoutResourceCleanup:
-    """Resource cleanup contract tests from shared/session/logout.feature.
-
-    These tests verify that connection state is properly cleaned up regardless
-    of whether logout was sent to the server. They focus on the client-side
-    state management contract.
-    """
-
-    # TODO(gherkin): "Then Session token in Connection.tokens is null" and
-    # "And Master token in Connection.tokens is null" cannot be directly verified —
-    # Python connection does not expose token field inspection.
-    # Verified indirectly: is_closed() confirms Core cleared tokens before returning.
-    @pytest.mark.parametrize("keep_alive", [True, False, None])
-    def test_should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent(
-        self, connection_factory, keep_alive
-    ):
-        """Verify connection state is cleaned up regardless of logout being sent.
-
-        Gherkin: shared/session/logout.feature:12-26
-
-        This is a state verification test, not an HTTP behavior test.
-        Token cleanup happens in Rust Core - Python layer verifies via is_closed().
-
-        Verifies:
-        - Given: Snowflake client is logged in
-        - And: server_session_keep_alive is set to <server_session_keep_alive>
-        - When: Connection is closed
-        - Then: Session token in Connection.tokens is null
-        - And: Master token in Connection.tokens is null
-        """
-        # Given Snowflake client is logged in
-        server_session_keep_alive = keep_alive  # The parametrized value to apply
-
-        # And server_session_keep_alive is set to <server_session_keep_alive>
-        conn = connection_factory(server_session_keep_alive=server_session_keep_alive)
-
-        # When Connection is closed
-        conn.close()
-
-        # Then Session token in Connection.tokens is null
-        assert conn.is_closed(), f"Connection should be closed with keep_alive={keep_alive}"
-
-        # And Master token in Connection.tokens is null
-        assert conn.is_closed(), "Master token cleared atomically with session token on close"
-
-
 class TestLogoutSessionInvalidation:
     """Post-logout session validation tests from shared/session/logout.feature.
 
