@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
-#include <cmath>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -1182,22 +1181,25 @@ TEST_CASE("should bind SQL_C_DOUBLE negative zero to SQL_VARCHAR.", "[query][bin
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
 }
 
-static bool is_nan_str(const std::string& s) {
+static std::string to_lower(const std::string& s) {
   std::string lower = s;
-  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  return lower == "nan";
+  std::transform(lower.begin(), lower.end(), lower.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return lower;
+}
+
+static bool is_nan_str(const std::string& s) {
+  return to_lower(s) == "nan";
 }
 
 static bool is_positive_infinity_str(const std::string& s) {
-  std::string lower = s;
-  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  return lower == "inf" || lower == "infinity";
+  auto l = to_lower(s);
+  return l == "inf" || l == "infinity";
 }
 
 static bool is_negative_infinity_str(const std::string& s) {
-  std::string lower = s;
-  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  return lower == "-inf" || lower == "-infinity";
+  auto l = to_lower(s);
+  return l == "-inf" || l == "-infinity";
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE NaN to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
