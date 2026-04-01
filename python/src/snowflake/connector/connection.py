@@ -40,7 +40,6 @@ from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.logout_config_mapping import (
-    LogoutConfig,
     LogoutOptionKeys,
     map_logout_config_phase2,
 )
@@ -62,12 +61,11 @@ logger = logging.getLogger(__name__)
 
 _UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
 
-# Keys handled by _setup_logout_config, not connection_set_options
+# Keys sent to Core via _setup_logout_config (not connection_set_options)
 _LOGOUT_PARAM_KEYS = frozenset(
     {
         "server_session_keep_alive",
         "enable_server_session_keep_alive_auto_detection",
-        "auto_cleanup",
     }
 )
 
@@ -155,12 +153,9 @@ class Connection:
         if "private_key" in kwargs:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
 
-        # Extract logout configuration parameters. These are handled by
-        # _setup_logout_config (not connection_set_options), so they're
-        # filtered out of the options dict below.
-        self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.get("server_session_keep_alive"))
-        self.enable_server_session_keep_alive_auto_detection: bool | None = _parse_auto_detection(kwargs)
-        self.auto_cleanup: bool = cast(bool, kwargs.get("auto_cleanup", True))
+        # auto_cleanup is Python-only (atexit registration) — pop so it
+        # doesn't get sent to Core via connection_set_options.
+        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
 
         options = {}
         for key, value in kwargs.items():
@@ -193,8 +188,9 @@ class Connection:
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
 
-        # Configure logout behavior BEFORE connection_init (init-time configuration)
-        self._setup_logout_config()
+        # Configure logout behavior BEFORE connection_init (init-time configuration).
+        # Logout params are read from kwargs (not stored on self — they're transient).
+        self._setup_logout_config(kwargs)
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         _sensitive_keys = {"password", "private_key"}
@@ -207,18 +203,20 @@ class Connection:
         if self.auto_cleanup:
             atexit.register(self._close_at_process_exit)
 
-    def _map_logout_config(self) -> LogoutConfig:
-        """Map logout parameters to Core configuration (SNOW-2314152)."""
-        return map_logout_config_phase2(self)
+    def _setup_logout_config(self, kwargs: dict[str, Any]) -> None:
+        """Resolve logout params from kwargs and send to Core.
 
-    def _setup_logout_config(self) -> None:
-        """Apply logout configuration to Core via ConnectionSetOption* RPCs.
+        Reads server_session_keep_alive and enable_server_session_keep_alive_auto_detection
+        from kwargs, applies backward-compat mapping (SNOW-2314152), and sends the
+        resolved config to Core via ConnectionSetOption* RPCs.
 
-        Called at init time, before connection_init. Writes values to Core's
-        connection_seed. Core re-derives LogoutConfig from connection_seed at
-        close() time, so post-init overrides (e.g. retry=False) take effect.
+        Called at init time, before connection_init. Core re-derives LogoutConfig
+        from connection_seed at close() time, so post-init overrides take effect.
         """
-        logout_config = self._map_logout_config()
+        logout_config = map_logout_config_phase2(
+            server_session_keep_alive=cast("bool | None", kwargs.get("server_session_keep_alive")),
+            enable_auto_detection=_parse_auto_detection(kwargs),
+        )
 
         if logout_config.server_session_keep_alive is not None:
             self.db_api.connection_set_option_bool(

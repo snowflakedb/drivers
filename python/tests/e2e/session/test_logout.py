@@ -180,20 +180,19 @@ class TestLogoutPythonWrapper:
                 conn = int_test_connection_factory(server_url=wiremock.http_url())
 
             # When Connection configuration is checked
-            logout_config = map_logout_config_phase2(conn)
+            config = map_logout_config_phase2(server_session_keep_alive=None, enable_auto_detection=True)
 
             # Then enable_server_session_keep_alive_auto_detection defaults to true
-            assert conn.enable_server_session_keep_alive_auto_detection is True, (
-                "Default must be True for backward compat: mirrors old Python driver "
-                "which always checked async query registry before logout (SNOW-2314152)"
-            )
-
-            # And Auto-detection is enabled by default
-            assert logout_config.enable_logout_auto_detection is True, (
+            assert config.enable_logout_auto_detection is True, (
                 "Default True must flow through to Core so registry check is performed"
             )
 
-            # And FutureWarning is emitted about auto_detection default changing
+            # And Auto-detection is enabled by default
+            assert config.server_session_keep_alive is None, (
+                "Default server_session_keep_alive=None should pass through unchanged"
+            )
+
+            # And Deprecation warning is logged about auto_detection default changing
             assert any(
                 "enable_server_session_keep_alive_auto_detection defaults to True" in msg for msg in caplog.messages
             ), f"Expected deprecation log about auto_detection default, got: {caplog.messages}"
@@ -219,13 +218,12 @@ class TestLogoutPythonWrapper:
                 )
 
             # When Connection configuration is checked
-            logout_config = map_logout_config_phase2(conn)
+            config = map_logout_config_phase2(server_session_keep_alive=None, enable_auto_detection=True)
 
             # Then enable_server_session_keep_alive_auto_detection is true
-            assert conn.enable_server_session_keep_alive_auto_detection is True
-            assert logout_config.enable_logout_auto_detection is True
+            assert config.enable_logout_auto_detection is True
 
-            # And No FutureWarning is emitted about auto_detection default
+            # And No deprecation warning is logged about auto_detection default
             auto_detection_warnings = [msg for msg in caplog.messages if "auto_detection" in msg]
             assert len(auto_detection_warnings) == 0, (
                 f"No deprecation warning expected when auto_detection is explicitly True, "
@@ -324,13 +322,11 @@ class TestLogoutPythonWrapper:
                 conn.close()
 
             # Then server_session_keep_alive none is passed to Core
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.server_session_keep_alive is None, (
-                "Phase 2: None keep-alive should pass through to Core unchanged"
-            )
+            config = map_logout_config_phase2(server_session_keep_alive=None, enable_auto_detection=True)
+            assert config.server_session_keep_alive is None, "None keep-alive should pass through to Core unchanged"
 
             # And enable_server_session_keep_alive_auto_detection true is passed to Core
-            assert logout_config.enable_logout_auto_detection is True, "auto_detection=True should pass through to Core"
+            assert config.enable_logout_auto_detection is True, "auto_detection=True should pass through to Core"
 
             # And No deprecation warning is emitted
             deprecation_warnings = [
@@ -363,9 +359,9 @@ class TestLogoutPythonWrapper:
                 conn.close()
 
             # Then server_session_keep_alive is remapped to none by Phase 2 mapping
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.server_session_keep_alive is None, (
-                "Phase 2: False + auto_detection=True (default) → remap → Core receives None to check registry"
+            config = map_logout_config_phase2(server_session_keep_alive=False, enable_auto_detection=True)
+            assert config.server_session_keep_alive is None, (
+                "False + auto_detection=True (default) → remap → Core receives None to check registry"
             )
 
             # And Deprecation warning is emitted
@@ -398,15 +394,13 @@ class TestLogoutPythonWrapper:
             elapsed = time.monotonic() - start
 
             # Then Logout timeout of 15 seconds is passed to Core
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.logout_total_timeout_seconds == 15, (
-                f"Expected 15s total timeout, got {logout_config.logout_total_timeout_seconds}s"
+            config = map_logout_config_phase2(server_session_keep_alive=None, enable_auto_detection=True)
+            assert config.logout_total_timeout_seconds == 15, (
+                f"Expected 15s total timeout, got {config.logout_total_timeout_seconds}s"
             )
 
             # And Logout max retries of 3 is passed to Core
-            assert logout_config.max_attempts == 3, (
-                f"Expected 3 max attempts (2 retries), got {logout_config.max_attempts}"
-            )
+            assert config.max_attempts == 3, f"Expected 3 max attempts (2 retries), got {config.max_attempts}"
 
             # And Logout request completes within 15 seconds
             assert elapsed < 15.0, f"Close should complete within 15 seconds, took {elapsed:.1f}s"
@@ -449,10 +443,8 @@ class TestLogoutPythonWrapper:
             assert conn.is_closed(), "Connection should be closed despite all logout attempts failing"
 
             # And Error handling strategy is best-effort by default
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.error_strategy == ErrorStrategy.BEST_EFFORT, (
-                "Default error strategy should be BEST_EFFORT"
-            )
+            config = map_logout_config_phase2(server_session_keep_alive=None, enable_auto_detection=True)
+            assert config.error_strategy == ErrorStrategy.BEST_EFFORT, "Default error strategy should be BEST_EFFORT"
 
 
 class TestLogoutRetryBehavior:

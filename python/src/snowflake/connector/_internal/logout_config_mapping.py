@@ -5,11 +5,7 @@ including phase-specific defaults and error handling strategies.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
-
-
-if TYPE_CHECKING:
-    from snowflake.connector.connection import Connection
+from typing import Optional
 
 
 class LogoutOptionKeys:
@@ -59,38 +55,35 @@ class LogoutConfig:
     logout_request_timeout_seconds: Optional[int]
 
 
-def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
-    """Map logout parameters for Phase 2 backward compatibility (SNOW-2314152).
+def map_logout_config_phase2(
+    server_session_keep_alive: Optional[bool],
+    enable_auto_detection: Optional[bool],
+) -> LogoutConfig:
+    """Map logout parameters for backward compatibility (SNOW-2314152).
 
-    Phase 2 semantics (backward compatible with old Python driver):
+    Backward-compat semantics (mirrors old Python driver):
     - server_session_keep_alive=False + auto-detection enabled → Core receives None
     - server_session_keep_alive=False + auto-detection disabled/None → Core receives False
     - server_session_keep_alive=True → Core receives True
     - server_session_keep_alive=None → Core receives None
-    - enable_logout_auto_detection: passed through as-is
+    - enable_auto_detection: passed through as-is
     - error_strategy: BEST_EFFORT (backward compatible)
 
-    Note: If enable_server_session_keep_alive_auto_detection is not set by the caller,
-    it defaults to True (Phase 2 (SNOW-2314152) backward compat: mirrors old Python driver which always
-    checked the async query registry before logout).
-
     Args:
-        connection: Connection instance with logout configuration
+        server_session_keep_alive: User-provided keep-alive setting (or None)
+        enable_auto_detection: User-provided auto-detection setting (or None)
 
     Returns:
         LogoutConfig with all final values ready for Core
     """
-    server_session_keep_alive = connection.server_session_keep_alive
-    enable_logout_auto_detection = connection.enable_server_session_keep_alive_auto_detection
-
-    # Phase 2 (SNOW-2314152) special mapping: False + auto-detection enabled → map to None
+    # Backward-compat mapping (SNOW-2314152): False + auto-detection enabled → None
     # This makes Core check the registry (legacy Python behavior)
-    if server_session_keep_alive is False and enable_logout_auto_detection:
+    if server_session_keep_alive is False and enable_auto_detection:
         server_session_keep_alive = None
 
     return LogoutConfig(
         server_session_keep_alive=server_session_keep_alive,
-        enable_logout_auto_detection=enable_logout_auto_detection,
+        enable_logout_auto_detection=enable_auto_detection,
         error_strategy=ErrorStrategy.BEST_EFFORT,
         logout_total_timeout_seconds=15,  # 15 second total budget with 3 max attempts = ~5s per attempt
         max_attempts=3,  # 3 total attempts (2 retries) for faster failure feedback

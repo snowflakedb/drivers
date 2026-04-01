@@ -31,7 +31,7 @@ Feature: Session Logout - Python-specific behavior
     When Connection configuration is checked
     Then server_session_keep_alive defaults to none
     And enable_server_session_keep_alive_auto_detection defaults to true
-    And FutureWarning is emitted about auto_detection default changing
+    And Deprecation warning is logged about auto_detection default changing
 
   # ===========================================================================
   #                   Parameter Passing Verification
@@ -97,7 +97,7 @@ Feature: Session Logout - Python-specific behavior
     When Connection configuration is checked
     Then enable_server_session_keep_alive_auto_detection defaults to true
     And Auto-detection is enabled by default
-    And FutureWarning is emitted about auto_detection default changing
+    And Deprecation warning is logged about auto_detection default changing
 
   @python_e2e
   Scenario: should not emit auto_detection deprecation warning when explicitly set to true
@@ -105,7 +105,7 @@ Feature: Session Logout - Python-specific behavior
     Given Snowflake Python client is created with enable_server_session_keep_alive_auto_detection set to true
     When Connection configuration is checked
     Then enable_server_session_keep_alive_auto_detection is true
-    And No FutureWarning is emitted about auto_detection default
+    And No deprecation warning is logged about auto_detection default
 
   # TODO: SNOW-2314153 - Requires logging integration between Rust Core and Python
   @python_e2e
