@@ -56,9 +56,6 @@ ConnectionHandleWrapper get_mfa_connection_handle(EnvironmentHandleWrapper& env)
 }
 
 SQLRETURN attempt_mfa_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
-  WARN("Connection string: " << connection_string);
-  WARN("ODBCSYSINI=" << (std::getenv("ODBCSYSINI") ? std::getenv("ODBCSYSINI") : "(unset)"));
-  WARN("DRIVER_PATH=" << (std::getenv("DRIVER_PATH") ? std::getenv("DRIVER_PATH") : "(unset)"));
   return SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                           SQL_DRIVER_NOPROMPT);
 }
