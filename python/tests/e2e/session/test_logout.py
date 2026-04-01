@@ -55,20 +55,7 @@ class TestLogoutSessionInvalidation:
     """
 
     def test_should_reject_queries_client_side_after_connection_is_closed(self, connection_factory):
-        """Verify queries are rejected client-side after connection is closed.
-
-        Gherkin: shared/session/logout.feature:40-46
-
-        This test verifies client-side validation prevents queries on closed connections.
-        The connection should detect the closed state before attempting network operations.
-
-        Verifies:
-        - Given: Snowflake client is logged in
-        - And: Simple query SELECT 1 executes successfully
-        - When: Connection is closed
-        - And: Query is attempted on closed connection
-        - Then: The query fails with a connection-closed error
-        """
+        """Verify queries are rejected client-side after connection is closed."""
         # Given Snowflake client is logged in
         conn = connection_factory()
 
@@ -100,10 +87,7 @@ class TestLogoutEdgeCases:
     """
 
     def test_should_be_idempotent_when_close_called_multiple_times(self, int_test_connection_factory):
-        """Verify that calling close() multiple times only sends one logout request.
-
-        Gherkin: shared/session/logout.feature:28-34
-        """
+        """Verify that calling close() multiple times only sends one logout request."""
         with WiremockClient().start() as wiremock:
             # Setup Wiremock mappings
             wiremock.add_mapping("auth/login_success_jwt.json")
@@ -131,10 +115,7 @@ class TestLogoutEdgeCases:
             assert conn.is_closed()
 
     def test_should_handle_concurrent_close_calls_safely(self, int_test_connection_factory):
-        """Verify that concurrent close() calls are thread-safe and send only one logout request.
-
-        Gherkin: shared/session/logout.feature:70-75
-        """
+        """Verify that concurrent close() calls are thread-safe and send only one logout request."""
         with WiremockClient().start() as wiremock:
             # Setup Wiremock mappings
             wiremock.add_mapping("auth/login_success_jwt.json")
@@ -184,8 +165,6 @@ class TestLogoutPythonWrapper:
     ):
         """Verify enable_server_session_keep_alive_auto_detection defaults to True.
 
-        Gherkin: python/session/logout.feature:96-101
-
         Default True is required for Phase 2 backward compat (SNOW-2314152): the old
         Python driver always checked _async_sfqids before logout. Without this default,
         Core receives enable_logout_auto_detection=None → always logout → kills async queries.
@@ -224,10 +203,7 @@ class TestLogoutPythonWrapper:
     def test_should_send_logout_when_server_session_keep_alive_is_none_and_auto_detection_false(
         self, int_test_connection_factory
     ):
-        """Verify that logout is sent when auto-detection is disabled.
-
-        Gherkin: python/session/logout.feature:50-59
-        """
+        """Verify that logout is sent when auto-detection is disabled."""
         with WiremockClient().start() as wiremock:
             # Setup Wiremock mappings
             wiremock.add_mapping("auth/login_success_jwt.json")
@@ -283,8 +259,6 @@ class TestLogoutPythonWrapper:
     ):
         """Verify Python wrapper passes None keep-alive and True auto-detection to Core.
 
-        Gherkin: python/session/logout.feature:41-49
-
         Phase 2 truth table: server_session_keep_alive=None + enable_auto_detection=True
         → no Phase 2 remap (only False + True triggers remap) → Core receives None + True.
         """
@@ -326,8 +300,6 @@ class TestLogoutPythonWrapper:
 
     def test_should_pass_correct_parameters_when_server_session_keep_alive_is_false(self, int_test_connection_factory):
         """Verify Python wrapper remaps False keep-alive to None when auto-detection is True (default).
-
-        Gherkin: python/session/logout.feature:63-70
 
         Phase 2 truth table: server_session_keep_alive=False + enable_auto_detection=True (default)
         → Phase 2 remap: False + True → None so Core checks registry (legacy Python behavior).
@@ -371,10 +343,7 @@ class TestLogoutPythonWrapper:
             )
 
     def test_should_use_python_default_15_second_timeout_and_3_max_retries(self, int_test_connection_factory):
-        """Verify Python wrapper configures 15s total timeout and 3 max attempts by default.
-
-        Gherkin: python/session/logout.feature:8-14
-        """
+        """Verify Python wrapper configures 15s total timeout and 3 max attempts by default."""
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
             wiremock.add_mapping("session/logout_success.json")
@@ -403,8 +372,6 @@ class TestLogoutPythonWrapper:
 
     def test_should_use_best_effort_error_handling_strategy_by_default(self, int_test_connection_factory):
         """Verify close() does not raise when server returns 500 on all logout attempts.
-
-        Gherkin: python/session/logout.feature:100-109
 
         Best-effort strategy: close() succeeds even if logout fails.
         All retries (max_attempts=3) are exhausted, then Core reports WARN and returns ok.
@@ -457,10 +424,7 @@ class TestLogoutRetryBehavior:
     def test_should_retry_logout_on_transient_failure_when_close_called_with_default_retry(
         self, int_test_connection_factory
     ):
-        """Verify close() retries a failed logout and sends two requests on transient 503.
-
-        Gherkin: python/session/logout.feature:117-123
-        """
+        """Verify close() retries a failed logout and sends two requests on transient 503."""
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
 
@@ -486,10 +450,7 @@ class TestLogoutRetryBehavior:
     def test_should_not_retry_logout_on_transient_failure_when_close_called_with_retry_false(
         self, int_test_connection_factory
     ):
-        """Verify close(retry=False) sends exactly one logout request and does not retry.
-
-        Gherkin: python/session/logout.feature:125-133
-        """
+        """Verify close(retry=False) sends exactly one logout request and does not retry."""
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
 

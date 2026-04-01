@@ -231,8 +231,9 @@ class Connection:
     def _setup_logout_config(self) -> None:
         """Apply logout configuration to Core via ConnectionSetOption* RPCs.
 
-        Must be called BEFORE connection_init. Reads configuration at call time
-        via _map_logout_config() so values reflect the state at close()-time.
+        Called at init time, before connection_init. Writes values to Core's
+        connection_seed. Core re-derives LogoutConfig from connection_seed at
+        close() time, so post-init overrides (e.g. retry=False) take effect.
         """
         logout_config = self._map_logout_config()
 
