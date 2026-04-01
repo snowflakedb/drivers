@@ -266,17 +266,6 @@ pipeline {
               AIX_USER = 'jenkins'
             }
             stages {
-              stage('Matrix diagnostics') {
-                steps {
-                  script {
-                    echo "[MATRIX] Branch initialized for PLATFORM=${PLATFORM}"
-                    echo "[MATRIX] Agent label=${getAgentLabel(PLATFORM)}"
-                    echo "[MATRIX] Needs docker=${needsDocker(PLATFORM)}"
-                    echo "[MATRIX] Build URL=${env.BUILD_URL}"
-                    echo "[MATRIX] Build tag=${env.BUILD_TAG}"
-                  }
-                }
-              }
               stage('Docker Build') {
                 when {
                   beforeAgent true
@@ -292,17 +281,6 @@ pipeline {
                   }
                 }
                 stages {
-                  stage('agent diagnostics (docker)') {
-                    steps {
-                      sh '''
-                        set +x
-                        echo "[MATRIX][DOCKER] uname: $(uname -a)"
-                        echo "[MATRIX][DOCKER] whoami: $(whoami)"
-                        echo "[MATRIX][DOCKER] rustup: $(command -v rustup || echo missing)"
-                        echo "[MATRIX][DOCKER] cargo: $(command -v cargo || echo missing)"
-                      '''
-                    }
-                  }
                   stage('checkout (docker)') {
                     steps {
                       checkout scm
@@ -348,26 +326,6 @@ pipeline {
                   label getAgentLabel(PLATFORM)
                 }
                 stages {
-                  stage('agent diagnostics (node)') {
-                    steps {
-                      script {
-                        if (platform_os(PLATFORM) == 'windows' && PLATFORM != 'windows-aarch64') {
-                          bat '''
-                            @echo off
-                            echo [MATRIX][NODE] COMPUTERNAME=%COMPUTERNAME%
-                            echo [MATRIX][NODE] USERNAME=%USERNAME%
-                            ver
-                          '''
-                        } else {
-                          sh '''
-                            set +x
-                            echo "[MATRIX][NODE] uname: $(uname -a)"
-                            echo "[MATRIX][NODE] whoami: $(whoami)"
-                          '''
-                        }
-                      }
-                    }
-                  }
                   stage('checkout (node)') {
                     steps {
                       checkout_repo()
