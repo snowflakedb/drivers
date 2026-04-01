@@ -996,6 +996,50 @@ mod tests {
     }
 
     #[test]
+    fn convert_numeric_negative_scale_as_varchar() -> TestResult {
+        // scale = -2 means value = 123 * 10^2 = 12300
+        let n = sql::Numeric {
+            precision: 10,
+            scale: -2,
+            sign: 1,
+            val: 123u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::VARCHAR,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("12300".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_negative_scale_negative_value_as_varchar() -> TestResult {
+        // scale = -3, sign = 0 (negative), val = 5 → -5000
+        let n = sql::Numeric {
+            precision: 10,
+            scale: -3,
+            sign: 0,
+            val: 5u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::VARCHAR,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("-5000".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn convert_binary_as_varchar() -> TestResult {
         let val: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
         let mut ind: sql::Len = 4;

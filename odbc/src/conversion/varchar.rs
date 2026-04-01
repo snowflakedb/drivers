@@ -451,6 +451,9 @@ impl ReadODBC for SnowflakeVarchar {
                         let (whole, frac) = abs_str.split_at(abs_str.len() - s);
                         format!("{}.{}", whole, frac)
                     }
+                } else if n.scale < 0 {
+                    let zeros = (-n.scale) as usize;
+                    format!("{}{}", abs_str, "0".repeat(zeros))
                 } else {
                     abs_str
                 };
