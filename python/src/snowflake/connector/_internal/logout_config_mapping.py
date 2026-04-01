@@ -71,7 +71,8 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
     - error_strategy: BEST_EFFORT (backward compatible)
 
     Note: If enable_server_session_keep_alive_auto_detection is not set by the caller,
-    it defaults to None (Core treats None as False = auto-detection disabled).
+    it defaults to True (Phase 2 backward compat: mirrors old Python driver which always
+    checked the async query registry before logout).
 
     Args:
         connection: Connection instance with logout configuration

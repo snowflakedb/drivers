@@ -132,7 +132,7 @@ class Connection:
                   remaps False → None so Core applies auto-detection (SNOW-2314152).
                 - None: Delegate to auto-detection setting
             enable_server_session_keep_alive_auto_detection: Optional[bool]
-                - True: Check async query registry before logout
+                - True (default): Check async query registry before logout (backward compat)
                 - False: Don't check registry
                 - None: Auto-detection disabled (Core treats None as False)
             auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
@@ -169,7 +169,7 @@ class Connection:
         # Extract logout configuration parameters before passing to Core
         self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
         self.enable_server_session_keep_alive_auto_detection: bool | None = cast(
-            "bool | None", kwargs.pop("enable_server_session_keep_alive_auto_detection", None)
+            "bool | None", kwargs.pop("enable_server_session_keep_alive_auto_detection", True)
         )
         self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
 
