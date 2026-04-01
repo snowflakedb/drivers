@@ -21,9 +21,9 @@ def getAgentLabel(platform) {
     case 'linux-aarch64-glibc':
       return 'small-node-aarch64'
     case 'macos-x86_64':
-      return 'mac_x86'
+      return 'mac_x86_v2'
     case 'macos-aarch64':
-      return 'mac_m1'
+      return 'mac_m1_v2'
     case 'windows-x86_64':
       return 'windows-build-vs2022'
     case 'windows-i686':
