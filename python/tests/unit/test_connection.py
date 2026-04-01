@@ -653,6 +653,29 @@ class TestConnectionArrowProperties:
         connection.arrow_number_to_decimal = 0
         assert connection.arrow_number_to_decimal is False
 
+    def test_arrow_number_to_decimal_true_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", arrow_number_to_decimal=True)
+        assert conn.arrow_number_to_decimal is True
+
+    def test_arrow_number_to_decimal_false_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", arrow_number_to_decimal=False)
+        assert conn.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_not_leaked_to_rust_core(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", arrow_number_to_decimal=True)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert "arrow_number_to_decimal" not in request.options
+
 
 class TestGetQueryStatus:
     """Unit tests for Connection.get_query_status."""

@@ -8,12 +8,17 @@ from types import ModuleType
 from typing import Any, Callable, TypeVar, cast
 
 from snowflake.connector import errors
-from snowflake.connector._internal.errorcode import ER_NO_PYARROW
+from snowflake.connector._internal.errorcode import ER_NO_NUMPY, ER_NO_PYARROW
 
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 logger = getLogger(__name__)
+
+DEP_PYARROW = "pyarrow"
+DEP_PANDAS = "pandas"
+DEP_NUMPY = "numpy"
+DEP_TZLOCAL = "tzlocal"
 
 """This module helps to manage optional dependencies.
 
@@ -58,12 +63,15 @@ def _import_or_missing(module_name: str) -> ModuleType | MissingOptionalDependen
 def check_dependency(module: ModuleType | MissingOptionalDependency) -> None:
     """Raise ProgrammingError if optional dependency is not installed."""
     if isinstance(module, MissingOptionalDependency):
-        if module.dep_name in ("pyarrow", "pandas"):
+        if module.dep_name in (DEP_PYARROW, DEP_PANDAS):
             msg = (
                 f"Optional dependency: '{module.dep_name}' is not installed, please see the following link for"
                 " install instructions: https://docs.snowflake.com/en/user-guide/python-connector-pandas.html#installation"
             )
             raise errors.ProgrammingError(msg=msg, errno=ER_NO_PYARROW)
+        elif module.dep_name == DEP_NUMPY:
+            msg = "Numpy module is not installed. Cannot fetch data as numpy"
+            raise errors.ProgrammingError(msg=msg, errno=ER_NO_NUMPY)
         else:
             raise errors.MissingDependencyError(module.dep_name)
 
@@ -82,5 +90,7 @@ def requires_dependency(module: ModuleType | MissingOptionalDependency) -> Calla
     return decorator
 
 
-pyarrow = _import_or_missing("pyarrow")
-pandas = _import_or_missing("pandas")
+pyarrow = _import_or_missing(DEP_PYARROW)
+pandas = _import_or_missing(DEP_PANDAS)
+numpy = _import_or_missing(DEP_NUMPY)
+tzlocal = _import_or_missing(DEP_TZLOCAL)

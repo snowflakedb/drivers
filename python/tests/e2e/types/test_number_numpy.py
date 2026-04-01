@@ -17,13 +17,10 @@ Use standard mode (Python int/Decimal) when precision is critical.
 
 from __future__ import annotations
 
-import pytest
+import numpy as np
 
 from .utils import assert_floats_equal, assert_type
 
-
-# NumPy is optional for these tests
-np = pytest.importorskip("numpy")
 
 # =============================================================================
 # DECIMAL CONTEXT CONFIGURATION
@@ -34,7 +31,6 @@ NUMBER_PRECISION = 38
 class TestNumberNumPy:
     """Test suite for NUMBER type NumPy conversion (Python-specific)."""
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_should_cast_number_scale0_to_numpy_int64(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
@@ -51,7 +47,6 @@ class TestNumberNumPy:
         # And Values should match exactly [0, 123, -456, 999999]
         assert result == (0, 123, -456, 999999)
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_should_cast_number_scale3_to_numpy_float64(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
@@ -68,7 +63,6 @@ class TestNumberNumPy:
         # And Values should match approximately [0.0, 123.456, -789.012] within float64 precision
         assert_floats_equal(result, (0.0, 123.456, -789.012))
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_handles_high_precision_integers_within_int64_range(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass

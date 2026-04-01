@@ -9,6 +9,7 @@ import sys
 
 from datetime import datetime, timedelta
 
+import numpy as np
 import pytest
 
 from snowflake.connector._internal.arrow_context import (
@@ -379,8 +380,6 @@ class TestNumpyConversions:
     )
     def test_real_to_numpy_float64(self, value):
         """Test REAL to numpy float64 conversion."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.REAL_to_numpy_float64(value)
         assert isinstance(result, np.float64)
@@ -393,8 +392,6 @@ class TestNumpyConversions:
     )
     def test_fixed_to_numpy_int64(self, value):
         """Test FIXED to numpy int64 conversion."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.FIXED_to_numpy_int64(value)
         assert isinstance(result, np.int64)
@@ -412,8 +409,6 @@ class TestNumpyConversions:
     )
     def test_fixed_to_numpy_float64(self, value, scale, expected):
         """Test FIXED to numpy float64 with scale."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.FIXED_to_numpy_float64(value, scale)
         assert isinstance(result, np.float64)
@@ -426,8 +421,6 @@ class TestNumpyConversions:
     )
     def test_date_to_numpy_datetime64(self, days):
         """Test DATE to numpy datetime64 conversion."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.DATE_to_numpy_datetime64(days)
         assert isinstance(result, np.datetime64)
@@ -439,8 +432,6 @@ class TestNumpyConversions:
     )
     def test_timestamp_ntz_one_field_to_numpy_datetime64(self, value, scale):
         """Test TIMESTAMP_NTZ one-field to numpy datetime64."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.TIMESTAMP_NTZ_ONE_FIELD_to_numpy_datetime64(value, scale)
         assert isinstance(result, np.datetime64)
@@ -452,16 +443,12 @@ class TestNumpyConversions:
     )
     def test_timestamp_ntz_two_field_to_numpy_datetime64(self, epoch, fraction):
         """Test TIMESTAMP_NTZ two-field to numpy datetime64."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.TIMESTAMP_NTZ_TWO_FIELD_to_numpy_datetime64(epoch, fraction)
         assert isinstance(result, np.datetime64)
 
     def test_decfloat_to_numpy_float64(self):
         """Test DECFLOAT to numpy float64 conversion."""
-        import numpy as np
-
         context = ArrowConverterContext()
         significand = (314159).to_bytes(16, byteorder="big", signed=True)
         result = context.DECFLOAT_to_numpy_float64(-5, significand)
@@ -544,8 +531,6 @@ class TestIntervalNumpyConversions:
     @pytest.mark.parametrize("months", [12, 0, 24, 1, 100], ids=["1y", "0", "2y", "1m", "8y4m"])
     def test_interval_year_month_to_numpy_timedelta(self, months):
         """Test INTERVAL_YEAR_MONTH to numpy timedelta."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.INTERVAL_YEAR_MONTH_to_numpy_timedelta(months)
         assert isinstance(result, np.timedelta64)
@@ -557,8 +542,6 @@ class TestIntervalNumpyConversions:
     )
     def test_interval_day_time_int_to_numpy_timedelta(self, nanos):
         """Test INTERVAL_DAY_TIME int to numpy timedelta."""
-        import numpy as np
-
         context = ArrowConverterContext()
         result = context.INTERVAL_DAY_TIME_int_to_numpy_timedelta(nanos)
         assert isinstance(result, np.timedelta64)
@@ -570,8 +553,6 @@ class TestIntervalNumpyConversions:
     )
     def test_interval_day_time_decimal_to_numpy_timedelta(self, nanos):
         """Test INTERVAL_DAY_TIME decimal to numpy timedelta."""
-        import numpy as np
-
         context = ArrowConverterContext()
         value = nanos.to_bytes(16, byteorder="little", signed=True)
         result = context.INTERVAL_DAY_TIME_decimal_to_numpy_timedelta(value)

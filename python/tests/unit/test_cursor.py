@@ -1021,6 +1021,52 @@ class TestRownumber:
         assert cursor.rownumber is None
 
 
+class TestCreateRowIteratorNumpyFlag:
+    """Unit tests for _create_row_iterator passing connection._numpy."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.is_closed.return_value = False
+        return conn
+
+    def test_passes_numpy_true_from_connection(self, mock_connection):
+        mock_connection._numpy = True
+        cursor = SnowflakeCursor(mock_connection)
+        cursor._execute_result = MagicMock()
+
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_row_iterator") as mock_create,
+        ):
+            mock_create.return_value = iter([])
+            cursor._create_row_iterator()
+
+        mock_create.assert_called_once_with(
+            stream_ptr=42,
+            use_dict_result=False,
+            use_numpy=True,
+        )
+
+    def test_passes_numpy_false_from_connection(self, mock_connection):
+        mock_connection._numpy = False
+        cursor = SnowflakeCursor(mock_connection)
+        cursor._execute_result = MagicMock()
+
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_row_iterator") as mock_create,
+        ):
+            mock_create.return_value = iter([])
+            cursor._create_row_iterator()
+
+        mock_create.assert_called_once_with(
+            stream_ptr=42,
+            use_dict_result=False,
+            use_numpy=False,
+        )
+
+
 class TestCheckCanUseArrowResultset:
     """Unit tests for SnowflakeCursorBase.check_can_use_arrow_resultset."""
 

@@ -642,8 +642,7 @@ class SnowflakeCursorBase(abc.ABC):
         return create_row_iterator(
             stream_ptr=stream_ptr,
             use_dict_result=self._use_dict_result,
-            # TODO: SNOW-2997786, temporarily hardcoded
-            use_numpy=False,
+            use_numpy=self._connection._numpy,
         )
 
     @pep249

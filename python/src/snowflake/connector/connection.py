@@ -37,6 +37,8 @@ from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.extras import check_dependency
+from ._internal.extras import numpy as np
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
@@ -123,12 +125,14 @@ class Connection:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
         kwargs["client_app_id"] = self._application
 
+        # Extract Python-only params before processing kwargs for Rust core
+        self._numpy: bool = self._resolve_numpy_option(kwargs)
+        self._arrow_number_to_decimal: bool = bool(kwargs.pop("arrow_number_to_decimal", False))
+
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
-
-        # Extract session_parameters before processing other kwargs
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
         if autocommit is not None:
@@ -181,9 +185,6 @@ class Connection:
         self._closed = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
-
-        # other connection properties
-        self._arrow_number_to_decimal: bool = False
 
     @pep249
     def close(self) -> None:
@@ -662,6 +663,14 @@ class Connection:
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
+
+    @staticmethod
+    def _resolve_numpy_option(kwargs: ConnectionParameters) -> bool:
+        """Pop ``numpy`` from *kwargs* and validate that numpy is installed if requested."""
+        use_numpy = bool(kwargs.pop("numpy", False))
+        if use_numpy:
+            check_dependency(np)
+        return use_numpy
 
     @staticmethod
     def is_still_running(status: QueryStatus) -> bool:

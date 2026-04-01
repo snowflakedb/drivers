@@ -7,7 +7,7 @@ name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs sw
 dynamic = ["version"]
 description = "A PEP 249 Database API 2.0 implementation for Snowflake"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = { text = "Apache-2.0" }
 keywords = ["database", "api", "pep249", "dbapi", "python", "snowflake"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -60,6 +60,9 @@ test = [
     "zstandard",
     "tomlkit",
     "tzdata",
+    "numpy>=1.23.0; python_version < '3.12'",
+    "numpy>=1.26.0; python_version >= '3.12' and python_version < '3.13'",
+    "numpy>=2.1.0; python_version >= '3.13'",
 ]
 dev = [
     "ruff",
@@ -191,7 +194,7 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "pandas", "pandas.*", "sqlalchemy", "sqlalchemy.*"]
+module = ["pyarrow", "pyarrow.*", "pandas", "pandas.*", "numpy", "numpy.*", "sqlalchemy", "sqlalchemy.*"]
 ignore_missing_imports = true
 
 # ===== Hatch Configuration =====
