@@ -5,3 +5,6 @@ EXPORTS
     sf_core_init_logger
     sf_core_api_call_proto
     sf_core_free_buffer
+    sf_core_perf_enabled
+    sf_core_get_perf_data
+    sf_core_reset_perf_metrics

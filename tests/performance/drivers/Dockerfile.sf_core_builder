@@ -80,10 +80,10 @@ COPY error_trace/src/ ./error_trace/src/
 COPY error_trace_derive/src/ ./error_trace_derive/src/
 COPY odbc_trace_tool/src/ ./odbc_trace_tool/src/
 
-# Build sf_core
-RUN cargo build --release --package sf_core && \
+# Build sf_core (with perf_timing instrumentation for performance tests)
+RUN cargo build --release --package sf_core --features perf_timing && \
     cp target/release/libsf_core.so /workdir/libsf_core.so
 
-# Build ODBC wrapper
-RUN cargo build --release --package odbc && \
+# Build ODBC wrapper (with perf_timing instrumentation for performance tests)
+RUN cargo build --release --package odbc --features perf_timing && \
     cp target/release/libsfodbc.so /workdir/libsfodbc.so

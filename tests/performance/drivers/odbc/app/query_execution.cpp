@@ -1,5 +1,6 @@
 #include "query_execution.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
@@ -9,17 +10,19 @@
 
 #include "common.h"
 #include "connection.h"
+#include "perf_metrics.h"
 #include "results.h"
 
 static constexpr std::size_t BULK_SIZE = 1024;
 static constexpr std::size_t CHAR_COL_BUF_LEN = 1024;
 
 // Forward declarations for private helpers
-void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations);
-std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations);
+void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, CoreInstrumentation& perf);
+std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations,
+                                            CoreInstrumentation& perf);
 void validate_row_counts(const std::vector<TestResult>& results);
 void print_statistics(const std::vector<TestResult>& results);
-TestResult run_query(SQLHDBC dbc, const std::string& sql, int iteration);
+TestResult run_query(SQLHDBC dbc, const std::string& sql, int iteration, CoreInstrumentation& perf);
 std::pair<std::size_t, std::size_t> get_expected_row_count(const std::vector<TestResult>& results);
 void assert_nonzero_row_count(std::size_t count);
 void check_row_count_match(std::size_t actual_count, std::size_t expected_count, std::size_t iteration);
@@ -32,19 +35,24 @@ void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_
   std::cout << "\n=== Executing SELECT Test (bulk fetch, " << BULK_SIZE << " rows/batch) ===\n";
   std::cout << "Query: " << sql_command << "\n";
 
-  run_warmup(dbc, sql_command, warmup_iterations);
+  CoreInstrumentation perf;
+  if (perf.available()) {
+    std::cout << "Perf metrics: enabled (sf_core perf_timing symbols found)\n";
+  }
+
+  run_warmup(dbc, sql_command, warmup_iterations, perf);
 
   ResourceMonitor monitor(std::chrono::milliseconds(100));
   monitor.start();
 
-  auto results = run_test_iterations(dbc, sql_command, iterations);
+  auto results = run_test_iterations(dbc, sql_command, iterations, perf);
 
   auto memory_timeline = monitor.stop();
 
   validate_row_counts(results);
 
   std::string filename = generate_results_filename(test_name, driver_type_str, now);
-  write_csv_results(results, filename);
+  write_csv_results(results, filename, perf.available());
   write_memory_timeline(memory_timeline, test_name, driver_type_str, now);
 
   print_statistics(results);
@@ -52,21 +60,22 @@ void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_
   finalize_test_execution(dbc, filename, driver_type_str, driver_version_str, now);
 }
 
-void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations) {
+void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, CoreInstrumentation& perf) {
   if (warmup_iterations == 0) {
     return;
   }
 
   for (int i = 1; i <= warmup_iterations; i++) {
-    run_query(dbc, sql, i);
+    run_query(dbc, sql, i, perf);
   }
 }
 
-std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations) {
+std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations,
+                                            CoreInstrumentation& perf) {
   std::vector<TestResult> results;
 
   for (int i = 1; i <= iterations; i++) {
-    auto result = run_query(dbc, sql, i);
+    auto result = run_query(dbc, sql, i, perf);
     results.push_back(result);
   }
 
@@ -155,7 +164,7 @@ void bind_columns_for_bulk_fetch(SQLHSTMT stmt, SQLSMALLINT column_count, std::v
   }
 }
 
-TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration) {
+TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration, CoreInstrumentation& perf) {
   TestResult result;
   result.iteration = iteration;
 
@@ -163,13 +172,11 @@ TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration)
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
   check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLAllocHandle STMT");
 
-  // Execute query
   auto query_start = std::chrono::high_resolution_clock::now();
   ret = SQLExecDirect(stmt, (SQLCHAR*)sql_command.c_str(), SQL_NTS);
   check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLExecDirect");
   auto query_end = std::chrono::high_resolution_clock::now();
 
-  // Get column count and pre-bind columns
   SQLSMALLINT column_count = 0;
   ret = SQLNumResultCols(stmt, &column_count);
   check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLNumResultCols");
@@ -178,17 +185,17 @@ TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration)
   std::vector<std::vector<SQLLEN>> indicators;
   bind_columns_for_bulk_fetch(stmt, column_count, char_bufs, indicators);
 
-  // Set bulk fetch size
   ret = SQLSetStmtAttr(stmt, SQL_ATTR_ROW_ARRAY_SIZE, (SQLPOINTER)BULK_SIZE, 0);
   check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLSetStmtAttr ROW_ARRAY_SIZE");
 
-  // Track actual rows fetched per batch
   SQLULEN rows_fetched = 0;
   ret = SQLSetStmtAttr(stmt, SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
   check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "SQLSetStmtAttr ROWS_FETCHED_PTR");
 
   struct rusage usage_before;
   getrusage(RUSAGE_SELF, &usage_before);
+
+  perf.reset();
 
   auto fetch_start = std::chrono::high_resolution_clock::now();
   std::size_t row_count = 0;
@@ -200,11 +207,17 @@ TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration)
 
   auto fetch_end = std::chrono::high_resolution_clock::now();
 
+  auto core_metrics = perf.collect();
+
   struct rusage usage_after;
   getrusage(RUSAGE_SELF, &usage_after);
 
   result.query_time_s = std::chrono::duration<double>(query_end - query_start).count();
   result.fetch_time_s = std::chrono::duration<double>(fetch_end - fetch_start).count();
+  result.core_batch_wait_s = core_metrics.core_batch_wait_s;
+  result.core_chunk_download_s = core_metrics.core_chunk_download_s;
+  result.core_arrow_decode_s = core_metrics.core_arrow_decode_s;
+  result.wrapper_time_s = std::max(0.0, result.fetch_time_s - result.core_batch_wait_s);
   result.row_count = row_count;
   result.cpu_time_s = cpu_seconds(usage_after) - cpu_seconds(usage_before);
   result.peak_rss_mb = get_peak_rss_mb();

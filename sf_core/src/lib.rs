@@ -16,6 +16,7 @@ pub mod file_manager;
 pub mod handle_manager;
 pub mod http;
 pub mod logging;
+pub mod perf_timing;
 pub mod query_types;
 pub mod rest;
 pub mod sensitive;

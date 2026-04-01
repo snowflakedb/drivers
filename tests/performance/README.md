@@ -9,6 +9,7 @@
 - [Driver Containers](#driver-containers)
 - [Results](#results)
 - [Metrics Reference](#metrics-reference)
+    - [Core Instrumentation Metrics](#core-instrumentation-metrics)
 - [Docker Builds Approach](#docker-builds-approach)
 
 ---
@@ -434,14 +435,24 @@ results/
 
 ### CSV Format
 
-Results CSV files contain per-iteration timing, CPU, and memory data with actual execution timestamps.
+Results CSV files contain per-iteration timing, CPU, and memory data with actual execution timestamps. When the `perf_timing` Cargo feature is enabled, additional core instrumentation columns are automatically included (the Python driver auto-detects this from the compiled library via `sf_core_perf_enabled()`).
 
-**For SELECT tests:**
+**For SELECT tests (Core driver):**
 ```csv
-timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb
-1762522370000,0.005432,1.583121,1000000,1.571032,236.2
-1762522372000,0.005118,1.812228,1000000,1.798445,237.4
-1762522374000,0.004987,1.799454,1000000,1.785123,236.1
+timestamp_ms,query_s,fetch_s,core_batch_wait_s,core_chunk_download_s,core_arrow_decode_s,row_count,cpu_time_s,peak_rss_mb
+1775119405296,0.498664,0.576998,0.576834166,0.792536293,0.000246459,1000000,0.015581,23.0
+```
+
+**For SELECT tests (Python driver with perf metrics):**
+```csv
+timestamp_ms,query_s,fetch_s,core_batch_wait_s,core_chunk_download_s,core_arrow_decode_s,wrapper_time_s,row_count,cpu_time_s,peak_rss_mb
+1775119615748,0.510870,0.506042,0.143377332,0.583327916,0.000164916,0.362664195,1000000,0.371000,44.2
+```
+
+**For SELECT tests (ODBC driver with perf metrics):**
+```csv
+timestamp_ms,query_s,fetch_s,core_batch_wait_s,core_chunk_download_s,core_arrow_decode_s,wrapper_time_s,row_count,cpu_time_s,peak_rss_mb
+1775119821685,0.465781,0.461258,0.140321876,0.572891234,0.000152667,0.320936124,1000000,0.335000,18.5
 ```
 
 **For PUT/GET tests:**
@@ -456,6 +467,10 @@ timestamp_ms,query_s,cpu_time_s,peak_rss_mb
 - `timestamp_ms`: Unix timestamp in milliseconds when the iteration completed
 - `query_s`: Wall-clock time to execute the query (`cursor.execute()`) and get initial response (seconds)
 - `fetch_s`: Wall-clock time to fetch all result rows via `fetchmany()` (seconds) — **SELECT tests only**
+- `core_batch_wait_s`: Wall-clock time the consumer thread spent waiting for the next `RecordBatch` from the prefetch pipeline (seconds) — see [Core Instrumentation Metrics](#core-instrumentation-metrics)
+- `core_chunk_download_s`: Cumulative wall-clock time spent downloading chunks from Snowflake (seconds) — see [Core Instrumentation Metrics](#core-instrumentation-metrics)
+- `core_arrow_decode_s`: Cumulative wall-clock time spent decoding downloaded chunks into Arrow `RecordBatch`es (seconds) — see [Core Instrumentation Metrics](#core-instrumentation-metrics)
+- `wrapper_time_s`: Wall-clock time spent in the language wrapper layer during fetch, computed as `fetch_s - core_batch_wait_s` (seconds) — **Python and ODBC only**
 - `row_count`: Number of rows fetched — **SELECT tests only**
 - `cpu_time_s`: CPU time consumed during the fetch phase (seconds, via `time.process_time()`) — see [Metrics Reference](#metrics-reference)
 - `peak_rss_mb`: Process-wide peak Resident Set Size (MB, via `getrusage(RUSAGE_SELF).ru_maxrss`)
@@ -465,6 +480,7 @@ timestamp_ms,query_s,cpu_time_s,peak_rss_mb
 - PUT/GET tests have no separate fetch phase — `query_s` covers the entire file operation
 - Timestamps are captured at the end of each iteration and uploaded to Benchstore for time-series analysis
 - Total wall-clock time for SELECT tests = `query_s + fetch_s`
+- Core instrumentation columns are only present when the `perf_timing` Cargo feature is enabled. Without it, the CSV falls back to the base columns (`timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb`)
 
 ### Memory Timeline Files
 
@@ -513,6 +529,48 @@ These are recorded once per test iteration and uploaded to Benchstore as time-se
 
 **Platform note:** `cpu_time_s` and `peak_rss_mb` work on both Linux and macOS. Memory timeline sampling (`/proc/self/statm`) is Linux-only — on macOS, the timeline is silently empty. All metrics are available on any Linux distribution (the APIs are kernel-level, not distro-specific).
 
+### Core Instrumentation Metrics
+
+These metrics break down what happens inside `sf_core` during the fetch phase. They are collected via `tracing` spans in the Rust core library, gated behind the `perf_timing` Cargo feature. Counters are reset before each fetch and read atomically after it completes.
+
+| Metric | Scope | Measures | Unit | Available in |
+|--------|-------|----------|------|-------------|
+| `core_batch_wait_s` | `PrefetchChunkReader::next()` | Wall-clock time the consumer blocks waiting for the next `RecordBatch` from the prefetch pipeline | seconds | Core, Python, ODBC |
+| `core_chunk_download_s` | `HttpChunkDownloader::download_chunk()` | Cumulative wall-clock time spent downloading chunks over HTTP | seconds | Core, Python, ODBC |
+| `core_arrow_decode_s` | `ArrowChunkParser::parse_chunk()` / `JsonChunkParser::parse_chunk()` | Cumulative wall-clock time spent decoding chunks into Arrow `RecordBatch`es | seconds | Core, Python, ODBC |
+| `wrapper_time_s` | Fetch phase minus core wait | Time spent in the language wrapper (type conversion, row copying) during fetch | seconds | Python, ODBC |
+
+**How metrics relate to each other:**
+
+The fetch phase decomposes cleanly:
+
+```
+fetch_s = core_batch_wait_s + wrapper_time_s     (Python, ODBC)
+fetch_s ≈ core_batch_wait_s                       (Core — no wrapper layer)
+```
+
+Meanwhile, chunk download and decode happen concurrently in the background prefetch pipeline:
+
+```
+core_chunk_download_s  — may exceed fetch_s because concurrent downloads accumulate
+core_arrow_decode_s    — typically negligible for Arrow (< 1ms)
+```
+
+**Implementation details:**
+
+- **Core driver**: Calls `sf_core::perf_timing::reset_perf_counters()` before fetch, then `sf_core::perf_timing::get_perf_data()` after fetch to read counters directly into a struct. No `wrapper_time_s` (core consumes batches directly).
+- **Python driver**: Auto-detects perf capability via `sf_core_perf_enabled()` FFI call. When enabled, uses `sf_core_reset_perf_metrics()` and `sf_core_get_perf_data()` (returns a `#[repr(C)]` struct — no JSON, no heap allocation) from the connector's `c_api` module. Computes `wrapper_time_s = fetch_s - core_batch_wait_s`.
+- **ODBC driver**: The C++ test app uses `dlopen`/`dlsym` to resolve `sf_core_get_perf_data` and `sf_core_reset_perf_metrics` from the already-loaded `libsfodbc.so` (which statically links `sf_core`). `sf_core_get_perf_data` returns a flat C struct with nanosecond counters — no JSON parsing or string management needed. The `CoreInstrumentation` class (`perf_metrics.cpp`) encapsulates this and falls back gracefully when the symbols are absent. Computes `wrapper_time_s = fetch_s - core_batch_wait_s`.
+- **Tracing mechanism**: Standard `tracing` spans alone only emit events to subscribers — they don't aggregate timing data or expose it via FFI. The custom `PerfTimingLayer` bridges this gap: it intercepts spans tagged with `target: "sf_core::perf"`, measures their wall-clock duration, and accumulates nanosecond totals into atomic counters that can be read and reset from C/Python/C++ callers. Other tracing subscribers (logging, OpenTelemetry) ignore these spans entirely, so there is no cross-subscriber overhead.
+- **Feature gating**: The `perf_timing` Cargo feature controls whether the `PerfTimingLayer` and FFI functions are compiled in. The `tracing` spans at measurement sites are **always compiled** (unconditional `trace_span!` calls). When no `PerfTimingLayer` is registered the spans short-circuit after a single atomic load (~1-2ns) — the same cost as the 48+ existing `#[instrument]` spans on API methods. When the feature is **on**, the layer is registered with the global subscriber during `init_logging`, and FFI calls return real timing data. This keeps instrumentation sites simple (no `#[cfg]` guards) while perf test builds (via `sf-core-builder` with `--features perf_timing`) get full timing breakdown.
+
+**Interpreting the metrics:**
+
+| Scenario | `core_batch_wait_s` | `wrapper_time_s` | Bottleneck |
+|----------|--------------------|--------------------|------------|
+| Fast network, slow wrapper | Low (< 10% of `fetch_s`) | High (≈ `fetch_s`) | Wrapper layer (type conversion) |
+| Slow network, fast wrapper | High (≈ `fetch_s`) | Low | Network / chunk download |
+
 ### Memory Timeline Metrics (Time Series)
 
 Sampled at ~100ms intervals by a background monitoring thread. Uploaded to Benchstore as time-series sample points. **Linux only** — relies on `/proc/self/statm` which is part of the Linux kernel's procfs (available on all distributions and architectures). On non-Linux platforms the monitor is silently disabled.
@@ -559,6 +617,10 @@ When uploading to Benchstore (with `--upload-to-benchstore`), each test uploads 
 - `select_string_1000000_rows_fetch_s` — data fetching time
 - `select_string_1000000_rows_cpu_time_s` — CPU time during fetch
 - `select_string_1000000_rows_peak_rss_mb` — peak process memory
+- `select_string_1000000_rows_core_batch_wait_s` — time waiting for next batch from core (when `perf_timing` enabled)
+- `select_string_1000000_rows_core_chunk_download_s` — cumulative chunk download time (when `perf_timing` enabled)
+- `select_string_1000000_rows_core_arrow_decode_s` — cumulative decode time (when `perf_timing` enabled)
+- `select_string_1000000_rows_wrapper_time_s` — wrapper layer time (Python/ODBC only, when `perf_timing` enabled)
 
 And these memory timeline metrics (sampled at ~100ms):
 - `select_string_1000000_rows_rss_memory_mb` — RSS at each sample point

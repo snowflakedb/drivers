@@ -6,6 +6,16 @@ from resource_monitor import ResourceMonitor
 
 _FETCH_BATCH_SIZE = 1024
 
+try:
+    from snowflake.connector._internal.api_client.c_api import (
+        sf_core_perf_enabled,
+        sf_core_get_perf_data,
+        sf_core_reset_perf_metrics,
+    )
+    _PERF_ENABLED = sf_core_perf_enabled()
+except (ImportError, AttributeError):
+    _PERF_ENABLED = False
+
 
 def execute_fetch_test(cursor, sql_command, warmup_iterations, iterations):
     """
@@ -113,7 +123,10 @@ def _execute_query(cursor, sql):
     query_start = time.time()
     cursor.execute(sql)
     query_time = time.time() - query_start
-    
+
+    if _PERF_ENABLED:
+        sf_core_reset_perf_metrics()
+
     cpu_start = time.process_time()
     fetch_start = time.time()
     row_count = 0
@@ -128,8 +141,8 @@ def _execute_query(cursor, sql):
     peak_rss_mb = get_peak_rss_mb()
 
     timestamp = int(time.time() * 1000)
-    
-    return {
+
+    result = {
         "timestamp": timestamp,
         "query_time_s": query_time,
         "fetch_time_s": fetch_time,
@@ -137,4 +150,13 @@ def _execute_query(cursor, sql):
         "cpu_time_s": cpu_time_s,
         "peak_rss_mb": peak_rss_mb,
     }
+
+    if _PERF_ENABLED:
+        core_metrics = sf_core_get_perf_data()
+        result["core_batch_wait_s"] = core_metrics.get("core_batch_wait_s", 0.0)
+        result["core_chunk_download_s"] = core_metrics.get("core_chunk_download_s", 0.0)
+        result["core_arrow_decode_s"] = core_metrics.get("core_arrow_decode_s", 0.0)
+        result["wrapper_time_s"] = max(0.0, fetch_time - result["core_batch_wait_s"])
+
+    return result
 

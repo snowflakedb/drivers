@@ -350,7 +350,7 @@ def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iteration
     
     Note: ARROW format is automatically enabled. Any setup_queries provided will be
     appended after "alter session set query_result_format = 'ARROW'".
-    
+
     The test_name is automatically derived from the test function name (strips "test_" prefix).
     You can also explicitly provide test_name if needed.
     

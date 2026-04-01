@@ -11,11 +11,12 @@ default = ["protobuf"]
 fips = ["rustls/fips"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
+perf_timing = []
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
 opentelemetry = { version = "0.30.0", default-features = false, features = ["trace"] }
-opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.30.0" }
 opentelemetry-semantic-conventions = { version = "0.30.0" }
 tracing = "0.1.41"

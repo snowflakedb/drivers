@@ -91,7 +91,7 @@ def create_perf_container(
     
     if driver != "core" and driver_type:
         container = container.with_env("DRIVER_TYPE", driver_type)
-    
+
     # Mount S3 files directory if provided (for PUT/GET tests)
     # Files are mounted at /put_get_files inside the container
     if s3_files_dir:
