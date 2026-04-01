@@ -392,11 +392,19 @@ impl ReadODBC for SnowflakeVarchar {
             CDataType::UTinyInt => read_unaligned::<u8>(binding).to_string(),
             CDataType::Double => {
                 let v = read_unaligned::<f64>(binding);
-                if v == 0.0 { 0.0_f64.to_string() } else { v.to_string() }
+                if v == 0.0 {
+                    0.0_f64.to_string()
+                } else {
+                    v.to_string()
+                }
             }
             CDataType::Float => {
                 let v = read_unaligned::<f32>(binding);
-                if v == 0.0 { 0.0_f32.to_string() } else { v.to_string() }
+                if v == 0.0 {
+                    0.0_f32.to_string()
+                } else {
+                    v.to_string()
+                }
             }
             CDataType::Bit => {
                 if read_unaligned::<u8>(binding) != 0 {
