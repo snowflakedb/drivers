@@ -38,7 +38,6 @@ class TestQueryStatus:
         # And the query should not be indicated as an error
         assert not connection.is_an_error(status)
 
-    @pytest.mark.skip(reason="cursor.sfqid is not populated on failed queries yet")
     def test_should_return_error_status_for_failed_query(self, connection, cursor):
         """Test that a failed query returns error status."""
         # Given Snowflake client is logged in

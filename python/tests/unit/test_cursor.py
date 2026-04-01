@@ -615,6 +615,40 @@ class TestSqlstate:
         assert cursor.sqlstate is None
 
 
+class TestSfqidOnFailedQuery:
+    """Unit tests for cursor.sfqid propagation when execute raises."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_sfqid_set_from_error_on_failed_execute(self, cursor, mock_connection):
+        """sfqid is captured from ProgrammingError when execute raises."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sfqid="01abc-def-12345")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.sfqid == "01abc-def-12345"
+
+    def test_sfqid_none_when_error_has_no_sfqid(self, cursor, mock_connection):
+        """sfqid is None when error carries no sfqid."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.sfqid is None
+
+
 class TestQueryResultStats:
     """Unit tests for QueryResultStats NamedTuple."""
 

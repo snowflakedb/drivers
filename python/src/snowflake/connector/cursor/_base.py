@@ -412,6 +412,7 @@ class SnowflakeCursorBase(abc.ABC):
             return self._connection.db_api.statement_execute_query(request).result
         except ProgrammingError as exc:
             self._sqlstate = exc.sqlstate or None
+            self._sfqid = exc.sfqid or None
             raise
 
     def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult:
