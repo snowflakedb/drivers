@@ -210,6 +210,43 @@ TEST_CASE("should authenticate using PAT as token", "[pat]") {
   }
 }
 
+TEST_CASE("should authenticate using PAT as token with lowercase authenticator", "[pat]") {
+  // Given Authentication is set to lowercase programmatic_access_token and valid PAT token is provided
+  PatSetup pat_setup;
+  PatResult pat = pat_setup.acquire();
+
+  OLD_DRIVER_ONLY("BD#7") {
+    CHECK(pat.fetch_ret == SQL_ERROR);
+    REQUIRE(pat.diag_records.size() == 1);
+    CHECK(pat.diag_records[0].sqlState == "24000");
+    CHECK(pat.diag_records[0].nativeError == 10510);
+    CHECK_THAT(pat.diag_records[0].messageText, ContainsSubstring("Invalid cursor state"));
+  }
+
+  NEW_DRIVER_ONLY("BD#7") {
+    REQUIRE(pat.fetch_ret == SQL_SUCCESS);
+
+    std::string connection_string = get_pat_as_token_connection_string(pat.token_secret);
+    const std::string upper_auth = "AUTHENTICATOR=PROGRAMMATIC_ACCESS_TOKEN;";
+    const std::string lower_auth = "AUTHENTICATOR=programmatic_access_token;";
+    auto auth_pos = connection_string.find(upper_auth);
+    if (auth_pos != std::string::npos) {
+      connection_string.replace(auth_pos, upper_auth.size(), lower_auth);
+    }
+
+    auto env = setup_pat_environment();
+    auto dbc = get_pat_connection_handle(env);
+
+    // When Trying to Connect
+    attempt_pat_connection(dbc, connection_string);
+
+    // Then Login is successful and simple query can be executed
+    verify_pat_simple_query_execution(dbc);
+
+    SQLDisconnect(dbc.getHandle());
+  }
+}
+
 TEST_CASE("should fail PAT authentication when invalid token provided", "[pat]") {
   // Given Authentication is set to Programmatic Access Token and invalid PAT token is provided
   std::string connection_string = get_pat_as_token_connection_string("invalid_token_12345");

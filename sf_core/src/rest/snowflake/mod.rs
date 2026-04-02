@@ -267,7 +267,6 @@ pub async fn auth_request_data(
             Credentials::Password { username, password } => {
                 data.login_name = Some(username);
                 data.password = Some(password);
-                data.authenticator = Some("SNOWFLAKE".to_string());
             }
             Credentials::Jwt { username, token } => {
                 data.login_name = Some(username);
@@ -1815,5 +1814,77 @@ mod tests {
         assert!(!response.success);
         assert!(response.data.is_none());
         assert_eq!(response.message.as_deref(), Some("Unauthorized"));
+    }
+
+    fn test_client_info() -> ClientInfo {
+        ClientInfo {
+            application: "TestApp".to_string(),
+            version: "1.0.0".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.15".to_string(),
+            ocsp_mode: None,
+            crl_config: Default::default(),
+            tls_config: Default::default(),
+        }
+    }
+
+    #[test]
+    fn password_auth_payload_does_not_include_authenticator() {
+        let login_params = LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: LoginMethod::Password {
+                username: "testuser".to_string(),
+                password: "testpass".into(),
+            },
+            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            client_info: test_client_info(),
+            session_parameters: None,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None))
+            .unwrap();
+
+        assert_eq!(data.login_name.as_deref(), Some("testuser"));
+        assert_eq!(data.password.as_ref().unwrap().reveal(), "testpass");
+        assert!(
+            data.authenticator.is_none(),
+            "Password auth should NOT include AUTHENTICATOR field (matching old driver behavior)"
+        );
+    }
+
+    #[test]
+    fn pat_auth_payload_includes_authenticator() {
+        let login_params = LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: LoginMethod::Pat {
+                username: "testuser".to_string(),
+                token: "pat_secret".into(),
+            },
+            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            client_info: test_client_info(),
+            session_parameters: None,
+        };
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let client = reqwest::Client::new();
+        let data = rt
+            .block_on(auth_request_data(&client, &login_params, None, None))
+            .unwrap();
+
+        assert_eq!(data.login_name.as_deref(), Some("testuser"));
+        assert_eq!(data.token.as_ref().unwrap().reveal(), "pat_secret");
+        assert_eq!(
+            data.authenticator.as_deref(),
+            Some("PROGRAMMATIC_ACCESS_TOKEN")
+        );
     }
 }
