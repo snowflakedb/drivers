@@ -21,13 +21,13 @@ using Catch::Matchers::ContainsSubstring;
 // Helpers
 // =============================================================================
 
-std::string get_mfa_base_connection_string() {
+std::string get_mfa_base_connection_string(bool passcodeInPassword) {
   std::stringstream ss;
   configure_driver_string(ss);
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";
-  ss << "PWD=test_password;";
+  ss << "PWD=test_password" << (passcodeInPassword ? "123456;" : ";");
   ss << "PORT=8090;";
   ss << "AUTHENTICATOR=USERNAME_PASSWORD_MFA;";
   return ss.str();
@@ -83,7 +83,7 @@ TEST_CASE("should forward USERNAME_PASSWORD_MFA parameters to core", "[mfa_auth]
   // Given Authentication is set to USERNAME_PASSWORD_MFA with user and password
   auto env = setup_mfa_environment();
   auto dbc = get_mfa_connection_handle(env);
-  std::string connection_string = get_mfa_base_connection_string();
+  std::string connection_string = get_mfa_base_connection_string(false);
 
   // When Trying to Connect
   SQLRETURN ret = attempt_mfa_connection(dbc, connection_string);
@@ -107,7 +107,7 @@ TEST_CASE("should forward PASSCODE parameter to core", "[mfa_auth]") {
   // Given Authentication is set to USERNAME_PASSWORD_MFA with a TOTP passcode
   auto env = setup_mfa_environment();
   auto dbc = get_mfa_connection_handle(env);
-  std::string connection_string = get_mfa_base_connection_string();
+  std::string connection_string = get_mfa_base_connection_string(false);
   connection_string += "PASSCODE=123456;";
 
   // When Trying to Connect
@@ -132,7 +132,7 @@ TEST_CASE("should forward PASSCODEINPASSWORD parameter to core", "[mfa_auth]") {
   // Given Authentication is set to USERNAME_PASSWORD_MFA with passcode appended to password
   auto env = setup_mfa_environment();
   auto dbc = get_mfa_connection_handle(env);
-  std::string connection_string = get_mfa_base_connection_string();
+  std::string connection_string = get_mfa_base_connection_string(true);
   connection_string += "PASSCODEINPASSWORD=true;";
 
   // When Trying to Connect
@@ -181,7 +181,7 @@ TEST_CASE("should forward CLIENT_STORE_TEMPORARY_CREDENTIAL parameter to core", 
   // Given Authentication is set to USERNAME_PASSWORD_MFA with token caching enabled
   auto env = setup_mfa_environment();
   auto dbc = get_mfa_connection_handle(env);
-  std::string connection_string = get_mfa_base_connection_string();
+  std::string connection_string = get_mfa_base_connection_string(false);
   connection_string += "CLIENT_STORE_TEMPORARY_CREDENTIAL=true;";
 
   // When Trying to Connect

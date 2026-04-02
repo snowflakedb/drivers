@@ -62,11 +62,13 @@ inline T get_param_required(const picojson::object& params, const std::string& c
   auto it = params.find(cfg_param_name);
   if (it == params.end()) {
     FAIL("Required parameter '" + cfg_param_name + "' is missing in the test parameters.");
+    return T{};  // unreachable return to avoid compiler warnings
   }
   if (it->second.is<T>()) {
     return it->second.get<T>();
   } else {
     FAIL("Parameter '" + cfg_param_name + "' is not of expected type.");
+    return T{};  // unreachable return to avoid compiler warnings
   }
 }
 
