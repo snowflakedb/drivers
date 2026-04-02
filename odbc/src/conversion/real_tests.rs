@@ -1689,6 +1689,27 @@ mod tests {
     }
 
     #[test]
+    fn interval_second_frac_microsecond_carry() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        // 0.999999_f64.fract() * 1_000_000.0 = 999_999.0 (no carry).
+        // Verify the fraction stays below 1_000_000 for a clean boundary value.
+        let warnings = sr.write_odbc_type(0.999999, &binding, &mut None).unwrap();
+        let frac = unsafe { interval.interval_value.day_second.fraction };
+        assert!(frac < 1_000_000, "fraction must be < 1_000_000, got {frac}");
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 0);
+        assert!(
+            warnings.is_empty()
+                || warnings
+                    .iter()
+                    .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+    }
+
+    #[test]
     fn interval_second_negative_zero_no_negative_sign() {
         let sr = make_real();
         let mut interval = zero_interval();

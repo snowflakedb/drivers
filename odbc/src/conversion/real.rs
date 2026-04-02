@@ -64,11 +64,23 @@ fn write_float_interval_second(value: f64, binding: &Binding) -> Result<Warnings
     let abs = value.abs();
     let abs_int = (abs.trunc() as i128).unsigned_abs();
 
-    check_leading_precision(abs_int, value, binding)?;
-    let second_val = checked_u32(abs_int, value)?;
     let frac_micros_f64 = abs.fract() * 1_000_000.0;
-    let frac_microseconds = frac_micros_f64.trunc() as u32;
-    let frac_truncated = frac_micros_f64.fract() != 0.0;
+    let mut frac_microseconds = frac_micros_f64.trunc() as u32;
+    let mut frac_truncated = frac_micros_f64.fract() != 0.0;
+
+    // Guard against floating-point rounding producing >= 1_000_000 microseconds.
+    // If that happens, carry into the seconds field and normalize the fraction.
+    let carry = if frac_microseconds >= 1_000_000 {
+        frac_microseconds = 0;
+        frac_truncated = true;
+        1u128
+    } else {
+        0u128
+    };
+
+    let final_abs_int = abs_int + carry;
+    check_leading_precision(final_abs_int, value, binding)?;
+    let second_val = checked_u32(final_abs_int, value)?;
 
     Ok(build_and_write_interval_second(
         second_val,
