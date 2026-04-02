@@ -195,3 +195,70 @@ TEST_CASE("TIMESTAMP_NTZ round-trip multiple rows with re-execution", "[timestam
   CHECK(ts2.second == 59);
   CHECK(ts2.fraction == 999000000);
 }
+
+TEST_CASE("TIMESTAMP_LTZ round-trip via SQL_C_TYPE_TIMESTAMP bind and fetch",
+          "[timestamp_ltz][bind_fetch][round_trip]") {
+  // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_LTZ column exists
+  Connection conn;
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+  auto schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE ts_ltz_rt (id INT, ts TIMESTAMP_LTZ)");
+  auto stmt = conn.createStatement();
+
+  // When A SQL_TIMESTAMP_STRUCT value is inserted via SQLBindParameter and then fetched back
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO ts_ltz_rt VALUES (?, ?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  SQLINTEGER id = 1;
+  SQLLEN id_ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &id, 0, &id_ind);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+
+  SQL_TIMESTAMP_STRUCT ts_in = {};
+  ts_in.year = 2024;
+  ts_in.month = 7;
+  ts_in.day = 4;
+  ts_in.hour = 18;
+  ts_in.minute = 15;
+  ts_in.second = 30;
+  ts_in.fraction = 500000000;
+  SQLLEN ts_ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP, 29, 9, &ts_in,
+                         sizeof(ts_in), &ts_ind);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The fetched SQL_TIMESTAMP_STRUCT matches the inserted value
+  auto select_stmt = conn.execute_fetch("SELECT ts FROM ts_ltz_rt WHERE id = 1");
+  auto ts_out = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(select_stmt, 1);
+  CHECK(ts_out.year == 2024);
+  CHECK(ts_out.month == 7);
+  CHECK(ts_out.day == 4);
+  CHECK(ts_out.hour == 18);
+  CHECK(ts_out.minute == 15);
+  CHECK(ts_out.second == 30);
+  CHECK(ts_out.fraction == 500000000);
+}
+
+TEST_CASE("TIMESTAMP_TZ round-trip via SQL_C_TYPE_TIMESTAMP bind and fetch", "[timestamp_tz][bind_fetch][round_trip]") {
+  // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_TZ column exists
+  Connection conn;
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
+  auto schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TEMPORARY TABLE ts_tz_rt (id INT, ts TIMESTAMP_TZ)");
+
+  // When A timestamp with an explicit timezone offset is inserted and then fetched back
+  conn.execute("INSERT INTO ts_tz_rt VALUES (1, '2024-03-15 14:30:45.123456789 +05:30'::TIMESTAMP_TZ)");
+
+  // Then The fetched SQL_TIMESTAMP_STRUCT contains the UTC-converted value
+  auto select_stmt = conn.execute_fetch("SELECT ts FROM ts_tz_rt WHERE id = 1");
+  auto ts_out = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(select_stmt, 1);
+  CHECK(ts_out.year == 2024);
+  CHECK(ts_out.month == 3);
+  CHECK(ts_out.day == 15);
+  CHECK(ts_out.hour == 9);
+  CHECK(ts_out.minute == 0);
+  CHECK(ts_out.second == 45);
+  CHECK(ts_out.fraction == 123456789);
+}

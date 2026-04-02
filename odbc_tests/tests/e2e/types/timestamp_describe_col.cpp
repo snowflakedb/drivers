@@ -19,9 +19,10 @@ TEST_CASE("SQLDescribeCol for TIMESTAMP_NTZ", "[timestamp_ntz][describe_col]") {
   SQLRETURN ret =
       SQLDescribeCol(stmt.getHandle(), 1, nullptr, 0, nullptr, &data_type, &column_size, &decimal_digits, nullptr);
 
-  // Then Data type is SQL_TYPE_TIMESTAMP with expected precision
+  // Then Data type is SQL_TYPE_TIMESTAMP with expected precision and column size
   REQUIRE_ODBC(ret, stmt);
   CHECK(data_type == SQL_TYPE_TIMESTAMP);
+  CHECK(column_size == 29);
   CHECK(decimal_digits == 9);
 }
 
@@ -37,9 +38,10 @@ TEST_CASE("SQLDescribeCol for TIMESTAMP_LTZ", "[timestamp_ltz][describe_col]") {
   SQLRETURN ret =
       SQLDescribeCol(stmt.getHandle(), 1, nullptr, 0, nullptr, &data_type, &column_size, &decimal_digits, nullptr);
 
-  // Then Data type is SQL_TYPE_TIMESTAMP with expected precision
+  // Then Data type is SQL_TYPE_TIMESTAMP with expected precision and column size
   REQUIRE_ODBC(ret, stmt);
   CHECK(data_type == SQL_TYPE_TIMESTAMP);
+  CHECK(column_size == 29);
   CHECK(decimal_digits == 9);
 }
 
@@ -55,8 +57,9 @@ TEST_CASE("SQLDescribeCol for TIMESTAMP_TZ", "[timestamp_tz][describe_col]") {
   SQLRETURN ret =
       SQLDescribeCol(stmt.getHandle(), 1, nullptr, 0, nullptr, &data_type, &column_size, &decimal_digits, nullptr);
 
-  // Then Data type is SQL_TYPE_TIMESTAMP with expected precision
+  // Then Data type is SQL_TYPE_TIMESTAMP with expected precision and column size
   REQUIRE_ODBC(ret, stmt);
   CHECK(data_type == SQL_TYPE_TIMESTAMP);
+  CHECK(column_size == 29);
   CHECK(decimal_digits == 9);
 }

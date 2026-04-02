@@ -46,6 +46,9 @@ fn split_scaled_epoch(raw: i64, scale: u32) -> Result<(i64, u32), ReadArrowError
             (secs, micros * 1_000)
         }
         _ => {
+            // Handles scales 1,2,4,5,7,8,9. The division 10^9 / 10^scale is
+            // exact for all integer scales 0–9 because 10^scale always divides
+            // evenly into 10^9. The guard `scale > 9` above ensures this.
             let divisor = 10i64.pow(scale);
             let secs = raw.div_euclid(divisor);
             let frac = raw.rem_euclid(divisor) as u32;
