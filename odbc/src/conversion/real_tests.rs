@@ -3,6 +3,9 @@ mod tests {
     use crate::api::CDataType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
+    use crate::conversion::test_utils::helpers::{
+        binding_for_interval, binding_for_interval_with_precision, zero_interval,
+    };
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::Warning;
     use odbc_sys as sql;
@@ -1232,48 +1235,6 @@ mod tests {
     // ======================================================================
     // Interval types
     // ======================================================================
-
-    fn binding_for_interval(
-        target_type: CDataType,
-        value: &mut sql::IntervalStruct,
-        str_len: &mut sql::Len,
-    ) -> Binding {
-        Binding {
-            target_type,
-            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
-            buffer_length: 0,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
-            ..Default::default()
-        }
-    }
-
-    fn binding_for_interval_with_precision(
-        target_type: CDataType,
-        value: &mut sql::IntervalStruct,
-        str_len: &mut sql::Len,
-        precision: i16,
-    ) -> Binding {
-        Binding {
-            target_type,
-            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
-            buffer_length: 0,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
-            datetime_interval_precision: Some(precision),
-            ..Default::default()
-        }
-    }
-
-    fn zero_interval() -> sql::IntervalStruct {
-        sql::IntervalStruct {
-            interval_type: 0,
-            interval_sign: 0,
-            interval_value: sql::IntervalUnion {
-                day_second: sql::DaySecond::default(),
-            },
-        }
-    }
 
     #[test]
     fn interval_year_positive() {

@@ -4,7 +4,7 @@ mod tests {
     use crate::conversion::WriteODBCType;
     use crate::conversion::boolean::SnowflakeBoolean;
     use crate::conversion::test_utils::helpers::{
-        binding_for_char_buffer, binding_for_value, binding_for_wchar_buffer,
+        binding_for_char_buffer, binding_for_value, binding_for_wchar_buffer, zero_interval,
     };
     use odbc_sys as sql;
 
@@ -392,16 +392,6 @@ mod tests {
     // ========================================================================
     // Interval type conversions
     // ========================================================================
-
-    fn zero_interval() -> sql::IntervalStruct {
-        sql::IntervalStruct {
-            interval_type: 0,
-            interval_sign: 0,
-            interval_value: sql::IntervalUnion {
-                day_second: sql::DaySecond::default(),
-            },
-        }
-    }
 
     #[test]
     fn interval_year_true() {

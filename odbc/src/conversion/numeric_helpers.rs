@@ -32,9 +32,12 @@ pub fn check_leading_precision(
     binding: &Binding,
 ) -> Result<(), WriteOdbcError> {
     let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
-    let exceeds = match 10u128.checked_pow(leading_precision) {
-        Some(max_leading) => abs_int >= max_leading,
-        None => false,
+    let exceeds = if leading_precision >= 39 {
+        // u128 values have at most 39 digits, so any u128 fits within
+        // a precision of 39+ digits.
+        false
+    } else {
+        abs_int >= 10u128.pow(leading_precision)
     };
     if exceeds {
         return IntervalFieldOverflowSnafu {
