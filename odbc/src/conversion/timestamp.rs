@@ -181,9 +181,9 @@ fn read_struct_timestamp_tz(
 
     let num_columns = array.num_columns();
 
-    if num_columns >= 3 {
+    if num_columns == 3 {
         read_struct_timestamp(array, row_idx)
-    } else {
+    } else if num_columns == 2 {
         let epoch_array = array
             .column(0)
             .as_any()
@@ -208,6 +208,11 @@ fn read_struct_timestamp_tz(
                 }
                 .build()
             })
+    } else {
+        InvalidArrowValueSnafu {
+            reason: format!("TIMESTAMP_TZ struct has {num_columns} columns, expected 2 or 3"),
+        }
+        .fail()
     }
 }
 

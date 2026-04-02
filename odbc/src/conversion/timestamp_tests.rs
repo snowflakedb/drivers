@@ -428,6 +428,93 @@ mod tests {
         assert_eq!(&buffer[..19], b"2023-06-15 10:30:45");
     }
 
+    fn make_tz_struct_array_3col(epoch: i64, fraction: i32, tz_offset: i32) -> StructArray {
+        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(epoch)]));
+        let frac_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(fraction)]));
+        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(tz_offset)]));
+        StructArray::from(vec![
+            (
+                Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
+                epoch_col,
+            ),
+            (
+                Arc::new(ArrowField::new("fraction", DataType::Int32, false)),
+                frac_col,
+            ),
+            (
+                Arc::new(ArrowField::new("tz_offset", DataType::Int32, false)),
+                tz_col,
+            ),
+        ])
+    }
+
+    fn make_single_col_struct_array(epoch: i64) -> StructArray {
+        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(epoch)]));
+        StructArray::from(vec![(
+            Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
+            epoch_col,
+        )])
+    }
+
+    #[test]
+    fn read_tz_3col_struct_valid() {
+        let sn = tz(9);
+        let array = make_tz_struct_array_3col(1_700_000_000, 0, 0);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value.and_utc().timestamp(), 1_700_000_000);
+    }
+
+    #[test]
+    fn read_tz_2col_struct_valid() {
+        let sn = tz(0);
+        let array = make_struct_array(1_700_000_000, 0);
+        let value = sn.read_arrow_type(&array, 0).unwrap();
+        assert_eq!(value.and_utc().timestamp(), 1_700_000_000);
+    }
+
+    #[test]
+    fn read_tz_1col_struct_returns_invalid() {
+        let sn = tz(0);
+        let array = make_single_col_struct_array(1_700_000_000);
+        let result = sn.read_arrow_type(&array, 0);
+        assert!(matches!(
+            result,
+            Err(ReadArrowError::InvalidArrowValue { .. })
+        ));
+    }
+
+    #[test]
+    fn read_tz_4col_struct_returns_invalid() {
+        let sn = tz(9);
+        let epoch_col: ArrayRef = Arc::new(PrimitiveArray::<Int64Type>::from(vec![Some(0i64)]));
+        let frac_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(0i32)]));
+        let tz_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(0i32)]));
+        let extra_col: ArrayRef = Arc::new(PrimitiveArray::<Int32Type>::from(vec![Some(0i32)]));
+        let array = StructArray::from(vec![
+            (
+                Arc::new(ArrowField::new("epoch", DataType::Int64, false)),
+                epoch_col,
+            ),
+            (
+                Arc::new(ArrowField::new("fraction", DataType::Int32, false)),
+                frac_col,
+            ),
+            (
+                Arc::new(ArrowField::new("tz_offset", DataType::Int32, false)),
+                tz_col,
+            ),
+            (
+                Arc::new(ArrowField::new("extra", DataType::Int32, false)),
+                extra_col,
+            ),
+        ]);
+        let result = sn.read_arrow_type(&array, 0);
+        assert!(matches!(
+            result,
+            Err(ReadArrowError::InvalidArrowValue { .. })
+        ));
+    }
+
     #[test]
     fn sql_type_is_timestamp_for_all_variants() {
         assert_eq!(ntz(0).sql_type(), sql::SqlDataType::TIMESTAMP);
