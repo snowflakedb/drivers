@@ -159,12 +159,7 @@ pub fn write_single_field_interval(
             interval.interval_type = sql::Interval::Minute as i32;
             unsafe { interval.interval_value.day_second.minute = field_val };
         }
-        _ => {
-            return IntervalFieldOverflowSnafu {
-                reason: format!("Unsupported single-field interval target type {target_type:?}"),
-            }
-            .fail();
-        }
+        _ => unreachable!("write_single_field_interval called with {target_type:?}"),
     }
     binding.write_fixed(interval);
     Ok(fractional_warning(has_fractional))
