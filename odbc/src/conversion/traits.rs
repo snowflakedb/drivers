@@ -340,7 +340,7 @@ impl Binding {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
                 }
-                // Return remaining byte count instead of SQL_NO_TOTAL (BD#25).
+                // Return remaining byte count instead of SQL_NO_TOTAL (BD#23).
                 // The ODBC spec says the indicator should contain the data length
                 // when determinable, and ours always is.
                 let remaining_bytes = (src.encode_utf16().count() - offset) as sql::Len * 2;

@@ -135,10 +135,10 @@ TEST_CASE("should return HY104 for invalid precision or scale.", "[query][bind_p
                                    sizeof(param), &indicator);
 
   // Then the new driver rejects with HY104, the old driver accepts it
-  NEW_DRIVER_ONLY("BD#28") {
+  NEW_DRIVER_ONLY("BD#26") {
     REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY104"));
   }
-  OLD_DRIVER_ONLY("BD#28") { REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded()); }
+  OLD_DRIVER_ONLY("BD#26") { REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded()); }
 }
 
 // TODO: Add HY021 (inconsistent descriptor) and HYC00 (unsupported conversion)
@@ -638,8 +638,8 @@ TEST_CASE("should return SQL_NO_DATA for unbound IPD record.", "[query][bind_par
   ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
 
   // Then the record should not be found (SQL_NO_DATA per spec; old driver returns SQL_ERROR)
-  NEW_DRIVER_ONLY("BD#30") { CHECK(ret == SQL_NO_DATA); }
-  OLD_DRIVER_ONLY("BD#30") { CHECK(ret == SQL_ERROR); }
+  NEW_DRIVER_ONLY("BD#28") { CHECK(ret == SQL_NO_DATA); }
+  OLD_DRIVER_ONLY("BD#28") { CHECK(ret == SQL_ERROR); }
 }
 
 TEST_CASE("should return error for negative descriptor record number.", "[query][bind_parameter][descriptor]") {

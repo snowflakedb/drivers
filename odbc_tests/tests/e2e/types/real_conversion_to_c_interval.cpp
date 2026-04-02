@@ -237,7 +237,7 @@ TEST_CASE("FLOAT to interval - no negative zero", "[datatype][float][conversion]
 
 TEST_CASE("FLOAT to interval - default precision rejects values >= 100",
           "[datatype][float][conversion][c_interval][precision]") {
-  SKIP_OLD_DRIVER("BD#20", "Old driver does not enforce interval leading precision");
+  SKIP_OLD_DRIVER("BD#18", "Old driver does not enforce interval leading precision");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -270,7 +270,7 @@ TEST_CASE("FLOAT to interval - default precision rejects values >= 100",
 
 TEST_CASE("FLOAT to interval - custom precision via SQLSetDescField",
           "[datatype][float][conversion][c_interval][precision][descriptor]") {
-  SKIP_OLD_DRIVER("BD#20", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
+  SKIP_OLD_DRIVER("BD#18", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
   // Given Snowflake client is logged in
   Connection conn;
 

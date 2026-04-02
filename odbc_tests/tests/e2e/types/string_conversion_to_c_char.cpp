@@ -80,8 +80,8 @@ TEST_CASE("should truncate wide string data when byte length is longer than the 
   CHECK(buffer[sizeof(buffer) / sizeof(char16_t) - 1] == 0);
 
   // And the indicator should show the actual byte length of the original string in wide char format
-  NEW_DRIVER_ONLY("BD#25") { CHECK(indicator == 98); }
-  OLD_DRIVER_ONLY("BD#25") { CHECK((indicator == 98 || indicator == SQL_NO_TOTAL)); }
+  NEW_DRIVER_ONLY("BD#23") { CHECK(indicator == 98); }
+  OLD_DRIVER_ONLY("BD#23") { CHECK((indicator == 98 || indicator == SQL_NO_TOTAL)); }
 }
 
 // ============================================================================

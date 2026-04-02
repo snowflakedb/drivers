@@ -67,7 +67,7 @@ TEST_CASE("TIMESTAMP_NTZ to SQL_C_WCHAR buffer too small", "[timestamp_ntz][conv
 }
 
 TEST_CASE("TIMESTAMP_NTZ to SQL_C_WCHAR truncation", "[timestamp_ntz][conversion][c_wchar][01004]") {
-  SKIP_OLD_DRIVER("BD#32", "Old driver crashes on TIMESTAMP to SQL_C_WCHAR truncation");
+  SKIP_OLD_DRIVER("BD#30", "Old driver crashes on TIMESTAMP to SQL_C_WCHAR truncation");
   // Given Snowflake client is logged in
   Connection conn;
 
