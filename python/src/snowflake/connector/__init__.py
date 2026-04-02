@@ -13,15 +13,35 @@ from .connection import Connection, SnowflakeConnection
 from .constants import QueryStatus
 from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
+    BadGatewayError,
+    BadRequest,
+    BindUploadError,
+    ConfigManagerError,
+    ConfigSourceError,
     DatabaseError,
     DataError,
     Error,
+    ForbiddenError,
+    GatewayTimeoutError,
     IntegrityError,
     InterfaceError,
     InternalError,
+    InternalServerError,
+    MethodNotAllowed,
+    MissingConfigOptionError,
+    MissingDependencyError,
     NotSupportedError,
     OperationalError,
+    OtherHTTPRetryableError,
+    PresignedUrlExpiredError,
     ProgrammingError,
+    RefreshTokenError,
+    RequestExceedMaxRetryError,
+    RequestTimeoutError,
+    RevocationCheckError,
+    ServiceUnavailableError,
+    TokenExpiredError,
+    TooManyRequests,
     Warning,
 )
 from .types import (
@@ -84,7 +104,7 @@ __all__ = [
     "QueryStatus",
     "DictCursor",
     "SnowflakeCursor",
-    # Exceptions
+    # Exceptions — PEP 249 core
     "Warning",
     "Error",
     "InterfaceError",
@@ -95,6 +115,31 @@ __all__ = [
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
+    # Exceptions — configuration
+    "ConfigManagerError",
+    "ConfigSourceError",
+    "MissingConfigOptionError",
+    "MissingDependencyError",
+    # Exceptions — HTTP
+    "BadRequest",
+    "ForbiddenError",
+    "MethodNotAllowed",
+    "RequestTimeoutError",
+    "TooManyRequests",
+    "InternalServerError",
+    "BadGatewayError",
+    "ServiceUnavailableError",
+    "GatewayTimeoutError",
+    "OtherHTTPRetryableError",
+    # Exceptions — auth / token
+    "RefreshTokenError",
+    "TokenExpiredError",
+    # Exceptions — TLS
+    "RevocationCheckError",
+    # Exceptions — file transfer
+    "BindUploadError",
+    "RequestExceedMaxRetryError",
+    "PresignedUrlExpiredError",
     # Type constructors
     "Date",
     "Time",

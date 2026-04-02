@@ -11,6 +11,7 @@ from __future__ import annotations
 # network
 ER_FAILED_TO_CONNECT_TO_DB = 250001
 ER_CONNECTION_IS_CLOSED = 250002
+ER_HTTP_GENERAL_ERROR = 290000
 
 # connection
 ER_NO_ACCOUNT_NAME = 251001

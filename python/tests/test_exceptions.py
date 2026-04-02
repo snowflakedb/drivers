@@ -26,16 +26,37 @@ from snowflake.connector._internal.status_codes import (
     STATUS_CODE_NOT_IMPLEMENTED,
     STATUS_TO_EXCEPTION,
 )
+from snowflake.connector._internal.errorcode import ER_HTTP_GENERAL_ERROR
 from snowflake.connector.errors import (
+    BadGatewayError,
+    BadRequest,
+    BindUploadError,
+    ConfigManagerError,
+    ConfigSourceError,
     DatabaseError,
     DataError,
     Error,
+    ForbiddenError,
+    GatewayTimeoutError,
     IntegrityError,
     InterfaceError,
     InternalError,
+    InternalServerError,
+    MethodNotAllowed,
+    MissingConfigOptionError,
+    MissingDependencyError,
     NotSupportedError,
     OperationalError,
+    OtherHTTPRetryableError,
+    PresignedUrlExpiredError,
     ProgrammingError,
+    RefreshTokenError,
+    RequestExceedMaxRetryError,
+    RequestTimeoutError,
+    RevocationCheckError,
+    ServiceUnavailableError,
+    TokenExpiredError,
+    TooManyRequests,
     Warning,
 )
 
@@ -405,3 +426,194 @@ class TestErrorAttributes:
         assert "001003" in err.msg
         assert "(42000)" in err.msg
         assert "fail" in err.msg
+
+
+class TestConfigHierarchyFix:
+    """ConfigSourceError must be a sibling of ConfigManagerError, not a subclass."""
+
+    def test_config_source_error_inherits_error(self):
+        assert issubclass(ConfigSourceError, Error)
+
+    def test_config_source_error_not_config_manager_subclass(self):
+        assert not issubclass(ConfigSourceError, ConfigManagerError)
+
+    def test_config_manager_error_inherits_error(self):
+        assert issubclass(ConfigManagerError, Error)
+
+    def test_missing_config_option_error_inherits_config_source(self):
+        assert issubclass(MissingConfigOptionError, ConfigSourceError)
+
+    def test_missing_config_option_error_not_config_manager_subclass(self):
+        assert not issubclass(MissingConfigOptionError, ConfigManagerError)
+
+    def test_config_source_error_not_caught_by_config_manager_handler(self):
+        raised = ConfigSourceError("bad source")
+        caught = False
+        try:
+            raise raised
+        except ConfigManagerError:
+            caught = True
+        except ConfigSourceError:
+            pass
+        assert not caught, "ConfigSourceError must not be catchable as ConfigManagerError"
+
+
+class TestNewExceptionHierarchy:
+    """Verify inheritance for the 15 newly-added exception classes."""
+
+    def test_bad_request_inherits_error(self):
+        assert issubclass(BadRequest, Error)
+        assert not issubclass(BadRequest, DatabaseError)
+
+    def test_forbidden_error_inherits_error(self):
+        assert issubclass(ForbiddenError, Error)
+
+    def test_method_not_allowed_inherits_error(self):
+        assert issubclass(MethodNotAllowed, Error)
+
+    def test_request_timeout_error_inherits_error(self):
+        assert issubclass(RequestTimeoutError, Error)
+
+    def test_too_many_requests_inherits_error(self):
+        assert issubclass(TooManyRequests, Error)
+
+    def test_internal_server_error_inherits_error(self):
+        assert issubclass(InternalServerError, Error)
+        assert not issubclass(InternalServerError, DatabaseError)
+
+    def test_bad_gateway_error_inherits_error(self):
+        assert issubclass(BadGatewayError, Error)
+
+    def test_service_unavailable_error_inherits_error(self):
+        assert issubclass(ServiceUnavailableError, Error)
+
+    def test_gateway_timeout_error_inherits_error(self):
+        assert issubclass(GatewayTimeoutError, Error)
+
+    def test_other_http_retryable_error_inherits_error(self):
+        assert issubclass(OtherHTTPRetryableError, Error)
+
+    def test_refresh_token_error_inherits_error(self):
+        assert issubclass(RefreshTokenError, Error)
+        assert not issubclass(RefreshTokenError, DatabaseError)
+
+    def test_token_expired_error_inherits_error(self):
+        assert issubclass(TokenExpiredError, Error)
+        assert not issubclass(TokenExpiredError, DatabaseError)
+
+    def test_revocation_check_error_inherits_operational_error(self):
+        assert issubclass(RevocationCheckError, OperationalError)
+        assert issubclass(RevocationCheckError, DatabaseError)
+
+    def test_bind_upload_error_inherits_error(self):
+        assert issubclass(BindUploadError, Error)
+        assert not issubclass(BindUploadError, DatabaseError)
+
+    def test_request_exceed_max_retry_error_inherits_error(self):
+        assert issubclass(RequestExceedMaxRetryError, Error)
+
+    def test_presigned_url_expired_error_inherits_error(self):
+        assert issubclass(PresignedUrlExpiredError, Error)
+
+    def test_missing_dependency_error_inherits_error(self):
+        assert issubclass(MissingDependencyError, Error)
+        assert not issubclass(MissingDependencyError, DatabaseError)
+
+
+class TestHttpExceptionConstructors:
+    """Verify default messages and errno offsets for HTTP exception classes."""
+
+    def test_bad_request_default_message(self):
+        err = BadRequest()
+        assert "400" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_forbidden_error_default_message(self):
+        err = ForbiddenError()
+        assert "403" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_method_not_allowed_default_message(self):
+        err = MethodNotAllowed()
+        assert "405" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_request_timeout_default_message(self):
+        err = RequestTimeoutError()
+        assert "408" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_too_many_requests_default_message(self):
+        err = TooManyRequests()
+        assert "429" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_internal_server_error_default_message(self):
+        err = InternalServerError()
+        assert "500" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_bad_gateway_default_message(self):
+        err = BadGatewayError()
+        assert "502" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_service_unavailable_default_message(self):
+        err = ServiceUnavailableError()
+        assert "503" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_gateway_timeout_default_message(self):
+        err = GatewayTimeoutError()
+        assert "504" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_http_custom_message_preserved(self):
+        err = GatewayTimeoutError(msg="custom message")
+        assert "custom message" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_http_errno_offset(self):
+        err = InternalServerError(errno=5)
+        assert err.errno == ER_HTTP_GENERAL_ERROR + 5
+
+    def test_other_http_retryable_with_code(self):
+        err = OtherHTTPRetryableError(code=520)
+        assert "520" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_other_http_retryable_default(self):
+        err = OtherHTTPRetryableError()
+        assert "n/a" in str(err)
+        assert err.errno == ER_HTTP_GENERAL_ERROR
+
+    def test_http_exception_catchable_as_error(self):
+        for cls in (BadRequest, ForbiddenError, MethodNotAllowed, RequestTimeoutError,
+                    TooManyRequests, InternalServerError, BadGatewayError,
+                    ServiceUnavailableError, GatewayTimeoutError, OtherHTTPRetryableError):
+            err = cls()
+            assert isinstance(err, Error), f"{cls.__name__} must be an instance of Error"
+
+
+class TestRefreshTokenErrorConstructor:
+
+    def test_default_message(self):
+        err = RefreshTokenError()
+        assert "Token Refresh Required" in str(err)
+
+    def test_custom_message(self):
+        err = RefreshTokenError(msg="custom reason")
+        assert "custom reason" in str(err)
+
+    def test_errno_passthrough(self):
+        err = RefreshTokenError(errno=42)
+        assert err.errno == 42
+
+
+class TestMissingDependencyError:
+    def test_message_contains_dependency_name(self):
+        err = MissingDependencyError("pandas")
+        assert "pandas" in str(err)
+
+    def test_is_error_instance(self):
+        assert isinstance(MissingDependencyError("x"), Error)

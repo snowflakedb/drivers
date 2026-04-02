@@ -6,6 +6,8 @@ This module defines the exception hierarchy as specified in PEP 249.
 
 from __future__ import annotations
 
+from snowflake.connector._internal.errorcode import ER_HTTP_GENERAL_ERROR
+
 
 class Warning(Warning):  # type: ignore[misc]
     """Exception raised for important warnings like data truncations while inserting, etc."""
@@ -120,7 +122,7 @@ class ConfigManagerError(Error):
     pass
 
 
-class ConfigSourceError(ConfigManagerError):
+class ConfigSourceError(Error):
     """Exception raised when a configuration source has invalid values."""
 
     pass
@@ -132,16 +134,137 @@ class MissingConfigOptionError(ConfigSourceError):
     pass
 
 
-###### BACK-COMPAT  ######
+# HTTP exceptions — all inherit Error directly, matching the reference driver.
+
+
+def _http_init(self: Error, default_msg: str, **kwargs: object) -> None:
+    Error.__init__(
+        self,
+        msg=kwargs.get("msg") or default_msg,  # type: ignore[arg-type]
+        errno=ER_HTTP_GENERAL_ERROR + int(kwargs.get("errno", 0) or 0),
+        sqlstate=kwargs.get("sqlstate"),  # type: ignore[arg-type]
+        sfqid=kwargs.get("sfqid"),  # type: ignore[arg-type]
+    )
 
 
 class BadRequest(Error):
     """Exception for 400 HTTP error for retry."""
 
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 400: Bad Request", **kwargs)
+
 
 class ForbiddenError(Error):
     """Exception for 403 HTTP error for retry."""
 
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 403: Forbidden", **kwargs)
+
+
+class MethodNotAllowed(Error):
+    """Exception for HTTP 405 Method Not Allowed."""
+
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 405: Method Not Allowed", **kwargs)
+
+
+class RequestTimeoutError(Error):
+    """Exception for HTTP 408 Request Timeout."""
+
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 408: Request Timeout", **kwargs)
+
+
+class TooManyRequests(Error):
+    """Exception for HTTP 429 Too Many Requests."""
+
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 429: Too Many Requests", **kwargs)
+
+
+class InternalServerError(Error):
+    """Exception for HTTP 500 Internal Server Error."""
+
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 500: Internal Server Error", **kwargs)
+
 
 class BadGatewayError(Error):
-    """Exception for 502 HTTP error for retry."""
+    """Exception for HTTP 502 Bad Gateway."""
+
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 502: Bad Gateway", **kwargs)
+
+
+class ServiceUnavailableError(Error):
+    """Exception for HTTP 503 Service Unavailable."""
+
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 503: Service Unavailable", **kwargs)
+
+
+class GatewayTimeoutError(Error):
+    """Exception for HTTP 504 Gateway Timeout."""
+
+    def __init__(self, **kwargs: object) -> None:
+        _http_init(self, "HTTP 504: Gateway Timeout", **kwargs)
+
+
+class OtherHTTPRetryableError(Error):
+    """Exception for other HTTP error for retry."""
+
+    def __init__(self, **kwargs: object) -> None:
+        code = kwargs.get("code", "n/a")
+        _http_init(self, f"HTTP {code}", **kwargs)
+
+
+# Auth / token exceptions
+
+
+class RefreshTokenError(Error):
+    """Exception raised when an OAuth token refresh fails."""
+
+    def __init__(self, **kwargs: object) -> None:
+        Error.__init__(
+            self,
+            msg=kwargs.get("msg") or "Token Refresh Required",  # type: ignore[arg-type]
+            errno=kwargs.get("errno"),  # type: ignore[arg-type]
+            sqlstate=kwargs.get("sqlstate"),  # type: ignore[arg-type]
+            sfqid=kwargs.get("sfqid"),  # type: ignore[arg-type]
+        )
+
+
+class TokenExpiredError(Error):
+    """Exception raised when a session token has expired and cannot be refreshed."""
+
+    pass
+
+
+# TLS / certificate exceptions
+
+
+class RevocationCheckError(OperationalError):
+    """Exception raised when a certificate revocation check (OCSP/CRL) fails."""
+
+    pass
+
+
+# File transfer exceptions
+
+
+class BindUploadError(Error):
+    """Exception raised when a stage upload for array binding fails."""
+
+    pass
+
+
+class RequestExceedMaxRetryError(Error):
+    """Exception raised when cloud storage REST calls exceed the maximum retry count."""
+
+    pass
+
+
+class PresignedUrlExpiredError(Error):
+    """Exception raised when a cloud storage presigned URL has expired."""
+
+    pass

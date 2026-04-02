@@ -90,7 +90,7 @@ def _extract_error_msg(exc: Exception) -> str:
 def _translate_core_error(
     exc: Exception,
     file_path: Path | None = None,
-) -> ConfigManagerError:
+) -> DriverError:
     """Translate a Rust core DriverException into the appropriate Python error.
 
     Maps sf_core error messages to backward-compatible Python exception types.
