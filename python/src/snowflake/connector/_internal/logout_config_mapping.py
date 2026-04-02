@@ -1,11 +1,20 @@
-"""Logout parameter mapping for backward compatibility (SNOW-2314152).
+"""Logout configuration for the Python wrapper (SNOW-2314152).
 
-Maps Python logout parameters to Core API configuration, computing final values
-including phase-specific defaults and error handling strategies.
+LogoutConfig carries resolved logout settings with Python-specific defaults.
+remap_keep_alive_phase2 applies the Phase 2 backward-compat remap.
 """
 
 from dataclasses import dataclass
 from typing import Optional
+
+
+# Python backward-compat defaults (SNOW-2314152).
+# These mirror the old Python driver's behavior.
+# Core defaults (5s, Strict, no per-request timeout) apply when no wrapper overrides them
+# (see sf_core/src/config/logout.rs::Default for LogoutConfig).
+PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS = 15
+PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS = 3
+PYTHON_DEFAULT_LOGOUT_REQUEST_TIMEOUT_SECONDS = 5
 
 
 class LogoutOptionKeys:
@@ -49,43 +58,27 @@ class LogoutConfig:
 
     server_session_keep_alive: Optional[bool]
     enable_logout_auto_detection: Optional[bool]
-    error_strategy: str
-    logout_total_timeout_seconds: int
-    max_attempts: Optional[int]  # Total attempts (1 = no retries, 3 = 2 retries)
-    logout_request_timeout_seconds: Optional[int]
+    error_strategy: str = ErrorStrategy.BEST_EFFORT
+    logout_total_timeout_seconds: int = PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS
+    max_attempts: Optional[int] = PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS
+    logout_request_timeout_seconds: Optional[int] = PYTHON_DEFAULT_LOGOUT_REQUEST_TIMEOUT_SECONDS
 
 
-def map_logout_config_phase2(
+def remap_keep_alive_phase2(
     server_session_keep_alive: Optional[bool],
     enable_auto_detection: Optional[bool],
-) -> LogoutConfig:
-    """Map logout parameters for backward compatibility (SNOW-2314152).
+) -> Optional[bool]:
+    """Phase 2 backward-compat remap for server_session_keep_alive (SNOW-2314152).
 
-    Backward-compat semantics (mirrors old Python driver):
-    - server_session_keep_alive=False + auto-detection enabled → Core receives None
-    - server_session_keep_alive=False + auto-detection disabled/None → Core receives False
-    - server_session_keep_alive=True → Core receives True
-    - server_session_keep_alive=None → Core receives None
-    - enable_auto_detection: passed through as-is
-    - error_strategy: BEST_EFFORT (backward compatible)
+    Old Python driver: server_session_keep_alive=False (default) always checked
+    _async_sfqids before logout. Phase 2 preserves this: False + True → None makes
+    Core check the registry (same behavior). Phase 3: False will mean "force logout".
 
-    Args:
-        server_session_keep_alive: User-provided keep-alive setting (or None)
-        enable_auto_detection: User-provided auto-detection setting (or None)
-
-    Returns:
-        LogoutConfig with all final values ready for Core
+    Truth table:
+    - False + auto_detection=True  → None (Core checks registry)
+    - False + auto_detection=False → False (no remap)
+    - True / None                  → pass through unchanged
     """
-    # Backward-compat mapping (SNOW-2314152): False + auto-detection enabled → None
-    # This makes Core check the registry (legacy Python behavior)
     if server_session_keep_alive is False and enable_auto_detection:
-        server_session_keep_alive = None
-
-    return LogoutConfig(
-        server_session_keep_alive=server_session_keep_alive,
-        enable_logout_auto_detection=enable_auto_detection,
-        error_strategy=ErrorStrategy.BEST_EFFORT,
-        logout_total_timeout_seconds=15,  # 15 second total budget with 3 max attempts = ~5s per attempt
-        max_attempts=3,  # 3 total attempts (2 retries) for faster failure feedback
-        logout_request_timeout_seconds=5,  # 5s per request (default), dynamically adjusted to min(5s, remaining)
-    )
+        return None
+    return server_session_keep_alive

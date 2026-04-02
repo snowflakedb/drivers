@@ -40,8 +40,9 @@ from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.logout_config_mapping import (
+    LogoutConfig,
     LogoutOptionKeys,
-    map_logout_config_phase2,
+    remap_keep_alive_phase2,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
@@ -61,32 +62,43 @@ logger = logging.getLogger(__name__)
 
 _UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
 
-# Keys sent to Core via _setup_logout_config (not connection_set_options)
-_LOGOUT_PARAM_KEYS = frozenset(
-    {
-        "server_session_keep_alive",
-        "enable_server_session_keep_alive_auto_detection",
-    }
-)
-
 
 def _parse_auto_detection(kwargs: dict[str, Any]) -> bool | None:
-    """Parse enable_server_session_keep_alive_auto_detection from connection kwargs.
+    """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
 
-    If not provided, defaults to True and logs a deprecation warning:
+    If not provided, defaults to True and emits a FutureWarning:
     the default will change to None in a future version (SNOW-2314152).
     """
-    raw = kwargs.get("enable_server_session_keep_alive_auto_detection", _UNSET)
+    raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
     if raw is _UNSET:
-        logger.warning(
+        warnings.warn(
             "enable_server_session_keep_alive_auto_detection defaults to True "
             "(async query registry is checked before logout). In a future version, "
             "the default will change to None (always logout on close). "
             "To preserve current behavior, explicitly pass "
-            "enable_server_session_keep_alive_auto_detection=True."
+            "enable_server_session_keep_alive_auto_detection=True.",
+            FutureWarning,
+            stacklevel=5,
         )
         return True
     return cast("bool | None", raw)
+
+
+def _build_config_settings(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
+    """Wrap kwargs values into ConfigSetting protobuf messages for Core."""
+    options: dict[str, ConfigSetting] = {}
+    for key, value in kwargs.items():
+        if isinstance(value, bool):
+            options[key] = ConfigSetting(bool_value=value)
+        elif isinstance(value, int):
+            options[key] = ConfigSetting(int_value=value)
+        elif isinstance(value, str):
+            options[key] = ConfigSetting(string_value=value)
+        elif isinstance(value, float):
+            options[key] = ConfigSetting(double_value=value)
+        elif isinstance(value, bytes):
+            options[key] = ConfigSetting(bytes_value=value)
+    return options
 
 
 class Connection:
@@ -125,7 +137,6 @@ class Connection:
             auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
             **kwargs: Additional connection parameters
         """
-        # paramstyle
         from snowflake.connector import paramstyle as default_paramstyle
 
         self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
@@ -137,41 +148,15 @@ class Connection:
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
-        # Extract session_parameters before processing other kwargs
-        session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
+        if autocommit is not None and not isinstance(autocommit, bool):
+            raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
 
-        if autocommit is not None:
-            if not isinstance(autocommit, bool):
-                raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
+        # Pop all special-purpose keys from kwargs in-place.
+        # After this, kwargs contains only generic Core options.
+        self._parse_kwargs(kwargs, autocommit)
 
-        if session_params is None:
-            session_params = {}
-        if autocommit is not None:
-            session_params["AUTOCOMMIT"] = str(autocommit).lower()
-
-        # Pre-process private_key if present - normalize for Rust core
-        if "private_key" in kwargs:
-            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
-
-        # auto_cleanup is Python-only (atexit registration) — pop so it
-        # doesn't get sent to Core via connection_set_options.
-        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
-
-        options = {}
-        for key, value in kwargs.items():
-            if key in _LOGOUT_PARAM_KEYS:
-                continue
-            if isinstance(value, bool):
-                options[key] = ConfigSetting(bool_value=value)
-            elif isinstance(value, int):
-                options[key] = ConfigSetting(int_value=value)
-            elif isinstance(value, str):
-                options[key] = ConfigSetting(string_value=value)
-            elif isinstance(value, float):
-                options[key] = ConfigSetting(double_value=value)
-            elif isinstance(value, bytes):
-                options[key] = ConfigSetting(bytes_value=value)
-
+        # Generic options → Core (kwargs is now clean, no filtering needed)
+        options = _build_config_settings(kwargs)
         if options:
             response = self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
@@ -182,42 +167,80 @@ class Connection:
             for warning in response.warnings:
                 warnings.warn(warning.message, stacklevel=2)
 
-        # Set session parameters if provided (before connection_init)
-        if session_params:
+        # Session params → Core (separate RPC: these are Snowflake server
+        # SET commands (string→string), not driver config (typed ConfigSetting))
+        if self._session_params:
             self.db_api.connection_set_session_parameters(
-                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
+                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=self._session_params)
             )
 
-        # Configure logout behavior BEFORE connection_init (init-time configuration).
-        # Logout params are read from kwargs (not stored on self — they're transient).
-        self._setup_logout_config(kwargs)
+        # Logout config → Core (typed RPCs, before connection_init)
+        self._send_logout_config(self.logout_config)
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
-        _sensitive_keys = {"password", "private_key"}
-        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
         self._arrow_number_to_decimal: bool = False
 
-        # Register atexit handler if auto_cleanup is enabled
         if self.auto_cleanup:
             atexit.register(self._close_at_process_exit)
 
-    def _setup_logout_config(self, kwargs: dict[str, Any]) -> None:
-        """Resolve logout params from kwargs and send to Core.
+    def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> None:
+        """Parse and extract all special params from kwargs in-place.
 
-        Reads server_session_keep_alive and enable_server_session_keep_alive_auto_detection
-        from kwargs, applies backward-compat mapping (SNOW-2314152), and sends the
-        resolved config to Core via ConnectionSetOption* RPCs.
+        After this call, kwargs contains only generic Core options
+        suitable for connection_set_options. Special params are stored
+        on self (auto_cleanup, _session_params, logout_config).
+        """
+        # Python-only (pop — never goes to Core)
+        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
+
+        # Session params use a dedicated RPC (connection_set_session_parameters),
+        # not the generic connection_set_options path, so pop them from kwargs.
+        self._session_params: SessionParameters = kwargs.pop("session_parameters", None) or {}
+        if autocommit is not None:
+            self._session_params["AUTOCOMMIT"] = str(autocommit).lower()
+
+        # Transform in-place (stays in kwargs for generic path)
+        if "private_key" in kwargs:
+            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
+
+        # Logout params (pop + resolve defaults + build config).
+        # Init-time snapshot only; Core re-derives at close() time from connection_seed,
+        # so post-init overrides like close(retry=False) won't be reflected here.
+        self.logout_config = self._parse_logout_config(kwargs)
+
+    def _parse_logout_config(self, kwargs: dict[str, Any]) -> LogoutConfig:
+        """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
+        keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
+        auto_detection = _parse_auto_detection(kwargs)
+
+        # Only warn when auto_detection=True: that's when the Phase 2 remap applies
+        # (False + True → None). With auto_detection=False/None, False already means
+        # "force logout" in Phase 2 and Phase 3 alike — no behavior change, no warning.
+        if keep_alive is False and auto_detection:
+            warnings.warn(
+                "server_session_keep_alive=False currently respects auto-detection "
+                "(async query registry is checked before logout). In a future version, "
+                "False will mean 'always logout' without registry check. "
+                "To keep current behavior, use server_session_keep_alive=None with "
+                "enable_server_session_keep_alive_auto_detection=True.",
+                FutureWarning,
+                stacklevel=4,
+            )
+
+        keep_alive = remap_keep_alive_phase2(keep_alive, auto_detection)
+        return LogoutConfig(
+            server_session_keep_alive=keep_alive,
+            enable_logout_auto_detection=auto_detection,
+        )
+
+    def _send_logout_config(self, logout_config: LogoutConfig) -> None:
+        """Send resolved LogoutConfig to Core via typed ConnectionSetOption* RPCs.
 
         Called at init time, before connection_init. Core re-derives LogoutConfig
         from connection_seed at close() time, so post-init overrides take effect.
         """
-        logout_config = map_logout_config_phase2(
-            server_session_keep_alive=cast("bool | None", kwargs.get("server_session_keep_alive")),
-            enable_auto_detection=_parse_auto_detection(kwargs),
-        )
-
         if logout_config.server_session_keep_alive is not None:
             self.db_api.connection_set_option_bool(
                 ConnectionSetOptionBoolRequest(
@@ -236,7 +259,6 @@ class Connection:
                 )
             )
 
-        # Error strategy: always set (has a default in Core)
         self.db_api.connection_set_option_string(
             ConnectionSetOptionStringRequest(
                 conn_handle=self.conn_handle,
@@ -316,15 +338,18 @@ class Connection:
             )
             return
 
-        # Connection is leaked (not explicitly closed) — log deprecation warning.
+        # Connection is leaked (not explicitly closed) — emit FutureWarning.
         # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
-        # try/except guards against interpreter shutdown: module globals (including
-        # `logger`) may already be None during CPython teardown.
+        # FutureWarning deduplication (once per source line per process) prevents
+        # log spam when multiple connections are leaked. try/except guards against
+        # interpreter shutdown where the warnings module itself may already be None.
         try:
-            logger.warning(
+            warnings.warn(
                 "Connection was not explicitly closed before process exit. "
                 "Auto-cleanup at exit will be disabled by default in a future version. "
-                "Please explicitly call connection.close() or use context manager."
+                "Please explicitly call connection.close() or use context manager.",
+                FutureWarning,
+                stacklevel=2,
             )
         except Exception:
             pass  # Interpreter shutting down; warning emission is best-effort
