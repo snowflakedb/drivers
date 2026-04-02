@@ -26,8 +26,14 @@ use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 ///
 /// Snowflake sends timestamp epoch values at varying scales:
 ///   scale 0 → seconds, scale 3 → milliseconds, scale 6 → microseconds, etc.
-fn split_scaled_epoch(raw: i64, scale: u32) -> (i64, u32) {
-    match scale {
+fn split_scaled_epoch(raw: i64, scale: u32) -> Result<(i64, u32), ReadArrowError> {
+    if scale > 9 {
+        return InvalidArrowValueSnafu {
+            reason: format!("timestamp scale {scale} exceeds maximum of 9"),
+        }
+        .fail();
+    }
+    Ok(match scale {
         0 => (raw, 0u32),
         3 => {
             let secs = raw.div_euclid(1_000);
@@ -46,7 +52,7 @@ fn split_scaled_epoch(raw: i64, scale: u32) -> (i64, u32) {
             let nanos = frac * (1_000_000_000u32 / divisor as u32);
             (secs, nanos)
         }
-    }
+    })
 }
 
 fn read_struct_timestamp(
@@ -83,6 +89,15 @@ fn read_struct_timestamp(
     let epoch_seconds = epoch_array.value(row_idx);
     let fraction_nanos = fraction_array.value(row_idx);
 
+    if !(0..1_000_000_000).contains(&fraction_nanos) {
+        return InvalidArrowValueSnafu {
+            reason: format!(
+                "fraction_nanos={fraction_nanos} is out of valid range [0, 1_000_000_000)"
+            ),
+        }
+        .fail();
+    }
+
     DateTime::from_timestamp(epoch_seconds, fraction_nanos as u32)
         .map(|dt| dt.naive_utc())
         .ok_or_else(|| {
@@ -109,7 +124,7 @@ fn read_scaled_timestamp(
     }
 
     let raw = array.value(row_idx);
-    let (epoch_seconds, nanos) = split_scaled_epoch(raw, scale);
+    let (epoch_seconds, nanos) = split_scaled_epoch(raw, scale)?;
 
     DateTime::from_timestamp(epoch_seconds, nanos)
         .map(|dt| dt.naive_utc())
@@ -165,7 +180,7 @@ fn read_struct_timestamp_tz(
             })?;
 
         let raw = epoch_array.value(row_idx);
-        let (epoch_seconds, nanos) = split_scaled_epoch(raw, scale);
+        let (epoch_seconds, nanos) = split_scaled_epoch(raw, scale)?;
 
         DateTime::from_timestamp(epoch_seconds, nanos)
             .map(|dt| dt.naive_utc())

@@ -29,6 +29,8 @@ mod time;
 #[cfg(test)]
 mod time_tests;
 mod timestamp;
+#[cfg(test)]
+mod timestamp_tests;
 mod varchar;
 
 use arrow::array::Array;
@@ -163,14 +165,26 @@ fn get_field_metadata(field: &Field, key: &str) -> Result<u32, ConversionError> 
     Ok(parsed)
 }
 
-fn timestamp_scale(field: &Field) -> u32 {
-    get_field_metadata(field, "scale").unwrap_or_else(|_| {
-        tracing::warn!(
-            field_name = field.name().as_str(),
-            "Missing 'scale' metadata for timestamp field, defaulting to 9"
-        );
-        9
-    })
+fn timestamp_scale(field: &Field) -> Result<u32, ConversionError> {
+    match get_field_metadata(field, "scale") {
+        Ok(scale) if scale > 9 => {
+            tracing::warn!(
+                field_name = field.name().as_str(),
+                scale,
+                "Timestamp scale exceeds maximum of 9, capping to 9"
+            );
+            Ok(9)
+        }
+        Ok(scale) => Ok(scale),
+        Err(ConversionError::MissingFieldMetadata { .. }) => {
+            tracing::warn!(
+                field_name = field.name().as_str(),
+                "Missing 'scale' metadata for timestamp field, defaulting to 9"
+            );
+            Ok(9)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Parsed Snowflake type from an Arrow field's metadata.
@@ -223,13 +237,13 @@ impl SnowflakeFieldType {
                 Ok(Self::Time(time::SnowflakeTime { scale }))
             }
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz {
-                scale: timestamp_scale(field),
+                scale: timestamp_scale(field)?,
             })),
             "TIMESTAMP_LTZ" => Ok(Self::TimestampLtz(timestamp::SnowflakeTimestampLtz {
-                scale: timestamp_scale(field),
+                scale: timestamp_scale(field)?,
             })),
             "TIMESTAMP_TZ" => Ok(Self::TimestampTz(timestamp::SnowflakeTimestampTz {
-                scale: timestamp_scale(field),
+                scale: timestamp_scale(field)?,
             })),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => {
