@@ -302,6 +302,13 @@ pub struct GetFunctions {
     pub function_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Unsupported {
+    pub return_code: ReturnCode,
+    pub function_name: String,
+    pub handle: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // OdbcCall enum
 // ---------------------------------------------------------------------------
@@ -349,6 +356,8 @@ pub enum OdbcCall {
     GetDiagRec(GetDiagRec),
     #[serde(rename = "SQLGetFunctions")]
     GetFunctions(GetFunctions),
+    #[serde(rename = "Unsupported")]
+    Unsupported(Unsupported),
 }
 
 impl OdbcCall {
@@ -374,6 +383,7 @@ impl OdbcCall {
             Self::GetInfo(c) => c.return_code,
             Self::GetDiagRec(c) => c.return_code,
             Self::GetFunctions(c) => c.return_code,
+            Self::Unsupported(c) => c.return_code,
         }
     }
 
@@ -399,6 +409,7 @@ impl OdbcCall {
             Self::GetInfo(_) => "SQLGetInfo",
             Self::GetDiagRec(_) => "SQLGetDiagRec",
             Self::GetFunctions(_) => "SQLGetFunctions",
+            Self::Unsupported(c) => &c.function_name,
         }
     }
 
@@ -433,6 +444,7 @@ impl OdbcCall {
             Self::GetInfo(c) => c.handle.as_deref(),
             Self::GetDiagRec(c) => c.handle.as_deref(),
             Self::GetFunctions(c) => c.handle.as_deref(),
+            Self::Unsupported(c) => c.handle.as_deref(),
         }
     }
 
@@ -469,6 +481,7 @@ impl OdbcCall {
             Self::GetInfo(c) => resolve(&mut c.handle, map),
             Self::GetDiagRec(c) => resolve(&mut c.handle, map),
             Self::GetFunctions(c) => resolve(&mut c.handle, map),
+            Self::Unsupported(c) => resolve(&mut c.handle, map),
         }
     }
 
@@ -569,7 +582,15 @@ impl OdbcCall {
             "SQLGetInfo" => raw::build_get_info(input_params, output_params, return_code),
             "SQLGetDiagRec" => raw::build_get_diag_rec(input_params, output_params, return_code),
             "SQLGetFunctions" => raw::build_get_functions(input_params, output_params, return_code),
-            _ => panic!("unsupported ODBC function: {function_name}"),
+            _ => {
+                let handle =
+                    raw::first_addr(&input_params).or_else(|| raw::first_addr(&output_params));
+                Self::Unsupported(Unsupported {
+                    return_code,
+                    function_name: function_name.to_string(),
+                    handle,
+                })
+            }
         }
     }
 }
@@ -745,12 +766,16 @@ mod raw {
             buffer_length: int_or_named(&output, 3)
                 .or_else(|| int_by_name(&input, "Buffer Length")),
             data_type: output_named_at(&output, 5)
+                .or_else(|| named_const_at(&output, 5))
+                .or_else(|| named_const_by_name(&output, "Data Type"))
                 .or_else(|| output_int_by_name(&output, "Data Type").map(|v| v.to_string())),
             column_size: output_int_at(&output, 6)
                 .or_else(|| output_int_by_name(&output, "Column Size")),
             decimal_digits: output_int_at(&output, 7)
                 .or_else(|| output_int_by_name(&output, "Decimal Digits")),
             nullable: output_named_at(&output, 8)
+                .or_else(|| named_const_at(&output, 8))
+                .or_else(|| named_const_by_name(&output, "Nullable"))
                 .or_else(|| output_int_by_name(&output, "Nullable").map(|v| v.to_string())),
         })
     }
@@ -897,7 +922,7 @@ mod raw {
             })
     }
 
-    fn first_addr(params: &[Parameter]) -> Option<String> {
+    pub(super) fn first_addr(params: &[Parameter]) -> Option<String> {
         params.iter().find_map(|p| match &p.value {
             ParamValue::Address(a) => Some(a.clone()),
             _ => None,
