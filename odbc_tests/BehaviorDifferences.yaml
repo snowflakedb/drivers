@@ -136,36 +136,6 @@ behavior_differences:
       Windows will now receive only the filename.
 
   18:
-    name: "Float to single-component interval conversions succeed instead of returning 07006"
-    description: |
-      OLD driver: When SQLGetData is called on a FLOAT/DOUBLE/REAL column with a
-      single-component interval target type (SQL_C_INTERVAL_YEAR, _MONTH, _DAY,
-      _HOUR, _MINUTE, _SECOND), the old driver returns SQL_SUCCESS and converts
-      the float value to the interval struct. This violates the ODBC spec
-      footnote [c] which states these conversions are "not supported for the
-      approximate numeric data types (SQL_REAL, SQL_FLOAT, or SQL_DOUBLE)."
-      NEW driver: Returns SQL_ERROR with SQLSTATE 07006 (Restricted data type
-      attribute violation), correctly rejecting the conversion per the ODBC spec.
-      Impact: Applications that relied on converting float columns to
-      single-component interval types will now receive an error.
-
-  19:
-    name: "Float to compound interval conversions return 22015 instead of 07006"
-    description: |
-      OLD driver: When SQLGetData is called on a FLOAT/DOUBLE/REAL column with a
-      compound interval target type (SQL_C_INTERVAL_YEAR_TO_MONTH,
-      _DAY_TO_HOUR, _DAY_TO_MINUTE, _DAY_TO_SECOND, _HOUR_TO_MINUTE,
-      _HOUR_TO_SECOND, _MINUTE_TO_SECOND), the old driver returns SQL_ERROR
-      with SQLSTATE 22015 (Interval field overflow). This treats the conversion
-      as supported but fails because a scalar cannot map to multiple components.
-      NEW driver: Returns SQL_ERROR with SQLSTATE 07006 (Restricted data type
-      attribute violation), correctly identifying the conversion as unsupported
-      for approximate numeric types per the ODBC spec.
-      Impact: Applications that check for specific SQLSTATE codes on interval
-      conversion failures will see 07006 instead of 22015. Both drivers return
-      SQL_ERROR, so applications checking only the return code are unaffected.
-
-  20:
     name: "Interval leading field precision is not enforced and SQL_DESC_DATETIME_INTERVAL_PRECISION is not supported"
     description: |
       OLD driver: Does not enforce the ODBC-mandated default interval leading
@@ -186,7 +156,7 @@ behavior_differences:
       interval types will now receive 22015 unless they explicitly set a higher
       leading precision via SQLSetDescField.
   
-  21:
+  19:
     name: "DECFLOAT values are returned in scientific notation and properly normalized"
     description: |
       OLD driver: DECFLOAT values are not properly normalized, when using scientific notation. (e.g. "12e199" is returned instead of "1.2e200")
@@ -194,7 +164,7 @@ behavior_differences:
       Impact: Applications that parse the DECFLOAT values will now receive values in properly formatted scientific notation.
       TODO: To be fixed in old driver (SNOW-3229401)
 
-  22:
+  20:
     name: "SQLNumResultCols returns 0 after SQL_CLOSE on prepared statement"
     description: |
       OLD driver: After Prepare -> Execute -> SQL_CLOSE, SQLNumResultCols returns 0.
@@ -209,7 +179,7 @@ behavior_differences:
       Impact: Applications that rely on SQLNumResultCols after SQL_CLOSE on a
       prepared statement will now receive the correct count.
 
-  23:
+  21:
     name: "SQLDescribeCol fails after SQL_CLOSE on prepared statement"
     description: |
       OLD driver: After Prepare -> Execute -> SQL_CLOSE, SQLDescribeCol returns
@@ -225,7 +195,7 @@ behavior_differences:
       Impact: Applications that call SQLDescribeCol after SQL_CLOSE on a prepared
       statement will now receive valid metadata instead of an error.
 
-  24:
+  22:
     name: "SQL_C_WCHAR chunked SQLGetData fits fewer characters per call"
     description: |
       OLD driver: With an 8-byte SQLWCHAR buffer, the old driver fits only
@@ -241,7 +211,7 @@ behavior_differences:
       new driver. Applications using iterative SQLGetData will complete in
       fewer round-trips.
 
-  25:
+  23:
     name: "SQLGetData truncation indicator is consistently the actual data length"
     description: |
       OLD driver: The truncation indicator returned by the old driver is
@@ -271,7 +241,7 @@ behavior_differences:
       class of platform-specific bugs where applications worked on one
       architecture but failed on another due to SQL_NO_TOTAL handling.
 
-  26:
+  24:
     name: "SQLDescribeCol reports SQL_VARBINARY for BINARY columns instead of SQL_BINARY"
     description: |
       OLD driver: Reports data_type as SQL_BINARY (-2) for Snowflake BINARY
@@ -284,7 +254,7 @@ behavior_differences:
       Impact: Most applications treat SQL_BINARY and SQL_VARBINARY
       interchangeably. Applications that switch on the exact data_type value
       may need to handle SQL_VARBINARY in addition to SQL_BINARY.
-  27:
+  25:
     name: "SQLRowCount with null RowCountPtr returns SQL_SUCCESS instead of SQL_ERROR (HY009)"
     description: |
       OLD driver: When SQLRowCount is called with a null RowCountPtr after
@@ -296,14 +266,15 @@ behavior_differences:
       arguments and is consistent with the driver's defensive validation.
       Impact: Applications that accidentally pass nullptr to SQLRowCount will
       now receive an error instead of silent success.
-  28:
+
+  26:
     name: "SQLBindParameter rejects negative DecimalDigits with HY104 instead of accepting silently"
     description: |
       OLD driver: Accepts negative DecimalDigits values without error.
       NEW driver: Returns SQL_ERROR with SQLSTATE HY104 (Invalid precision
       or scale value) per the ODBC specification.
 
-  29:
+  27:
     name: "Unbound parameter marker returns 42000 (server error) instead of 07002 (COUNT field incorrect)"
     description: |
       OLD driver: After SQL_RESET_PARAMS, executing a prepared statement with
@@ -312,7 +283,7 @@ behavior_differences:
       NEW driver: Sends the query to the server, which returns SQL_ERROR with
       SQLSTATE 42000 (Syntax error: Bind variable ? not set).
 
-  30:
+  28:
     name: "SQLGetDescField on empty IPD returns SQL_ERROR instead of SQL_NO_DATA"
     description: |
       OLD driver: Querying a record field on an empty IPD (no parameters
@@ -321,7 +292,7 @@ behavior_differences:
       "SQL_NO_DATA is returned if RecNumber is greater than the current
       number of descriptor records."
 
-  31:
+  29:
     name: "DECFLOAT extreme exponent to SQL_C_BINARY returns 22003 instead of silently succeeding"
     type: "Bug Fix"
     description: |
@@ -329,7 +300,7 @@ behavior_differences:
       to SQL_C_BINARY returns SQL_SUCCESS with an incorrect/clamped value.
       NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (numeric value out of
       range) because the value overflows the i128 intermediate representation.
-  32:
+  30:
     name: "TIMESTAMP to character truncation crashes old driver"
     type: "Bug Fix"
     description: |
@@ -339,7 +310,7 @@ behavior_differences:
       crashes with SIGSEGV.
       NEW driver: Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 and
       the fractional part of the timestamp string truncated, per the ODBC spec.
-  33:
+  31:
     name: "SQLExecDirect/SQLExecute return 24000 when cursor is already open"
     description: |
       OLD driver: SQLExecDirect and SQLExecute silently overwrite the statement
@@ -353,7 +324,7 @@ behavior_differences:
       Impact: Applications that chain multiple SQLExecDirect calls without
       closing the cursor between them will receive 24000 errors. Add
       SQLFreeStmt(SQL_CLOSE) between successive executions.
-  34:
+  32:
     name: "Async cancel does not interrupt in-progress operations"
     description: |
       OLD driver: Supports SQL_ATTR_ASYNC_ENABLE (SQLSetStmtAttr succeeds),

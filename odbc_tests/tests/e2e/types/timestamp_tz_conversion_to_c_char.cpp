@@ -58,7 +58,7 @@ TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR", "[timestamp_tz][conversion][c_char]") {
 }
 
 TEST_CASE("TIMESTAMP_TZ to SQL_C_CHAR fractional truncation", "[timestamp_tz][conversion][c_char][01004]") {
-  SKIP_OLD_DRIVER("BD#32", "Old driver crashes (SIGSEGV) on TIMESTAMP to SQL_C_CHAR truncation");
+  SKIP_OLD_DRIVER("BD#30", "Old driver crashes (SIGSEGV) on TIMESTAMP to SQL_C_CHAR truncation");
   // Given Snowflake client is logged in
   Connection conn;
 

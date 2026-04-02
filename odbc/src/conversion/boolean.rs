@@ -6,6 +6,9 @@ use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::numeric_helpers::{
+    build_and_write_interval_second, reject_multi_field_interval, write_single_field_interval,
+};
 use crate::conversion::param_binding::read_unaligned;
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -120,6 +123,31 @@ impl WriteODBCType for SnowflakeBoolean {
                 Ok(vec![])
             }
             CDataType::Binary => Ok(binding.write_binary(&[int_value], get_data_offset)),
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute => write_single_field_interval(
+                binding.target_type,
+                int_value as i128,
+                false,
+                false,
+                binding,
+            ),
+            CDataType::IntervalSecond => Ok(build_and_write_interval_second(
+                int_value as u32,
+                0,
+                false,
+                false,
+                binding,
+            )),
+            CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => reject_multi_field_interval(binding.target_type),
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
             }

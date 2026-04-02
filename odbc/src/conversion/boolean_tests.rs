@@ -390,6 +390,146 @@ mod tests {
     }
 
     // ========================================================================
+    // Interval type conversions
+    // ========================================================================
+
+    fn zero_interval() -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0,
+            interval_sign: 0,
+            interval_value: sql::IntervalUnion {
+                day_second: sql::DaySecond::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn interval_year_true() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalYear, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 1);
+    }
+
+    #[test]
+    fn interval_year_false() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalYear, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(false, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 0);
+    }
+
+    #[test]
+    fn interval_month_true() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalMonth, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Month as i32);
+        assert_eq!(unsafe { interval.interval_value.year_month.month }, 1);
+    }
+
+    #[test]
+    fn interval_day_true() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalDay, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Day as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.day }, 1);
+    }
+
+    #[test]
+    fn interval_hour_true() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalHour, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Hour as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.hour }, 1);
+    }
+
+    #[test]
+    fn interval_minute_true() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalMinute, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Minute as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.minute }, 1);
+    }
+
+    #[test]
+    fn interval_second_true() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalSecond, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(true, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Second as i32);
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 1);
+        assert_eq!(unsafe { interval.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn interval_second_false() {
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_value(CDataType::IntervalSecond, &mut interval, &mut str_len);
+        let warnings = sn.write_odbc_type(false, &binding, &mut None).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Second as i32);
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 0);
+        assert_eq!(unsafe { interval.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn interval_multi_field_returns_error() {
+        use crate::conversion::error::WriteOdbcError;
+        let sn = SnowflakeBoolean;
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        for target_type in [
+            CDataType::IntervalYearToMonth,
+            CDataType::IntervalDayToHour,
+            CDataType::IntervalDayToMinute,
+            CDataType::IntervalDayToSecond,
+            CDataType::IntervalHourToMinute,
+            CDataType::IntervalHourToSecond,
+            CDataType::IntervalMinuteToSecond,
+        ] {
+            let binding = binding_for_value(target_type, &mut interval, &mut str_len);
+            let result = sn.write_odbc_type(true, &binding, &mut None);
+            assert!(
+                matches!(result, Err(WriteOdbcError::IntervalFieldOverflow { .. })),
+                "Multi-field interval {target_type:?} should fail"
+            );
+        }
+    }
+
+    // ========================================================================
     // Unsupported target type returns error
     // ========================================================================
 
