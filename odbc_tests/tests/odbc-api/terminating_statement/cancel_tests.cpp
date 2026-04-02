@@ -170,7 +170,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Statement recoverable via SQ
     ret = SQLFetch(stmt_handle());
     REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
-    // Re-execution fails because cursor is still open (BD#32).
+    // Re-execution fails because cursor is still open (BD#33).
     ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
     REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
   }
@@ -668,7 +668,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Does not post diagnostic rec
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel interrupts execution with HY008",
                  "[odbc-api][cancel][terminating_statement][async]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  SKIP_OLD_DRIVER("BD#33", "Async cancel does not interrupt in-progress operations on reference driver");
+  SKIP_OLD_DRIVER("BD#34", "Async cancel does not interrupt in-progress operations on reference driver");
 
   SQLRETURN ret =
       SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
@@ -699,7 +699,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel interrupts exec
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Async cancel clears diagnostics and posts its own",
                  "[odbc-api][cancel][terminating_statement][async]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  SKIP_OLD_DRIVER("BD#33", "Async cancel does not interrupt in-progress operations on reference driver");
+  SKIP_OLD_DRIVER("BD#34", "Async cancel does not interrupt in-progress operations on reference driver");
 
   SQLRETURN ret =
       SQLSetStmtAttr(stmt_handle(), SQL_ATTR_ASYNC_ENABLE, reinterpret_cast<SQLPOINTER>(SQL_ASYNC_ENABLE_ON), 0);
