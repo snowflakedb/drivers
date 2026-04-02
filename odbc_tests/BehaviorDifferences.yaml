@@ -330,3 +330,12 @@ behavior_differences:
       to SQL_C_BINARY returns SQL_SUCCESS with an incorrect/clamped value.
       NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (numeric value out of
       range) because the value overflows the i128 intermediate representation.
+  32:
+    name: "TIMESTAMP_NTZ to SQL_C_CHAR truncation crashes old driver"
+    type: "Bug Fix"
+    description: |
+      OLD driver: Converting a TIMESTAMP_NTZ with fractional seconds to
+      SQL_C_CHAR with a buffer of 20-29 bytes (enough for the base timestamp
+      but not the fractional part) crashes with SIGSEGV.
+      NEW driver: Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 and
+      the fractional part truncated, per the ODBC spec.

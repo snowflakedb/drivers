@@ -405,6 +405,8 @@ pub(crate) enum SnowflakeLogicalType {
     Date,
     Time,
     TimestampNtz,
+    TimestampLtz,
+    TimestampTz,
 }
 
 impl SnowflakeLogicalType {
@@ -419,6 +421,8 @@ impl SnowflakeLogicalType {
             Self::Date => "DATE",
             Self::Time => "TIME",
             Self::TimestampNtz => "TIMESTAMP_NTZ",
+            Self::TimestampLtz => "TIMESTAMP_LTZ",
+            Self::TimestampTz => "TIMESTAMP_TZ",
         }
     }
 }
