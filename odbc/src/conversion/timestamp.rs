@@ -65,6 +65,16 @@ fn read_struct_timestamp(
         });
     }
 
+    if array.num_columns() < 2 {
+        return InvalidArrowValueSnafu {
+            reason: format!(
+                "timestamp struct has {} column(s), expected at least 2",
+                array.num_columns()
+            ),
+        }
+        .fail();
+    }
+
     let epoch_array = array
         .column(0)
         .as_any()
@@ -148,10 +158,13 @@ fn read_scaled_timestamp(
 /// `tz_offset_min` column carries the original timezone offset in minutes but
 /// is intentionally **not** applied to the returned `NaiveDateTime`. This
 /// matches the old driver behavior: `SQL_TIMESTAMP_STRUCT` has no field for
-/// timezone, so callers always receive the UTC wall-clock time. Applications
-/// that need the offset must query it separately (e.g. via `SQL_C_CHAR` which
-/// includes the offset in the formatted string from Snowflake's server-side
-/// formatting, not from this conversion path).
+/// timezone, so callers always receive the UTC wall-clock time. When values
+/// are fetched as `SQL_C_CHAR`/`SQL_C_WCHAR` through this Arrow-based
+/// conversion path, the formatted string likewise reflects the UTC instant and
+/// does not include the original timezone offset. Applications that need to
+/// preserve or reconstruct the original offset must obtain it by other means
+/// (for example, by reading the offset column explicitly or using an API that
+/// exposes the server-formatted string with offset).
 fn read_struct_timestamp_tz(
     array: &StructArray,
     row_idx: usize,
@@ -301,13 +314,18 @@ fn write_timestamp_to_odbc(
             }
         }
         CDataType::Binary => {
+            let mut bytes = [0u8; std::mem::size_of::<sql::Timestamp>()];
             let ts = to_sql_timestamp(dt);
-            let ts_bytes: &[u8] = unsafe {
-                std::slice::from_raw_parts(
+            // SAFETY: sql::Timestamp is a repr(C) POD struct. Writing into a
+            // pre-zeroed buffer ensures any padding bytes are deterministic.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
                     &ts as *const sql::Timestamp as *const u8,
-                    std::mem::size_of::<sql::Timestamp>(),
-                )
-            };
+                    bytes.as_mut_ptr(),
+                    bytes.len(),
+                );
+            }
+            let ts_bytes: &[u8] = &bytes;
             if binding.buffer_length > 0
                 && (binding.buffer_length as usize) < std::mem::size_of::<sql::Timestamp>()
             {
