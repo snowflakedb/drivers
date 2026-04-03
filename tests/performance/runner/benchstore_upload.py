@@ -511,6 +511,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     docker_cpu = resource_limits['cpu']
     
     jenkins_node = os.getenv('JENKINS_NODE_LABEL', 'UNKNOWN')
+    trigger_type = os.getenv('TRIGGER_TYPE', 'LOCAL' if is_local else 'unknown')
     
     # Collect host hardware info for node equivalence tracking
     node_info = collect_node_info()
@@ -547,6 +548,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
             f"REGION={region}",
+            f"TRIGGER_TYPE={trigger_type}",
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
             f"DOCKER_CPU={docker_cpu}",
