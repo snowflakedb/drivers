@@ -65,3 +65,9 @@ behavior_differences:
       NEW driver: `JSONResultBatch` and `ArrowResultBatch` are backward-compatibility aliases for the Arrow-backed `ResultBatch`.
         `to_arrow()`, `to_pandas()`, and `create_iter(iter_unit=TABLE_UNIT)` all work on every batch regardless of its class.
       OLD driver: `JSONResultBatch.to_arrow()` and `JSONResultBatch.to_pandas()` raise `NotSupportedError` because JSON-format chunks have no Arrow representation.
+
+  19:
+    name: "write_pandas create_temp_table parameter removed"
+    description: |
+      NEW driver: The `create_temp_table` parameter is removed from `write_pandas`. Use `table_type='temp'` instead.
+      OLD driver: `create_temp_table=True` was accepted as a deprecated alias for `table_type='temp'` and emitted a DeprecationWarning.
