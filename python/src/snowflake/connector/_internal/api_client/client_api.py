@@ -88,6 +88,89 @@ def _proto_to_public_error(proto_exc: Exception) -> Error:
     return DatabaseError(str(proto_exc))
 
 
+def _refine_exception_class(
+    exc_class: type,
+    status_code: int,
+    message: str,
+) -> type:
+    """Refine the PEP 249 exception class using message content.
+
+    A single proto StatusCode can map to several specific Python exception
+    classes depending on the Rust error variant that produced it.  This
+    function performs a secondary dispatch based on well-known substrings in
+    the combined message + root_cause string (the root_cause has already been
+    appended to *message* by the caller before this function is invoked).
+
+    Keywords are coupled to the Rust error Display strings in:
+      - sf_core/src/crl/error.rs  (CrlError variants → RevocationCheckError)
+      - sf_core/src/apis/database_driver_v1/error.rs
+          ApiError::MasterTokenExpired  → TokenExpiredError
+          ApiError::InvalidRefreshState → RefreshTokenError
+    """
+    from snowflake.connector._internal.status_codes import (
+        STATUS_CODE_AUTHENTICATION_ERROR,
+        STATUS_CODE_INTERNAL_ERROR,
+    )
+    from snowflake.connector.errors import (
+        RefreshTokenError,
+        RevocationCheckError,
+        TokenExpiredError,
+    )
+
+    combined = message.lower()
+
+    if status_code == STATUS_CODE_AUTHENTICATION_ERROR:
+        if "master token expired" in combined:
+            return TokenExpiredError
+        # CrlError display strings all contain "revoked" or "crl"
+        if "revoked" in combined or "crl" in combined:
+            return RevocationCheckError
+
+    if status_code == STATUS_CODE_INTERNAL_ERROR:
+        if "invalid refresh state" in combined:
+            return RefreshTokenError
+
+    return exc_class
+
+
+def _http_error_from_status(
+    http_status: int,
+    message: str,
+    sqlstate: str | None,
+    sfqid: str | None,
+) -> Error:
+    """Map a raw HTTP status code to the matching HTTP exception class."""
+    from snowflake.connector.errors import (
+        BadGatewayError,
+        BadRequest,
+        ForbiddenError,
+        GatewayTimeoutError,
+        InternalServerError,
+        MethodNotAllowed,
+        OtherHTTPRetryableError,
+        RequestTimeoutError,
+        ServiceUnavailableError,
+        TooManyRequests,
+    )
+
+    _HTTP_STATUS_TO_EXC: dict[int, type] = {
+        400: BadRequest,
+        403: ForbiddenError,
+        405: MethodNotAllowed,
+        408: RequestTimeoutError,
+        429: TooManyRequests,
+        500: InternalServerError,
+        502: BadGatewayError,
+        503: ServiceUnavailableError,
+        504: GatewayTimeoutError,
+    }
+
+    exc_class = _HTTP_STATUS_TO_EXC.get(http_status)
+    if exc_class is not None:
+        return exc_class(msg=message, sqlstate=sqlstate, sfqid=sfqid)
+    return OtherHTTPRetryableError(msg=message, code=http_status, sqlstate=sqlstate, sfqid=sfqid)
+
+
 def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     from snowflake.connector._internal.status_codes import (
         STATUS_CODE_LABELS,
@@ -116,7 +199,18 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     if not message:
         message = STATUS_CODE_LABELS.get(status_code, "Unknown error")
 
+    # HTTP status override: when the core provides a concrete HTTP status code,
+    # raise the matching HTTP exception class (e.g. ServiceUnavailableError for
+    # 503, TooManyRequests for 429) rather than the coarser StatusCode-derived
+    # class.
+    http_status_code = _get_optional_int(driver_exc, "http_status_code")
+    if http_status_code is not None:
+        sqlstate = _get_optional_str(driver_exc, "sql_state") or _derive_sqlstate(driver_exc)
+        sfqid = _get_optional_str(driver_exc, "query_id")
+        return _http_error_from_status(http_status_code, message, sqlstate, sfqid)
+
     exc_class = STATUS_TO_EXCEPTION.get(status_code, DatabaseError)
+    exc_class = _refine_exception_class(exc_class, status_code, message)
 
     # Prefer the Snowflake server vendor_code when the core driver provides it
     # (e.g. 1003 for syntax error, 904 for invalid identifier).
@@ -130,7 +224,7 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
 
     sfqid = _get_optional_str(driver_exc, "query_id")
 
-    return exc_class(message, errno=errno, sqlstate=sqlstate, sfqid=sfqid)
+    return exc_class(msg=message, errno=errno, sqlstate=sqlstate, sfqid=sfqid)
 
 
 def _get_optional_int(msg: Any, field: str) -> int | None:

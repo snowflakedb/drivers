@@ -9,6 +9,8 @@ use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::apis::database_driver_v1::error::RestError;
+use crate::chunks::ChunkError;
+use crate::http::retry::HttpError;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     ValidationCode as CoreValidationCode, ValidationIssue as CoreValidationIssue,
@@ -495,6 +497,49 @@ fn extract_query_id(error: &ApiError) -> Option<String> {
     }
 }
 
+/// Extract the HTTP status code from errors that originate from HTTP responses.
+///
+/// Returns `Some(status as i32)` for errors that carry an HTTP status, `None`
+/// for errors that have no associated HTTP response (e.g. serialization errors,
+/// TLS failures, config errors).
+fn extract_http_status(error: &ApiError) -> Option<i32> {
+    let status_u16 = match error {
+        ApiError::Login { source, .. }
+        | ApiError::Query { source, .. }
+        | ApiError::SessionRefresh { source, .. } => extract_http_status_from_rest(source)?,
+        ApiError::ChunkFetch {
+            source: ChunkError::UnsuccessfulHttpStatusCode { status, .. },
+            ..
+        } => status.as_u16(),
+        _ => return None,
+    };
+    Some(status_u16 as i32)
+}
+
+fn extract_http_status_from_rest(rest: &RestError) -> Option<u16> {
+    match rest {
+        RestError::SessionRefresh { status, .. } => Some(status.as_u16()),
+        RestError::HttpRetry { source, .. } => match source {
+            HttpError::MaxAttempts { last_status, .. } => Some(last_status.as_u16()),
+            // DeadlineExceeded and RetryAfterExceeded exhaust the retry budget
+            // without a final HTTP response — treat as 408 Request Timeout.
+            HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
+                Some(reqwest::StatusCode::REQUEST_TIMEOUT.as_u16())
+            }
+            HttpError::Transport { .. } => None,
+        },
+        RestError::AsyncQuery {
+            source: SfError::HttpStatus { status, .. },
+            ..
+        } => Some(status.as_u16()),
+        RestError::AsyncQuery {
+            source: SfError::RetryAttemptsExhausted { last_status, .. },
+            ..
+        } => Some(last_status.as_u16()),
+        _ => None,
+    }
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let status_code = match &error {
         ApiError::GenericError { .. } => StatusCode::GenericError,
@@ -569,6 +614,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
     let query_id = extract_query_id(&error);
+    let http_status_code = extract_http_status(&error);
     let message = error.to_string();
     let root_cause = extract_root_cause(&error);
     let driver_error = to_driver_error(&error);
@@ -592,6 +638,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         sql_state,
         root_cause,
         query_id,
+        http_status_code,
     }
 }
 

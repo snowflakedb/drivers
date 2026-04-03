@@ -125,6 +125,9 @@ message DriverException {
   optional string root_cause = 7;
   // Snowflake Query ID (sfqid) associated with the failed query, if available.
   optional string query_id = 8;
+  // HTTP status code (e.g. 400, 401, 404, 429, 500, 502, 503, 504).
+  // Present when the error originated from an HTTP response.
+  optional int32 http_status_code = 9;
 }
 
 // Column metadata for description
