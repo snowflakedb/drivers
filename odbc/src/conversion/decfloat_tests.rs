@@ -6,7 +6,9 @@ mod tests {
         SnowflakeDecfloat, format_decfloat, i128_from_big_endian_signed,
     };
     use crate::conversion::error::{ReadArrowError, WriteOdbcError};
-    use crate::conversion::test_utils::helpers::binding_for_wchar_buffer;
+    use crate::conversion::test_utils::helpers::{
+        binding_for_interval, binding_for_wchar_buffer, zero_interval,
+    };
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::Warning;
     use odbc_sys as sql;
@@ -543,31 +545,6 @@ mod tests {
     // ======================================================================
     // WriteODBCType — interval types
     // ======================================================================
-
-    fn binding_for_interval(
-        target_type: CDataType,
-        value: &mut sql::IntervalStruct,
-        str_len: &mut sql::Len,
-    ) -> Binding {
-        Binding {
-            target_type,
-            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
-            buffer_length: 0,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
-            ..Default::default()
-        }
-    }
-
-    fn zero_interval() -> sql::IntervalStruct {
-        sql::IntervalStruct {
-            interval_type: 0,
-            interval_sign: 0,
-            interval_value: sql::IntervalUnion {
-                day_second: sql::DaySecond::default(),
-            },
-        }
-    }
 
     #[test]
     fn write_interval_year_positive() {

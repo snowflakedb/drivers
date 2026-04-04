@@ -25,21 +25,23 @@ on:
       docs_only:
         description: "True if only documentation changed"
         value: ${{ jobs.detect.outputs.docs_only }}
-      # Pre-computed "should run" outputs
+      # "Should run" outputs — GHA always runs ALL unit tests; these flags
+      # control whether to run at all (skip when only unrelated files changed).
+      # Per-feature test selection is handled by Buildkite via ci/select_tests.py.
       run_jdbc:
-        description: "True if JDBC tests should run (jdbc OR core OR shared changed)"
+        description: "True if JDBC tests should run"
         value: ${{ jobs.detect.outputs.run_jdbc }}
       run_odbc:
-        description: "True if ODBC tests should run (odbc OR core OR shared changed)"
+        description: "True if ODBC tests should run"
         value: ${{ jobs.detect.outputs.run_odbc }}
       run_python:
-        description: "True if Python tests should run (python OR core OR shared changed)"
+        description: "True if Python tests should run"
         value: ${{ jobs.detect.outputs.run_python }}
       run_python_packaging:
-        description: "True if Python packaging tests should run (pyproject.toml OR hatch_build.py changed)"
+        description: "True if Python packaging tests should run"
         value: ${{ jobs.detect.outputs.run_python_packaging }}
       run_rust_core:
-        description: "True if Rust Core tests should run (core OR shared changed)"
+        description: "True if Rust Core tests should run"
         value: ${{ jobs.detect.outputs.run_rust_core }}
 
 jobs:
@@ -96,9 +98,14 @@ jobs:
               - 'Cargo.lock'
               - 'build_common.rs'
               - 'rust-toolchain.toml'
+              - 'error_trace/**'
+              - 'error_trace_derive/**'
+              - 'odbc_trace_tool/**'
               - 'tests/!(performance|tests_format_validator|test_coverage_report)/**'
               - '.github/workflows/**'
+              - '.buildkite/**'
               - 'scripts/**'
+              - 'ci/**'
             docs_only:
               - '**/*.md'
               - 'LICENSE'
@@ -181,7 +188,7 @@ jobs:
           echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docs Only | ${{ steps.computed.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Tests to Run" >> $GITHUB_STEP_SUMMARY
+          echo "#### Tests to Run (GHA — all unit tests)" >> $GITHUB_STEP_SUMMARY
           echo "| Test Suite | Should Run |" >> $GITHUB_STEP_SUMMARY
           echo "|------------|------------|" >> $GITHUB_STEP_SUMMARY
           echo "| Rust Core | ${{ steps.computed.outputs.run_rust_core }} |" >> $GITHUB_STEP_SUMMARY

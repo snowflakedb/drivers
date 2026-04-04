@@ -340,7 +340,7 @@ impl Binding {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
                 }
-                // Return remaining byte count instead of SQL_NO_TOTAL (BD#25).
+                // Return remaining byte count instead of SQL_NO_TOTAL (BD#23).
                 // The ODBC spec says the indicator should contain the data length
                 // when determinable, and ours always is.
                 let remaining_bytes = (src.encode_utf16().count() - offset) as sql::Len * 2;
@@ -405,6 +405,8 @@ pub(crate) enum SnowflakeLogicalType {
     Date,
     Time,
     TimestampNtz,
+    TimestampLtz,
+    TimestampTz,
 }
 
 impl SnowflakeLogicalType {
@@ -419,6 +421,8 @@ impl SnowflakeLogicalType {
             Self::Date => "DATE",
             Self::Time => "TIME",
             Self::TimestampNtz => "TIMESTAMP_NTZ",
+            Self::TimestampLtz => "TIMESTAMP_LTZ",
+            Self::TimestampTz => "TIMESTAMP_TZ",
         }
     }
 }

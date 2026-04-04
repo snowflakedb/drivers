@@ -1,0 +1,302 @@
+# Universal Driver CI Tests Pipeline
+#
+# 1. Test Selection runs on bare agent, determines which drivers need testing.
+# 2. Driver steps run build+test inside Docker, upload JUnit XML results as
+#    artifacts and POST them to Buildkite Test Analytics with driver tags.
+
+env:
+  DOCKER_IMAGE: "artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3"
+
+common: &common
+  agents:
+    queue: "discovery"
+    repo: "snowflakedb/universal-driver"
+  plugins:
+    - ${GLOBAL_PLUGIN}/vault_secrets:
+        secrets:
+          - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+            env_name: "PARAMETERS_SECRET"
+          - path: "secret/jenkins/rt-tests/universal_driver_test_suite_api_token"
+            env_name: "BUILDKITE_ANALYTICS_TOKEN"
+  retry:
+    automatic:
+      - exit_status: "*"
+        limit: 1
+
+steps:
+  # ==========================================================================
+  # Test Selection
+  # ==========================================================================
+  - label: ":mag: Test Selection"
+    key: "test-selection"
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
+    command: |
+      set -euo pipefail
+      pip3 install pyyaml -q
+      for driver_group in "rust:integ,e2e" "python:integ,e2e" "odbc:integ,e2e" "java:e2e"; do
+        driver="$${driver_group%%:*}"
+        group="$${driver_group##*:}"
+        result=$$(python3 ci/select_tests.py --driver "$$driver" --group "$$group" --verbose)
+        buildkite-agent meta-data set "test-filter-$$driver" "$$result"
+        if [ "$$result" = "SKIP" ]; then
+          buildkite-agent annotate ":fast_forward: Skipped: $$driver (no relevant changes)" --style "info" --context "test-selection" --append
+        fi
+      done
+
+  # ==========================================================================
+  # Rust Core
+  # ==========================================================================
+  - group: ":rust: Rust Core"
+    key: "rust-core"
+    depends_on: "test-selection"
+    steps:
+      - label: ":rust: Build + Tests"
+        key: "rust-tests"
+        <<: *common
+        timeout_in_minutes: 30
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-rust")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for rust core, skipping"
+            exit 0
+          fi
+
+          DOCKER_EXIT=0
+          docker run --rm \
+            -v "$$PWD:/workdir" \
+            -w /workdir \
+            -e PARAMETERS_SECRET \
+            -e TEST_FILTER \
+            "$$DOCKER_IMAGE" \
+            bash -c '
+              set -euo pipefail
+              rm -rf /workdir/junit-results
+              ./scripts/decode_secrets.sh
+              command -v unzip >/dev/null || yum install -y unzip
+              export PARAMETER_PATH=/workdir/parameters.json
+
+              echo "--- :hammer: Building sf_core"
+              cargo build --package sf_core
+              cargo install cargo2junit 2>/dev/null || true
+
+              echo "--- :test_tube: Running Tests"
+              mkdir -p /workdir/junit-results
+              # Run tests as non-root so ownership-sensitive tests work correctly
+              useradd -m testuser 2>/dev/null || true
+              # RUSTC_BOOTSTRAP=1 enables -Z unstable-options for JSON test output
+              export RUSTC_BOOTSTRAP=1
+              cargo test --package sf_core --no-run 2>&1
+              chmod a+rx /root
+              chmod -R a+rX /root/.cargo /root/.rustup 2>/dev/null || true
+              chmod -R a+rwX /workdir/target /workdir/junit-results
+              CARGO_BIN=$$(dirname $$(which cargo))
+              git config --system --add safe.directory /workdir
+              set +e
+              TEST_EXIT=0
+              if [ "$$TEST_FILTER" = "ALL" ]; then
+                runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
+                  cargo test --package sf_core -- -Z unstable-options --format json --report-time 2>&1 | tee /tmp/rust-test-output.json
+                TEST_EXIT=$${PIPESTATUS[0]}
+              else
+                IFS="|" read -ra FILTERS <<< "$$TEST_FILTER"
+                > /tmp/rust-test-output.json
+                for filter in "$${FILTERS[@]}"; do
+                  echo "Running: cargo test -- $$filter"
+                  runuser -u testuser -- env PATH="$$CARGO_BIN:$$PATH" PARAMETER_PATH=/workdir/parameters.json RUSTC_BOOTSTRAP=1 \
+                    cargo test --package sf_core -- "$$filter" -Z unstable-options --format json --report-time 2>&1 | tee -a /tmp/rust-test-output.json
+                  [ $${PIPESTATUS[0]} -ne 0 ] && TEST_EXIT=1
+                done
+              fi
+              cargo2junit < /tmp/rust-test-output.json > /workdir/junit-results/rust-junit.xml || true
+              exit $$TEST_EXIT
+            ' || DOCKER_EXIT=$$?
+
+          ci/upload_test_results.sh rust "Rust Core" "$$DOCKER_EXIT" "junit-results/rust-junit.xml"
+
+  # ==========================================================================
+  # Python
+  # ==========================================================================
+  - group: ":python: Python"
+    key: "python"
+    depends_on: "test-selection"
+    steps:
+      - label: ":python: Build + Integ + E2E Tests"
+        key: "python-tests"
+        <<: *common
+        timeout_in_minutes: 45
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-python")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for python, skipping"
+            exit 0
+          fi
+
+          DOCKER_EXIT=0
+          docker run --rm \
+            -v "$$PWD:/workdir" \
+            -w /workdir \
+            -e PARAMETERS_SECRET \
+            -e TEST_FILTER \
+            "$$DOCKER_IMAGE" \
+            bash -c '
+              set -euo pipefail
+              rm -rf /workdir/junit-results
+              ./scripts/decode_secrets.sh
+              command -v unzip >/dev/null || yum install -y unzip
+              export PARAMETER_PATH=/workdir/parameters.json
+              cd python
+
+              echo "--- :hammer: Building Python Wheel"
+              RUSTFLAGS="" hatch build -t wheel
+              hatch run test-pandas.py3.9:install-wheel
+
+              echo "--- :test_tube: Running Integ + E2E Tests"
+              mkdir -p /workdir/junit-results
+              set +e
+              if [ "$$TEST_FILTER" = "ALL" ]; then
+                hatch run test-pandas.py3.9:all -- tests/integ/ tests/e2e/ -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
+              else
+                hatch run test-pandas.py3.9:all -- $$TEST_FILTER -v --timeout=900 --junitxml=/workdir/junit-results/python-junit.xml
+              fi
+              exit $$?
+            ' || DOCKER_EXIT=$$?
+
+          ci/upload_test_results.sh python "Python" "$$DOCKER_EXIT" "junit-results/python-junit.xml"
+
+  # ==========================================================================
+  # ODBC
+  # ==========================================================================
+  - group: ":c: ODBC"
+    key: "odbc"
+    depends_on: "test-selection"
+    steps:
+      - label: ":c: Build + Integ + E2E Tests"
+        key: "odbc-tests"
+        <<: *common
+        timeout_in_minutes: 45
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-odbc")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for odbc, skipping"
+            exit 0
+          fi
+
+          DOCKER_EXIT=0
+          docker run --rm \
+            -v "$$PWD:/workdir" \
+            -w /workdir \
+            -e PARAMETERS_SECRET \
+            -e TEST_FILTER \
+            "$$DOCKER_IMAGE" \
+            bash -c '
+              set -euo pipefail
+              rm -rf /workdir/junit-results
+              ./scripts/decode_secrets.sh
+              command -v unzip >/dev/null || yum install -y unzip
+              export PARAMETER_PATH=/workdir/parameters.json
+              export DRIVER_PATH=/workdir/target/debug/libsfodbc.so
+
+              echo "--- :hammer: Building ODBC Driver"
+              cargo build
+
+              echo "--- :hammer: Building C++ Test Suite"
+              source /opt/rh/gcc-toolset-11/enable
+              cd odbc_tests
+              mkdir -p cmake-build
+              cmake -B cmake-build \
+                  -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                  -D ODBC_INCLUDE_DIR="/usr/include" \
+                  -D DRIVER_TYPE=NEW \
+                  .
+              cmake --build cmake-build -- -j $$(nproc)
+
+              echo "--- :test_tube: Running Integ + E2E Tests"
+              mkdir -p /workdir/junit-results
+              set +e
+              if [ "$$TEST_FILTER" = "ALL" ]; then
+                ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "e2e|integration" --output-junit /workdir/junit-results/odbc-junit.xml
+              else
+                ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure --no-tests=error -R "$$TEST_FILTER" --output-junit /workdir/junit-results/odbc-junit.xml
+              fi
+              exit $$?
+            ' || DOCKER_EXIT=$$?
+
+          ci/upload_test_results.sh odbc "ODBC" "$$DOCKER_EXIT" "junit-results/odbc-junit.xml"
+
+  # ==========================================================================
+  # JDBC
+  # ==========================================================================
+  - group: ":java: JDBC"
+    key: "jdbc"
+    depends_on: "test-selection"
+    steps:
+      - label: ":java: Build + E2E Tests"
+        key: "jdbc-tests"
+        <<: *common
+        timeout_in_minutes: 45
+        command: |
+          set -euo pipefail
+          export TEST_FILTER=$$(buildkite-agent meta-data get "test-filter-java")
+          echo "Filter: $$TEST_FILTER"
+          if [ "$$TEST_FILTER" = "SKIP" ]; then
+            echo "No relevant changes for jdbc, skipping"
+            exit 0
+          fi
+
+          DOCKER_EXIT=0
+          docker run --rm \
+            -v "$$PWD:/workdir" \
+            -w /workdir \
+            -e PARAMETERS_SECRET \
+            -e TEST_FILTER \
+            "$$DOCKER_IMAGE" \
+            bash -c '
+              set -euo pipefail
+              rm -rf /workdir/junit-results
+              ./scripts/decode_secrets.sh
+              command -v unzip >/dev/null || yum install -y unzip
+              export PARAMETER_PATH=/workdir/parameters.json
+
+              echo "--- :hammer: Building JDBC Bridge"
+              cargo build --package sf_core
+              cargo build --package jdbc_bridge
+
+              echo "--- :test_tube: Running E2E Tests"
+              export CORE_PATH=/workdir/target/debug/libjdbc_bridge.so
+              chmod +x jdbc/gradlew
+              cd jdbc
+              set +e
+              if [ "$$TEST_FILTER" = "ALL" ]; then
+                ./gradlew test --tests "net.snowflake.jdbc.e2e.*" --stacktrace
+              else
+                GRADLE_TESTS=""
+                IFS="|" read -ra PATTERNS <<< "$$TEST_FILTER"
+                for pattern in "$${PATTERNS[@]}"; do
+                  GRADLE_TESTS="$$GRADLE_TESTS --tests $$pattern"
+                done
+                ./gradlew test $$GRADLE_TESTS --stacktrace
+              fi
+              TEST_EXIT=$$?
+              set -e
+              mkdir -p /workdir/junit-results
+              {
+                echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                echo "<testsuites>"
+                for f in build/test-results/test/*.xml; do
+                  [ -f "$$f" ] || continue
+                  grep -v "<?xml" "$$f"
+                done
+                echo "</testsuites>"
+              } > /workdir/junit-results/jdbc-junit.xml
+              exit $$TEST_EXIT
+            ' || DOCKER_EXIT=$$?
+
+          ci/upload_test_results.sh jdbc "JDBC" "$$DOCKER_EXIT" "junit-results/jdbc-junit.xml"

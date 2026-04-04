@@ -18,8 +18,9 @@ import pytest
 import requests
 
 from snowflake.connector._internal.logout_config_mapping import (
+    PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS,
+    PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS,
     ErrorStrategy,
-    map_logout_config_phase2,
 )
 from tests.wiremock_client import WiremockClient
 
@@ -165,30 +166,73 @@ class TestLogoutPythonWrapper:
     ):
         """Verify enable_server_session_keep_alive_auto_detection defaults to True.
 
-        Default True is required for Phase 2 backward compat (SNOW-2314152): the old
-        Python driver always checked _async_sfqids before logout. Without this default,
-        Core receives enable_logout_auto_detection=None → always logout → kills async queries.
+        Default True is required for backward compat (SNOW-2314152): the old Python
+        driver always checked _async_sfqids before logout. Without this default,
+        Core receives enable_server_session_keep_alive_auto_detection=None → always logout → kills async queries.
+        A FutureWarning is emitted because this default will change in a future version.
         """
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
             wiremock.add_mapping("session/logout_success.json")
 
             # Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
-            conn = int_test_connection_factory(server_url=wiremock.http_url())
+            with pytest.warns(FutureWarning) as warning_list:
+                conn = int_test_connection_factory(server_url=wiremock.http_url())
 
             # When Connection configuration is checked
-            logout_config = map_logout_config_phase2(conn)
+            config = conn.logout_config
 
             # Then enable_server_session_keep_alive_auto_detection defaults to true
-            assert conn.enable_server_session_keep_alive_auto_detection is True, (
-                "Default must be True for Phase 2 backward compat: mirrors old Python driver "
-                "which always checked async query registry before logout (SNOW-2314152)"
+            assert config.enable_server_session_keep_alive_auto_detection is True, (
+                "Default True must flow through to Core so registry check is performed"
             )
 
             # And Auto-detection is enabled by default
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.enable_logout_auto_detection is True, (
-                "Default True must flow through to Core so registry check is performed"
+            assert config.server_session_keep_alive is None, (
+                "Default server_session_keep_alive=None should pass through unchanged"
+            )
+
+            # And Deprecation warning is emitted about auto_detection default changing
+            assert any(
+                "enable_server_session_keep_alive_auto_detection was not set" in str(w.message) for w in warning_list
+            ), f"Expected FutureWarning about auto_detection default, got: {[str(w.message) for w in warning_list]}"
+
+            conn.close()
+
+    def test_should_not_emit_auto_detection_deprecation_warning_when_explicitly_set_to_true(
+        self, int_test_connection_factory
+    ):
+        """Verify no FutureWarning when user explicitly passes auto_detection=True.
+
+        Explicit True means the user has made a conscious choice — no warning needed.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            # Given Snowflake Python client is created with enable_server_session_keep_alive_auto_detection set to true
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always")
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    enable_server_session_keep_alive_auto_detection=True,
+                )
+
+            # When Connection configuration is checked
+            config = conn.logout_config
+
+            # Then enable_server_session_keep_alive_auto_detection is true
+            assert config.enable_server_session_keep_alive_auto_detection is True
+
+            # And No deprecation warning is emitted about auto_detection default
+            auto_detection_warnings = [
+                w
+                for w in captured_warnings
+                if issubclass(w.category, FutureWarning) and "auto_detection" in str(w.message)
+            ]
+            assert len(auto_detection_warnings) == 0, (
+                f"No FutureWarning expected when auto_detection is explicitly True, "
+                f"got: {[str(w.message) for w in auto_detection_warnings]}"
             )
 
             conn.close()
@@ -283,13 +327,13 @@ class TestLogoutPythonWrapper:
                 conn.close()
 
             # Then server_session_keep_alive none is passed to Core
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.server_session_keep_alive is None, (
-                "Phase 2: None keep-alive should pass through to Core unchanged"
-            )
+            config = conn.logout_config
+            assert config.server_session_keep_alive is None, "None keep-alive should pass through to Core unchanged"
 
             # And enable_server_session_keep_alive_auto_detection true is passed to Core
-            assert logout_config.enable_logout_auto_detection is True, "auto_detection=True should pass through to Core"
+            assert config.enable_server_session_keep_alive_auto_detection is True, (
+                "auto_detection=True should pass through to Core"
+            )
 
             # And No deprecation warning is emitted
             deprecation_warnings = [
@@ -298,7 +342,9 @@ class TestLogoutPythonWrapper:
             msgs = [str(w.message) for w in deprecation_warnings]
             assert len(deprecation_warnings) == 0, f"None + True should not emit deprecation warning, got: {msgs}"
 
-    def test_should_pass_correct_parameters_when_server_session_keep_alive_is_false(self, int_test_connection_factory):
+    def test_should_remap_server_session_keep_alive_false_to_none_when_auto_detection_defaults_to_true(
+        self, int_test_connection_factory
+    ):
         """Verify Python wrapper remaps False keep-alive to None when auto-detection is True (default).
 
         Phase 2 truth table: server_session_keep_alive=False + enable_auto_detection=True (default)
@@ -309,37 +355,85 @@ class TestLogoutPythonWrapper:
             wiremock.add_mapping("auth/login_success_jwt.json")
             wiremock.add_mapping("session/logout_success.json")
 
-            with warnings.catch_warnings(record=True) as _captured_warnings:
+            # Given Snowflake Python client is created with server_session_keep_alive set to false
+            with warnings.catch_warnings(record=True) as captured_warnings:
                 warnings.simplefilter("always")
-
-                # Given Snowflake Python client is created with server_session_keep_alive set to false
                 conn = int_test_connection_factory(
                     server_url=wiremock.http_url(),
                     server_session_keep_alive=False,
                 )
 
-                # When Client closes connection
-                conn.close()
-
-            # Then server_session_keep_alive is remapped to none by Phase 2 mapping
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.server_session_keep_alive is None, (
-                "Phase 2: False + auto_detection=True (default) → remap → Core receives None to check registry"
+            # Then server_session_keep_alive false is remapped to none
+            config = conn.logout_config
+            assert config.server_session_keep_alive is None, (
+                "False + auto_detection=True (default) → remap → Core receives None to check registry"
             )
 
+            future_warnings = [w for w in captured_warnings if issubclass(w.category, FutureWarning)]
+
             # And Deprecation warning is emitted
-            _deprecation_emitted = (
-                False  # TODO(SNOW-2314152): Warning for server_session_keep_alive=False not yet implemented
+            assert any("server_session_keep_alive=False" in str(w.message) for w in future_warnings), (
+                f"Expected FutureWarning about server_session_keep_alive=False, "
+                f"got: {[str(w.message) for w in captured_warnings]}"
             )
 
             # And Warning mentions that false will force logout in Phase 3
-            _warning_message_verified = False  # TODO(SNOW-2314152): see above
+            assert any("always logout" in str(w.message) for w in future_warnings), (
+                f"Warning should mention Phase 3 'always logout' behavior, "
+                f"got: {[str(w.message) for w in future_warnings]}"
+            )
+
+            # When Client closes connection
+            conn.close()
 
             # Verify logout was actually sent to Core (False = explicit logout)
             all_requests = get_wiremock_requests(wiremock.http_url())
             logout_requests = filter_logout_requests(all_requests)
             assert len(logout_requests) == 1, (
                 f"server_session_keep_alive=False should send exactly one logout request, got {len(logout_requests)}"
+            )
+
+    def test_should_pass_server_session_keep_alive_false_to_core_when_auto_detection_explicitly_disabled(
+        self, int_test_connection_factory
+    ):
+        """Verify Python wrapper passes False to Core when auto_detection is explicitly disabled.
+
+        False + auto_detection=False (explicit) → no Phase 2 remap → Core receives False (force logout).
+        No deprecation warning: user opted out of auto-detection consciously.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always")
+
+                # Given Snowflake Python client is created with server_session_keep_alive set to false
+                server_session_keep_alive_param = False
+
+                # And enable_server_session_keep_alive_auto_detection is set to false
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    server_session_keep_alive=server_session_keep_alive_param,
+                    enable_server_session_keep_alive_auto_detection=False,
+                )
+
+                # When Client closes connection
+                conn.close()
+
+            # Then server_session_keep_alive false is passed to Core
+            config = conn.logout_config
+            assert config.server_session_keep_alive is False, (
+                "False + auto_detection=False → no remap → Core receives False"
+            )
+
+            # And No deprecation warning is emitted
+            deprecation_warnings = [
+                w for w in captured_warnings if issubclass(w.category, (FutureWarning, DeprecationWarning))
+            ]
+            assert len(deprecation_warnings) == 0, (
+                f"False + auto_detection=False should not emit deprecation warning, "
+                f"got: {[str(w.message) for w in deprecation_warnings]}"
             )
 
     def test_should_use_python_default_15_second_timeout_and_3_max_retries(self, int_test_connection_factory):
@@ -357,14 +451,15 @@ class TestLogoutPythonWrapper:
             elapsed = time.monotonic() - start
 
             # Then Logout timeout of 15 seconds is passed to Core
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.logout_total_timeout_seconds == 15, (
-                f"Expected 15s total timeout, got {logout_config.logout_total_timeout_seconds}s"
+            config = conn.logout_config
+            assert config.logout_total_timeout_seconds == PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS, (
+                f"Expected {PYTHON_DEFAULT_LOGOUT_TOTAL_TIMEOUT_SECONDS}s total timeout, "
+                f"got {config.logout_total_timeout_seconds}s"
             )
 
             # And Logout max retries of 3 is passed to Core
-            assert logout_config.max_attempts == 3, (
-                f"Expected 3 max attempts (2 retries), got {logout_config.max_attempts}"
+            assert config.max_attempts == PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS, (
+                f"Expected {PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS} max attempts, got {config.max_attempts}"
             )
 
             # And Logout request completes within 15 seconds
@@ -408,8 +503,7 @@ class TestLogoutPythonWrapper:
             assert conn.is_closed(), "Connection should be closed despite all logout attempts failing"
 
             # And Error handling strategy is best-effort by default
-            logout_config = map_logout_config_phase2(conn)
-            assert logout_config.error_strategy == ErrorStrategy.BEST_EFFORT, (
+            assert conn.logout_config.error_strategy == ErrorStrategy.BEST_EFFORT, (
                 "Default error strategy should be BEST_EFFORT"
             )
 

@@ -1,9 +1,10 @@
 use super::ColumnMetadata;
 use crate::arrow_utils::ArrowUtilsError;
-use crate::arrow_utils::{
-    boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
+use crate::arrow_utils::{boxed_arrow_reader, create_schema};
+use crate::chunks::{
+    ChunkError, DEFAULT_PREFETCH_THREADS, arrow_prefetch_reader, empty_reader,
+    json_prefetch_reader, schema_only_reader, single_chunk_reader,
 };
-use crate::chunks::{self, ChunkError, ChunkReader, DEFAULT_PREFETCH_THREADS};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::query_types::RowType;
@@ -34,7 +35,7 @@ pub async fn process_query_response(
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
         None => {
-            let reader = read_batches(data.to_rowset_data(), http_client)
+            let reader = read_batches(data.to_rowset_data(), http_client.clone())
                 .await
                 .context(BatchReadingSnafu)?;
             Ok(QueryResult {
@@ -87,46 +88,43 @@ async fn perform_put_get(
 
 async fn read_batches<'a>(
     data: query_response::RowsetData<'a>,
-    http_client: &Client,
+    http_client: Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     tracing::debug!("read_batches called {:?}", data);
     match data {
         query_response::RowsetData::ArrowSingleChunk { chunk_base64 } => {
-            let reader_result =
-                ChunkReader::single_chunk(chunk_base64).context(ChunkReadingSnafu)?;
-
-            Ok(Box::new(reader_result))
+            single_chunk_reader(chunk_base64).context(ChunkReadingSnafu)
         }
         query_response::RowsetData::ArrowMultiChunk {
             initial_base64_opt,
             chunk_download_data,
         } => {
             // Handle chunk download case without base64 data
-            let reader_result = ChunkReader::multi_chunk(
+            arrow_prefetch_reader(
                 initial_base64_opt,
                 chunk_download_data.into(),
                 http_client.clone(),
                 DEFAULT_PREFETCH_THREADS,
             )
             .await
-            .context(ChunkReadingSnafu)?;
-
-            Ok(Box::new(reader_result))
+            .context(ChunkReadingSnafu)
         }
         query_response::RowsetData::SchemaOnly { rowtype } => {
-            let row_types = rowtype
-                .iter()
-                .map(|rt| rt.try_into())
-                .collect::<Result<Vec<_>, _>>()
-                .context(RowTypeParsingSnafu)?;
-            let rowset = vec![];
-            convert_string_rowset_to_arrow_reader(&rowset, &row_types)
-                .context(RowsetConversionSnafu)
+            let row_types = parse_row_types(rowtype)?;
+            schema_only_reader(&row_types).context(ChunkReadingSnafu)
         }
         query_response::RowsetData::JsonRowset { rowset, rowtype } => {
             let row_types = parse_row_types(rowtype)?;
             validate_column_count(rowset, &row_types)?;
-            convert_string_rowset_to_arrow_reader(rowset, &row_types).context(RowsetConversionSnafu)
+            json_prefetch_reader(
+                rowset,
+                row_types,
+                Vec::new(),
+                http_client.clone(),
+                DEFAULT_PREFETCH_THREADS,
+            )
+            .await
+            .context(ChunkReadingSnafu)
         }
         query_response::RowsetData::JsonMultiChunk {
             rowset,
@@ -136,7 +134,7 @@ async fn read_batches<'a>(
             let row_types = parse_row_types(rowtype)?;
             validate_column_count(rowset, &row_types)?;
 
-            let reader = chunks::JsonChunkReader::new(
+            json_prefetch_reader(
                 rowset,
                 row_types,
                 chunk_download_data,
@@ -144,15 +142,9 @@ async fn read_batches<'a>(
                 DEFAULT_PREFETCH_THREADS,
             )
             .await
-            .context(ChunkReadingSnafu)?;
-
-            Ok(Box::new(reader))
+            .context(ChunkReadingSnafu)
         }
-        query_response::RowsetData::NoData => {
-            // No rowset or rowtype found, return empty reader
-            let reader = ChunkReader::empty();
-            Ok(Box::new(reader))
-        }
+        query_response::RowsetData::NoData => Ok(empty_reader()),
     }
 }
 

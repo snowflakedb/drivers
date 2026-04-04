@@ -58,7 +58,7 @@ pub struct LogoutConfig {
     /// - Some(true): Check async query registry before logout
     /// - Some(false): Don't check registry
     /// - None: Treated as false (no auto-detection)
-    pub enable_logout_auto_detection: Option<bool>,
+    pub enable_server_session_keep_alive_auto_detection: Option<bool>,
 
     /// Error handling strategy for logout failures
     pub error_strategy: ErrorStrategy,
@@ -83,10 +83,14 @@ pub struct LogoutConfig {
 }
 
 impl Default for LogoutConfig {
+    /// Core defaults apply when no language wrapper overrides them.
+    /// Language wrappers typically set their own defaults for backward compat:
+    /// e.g. Python sets BestEffort, 15s timeout, 3 attempts
+    /// (see python/.../logout_config_mapping.py::map_logout_config_phase2).
     fn default() -> Self {
         Self {
             server_session_keep_alive: None,
-            enable_logout_auto_detection: None,
+            enable_server_session_keep_alive_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
             logout_total_timeout: Duration::from_secs(5),
             max_attempts: None,
@@ -106,7 +110,7 @@ impl LogoutConfig {
     pub fn merge_with_request(
         &self,
         server_session_keep_alive: Option<bool>,
-        enable_logout_auto_detection: Option<bool>,
+        enable_server_session_keep_alive_auto_detection: Option<bool>,
         error_strategy: Option<ErrorStrategy>,
         logout_total_timeout_seconds: Option<i32>,
         max_retry_attempts: Option<i32>,
@@ -143,8 +147,8 @@ impl LogoutConfig {
 
         Ok(Self {
             server_session_keep_alive: server_session_keep_alive.or(self.server_session_keep_alive),
-            enable_logout_auto_detection: enable_logout_auto_detection
-                .or(self.enable_logout_auto_detection),
+            enable_server_session_keep_alive_auto_detection: enable_server_session_keep_alive_auto_detection
+                .or(self.enable_server_session_keep_alive_auto_detection),
             error_strategy: error_strategy.unwrap_or(self.error_strategy),
             logout_total_timeout,
             max_attempts,
@@ -192,7 +196,8 @@ impl LogoutConfig {
 
         Ok(Self {
             server_session_keep_alive: settings.get_bool("server_session_keep_alive"),
-            enable_logout_auto_detection: settings.get_bool("enable_logout_auto_detection"),
+            enable_server_session_keep_alive_auto_detection: settings
+                .get_bool("enable_server_session_keep_alive_auto_detection"),
             error_strategy,
             logout_total_timeout,
             max_attempts,
@@ -310,7 +315,7 @@ mod tests {
     fn test_default_config() {
         let config = LogoutConfig::default();
         assert_eq!(config.server_session_keep_alive, None);
-        assert_eq!(config.enable_logout_auto_detection, None);
+        assert_eq!(config.enable_server_session_keep_alive_auto_detection, None);
         assert_eq!(config.error_strategy, ErrorStrategy::Strict);
         assert_eq!(config.logout_total_timeout, Duration::from_secs(5));
     }
@@ -404,7 +409,7 @@ mod tests {
     fn test_merge_with_request_override_wins() {
         let base = LogoutConfig {
             server_session_keep_alive: Some(true),
-            enable_logout_auto_detection: Some(false),
+            enable_server_session_keep_alive_auto_detection: Some(false),
             error_strategy: ErrorStrategy::Strict,
             logout_total_timeout: Duration::from_secs(5),
             max_attempts: Some(3),
@@ -423,7 +428,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(merged.server_session_keep_alive, Some(false));
-        assert_eq!(merged.enable_logout_auto_detection, Some(true));
+        assert_eq!(merged.enable_server_session_keep_alive_auto_detection, Some(true));
         assert_eq!(merged.error_strategy, ErrorStrategy::BestEffort);
         assert_eq!(merged.logout_total_timeout, Duration::from_secs(10));
         assert_eq!(merged.max_attempts, Some(1)); // 0 retries + 1 = 1 total attempt
@@ -434,7 +439,7 @@ mod tests {
     fn test_merge_with_request_none_preserves_self() {
         let base = LogoutConfig {
             server_session_keep_alive: Some(true),
-            enable_logout_auto_detection: Some(true),
+            enable_server_session_keep_alive_auto_detection: Some(true),
             error_strategy: ErrorStrategy::BestEffort,
             logout_total_timeout: Duration::from_secs(7),
             max_attempts: Some(5),
@@ -446,7 +451,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(merged.server_session_keep_alive, Some(true));
-        assert_eq!(merged.enable_logout_auto_detection, Some(true));
+        assert_eq!(merged.enable_server_session_keep_alive_auto_detection, Some(true));
         assert_eq!(merged.error_strategy, ErrorStrategy::BestEffort);
         assert_eq!(merged.logout_total_timeout, Duration::from_secs(7));
         assert_eq!(merged.max_attempts, Some(5));

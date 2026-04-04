@@ -226,7 +226,7 @@ TEST_CASE("should retrieve large binary as hex in chunks via SQLGetData with SQL
 
 TEST_CASE("should retrieve large binary as hex in chunks via SQLGetData with SQL_C_WCHAR",
           "[datatype][binary][conversion][char]") {
-  SKIP_OLD_DRIVER("BD#24",
+  SKIP_OLD_DRIVER("BD#22",
                   "Simba SDK uses sizeof(wchar_t)=4 for WCHAR buffer capacity on Linux, "
                   "fitting fewer characters per call than the ODBC spec expects with 2-byte SQLWCHAR");
   // Given Snowflake client is logged in
@@ -286,7 +286,7 @@ TEST_CASE("should succeed with exact-fit buffer for SQL_C_CHAR", "[datatype][bin
 // ============================================================================
 
 TEST_CASE("should succeed with exact-fit buffer for SQL_C_WCHAR", "[datatype][binary][conversion][char]") {
-  SKIP_OLD_DRIVER("BD#24",
+  SKIP_OLD_DRIVER("BD#22",
                   "Simba SDK uses sizeof(wchar_t)=4 for WCHAR buffer capacity on Linux, "
                   "fitting fewer characters per call than the ODBC spec expects with 2-byte SQLWCHAR");
   // Given Snowflake client is logged in
@@ -328,15 +328,15 @@ TEST_CASE("should truncate binary hex with one-byte-short buffer for SQL_C_CHAR"
   REQUIRE(get_sqlstate(stmt) == "01004");
   REQUIRE(indicator == 6);
 
-  // BD#30: Old driver writes only complete hex pairs on even BufferLength
+  // BD#28: Old driver writes only complete hex pairs on even BufferLength
   // ("ABCD\0", last byte unused). New driver fills all available space ("ABCDE\0").
 
   // And Truncated output should be null-terminated with valid hex prefix
-  OLD_DRIVER_ONLY("BD#30") {
+  OLD_DRIVER_ONLY("BD#28") {
     REQUIRE(std::string(buffer, 4) == "ABCD");
     REQUIRE(buffer[4] == '\0');
   }
-  NEW_DRIVER_ONLY("BD#30") {
+  NEW_DRIVER_ONLY("BD#28") {
     REQUIRE(std::string(buffer, 5) == "ABCDE");
     REQUIRE(buffer[5] == '\0');
   }

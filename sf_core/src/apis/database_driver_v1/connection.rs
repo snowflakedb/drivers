@@ -999,7 +999,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         server_session_keep_alive: Option<bool>,
-        enable_logout_auto_detection: Option<bool>,
+        enable_server_session_keep_alive_auto_detection: Option<bool>,
         error_strategy: Option<ErrorStrategy>,
         logout_total_timeout_seconds: Option<i32>,
         max_retry_attempts: Option<i32>,
@@ -1032,7 +1032,7 @@ impl DatabaseDriverV1 {
                     .logout_config
                     .merge_with_request(
                         server_session_keep_alive,
-                        enable_logout_auto_detection,
+                        enable_server_session_keep_alive_auto_detection,
                         error_strategy,
                         logout_total_timeout_seconds,
                         max_retry_attempts,

@@ -16,6 +16,11 @@ fi
 export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.${DYLIB_EXT}
 export PARAMETER_PATH=${PARAMETER_PATH:-$(pwd)/parameters.json}
 
+CCACHE_ARGS=""
+if command -v ccache &>/dev/null; then
+    CCACHE_ARGS="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
+fi
+
 pushd odbc_tests
     if [ ! -d cmake-build ]; then
         mkdir -p cmake-build
@@ -25,6 +30,7 @@ pushd odbc_tests
             -D ODBC_LIBRARY="$(odbc_config --lib-prefix)/libodbc.${DYLIB_EXT}" \
             -D ODBC_INCLUDE_DIR="$(odbc_config --include-prefix)" \
             -D DRIVER_TYPE=NEW \
+            ${CCACHE_ARGS} \
             .
     fi
     cmake --build cmake-build -- -j 16

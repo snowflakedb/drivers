@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import atexit
 import logging
+import re
 import threading
 import warnings
 
 from collections.abc import Generator, Iterable
-from dataclasses import dataclass
 from io import StringIO
 from typing import Any, Callable, Union, cast
 
@@ -25,6 +25,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
     ConnectionGetParameterRequest,
+    ConnectionGetQueryStatusRequest,
+    ConnectionGetQueryStatusResponse,
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
@@ -44,7 +46,7 @@ from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.logout_config_mapping import (
     LogoutConfig,
     LogoutOptionKeys,
-    map_logout_config_phase2,
+    remap_keep_alive_phase2,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
@@ -54,56 +56,62 @@ from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
-logger = logging.getLogger(__name__)
+CLIENT_NAME = "PythonConnector"
+APPLICATION_RE = re.compile(r"^[\w\d_]+$")
 
 SessionParameters = dict[str, Any]
-ConnectionParamValue = Union[int, str, float, bytes, SessionParameters]
+ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
 ConnectionParameters = dict[str, ConnectionParamValue]
-
 
 # Module-level logger
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ConnectionClassConfig:
-    """Static configuration flags for Connection class behavior.
+_UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
 
-    Immutable configuration that controls Connection behavior across all instances.
+
+def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
+    """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
+
+    If not provided, defaults to True and emits a FutureWarning:
+    the default will change to None in a future version (SNOW-2314152).
     """
+    raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
+    if raw is _UNSET:
+        warnings.warn(
+            "enable_server_session_keep_alive_auto_detection was not set and defaults "
+            "to True. In a future version, the default will change to None. "
+            "Please provide an explicit value: "
+            "True = check for running async queries before logout (queries are preserved); "
+            "False/None = always send logout on close (async queries may be terminated by server). "
+            "Logout behavior can also be overridden with server_session_keep_alive. "
+            "See the connection parameter docs for more info.",
+            FutureWarning,
+            stacklevel=5,
+        )
+        return True
+    return cast("bool | None", raw)
 
-    # Internal flag for logout semantics migration (SNOW-2314152)
-    # False (default): Phase 2 (SNOW-2314152) - server_session_keep_alive=False respects auto-detection
-    # True: Phase 3 (SNOW-2314152) - Pass parameters directly to Core without mapping
-    # WARNING: Phase 3 (SNOW-2314152) will become default in future release (Breaking Change)
-    USE_PHASE3_LOGOUT_SEMANTICS: bool = False
 
-
-@dataclass
-class ConnectionClassState:
-    """Mutable class-level state shared across all Connection instances in the process.
-
-    This is static/class-level state, NOT instance state.
-    Thread-safety: The lock protects concurrent access to shared state during process exit.
-    """
-
-    # Track if first auto-cleanup warning has been emitted in this process
-    # False = warning already emitted, True = warning not yet emitted
-    first_auto_cleanup_warning_pending: bool = True
-
-    # Lock to protect concurrent access to class state during process exit
-    # This prevents race conditions when multiple connections close simultaneously
-    lock: threading.Lock = threading.Lock()
+def _build_config_settings(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
+    """Wrap kwargs values into ConfigSetting protobuf messages for Core."""
+    options: dict[str, ConfigSetting] = {}
+    for key, value in kwargs.items():
+        if isinstance(value, bool):
+            options[key] = ConfigSetting(bool_value=value)
+        elif isinstance(value, int):
+            options[key] = ConfigSetting(int_value=value)
+        elif isinstance(value, str):
+            options[key] = ConfigSetting(string_value=value)
+        elif isinstance(value, float):
+            options[key] = ConfigSetting(double_value=value)
+        elif isinstance(value, bytes):
+            options[key] = ConfigSetting(bytes_value=value)
+    return options
 
 
 class Connection:
     """Connection objects represent a database connection."""
-
-    # Protected static configuration (immutable class-level settings)
-    _class_config = ConnectionClassConfig()
-
-    # Protected static state (mutable class-level state, shared across all instances)
-    _class_state = ConnectionClassState()
 
     def __init__(
         self,
@@ -126,69 +134,74 @@ class Connection:
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             session_parameters: Optional dict of session parameters to set at connection time
             server_session_keep_alive: Optional[bool] - Control server session lifecycle
-                - True: Never send logout (Fire & Forget; session persists on server)
-                - False: Always send logout on close (no auto-detection at Core level).
-                  Phase 2 note: if auto-detection is also enabled, the Python wrapper
-                  remaps False → None so Core applies auto-detection (SNOW-2314152).
+                - True: Never send logout (Fire & Forget; session persists on server
+                  as long as there is activity in it, e.g. running queries)
+                - False: Always send logout on close. For backward compatibility,
+                  False is currently remapped to None when auto-detection is enabled,
+                  so Core checks the async query registry before logout.
+                  This remapping will be removed in a future version.
                 - None: Delegate to auto-detection setting
             enable_server_session_keep_alive_auto_detection: Optional[bool]
                 - True (default): Check async query registry before logout (backward compat)
                 - False: Don't check registry
                 - None: Auto-detection disabled (Core treats None as False)
             auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
+            authenticator: Authentication method. Use ``"USERNAME_PASSWORD_MFA"`` for MFA authentication.
+            passcode: MFA passcode (TOTP one-time code from an authenticator app). When provided
+                with ``authenticator="USERNAME_PASSWORD_MFA"``, the driver automatically uses the
+                Duo passcode flow; you do not need to set ``ext_authn_duo_method="passcode"``
+                explicitly.
+            passcode_in_password: If ``True``, the MFA passcode is appended to the password field
+                rather than sent separately. This is treated the same as supplying ``passcode``
+                directly and will automatically select the Duo passcode flow. Default ``False``.
+            client_store_temporary_credential: If ``True``, a successfully obtained MFA token is
+                cached in the OS keyring and reused for subsequent connections, avoiding repeated
+                MFA prompts. Default ``False``. The server must have ``ALLOW_CLIENT_MFA_CACHING``
+                enabled. This also implicitly requests an MFA token from the server
+                (``CLIENT_REQUEST_MFA_TOKEN``).
+            client_request_mfa_token: Deprecated alias for ``client_store_temporary_credential``
+                from ``snowflake-connector-python``. Accepted for backward compatibility; prefer
+                ``client_store_temporary_credential`` in new code.
+            ext_authn_duo_method: DUO Security authentication method applied when no explicit
+                passcode is provided and no cached MFA token is available. Either ``"push"``
+                (send a push notification to the registered device) or ``"passcode"`` (prompt
+                for or use a TOTP code). When a ``passcode`` is supplied directly this parameter
+                is ignored because the passcode flow is selected automatically.
             **kwargs: Additional connection parameters
         """
-        # paramstyle
         from snowflake.connector import paramstyle as default_paramstyle
 
         self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
 
         kwargs = self._rewrite_private_key_password(kwargs)
+        kwargs = self._rewrite_mfa_params(kwargs)
+
+        application = kwargs.pop("application", None)
+        if application is None or (isinstance(application, str) and not application):
+            self._application = CLIENT_NAME
+        elif isinstance(application, str):
+            if not APPLICATION_RE.match(application):
+                raise ProgrammingError(f"Invalid application name: {application!r}")
+            self._application = application
+        else:
+            raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
+        kwargs["client_app_id"] = self._application
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
-        # Extract session_parameters before processing other kwargs
-        session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
+        if autocommit is not None and not isinstance(autocommit, bool):
+            raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
 
-        if autocommit is not None:
-            if not isinstance(autocommit, bool):
-                raise ProgrammingError(f"Invalid autocommit parameter: {autocommit!r}")
+        # Pop all special-purpose keys from kwargs in-place.
+        # After this, kwargs contains only generic Core options.
+        self._parse_kwargs(kwargs, autocommit)
 
-        if session_params is None:
-            session_params = {}
-        if autocommit is not None:
-            session_params["AUTOCOMMIT"] = str(autocommit).lower()
-
-        # Pre-process private_key if present - normalize for Rust core
-        if "private_key" in kwargs:
-            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
-
-        # Extract logout configuration parameters before passing to Core
-        self.server_session_keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
-        self.enable_server_session_keep_alive_auto_detection: bool | None = cast(
-            "bool | None", kwargs.pop("enable_server_session_keep_alive_auto_detection", True)
-        )
-        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
-
-        options = {}
-        for key, value in kwargs.items():
-            if isinstance(value, bool):
-                options[key] = ConfigSetting(bool_value=value)
-            elif isinstance(value, int):
-                options[key] = ConfigSetting(int_value=value)
-            elif isinstance(value, str):
-                options[key] = ConfigSetting(string_value=value)
-            elif isinstance(value, float):
-                options[key] = ConfigSetting(double_value=value)
-            elif isinstance(value, bytes):
-                options[key] = ConfigSetting(bytes_value=value)
-
+        # Generic options → Core (kwargs is now clean, no filtering needed)
+        options = _build_config_settings(kwargs)
         if options:
-            import warnings as py_warnings
-
             response = self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
@@ -196,47 +209,74 @@ class Connection:
                 )
             )
             for warning in response.warnings:
-                py_warnings.warn(warning.message, stacklevel=2)
+                warnings.warn(warning.message, stacklevel=2)
 
-        # Set session parameters if provided (before connection_init)
-        if session_params:
+        # Session params → Core (separate RPC: these are Snowflake server
+        # SET commands (string→string), not driver config (typed ConfigSetting))
+        if self._session_params:
             self.db_api.connection_set_session_parameters(
-                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
+                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=self._session_params)
             )
 
-        # Configure logout behavior BEFORE connection_init (init-time configuration)
-        self._setup_logout_config()
+        # Logout config → Core (typed RPCs, before connection_init)
+        self._send_logout_config(self.logout_config)
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
-        _sensitive_keys = {"password", "private_key"}
-        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
         self._arrow_number_to_decimal: bool = False
 
-        # Register atexit handler if auto_cleanup is enabled
         if self.auto_cleanup:
             atexit.register(self._close_at_process_exit)
 
-    def _map_logout_config(self) -> LogoutConfig:
-        """Map logout parameters to Core configuration.
+    def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> None:
+        """Parse and extract all special params from kwargs in-place.
 
-        Returns logout configuration with all values resolved (defaults applied,
-        phase-specific mapping done).
-
-        Related: SNOW-2314152
+        After this call, kwargs contains only generic Core options
+        suitable for connection_set_options. Special params are stored
+        on self (auto_cleanup, _session_params, logout_config).
         """
-        return map_logout_config_phase2(self)
+        # Python-only (pop — never goes to Core)
+        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
 
-    def _setup_logout_config(self) -> None:
-        """Apply logout configuration to Core via ConnectionSetOption* RPCs.
+        # Session params use a dedicated RPC (connection_set_session_parameters),
+        # not the generic connection_set_options path, so pop them from kwargs.
+        self._session_params = self._extract_session_params(kwargs, autocommit)
+
+        # Transform in-place (stays in kwargs for generic path)
+        if "private_key" in kwargs:
+            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
+
+        # Logout params (pop + resolve defaults + build config).
+        # Init-time snapshot only; Core re-derives at close() time from connection_seed,
+        # so post-init overrides like close(retry=False) won't be reflected here.
+        self.logout_config = self._parse_logout_config(kwargs)
+
+    @staticmethod
+    def _extract_session_params(kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
+        """Pop session_parameters from kwargs and fold in autocommit."""
+        params: SessionParameters = kwargs.pop("session_parameters", None) or {}
+        if autocommit is not None:
+            params["AUTOCOMMIT"] = str(autocommit).lower()
+        return params
+
+    def _parse_logout_config(self, kwargs: dict[str, Any]) -> LogoutConfig:
+        """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
+        keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
+        auto_detection = _extract_auto_detection_param(kwargs)
+        keep_alive = remap_keep_alive_phase2(keep_alive, auto_detection)
+        return LogoutConfig(
+            server_session_keep_alive=keep_alive,
+            enable_server_session_keep_alive_auto_detection=auto_detection,
+        )
+
+    def _send_logout_config(self, logout_config: LogoutConfig) -> None:
+        """Send resolved LogoutConfig to Core via typed ConnectionSetOption* RPCs.
 
         Called at init time, before connection_init. Writes values to Core's
         connection_seed. Config is frozen at init; close-time overrides use
         ConnectionCloseRequest fields (not connection_seed mutation).
         """
-        logout_config = self._map_logout_config()
-
         if logout_config.server_session_keep_alive is not None:
             self.db_api.connection_set_option_bool(
                 ConnectionSetOptionBoolRequest(
@@ -246,16 +286,15 @@ class Connection:
                 )
             )
 
-        if logout_config.enable_logout_auto_detection is not None:
+        if logout_config.enable_server_session_keep_alive_auto_detection is not None:
             self.db_api.connection_set_option_bool(
                 ConnectionSetOptionBoolRequest(
                     conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.ENABLE_LOGOUT_AUTO_DETECTION,
-                    value=logout_config.enable_logout_auto_detection,
+                    key=LogoutOptionKeys.ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION,
+                    value=logout_config.enable_server_session_keep_alive_auto_detection,
                 )
             )
 
-        # Error strategy: always set (has a default in Core)
         self.db_api.connection_set_option_string(
             ConnectionSetOptionStringRequest(
                 conn_handle=self.conn_handle,
@@ -328,23 +367,19 @@ class Connection:
             )
             return
 
-        # Connection is leaked (not explicitly closed) - emit deprecation warning
-        # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
-        # Use lock to prevent race conditions when multiple connections close concurrently
-        # Wrapped in try/except to guard against interpreter shutdown: during CPython
-        # teardown, module globals (including `warnings`) may already be set to None,
-        # causing AttributeError/TypeError that would otherwise escape through atexit.
+        # Connection is leaked (not explicitly closed) — emit FutureWarning.
+        # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
+        # FutureWarning deduplication (once per source line per process) prevents
+        # log spam when multiple connections are leaked. try/except guards against
+        # interpreter shutdown where the warnings module itself may already be None.
         try:
-            with self.__class__._class_state.lock:
-                if self.__class__._class_state.first_auto_cleanup_warning_pending:
-                    warnings.warn(
-                        "Connection was not explicitly closed before process exit. "
-                        "Auto-cleanup at exit will be disabled by default in a future version. "
-                        "Please explicitly call connection.close() or use context manager.",
-                        FutureWarning,
-                        stacklevel=2,
-                    )
-                    self.__class__._class_state.first_auto_cleanup_warning_pending = False
+            warnings.warn(
+                "Connection was not explicitly closed before process exit. "
+                "Auto-cleanup at exit will be disabled by default in a future version. "
+                "Please explicitly call connection.close() or use context manager.",
+                FutureWarning,
+                stacklevel=2,
+            )
         except Exception:
             pass  # Interpreter shutting down; warning emission is best-effort
 
@@ -578,6 +613,31 @@ class Connection:
             kwargs = {**kwargs, "private_key_password": private_key_file_pwd}
         return kwargs
 
+    @backward_compatibility
+    def _rewrite_mfa_params(self, kwargs: ConnectionParameters) -> ConnectionParameters:
+        """Translate Python-style MFA parameter names to the keys expected by the Rust core.
+
+        Handles two rewrite rules:
+
+        * ``passcode_in_password`` → ``passcodeInPassword`` (camelCase key required by Rust core).
+        * ``client_request_mfa_token`` → ``client_store_temporary_credential`` for compatibility
+          with ``snowflake-connector-python``, which used the former name for MFA token caching.
+          If both are supplied, ``client_store_temporary_credential`` takes precedence and the
+          legacy key is discarded.
+        """
+        passcode_in_password = kwargs.pop("passcode_in_password", None)
+        if passcode_in_password is not None:
+            kwargs = {**kwargs, "passcodeInPassword": passcode_in_password}
+
+        # client_request_mfa_token is the legacy snowflake-connector-python name for MFA token
+        # caching.  Map it to the canonical key so callers migrating from the old driver do not
+        # need to update their code.
+        legacy_token_cache = kwargs.pop("client_request_mfa_token", None)
+        if legacy_token_cache is not None and "client_store_temporary_credential" not in kwargs:
+            kwargs = {**kwargs, "client_store_temporary_credential": legacy_token_cache}
+
+        return kwargs
+
     @property
     def role(self) -> str | None:
         """The current role in use for the session."""
@@ -684,7 +744,7 @@ class Connection:
     @property
     def application(self) -> str:
         """The name of the client application connecting to Snowflake."""
-        raise NotImplementedError("application is not yet implemented")
+        return self._application
 
     @property
     @pep249
@@ -779,13 +839,31 @@ class Connection:
         """The current Snowflake server version string."""
         raise NotImplementedError("snowflake_version is not yet implemented")
 
-    def get_query_status(self, sf_qid: str) -> Any:
+    def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""
-        raise NotImplementedError("get_query_status is not yet implemented")
+        status, _ = self._get_query_status_with_response(sf_qid)
+        return status
 
-    def get_query_status_throw_if_error(self, sf_qid: str) -> Any:
+    def get_query_status_throw_if_error(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
-        raise NotImplementedError("get_query_status_throw_if_error is not yet implemented")
+        status, response = self._get_query_status_with_response(sf_qid)
+        if self.is_an_error(status):
+            message = response.error_message if response.HasField("error_message") else f"Query {sf_qid} failed"
+            errno = response.error_code if response.HasField("error_code") else -1
+            raise ProgrammingError(msg=message, errno=errno, sfqid=sf_qid)
+        return status
+
+    def _get_query_status_with_response(self, sf_qid: str) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
+        """Fetch query status from the server and map the status name to a QueryStatus enum value."""
+        response = self.db_api.connection_get_query_status(
+            ConnectionGetQueryStatusRequest(conn_handle=self.conn_handle, query_id=sf_qid)
+        )
+        try:
+            status = QueryStatus[response.status_name]
+        except KeyError:
+            logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
+            status = QueryStatus.NO_DATA
+        return status, response
 
     @staticmethod
     def is_still_running(status: QueryStatus) -> bool:
