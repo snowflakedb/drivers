@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import atexit
 import logging
+import re
+import threading
 import warnings
 
 from collections.abc import Generator, Iterable
@@ -23,6 +25,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
     ConnectionGetParameterRequest,
+    ConnectionGetQueryStatusRequest,
+    ConnectionGetQueryStatusResponse,
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
@@ -52,8 +56,11 @@ from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
+CLIENT_NAME = "PythonConnector"
+APPLICATION_RE = re.compile(r"^[\w\d_]+$")
+
 SessionParameters = dict[str, Any]
-ConnectionParamValue = Union[int, str, float, bytes, SessionParameters]
+ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
 ConnectionParameters = dict[str, ConnectionParamValue]
 
 # Module-level logger
@@ -139,6 +146,27 @@ class Connection:
                 - False: Don't check registry
                 - None: Auto-detection disabled (Core treats None as False)
             auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
+            authenticator: Authentication method. Use ``"USERNAME_PASSWORD_MFA"`` for MFA authentication.
+            passcode: MFA passcode (TOTP one-time code from an authenticator app). When provided
+                with ``authenticator="USERNAME_PASSWORD_MFA"``, the driver automatically uses the
+                Duo passcode flow; you do not need to set ``ext_authn_duo_method="passcode"``
+                explicitly.
+            passcode_in_password: If ``True``, the MFA passcode is appended to the password field
+                rather than sent separately. This is treated the same as supplying ``passcode``
+                directly and will automatically select the Duo passcode flow. Default ``False``.
+            client_store_temporary_credential: If ``True``, a successfully obtained MFA token is
+                cached in the OS keyring and reused for subsequent connections, avoiding repeated
+                MFA prompts. Default ``False``. The server must have ``ALLOW_CLIENT_MFA_CACHING``
+                enabled. This also implicitly requests an MFA token from the server
+                (``CLIENT_REQUEST_MFA_TOKEN``).
+            client_request_mfa_token: Deprecated alias for ``client_store_temporary_credential``
+                from ``snowflake-connector-python``. Accepted for backward compatibility; prefer
+                ``client_store_temporary_credential`` in new code.
+            ext_authn_duo_method: DUO Security authentication method applied when no explicit
+                passcode is provided and no cached MFA token is available. Either ``"push"``
+                (send a push notification to the registered device) or ``"passcode"`` (prompt
+                for or use a TOTP code). When a ``passcode`` is supplied directly this parameter
+                is ignored because the passcode flow is selected automatically.
             **kwargs: Additional connection parameters
         """
         from snowflake.connector import paramstyle as default_paramstyle
@@ -146,6 +174,18 @@ class Connection:
         self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
 
         kwargs = self._rewrite_private_key_password(kwargs)
+        kwargs = self._rewrite_mfa_params(kwargs)
+
+        application = kwargs.pop("application", None)
+        if application is None or (isinstance(application, str) and not application):
+            self._application = CLIENT_NAME
+        elif isinstance(application, str):
+            if not APPLICATION_RE.match(application):
+                raise ProgrammingError(f"Invalid application name: {application!r}")
+            self._application = application
+        else:
+            raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
+        kwargs["client_app_id"] = self._application
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
@@ -579,6 +619,31 @@ class Connection:
             kwargs = {**kwargs, "private_key_password": private_key_file_pwd}
         return kwargs
 
+    @backward_compatibility
+    def _rewrite_mfa_params(self, kwargs: ConnectionParameters) -> ConnectionParameters:
+        """Translate Python-style MFA parameter names to the keys expected by the Rust core.
+
+        Handles two rewrite rules:
+
+        * ``passcode_in_password`` → ``passcodeInPassword`` (camelCase key required by Rust core).
+        * ``client_request_mfa_token`` → ``client_store_temporary_credential`` for compatibility
+          with ``snowflake-connector-python``, which used the former name for MFA token caching.
+          If both are supplied, ``client_store_temporary_credential`` takes precedence and the
+          legacy key is discarded.
+        """
+        passcode_in_password = kwargs.pop("passcode_in_password", None)
+        if passcode_in_password is not None:
+            kwargs = {**kwargs, "passcodeInPassword": passcode_in_password}
+
+        # client_request_mfa_token is the legacy snowflake-connector-python name for MFA token
+        # caching.  Map it to the canonical key so callers migrating from the old driver do not
+        # need to update their code.
+        legacy_token_cache = kwargs.pop("client_request_mfa_token", None)
+        if legacy_token_cache is not None and "client_store_temporary_credential" not in kwargs:
+            kwargs = {**kwargs, "client_store_temporary_credential": legacy_token_cache}
+
+        return kwargs
+
     @property
     def role(self) -> str | None:
         """The current role in use for the session."""
@@ -685,7 +750,7 @@ class Connection:
     @property
     def application(self) -> str:
         """The name of the client application connecting to Snowflake."""
-        raise NotImplementedError("application is not yet implemented")
+        return self._application
 
     @property
     @pep249
@@ -780,13 +845,31 @@ class Connection:
         """The current Snowflake server version string."""
         raise NotImplementedError("snowflake_version is not yet implemented")
 
-    def get_query_status(self, sf_qid: str) -> Any:
+    def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""
-        raise NotImplementedError("get_query_status is not yet implemented")
+        status, _ = self._get_query_status_with_response(sf_qid)
+        return status
 
-    def get_query_status_throw_if_error(self, sf_qid: str) -> Any:
+    def get_query_status_throw_if_error(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
-        raise NotImplementedError("get_query_status_throw_if_error is not yet implemented")
+        status, response = self._get_query_status_with_response(sf_qid)
+        if self.is_an_error(status):
+            message = response.error_message if response.HasField("error_message") else f"Query {sf_qid} failed"
+            errno = response.error_code if response.HasField("error_code") else -1
+            raise ProgrammingError(msg=message, errno=errno, sfqid=sf_qid)
+        return status
+
+    def _get_query_status_with_response(self, sf_qid: str) -> tuple[QueryStatus, ConnectionGetQueryStatusResponse]:
+        """Fetch query status from the server and map the status name to a QueryStatus enum value."""
+        response = self.db_api.connection_get_query_status(
+            ConnectionGetQueryStatusRequest(conn_handle=self.conn_handle, query_id=sf_qid)
+        )
+        try:
+            status = QueryStatus[response.status_name]
+        except KeyError:
+            logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
+            status = QueryStatus.NO_DATA
+        return status, response
 
     @staticmethod
     def is_still_running(status: QueryStatus) -> bool:

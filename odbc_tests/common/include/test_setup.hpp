@@ -58,6 +58,21 @@ inline void add_param_required(std::stringstream& ss, const picojson::object& pa
 }
 
 template <typename T>
+inline T get_param_required(const picojson::object& params, const std::string& cfg_param_name) {
+  auto it = params.find(cfg_param_name);
+  if (it == params.end()) {
+    FAIL("Required parameter '" + cfg_param_name + "' is missing in the test parameters.");
+    return T{};  // unreachable return to avoid compiler warnings
+  }
+  if (it->second.is<T>()) {
+    return it->second.get<T>();
+  } else {
+    FAIL("Parameter '" + cfg_param_name + "' is not of expected type.");
+    return T{};  // unreachable return to avoid compiler warnings
+  }
+}
+
+template <typename T>
 inline void add_param_optional(std::stringstream& ss, const picojson::object& params, const std::string& cfg_param_name,
                                const std::string& conn_param_name) {
   auto it = params.find(cfg_param_name);
@@ -132,6 +147,11 @@ inline void configure_driver_string(std::stringstream& ss) {
 #else
   ss << "DRIVER={" << driver_config->name() << "};";
 #endif
+}
+
+inline void ensure_driver_installed() {
+  std::stringstream ss;
+  configure_driver_string(ss);
 }
 
 inline void read_default_params(std::stringstream& ss, const picojson::object& params,

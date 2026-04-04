@@ -21,11 +21,13 @@ pub fn num_result_cols(
 
     let num_cols = match stmt.state.as_ref() {
         StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
-        StatementState::Executed { reader, .. } => reader.schema().fields().len() as sql::SmallInt,
+        StatementState::QueryExecuted { reader, .. } => {
+            reader.schema().fields().len() as sql::SmallInt
+        }
         StatementState::Fetching { record_batch, .. } => {
             record_batch.schema().fields().len() as sql::SmallInt
         }
-        StatementState::NoResultSet { .. } => 0,
+        StatementState::DdlExecuted { .. } | StatementState::DmlExecuted { .. } => 0,
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
@@ -44,9 +46,10 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
     tracing::debug!("row_count called");
     let stmt = stmt_from_handle(statement_handle);
     let row_count = match stmt.state.as_ref() {
-        StatementState::Executed { rows_affected, .. }
+        StatementState::QueryExecuted { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
-        StatementState::NoResultSet { .. } => -1,
+        StatementState::DmlExecuted { rows_affected, .. } => *rows_affected as sql::Len,
+        StatementState::DdlExecuted { .. } => -1,
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
@@ -78,7 +81,7 @@ pub fn col_attribute(
     let stmt = stmt_from_handle(statement_handle);
 
     let schema = match stmt.state.as_ref() {
-        StatementState::Executed { reader, .. } => reader.schema(),
+        StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         _ => return StatementNotExecutedSnafu.fail(),
     };
@@ -140,7 +143,7 @@ pub fn describe_col<E: OdbcEncoding>(
     let stmt = stmt_from_handle(statement_handle);
 
     let schema = match stmt.state.as_ref() {
-        StatementState::Executed { reader, .. } => reader.schema(),
+        StatementState::QueryExecuted { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         StatementState::Prepared { schema } => schema.clone(),
         _ => return StatementNotExecutedSnafu.fail(),

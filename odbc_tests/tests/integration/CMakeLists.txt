@@ -2,6 +2,7 @@
 
 # Find all .cpp files recursively
 file(GLOB_RECURSE all_sources "*.cpp")
+list(FILTER all_sources EXCLUDE REGEX ".*/cmake-build.*/.*")
 
 # Create a test for each .cpp file
 foreach(source_file ${all_sources})

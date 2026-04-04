@@ -310,7 +310,7 @@ TEST_CASE("NUMBER to interval - NULL returns SQL_NULL_DATA", "[datatype][number]
 // ============================================================================
 
 TEST_CASE("NUMBER to interval - default precision rejects values >= 100", "[datatype][number][interval][precision]") {
-  SKIP_OLD_DRIVER("BD#20", "Old driver does not enforce interval leading precision");
+  SKIP_OLD_DRIVER("BD#18", "Old driver does not enforce interval leading precision");
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -350,7 +350,7 @@ TEST_CASE("NUMBER to interval - default precision rejects values >= 100", "[data
 
 TEST_CASE("NUMBER to interval - custom precision via SQLSetDescField",
           "[datatype][number][interval][precision][descriptor]") {
-  SKIP_OLD_DRIVER("BD#20", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
+  SKIP_OLD_DRIVER("BD#18", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

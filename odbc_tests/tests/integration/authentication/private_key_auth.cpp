@@ -63,6 +63,7 @@ std::string read_test_private_key_content() {
 }
 
 EnvironmentHandleWrapper setup_environment_integration() {
+  ensure_driver_installed();
   EnvironmentHandleWrapper env;
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
   REQUIRE_ODBC(ret, env);
@@ -77,7 +78,16 @@ SQLRETURN attempt_connection_expect_error_integration(ConnectionHandleWrapper& d
                                                       const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
+  // connection failure is expected as the test is not E2E test
   REQUIRE(ret == SQL_ERROR);
+
+  // however driver/environment setup error is unwanted
+  auto records = get_diag_rec(dbc);
+  using Catch::Matchers::ContainsSubstring;
+  for (const auto& record : records) {
+    CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
+    CHECK_THAT(record.messageText, !ContainsSubstring("Data source name not found and no default driver specified"));
+  }
   return ret;
 }
 
@@ -112,6 +122,7 @@ void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, const st
     for (const auto& record : records) {
       // Error must not be about a missing parameter (any other error is acceptable).
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
+      CHECK_THAT(record.messageText, !ContainsSubstring("Can't open lib"));
     }
   }
   // SQL_SUCCESS means the key was forwarded and used successfully.
@@ -123,7 +134,6 @@ void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, const st
 
 TEST_CASE("should fail JWT authentication when no private file provided", "[private_key_auth]") {
   // Given Authentication is set to JWT
-  /* TODO: Explicit config installation */
   std::string connection_string = get_jwt_connection_string_without_private_key();
 
   // When Trying to Connect with no private file provided

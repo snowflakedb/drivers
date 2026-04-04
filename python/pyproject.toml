@@ -191,7 +191,7 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
-module = ["pyarrow", "pyarrow.*", "pandas", "pandas.*"]
+module = ["pyarrow", "pyarrow.*", "pandas", "pandas.*", "sqlalchemy", "sqlalchemy.*"]
 ignore_missing_imports = true
 
 # ===== Hatch Configuration =====

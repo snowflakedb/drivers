@@ -1,10 +1,11 @@
 use crate::api::CDataType;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, DisconnectedSnafu, InvalidBufferLengthSnafu,
-    InvalidCursorStateSnafu, InvalidHandleSnafu, InvalidParameterNumberSnafu,
-    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
+    ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
+    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
+    NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required,
+    StatementNotExecutedSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -22,6 +23,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     StatementPrepareRequest, StatementSetSqlQueryRequest, query_bindings,
 };
 use snafu::ResultExt;
+use tokio_util::sync::CancellationToken;
 use tracing;
 
 /// Execute a SQL statement directly (SQLExecDirect / SQLExecDirectW).
@@ -38,6 +40,11 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
     let stmt = stmt_from_handle(statement_handle);
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
+    if stmt.state.as_ref().has_open_cursor() {
+        tracing::error!("exec_direct: cursor is already open");
+        return CursorAlreadyOpenSnafu.fail();
+    }
+
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -46,6 +53,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, false)?;
             let stmt_handle = stmt.stmt_handle;
 
+            stmt.cancel_token = CancellationToken::new();
+            let _cancel_token = stmt.cancel_token.clone();
+            // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
+            // _cancel_token.cancelled() to support cross-thread SQLCancel.
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
@@ -65,8 +76,19 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
-            set_state(stmt, create_execute_state(response, false)?);
+            let execute_state = create_execute_state(response, false)?;
+            let is_zero_dml = matches!(
+                &execute_state,
+                StatementState::DmlExecuted {
+                    rows_affected: 0,
+                    ..
+                }
+            );
+            set_state(stmt, execute_state);
             stmt.last_query_id = query_id.filter(|s| !s.is_empty());
+            if is_zero_dml {
+                return NoMoreDataSnafu.fail();
+            }
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -126,8 +148,6 @@ fn update_numeric_settings(
     Ok(())
 }
 
-/// Read the query text from an ODBC buffer and prepare
-/// (SQLPrepare / SQLPrepareW).
 /// Prepare a SQL statement (SQLPrepare / SQLPrepareW).
 pub fn prepare<E: OdbcEncoding>(
     statement_handle: sql::Handle,
@@ -156,14 +176,9 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
 
-    if matches!(
-        stmt.state.as_ref(),
-        StatementState::Executed { .. }
-            | StatementState::Fetching { .. }
-            | StatementState::Done { .. }
-    ) {
+    if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("prepare: cursor is already open");
-        return InvalidCursorStateSnafu.fail();
+        return CursorAlreadyOpenSnafu.fail();
     }
 
     match &mut stmt.conn.state {
@@ -174,6 +189,10 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             tracing::debug!("prepare: query = {query}");
 
             let stmt_handle = stmt.stmt_handle;
+            stmt.cancel_token = CancellationToken::new();
+            let _cancel_token = stmt.cancel_token.clone();
+            // TODO(SNOW-3258922): Wire _cancel_token into tokio::select!
+            // alongside the RPC future to support cancellation.
             let prepare_result = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_set_sql_query(StatementSetSqlQueryRequest {
                     stmt_handle: Some(stmt_handle),
@@ -222,19 +241,15 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
 
-    if matches!(
-        stmt.state.as_ref(),
-        StatementState::Executed { .. }
-            | StatementState::Fetching { .. }
-            | StatementState::Done { .. }
-    ) {
+    if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("execute: cursor is already open");
-        return InvalidCursorStateSnafu.fail();
+        return CursorAlreadyOpenSnafu.fail();
     }
 
     let prepared = match stmt.state.as_ref() {
         StatementState::Prepared { .. } => true,
-        StatementState::NoResultSet { prepared, .. } => *prepared,
+        StatementState::DdlExecuted { prepared, .. }
+        | StatementState::DmlExecuted { prepared, .. } => *prepared,
         _ => false,
     };
 
@@ -245,6 +260,10 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         } => {
             let (bindings, _json_owner) = apply_parameter_bindings(&stmt.apd, &stmt.ipd, prepared)?;
 
+            stmt.cancel_token = CancellationToken::new();
+            let _cancel_token = stmt.cancel_token.clone();
+            // TODO(SNOW-3258922): Wrap RPC in tokio::select! with
+            // _cancel_token.cancelled() to support cross-thread SQLCancel.
             let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
                 c.statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
@@ -256,32 +275,21 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
 
-            let statement_type_id = response.result.as_ref().and_then(|r| r.statement_type_id);
-            let rows_affected = response.result.as_ref().and_then(|r| r.rows_affected);
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
 
             let execute_state = create_execute_state(response, prepared)?;
-
+            let is_zero_dml = matches!(
+                &execute_state,
+                StatementState::DmlExecuted {
+                    rows_affected: 0,
+                    ..
+                }
+            );
+            set_state(stmt, execute_state);
             stmt.last_query_id = query_id.filter(|s| !s.is_empty());
-
-            if is_dml_statement_type(statement_type_id) && Some(0) == rows_affected {
-                let StatementState::Executed {
-                    reader, prepared, ..
-                } = &execute_state
-                else {
-                    unreachable!("DML always produces Executed state");
-                };
-                set_state(
-                    stmt,
-                    StatementState::NoResultSet {
-                        schema: reader.schema(),
-                        prepared: *prepared,
-                    },
-                );
+            if is_zero_dml {
                 return NoMoreDataSnafu.fail();
             }
-
-            set_state(stmt, execute_state);
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -292,10 +300,6 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 }
 
 const STATEMENT_TYPE_ID_MANAGE_PATS: i64 = 0x6244;
-
-fn is_pat_statement(statement_type_id: i64) -> bool {
-    statement_type_id == STATEMENT_TYPE_ID_MANAGE_PATS
-}
 
 fn is_ddl_statement(statement_type_id: i64) -> bool {
     tracing::debug!("is_ddl_statement: statement_type_id={}", statement_type_id);
@@ -309,14 +313,14 @@ fn is_dml_statement_type(statement_type_id: Option<i64>) -> bool {
     statement_type_id.is_some_and(|id| (0x3000..0x4000).contains(&id))
 }
 
-fn has_result_set(statement_type_id: i64) -> bool {
-    is_ddl_statement(statement_type_id) && !is_pat_statement(statement_type_id)
-}
-
 fn set_state(stmt: &mut Statement, state: StatementState) {
     stmt.ird.desc_count = match &state {
-        StatementState::Executed { reader, .. } => reader.schema().fields().len() as sql::SmallInt,
-        StatementState::NoResultSet { .. } | StatementState::Done { .. } => 0,
+        StatementState::QueryExecuted { reader, .. } => {
+            reader.schema().fields().len() as sql::SmallInt
+        }
+        StatementState::DdlExecuted { .. }
+        | StatementState::DmlExecuted { .. }
+        | StatementState::Done { .. } => 0,
         _ => stmt.ird.desc_count,
     };
     stmt.state = state.into();
@@ -331,15 +335,24 @@ fn create_execute_state(
     let stream = result.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream)?;
     let rows_affected = result.rows_affected;
-    if let Some(statement_type_id) = result.statement_type_id
-        && has_result_set(statement_type_id)
-    {
-        return Ok(StatementState::NoResultSet {
-            schema: reader.schema(),
-            prepared,
-        });
+    if let Some(id) = result.statement_type_id {
+        if is_ddl_statement(id) {
+            return Ok(StatementState::DdlExecuted {
+                schema: reader.schema(),
+                prepared,
+            });
+        }
+        if is_dml_statement_type(Some(id))
+            && let Some(affected) = rows_affected
+        {
+            return Ok(StatementState::DmlExecuted {
+                rows_affected: affected,
+                schema: reader.schema(),
+                prepared,
+            });
+        }
     }
-    Ok(StatementState::Executed {
+    Ok(StatementState::QueryExecuted {
         reader,
         rows_affected,
         prepared,
@@ -522,7 +535,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
             tracing::info!("free_stmt: Closing cursor");
             let transition = match stmt.state.as_ref() {
                 StatementState::Created | StatementState::Prepared { .. } => None,
-                StatementState::Executed {
+                StatementState::QueryExecuted {
                     reader,
                     prepared: true,
                     ..
@@ -536,9 +549,14 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
                     let desc_count = schema.fields().len() as sql::SmallInt;
                     Some((StatementState::Prepared { schema }, desc_count))
                 }
-                StatementState::NoResultSet {
+                StatementState::DdlExecuted {
                     schema,
                     prepared: true,
+                }
+                | StatementState::DmlExecuted {
+                    schema,
+                    prepared: true,
+                    ..
                 }
                 | StatementState::Done {
                     schema,
@@ -572,6 +590,21 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
     }
 
     Ok(())
+}
+
+/// Close the cursor on a statement, returning SQLSTATE 24000 if no cursor is open.
+/// Unlike `free_stmt(SQL_CLOSE)`, which silently no-ops when no cursor is open,
+/// this function errors per the ODBC spec for `SQLCloseCursor`.
+pub fn close_cursor(statement_handle: sql::Handle) -> OdbcResult<()> {
+    tracing::debug!("close_cursor: statement_handle={statement_handle:?}");
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    if !stmt.state.as_ref().has_open_cursor() {
+        return InvalidCursorStateSnafu.fail();
+    }
+
+    free_stmt(statement_handle, FreeStmtOption::Close)
 }
 
 /// Return the number of parameters in the statement via the IPD descriptor.
@@ -626,7 +659,14 @@ pub fn describe_param(
 
     let stmt = stmt_from_handle(statement_handle);
 
-    if matches!(stmt.state.as_ref(), StatementState::Created) {
+    let allowed = matches!(
+        stmt.state.as_ref(),
+        StatementState::Prepared { .. }
+            | StatementState::DdlExecuted { prepared: true, .. }
+            | StatementState::DmlExecuted { prepared: true, .. }
+            | StatementState::Done { prepared: true, .. }
+    );
+    if !allowed {
         return StatementNotExecutedSnafu.fail();
     }
     let ipd_rec = stmt.ipd.records.get(&parameter_number).ok_or_else(|| {
@@ -927,4 +967,34 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             crate::api::error::UnknownAttributeSnafu { attribute }.fail()
         }
     }
+}
+
+/// Cancel processing on a statement (SQLCancel).
+///
+/// Cancels the `CancellationToken` stored on the `Statement` struct.
+/// Called from `SQLCancel` in `c_api.rs`, which may be invoked from a
+/// different thread. Per ODBC 3.5 spec, cross-thread `SQLCancel` does
+/// not clear or post diagnostic records.
+///
+/// NOTE: Cross-thread calls create `&mut Statement` via `stmt_from_handle`
+/// concurrently with the executing thread — the same pre-existing aliasing
+/// pattern used by every C API entry point. A future handle manager will
+/// introduce proper interior mutability to eliminate this UB.
+pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
+    tracing::debug!("cancel: statement_handle={:?}", statement_handle);
+
+    // TODO(SNOW-3258918): Cancel async execution.
+    // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
+
+    // TODO(SNOW-3258919): Cancel data-at-execution (SQL_NEED_DATA).
+    // Blocked by: SQLParamData and SQLPutData are not implemented/exported.
+
+    // TODO(SNOW-3258922): Cancel execution on another thread.
+    // Blocked by: no server-side cancel RPC. When implemented,
+    // cancelling the token resolves the cancelled() future observed
+    // by the executing thread's tokio::select!, aborting the in-flight RPC.
+
+    let stmt = stmt_from_handle(statement_handle);
+    stmt.cancel_token.cancel();
+    Ok(())
 }

@@ -315,8 +315,9 @@ fn build_tls_config(settings: &ParamStore) -> TlsConfig {
 
 fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
+    let auth_upper = authenticator.to_ascii_uppercase();
 
-    let use_jwt = authenticator == "SNOWFLAKE_JWT"
+    let use_jwt = auth_upper == "SNOWFLAKE_JWT"
         || (authenticator.is_empty() && has_private_key_params(settings));
 
     if use_jwt {
@@ -329,8 +330,8 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
         });
     }
 
-    match authenticator.as_str() {
-        "SNOWFLAKE_PASSWORD" | "" => Ok(AuthConfig::Password {
+    match auth_upper.as_str() {
+        "SNOWFLAKE" | "SNOWFLAKE_PASSWORD" | "" => Ok(AuthConfig::Password {
             user: non_empty_string(settings, USER).context(MissingParameterSnafu {
                 parameter: String::from(USER),
             })?,
@@ -366,7 +367,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
                     parameter: String::from(TOKEN),
                 })?,
         }),
-        _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
+        _ if auth_upper.starts_with("HTTPS://") => {
             let okta_url = Url::parse(&authenticator).map_err(|_| {
                 InvalidParameterValueSnafu {
                     parameter: String::from(AUTHENTICATOR),
@@ -401,7 +402,7 @@ fn build_auth_config(settings: &ParamStore) -> Result<AuthConfig, ConfigError> {
         _ => InvalidParameterValueSnafu {
             parameter: String::from(AUTHENTICATOR),
             value: authenticator,
-            explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA, or an https:// URL for native Okta SSO".to_string(),
+            explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)".to_string(),
         }
         .fail(),
     }
@@ -561,22 +562,23 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
 
     // --- Auth-specific checks based on authenticator ---
     let authenticator = settings.get_string(AUTHENTICATOR).unwrap_or_default();
-    match authenticator.as_str() {
+    let auth_upper = authenticator.to_ascii_uppercase();
+    match auth_upper.as_str() {
         "" if has_private_key_params(settings) => {
             // Empty authenticator + private key params → auto-JWT, no password needed
         }
-        "SNOWFLAKE_PASSWORD" if has_private_key_params(settings) => {
+        "SNOWFLAKE" | "SNOWFLAKE_PASSWORD" if has_private_key_params(settings) => {
             issues.push(ValidationIssue {
                 severity: ValidationSeverity::Error,
                 parameter: AUTHENTICATOR.into(),
-                message: "Cannot specify 'SNOWFLAKE_PASSWORD' authenticator together with \
+                message: "Cannot specify basic authenticator together with \
                           private key parameters; use 'SNOWFLAKE_JWT' or remove the private \
                           key parameters"
                     .into(),
                 code: ValidationCode::ConflictingParameters,
             });
         }
-        "SNOWFLAKE_PASSWORD" | "" => {
+        "SNOWFLAKE" | "SNOWFLAKE_PASSWORD" | "" => {
             if settings.get_string(PASSWORD).is_none_or(|s| s.is_empty()) {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
@@ -618,12 +620,15 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 });
             }
         }
-        other if other.to_ascii_lowercase().starts_with("https://") => {
-            if Url::parse(other).is_err() {
+        _ if auth_upper.starts_with("HTTPS://") => {
+            if Url::parse(&authenticator).is_err() {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: AUTHENTICATOR.into(),
-                    message: format!("The authenticator URL '{other}' is not a valid URL"),
+                    message: format!(
+                        "The authenticator URL '{}' is not a valid URL",
+                        authenticator
+                    ),
                     code: ValidationCode::InvalidValue,
                 });
             }
@@ -637,12 +642,12 @@ pub fn validate_settings(settings: &ParamStore) -> Vec<ValidationIssue> {
                 });
             }
         }
-        other => {
+        _ => {
             issues.push(ValidationIssue {
                 severity: ValidationSeverity::Error,
                 parameter: AUTHENTICATOR.into(),
                 message: format!(
-                    "Invalid authenticator '{other}'. Allowed: SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA, or an https:// URL for native Okta SSO"
+                    "Invalid authenticator '{}'. Allowed: snowflake, snowflake_password, snowflake_jwt, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)", authenticator
                 ),
                 code: ValidationCode::InvalidValue,
             });
@@ -884,6 +889,138 @@ mod tests {
             }
             _ => panic!("Expected Pat auth"),
         }
+    }
+
+    #[test]
+    fn build_password_auth_with_snowflake_lowercase() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("authenticator", Setting::String("snowflake".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Password { user, password } => {
+                assert_eq!(user, "u");
+                assert_eq!(password.reveal(), "p");
+            }
+            _ => panic!("Expected Password auth for 'snowflake' authenticator"),
+        }
+    }
+
+    #[test]
+    fn build_password_auth_with_snowflake_mixed_case() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            ("authenticator", Setting::String("Snowflake".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Password { .. } => {}
+            _ => panic!("Expected Password auth for 'Snowflake' authenticator"),
+        }
+    }
+
+    #[test]
+    fn build_password_auth_with_snowflake_password_lowercase() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "authenticator",
+                Setting::String("snowflake_password".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Password { .. } => {}
+            _ => panic!("Expected Password auth for 'snowflake_password' authenticator"),
+        }
+    }
+
+    #[test]
+    fn build_pat_auth_case_insensitive() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("token", Setting::String("tok123".into())),
+            (
+                "authenticator",
+                Setting::String("programmatic_access_token".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Pat { user, token } => {
+                assert_eq!(user, "u");
+                assert_eq!(token.reveal(), "tok123");
+            }
+            _ => panic!("Expected Pat auth for lowercase 'programmatic_access_token'"),
+        }
+    }
+
+    #[test]
+    fn build_pat_auth_mixed_case() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("token", Setting::String("tok123".into())),
+            (
+                "authenticator",
+                Setting::String("Programmatic_Access_Token".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Pat { .. } => {}
+            _ => panic!("Expected Pat auth for mixed-case authenticator"),
+        }
+    }
+
+    #[test]
+    fn build_mfa_auth_case_insensitive() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("password", Setting::String("p".into())),
+            (
+                "authenticator",
+                Setting::String("username_password_mfa".into()),
+            ),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let config = ConnectionConfig::build(&settings).unwrap();
+        match &config.auth {
+            AuthConfig::Mfa { .. } => {}
+            _ => panic!("Expected Mfa auth for lowercase 'username_password_mfa'"),
+        }
+    }
+
+    #[test]
+    fn build_jwt_auth_case_insensitive() {
+        let settings = settings_from(&[
+            ("account", Setting::String("acct".into())),
+            ("user", Setting::String("u".into())),
+            ("authenticator", Setting::String("snowflake_jwt".into())),
+            ("private_key", Setting::String("some_key".into())),
+            ("host", Setting::String("h.com".into())),
+        ]);
+        let result = ConnectionConfig::build(&settings);
+        // Will fail at key parsing, but should NOT fail at authenticator recognition
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            !err_msg.contains("Invalid authenticator"),
+            "Should recognize 'snowflake_jwt' (lowercase): {err_msg}"
+        );
     }
 
     #[test]
@@ -1247,7 +1384,7 @@ mod tests {
             .expect("expected invalid authenticator issue");
 
         assert!(
-            auth_issue.message.contains("USERNAME_PASSWORD_MFA"),
+            auth_issue.message.contains("username_password_mfa"),
             "Expected MFA authenticator in message, got: {}",
             auth_issue.message
         );

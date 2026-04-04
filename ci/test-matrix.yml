@@ -1,0 +1,495 @@
+# Test Matrix
+#
+# Maps source file paths to test filters, organized by component.
+# Each rule's tests are grouped by level: unit, integ, e2e.
+#
+# Key principles:
+#   - Wrapper changes (odbc/, python/, jdbc/) only trigger tests for THAT wrapper
+#   - Core changes (sf_core/) trigger core tests AND corresponding tests in ALL wrappers
+#   - Shared infrastructure changes trigger ALL tests for ALL components
+#
+# CI split:
+#   - GHA:       always runs ALL unit tests; uses detect-changes run_* flags for
+#                skip/run decisions (no per-feature test selection on GHA)
+#   - Buildkite: runs integ + e2e with per-feature filtering via select_tests.py
+#                (--group integ,e2e); base ref auto-detected from Buildkite env
+#
+# Usage (Buildkite / local):
+#   python ci/select_tests.py --driver rust --group integ,e2e  # combined integ+e2e
+#   python ci/select_tests.py --driver odbc --group integ,e2e
+#   python ci/select_tests.py --driver python --group integ,e2e
+#   python ci/select_tests.py --driver java --group e2e
+#   python ci/select_tests.py --driver java --group unit       # single group
+#
+# Filter format note:
+#   Rust filters use "|" as separator in this config. cargo test uses substring
+#   matching (NOT regex), so the pipeline runner splits on "|" and runs cargo
+#   test once per filter.
+#
+# Test filter formats:
+#   rust unit:   cargo test --package sf_core --lib <filter>
+#   rust integ:  cargo test --package sf_core --test integration_tests <filter>
+#   rust e2e:    cargo test --package sf_core --test e2e_tests <filter>
+#   odbc unit:   cargo test --package odbc (no ctest filter — Rust inline tests only)
+#   odbc integ:  ctest -R <filter> (C++ integration tests)
+#   odbc e2e:    ctest -R <filter> (C++ e2e tests)
+#   python unit: pytest <paths> (tests/unit/)
+#   python integ: pytest <paths> (tests/integ/)
+#   python e2e:  pytest <paths> (tests/e2e/)
+#   java unit:   gradle --tests <filter>
+#   java e2e:    gradle --tests <filter>
+
+# =============================================================================
+# CORE (sf_core)
+#
+# Changes here run core tests AND propagate to ALL wrappers for the same feature.
+# =============================================================================
+core:
+  rules:
+    - name: authentication
+      paths:
+        - "sf_core/src/auth.rs"
+        - "sf_core/src/rest/snowflake/auth.rs"
+        - "sf_core/src/rest/snowflake/native_okta.rs"
+        - "sf_core/src/token_cache/**"
+        - "sf_core/tests/e2e/authentication/**"
+        - "sf_core/tests/integration/authentication/**"
+      tests:
+        rust:
+          unit: "auth"
+          integ: "authentication"
+          e2e: "authentication"
+        odbc:
+          integ: "integration_authentication"
+          e2e: "e2e_authentication"
+        python:
+          integ: "tests/integ/authentication"
+          e2e: "tests/e2e/authentication"
+        java:
+          e2e: "*Connection*"
+
+    - name: query
+      paths:
+        - "sf_core/src/rest/snowflake/query_request.rs"
+        - "sf_core/src/rest/snowflake/query_response.rs"
+        - "sf_core/src/rest/snowflake/async_exec.rs"
+        - "sf_core/src/apis/**/query.rs"
+        - "sf_core/src/apis/**/statement.rs"
+        - "sf_core/src/chunks.rs"
+        - "sf_core/src/arrow_utils.rs"
+        - "sf_core/src/query_types.rs"
+        - "sf_core/tests/e2e/query/**"
+        - "sf_core/tests/integration/query/**"
+      tests:
+        rust:
+          unit: "query|async_exec|chunks|arrow_utils"
+          integ: "query"
+          e2e: "query"
+        odbc:
+          e2e: "e2e_query|basic_execute|sql_fetch|sql_get_data|sql_bind_col|sql_row_count"
+        python:
+          integ: "tests/integ/test_cursor.py"
+          e2e: "tests/e2e/query"
+        java:
+          e2e: "*Statement*|*ResultSet*"
+
+    # Note: sf_core/src/protobuf/** is in fallback_paths (runs ALL) since protobuf
+    # changes are foundational and affect every component's type handling.
+
+    - name: tls
+      paths:
+        - "sf_core/src/tls/**"
+        - "sf_core/src/crl/**"
+        - "sf_core/tests/e2e/tls/**"
+      tests:
+        rust:
+          unit: "tls|crl"
+          e2e: "tls"
+        odbc:
+          e2e: "e2e_tls|crl"
+        python:
+          e2e: "tests/e2e/tls"
+
+    - name: put_get
+      paths:
+        - "sf_core/src/file_manager/**"
+        - "sf_core/src/compression.rs"
+        - "sf_core/src/compression_types.rs"
+        - "sf_core/tests/e2e/put_get/**"
+        - "sf_core/tests/integration/put_get/**"
+      tests:
+        rust:
+          integ: "put_get"
+          e2e: "put_get"
+        odbc:
+          e2e: "e2e_put_get|put_get"
+        python:
+          integ: "tests/integ/put_get"
+          e2e: "tests/e2e/put_get"
+
+    - name: session
+      paths:
+        - "sf_core/src/rest/snowflake/mod.rs"
+        - "sf_core/tests/e2e/session/**"
+        - "sf_core/tests/integration/session/**"
+      tests:
+        rust:
+          integ: "session"
+          e2e: "session"
+        python:
+          integ: "tests/integ/test_session_parameters.py"
+
+    - name: http
+      paths:
+        - "sf_core/src/http/**"
+        - "sf_core/tests/integration/http/**"
+      tests:
+        rust:
+          integ: "http|http_retry|retry|sync_retry"
+
+    - name: config
+      paths:
+        - "sf_core/src/config/**"
+        - "sf_core/tests/integration/config/**"
+      tests:
+        rust:
+          unit: "config"
+          integ: "config"
+        python:
+          unit: "tests/unit/test_config_manager.py"
+          integ: "tests/integ/config"
+
+    - name: connection
+      paths:
+        - "sf_core/src/apis/**/connection.rs"
+        - "sf_core/src/apis/**/database.rs"
+        - "sf_core/src/apis/**/global_state.rs"
+        - "sf_core/src/apis/**/session_parameters.rs"
+        - "sf_core/src/apis/**/alter_session_parser.rs"
+      tests:
+        rust:
+          unit: "connection|alter_session"
+        odbc:
+          integ: "integration_authentication"
+          e2e: "connecting|disconnect|free_handle|alloc_handle"
+        python:
+          integ: "tests/integ/test_connection.py"
+        java:
+          e2e: "*Connection*|*Driver*"
+
+    - name: logging
+      paths:
+        - "sf_core/src/logging/**"
+      tests:
+        rust:
+          unit: "logging"
+
+  # Core fallback: changes to these foundational files run ALL tests for ALL components
+  fallback_paths:
+    - "sf_core/src/lib.rs"
+    - "sf_core/src/c_api.rs"
+    - "sf_core/src/handle_manager.rs"
+    - "sf_core/src/sensitive.rs"
+    - "sf_core/src/async_bridge.rs"
+    - "sf_core/src/protobuf/**"
+    - "sf_core/src/apis/mod.rs"
+    - "sf_core/src/apis/**/mod.rs"
+    - "sf_core/src/apis/**/error.rs"
+    - "sf_core/src/rest/mod.rs"
+    - "sf_core/src/rest/snowflake/error.rs"
+    - "sf_core/Cargo.toml"
+    - "sf_core/build.rs"
+    - "sf_core/tests/common/**"
+
+
+# =============================================================================
+# ODBC WRAPPER
+#
+# Changes here ONLY trigger ODBC tests. Core is not affected.
+# =============================================================================
+odbc:
+  rules:
+    - name: types
+      paths:
+        - "odbc/src/conversion/**"
+        - "odbc/src/cdata_types.rs"
+        - "odbc_tests/tests/e2e/types/**"
+        - "odbc_tests/tests/datatype_tests/**"
+        - "odbc_tests/tests/bindings_tests/**"
+      tests:
+        odbc:
+          unit: "conversion|number_tests|numeric_literal"
+          e2e: "e2e_types|datatype|string_conversion|bindings|number"
+
+    - name: query
+      paths:
+        - "odbc/src/api/statement.rs"
+        - "odbc/src/api/data.rs"
+        - "odbc_tests/tests/e2e/query/**"
+      tests:
+        odbc:
+          unit: "data"
+          e2e: "e2e_query|basic_execute|sql_fetch|sql_get_data|sql_bind_col|sql_row_count"
+
+    - name: connection
+      paths:
+        - "odbc/src/api/connection.rs"
+        - "odbc/src/api/environment.rs"
+        - "odbc_tests/tests/odbc-api/connecting/**"
+        - "odbc_tests/tests/odbc-api/terminating_connection/**"
+      tests:
+        odbc:
+          e2e: "connecting|disconnect|free_handle|alloc_handle"
+
+    - name: authentication
+      paths:
+        - "odbc_tests/tests/e2e/authentication/**"
+        - "odbc_tests/tests/integration/authentication/**"
+      tests:
+        odbc:
+          integ: "integration_authentication"
+          e2e: "e2e_authentication"
+
+    - name: put_get
+      paths:
+        - "odbc_tests/tests/e2e/put_get/**"
+      tests:
+        odbc:
+          e2e: "e2e_put_get|put_get"
+
+    - name: tls
+      paths:
+        - "odbc_tests/tests/e2e/tls/**"
+      tests:
+        odbc:
+          e2e: "e2e_tls|crl"
+
+    - name: odbc_api
+      paths:
+        - "odbc/src/api/descriptor.rs"
+        - "odbc/src/api/diagnostic.rs"
+        - "odbc/src/api/handle_allocation.rs"
+        - "odbc/src/api/sql_state.rs"
+        - "odbc/src/api/types.rs"
+        - "odbc/src/api/utils.rs"
+        - "odbc/src/api/api_utils.rs"
+        - "odbc/src/api/bitmask.rs"
+        - "odbc_tests/tests/odbc-api/**"
+        - "odbc_tests/tests/basic_tests/**"
+      tests:
+        odbc:
+          unit: "sql_state"
+          e2e: "catalog|driver_info|preparing|get_cursor|set_cursor|execute|submitting|terminating|descriptor|basic"
+
+  # ODBC fallback: changes here run ALL ODBC tests (but not other wrappers)
+  fallback_paths:
+    - "odbc/src/lib.rs"
+    - "odbc/src/c_api.rs"
+    - "odbc/src/write_json.rs"
+    - "odbc/src/api/mod.rs"
+    - "odbc/src/api/error.rs"
+    - "odbc/src/conversion/mod.rs"
+    - "odbc/src/conversion/traits.rs"
+    - "odbc/Cargo.toml"
+    - "odbc_tests/CMakeLists.txt"
+    - "odbc_tests/common/**"
+
+
+# =============================================================================
+# PYTHON WRAPPER
+#
+# Changes here ONLY trigger Python tests. Core is not affected.
+# =============================================================================
+python:
+  rules:
+    - name: authentication
+      paths:
+        - "python/src/**/auth/**"
+        - "python/tests/e2e/authentication/**"
+        - "python/tests/integ/authentication/**"
+      tests:
+        python:
+          integ: "tests/integ/authentication"
+          e2e: "tests/e2e/authentication"
+
+    - name: query
+      paths:
+        - "python/src/**/cursor.py"
+        - "python/tests/e2e/query/**"
+        - "python/tests/integ/test_cursor.py"
+      tests:
+        python:
+          unit: "tests/unit/test_cursor.py"
+          integ: "tests/integ/test_cursor.py"
+          e2e: "tests/e2e/query"
+
+    - name: types
+      paths:
+        - "python/src/**/types.py"
+        - "python/src/**/type_codes.py"
+        - "python/src/**/arrow_context.py"
+        - "python/src/**/binding_converters.py"
+        - "python/src/**/nanoarrow_cpp/**"
+        - "python/tests/e2e/types/**"
+        - "python/tests/unit/test_types.py"
+        - "python/tests/unit/test_arrow_context.py"
+      tests:
+        python:
+          unit: "tests/unit/test_types.py tests/unit/test_arrow_context.py tests/unit/test_binding_converters.py"
+          e2e: "tests/e2e/types"
+
+    - name: connection
+      paths:
+        - "python/src/**/connection.py"
+        - "python/tests/integ/test_connection.py"
+      tests:
+        python:
+          unit: "tests/unit/test_connection.py"
+          integ: "tests/integ/test_connection.py"
+
+    - name: put_get
+      paths:
+        - "python/tests/e2e/put_get/**"
+        - "python/tests/integ/put_get/**"
+      tests:
+        python:
+          integ: "tests/integ/put_get"
+          e2e: "tests/e2e/put_get"
+
+    - name: tls
+      paths:
+        - "python/tests/e2e/tls/**"
+      tests:
+        python:
+          e2e: "tests/e2e/tls"
+
+    - name: config
+      paths:
+        - "python/src/**/config_manager.py"
+        - "python/tests/integ/config/**"
+      tests:
+        python:
+          unit: "tests/unit/test_config_manager.py"
+          integ: "tests/integ/config"
+
+    - name: logging
+      paths:
+        - "python/src/**/logging.py"
+        - "python/src/**/snow_logging.py"
+        - "python/tests/unit/test_logging.py"
+      tests:
+        python:
+          unit: "tests/unit/test_logging.py"
+
+    - name: packaging
+      paths:
+        - "python/tests/packaging/**"
+        - "python/setup.py"
+        - "python/MANIFEST.in"
+      tests:
+        python:
+          unit: "tests/packaging"
+
+    - name: unit
+      paths:
+        - "python/tests/unit/**"
+      tests:
+        python:
+          unit: "tests/unit"
+
+  # Python fallback: changes here run ALL Python tests (but not other wrappers)
+  fallback_paths:
+    - "python/src/snowflake/connector/__init__.py"
+    - "python/src/snowflake/connector/_core/**"
+    - "python/src/snowflake/connector/_internal/__init__.py"
+    - "python/src/snowflake/connector/_internal/api_client/**"
+    - "python/src/snowflake/connector/_internal/snowflake_restful.py"
+    - "python/src/snowflake/connector/errors.py"
+    - "python/src/snowflake/connector/constants.py"
+    - "python/src/snowflake/connector/compat.py"
+    - "python/pyproject.toml"
+    - "python/hatch_build.py"
+
+
+# =============================================================================
+# JDBC WRAPPER
+#
+# Changes here ONLY trigger JDBC tests. Core is not affected.
+# =============================================================================
+java:
+  rules:
+    - name: types
+      paths:
+        - "jdbc/**/arrow/**"
+        - "jdbc/**/converters/**"
+        - "jdbc/src/test/**/e2e/types/**"
+      tests:
+        java:
+          unit: "*Converter*|*ArrowBatchManager*|*SchemaState*|*SnowflakeResultSetCursor*"
+          e2e: "*BooleanTests|*DateTests|*DecfloatTests|*FloatTests|*IntTests|*NumberTests|*StringTests|*StringLobTests"
+
+    - name: connection
+      paths:
+        - "jdbc/**/connection/**"
+        - "jdbc/**/SnowflakeDriver*"
+      tests:
+        java:
+          unit: "*ConnectionOptionsResolver*|*SnowflakeDriverTest"
+          e2e: "*Connection*|*Driver*"
+
+    - name: query
+      paths:
+        - "jdbc/**/statement/**"
+        - "jdbc/**/resultset/**"
+      tests:
+        java:
+          unit: "*PreparedStatementBinding*|*SnowflakeStatementTest|*SnowflakeResultSetGetters*"
+          e2e: "*Statement*|*ResultSet*"
+
+    - name: logging
+      paths:
+        - "jdbc/**/log/**"
+        - "jdbc_bridge/src/slf4j_layer.rs"
+      tests:
+        java:
+          unit: "*Logger*"
+
+    - name: security
+      paths:
+        - "jdbc/**/util/MaskedExceptionTest*"
+        - "jdbc/**/util/SecretDetectorTest*"
+      tests:
+        java:
+          unit: "*MaskedExceptionTest|*SecretDetectorTest"
+
+  # JDBC fallback: changes here run ALL JDBC tests (but not other wrappers)
+  fallback_paths:
+    - "jdbc_bridge/**"
+    - "jdbc/build.gradle"
+    - "jdbc/**/unicore/**"
+    - "jdbc/**/JNICoreTransport*"
+    - "jdbc/src/main/java/net/snowflake/client/api/**"
+    - "jdbc/src/main/java/net/snowflake/client/jdbc/**"
+    - "jdbc/src/main/resources/**"
+
+
+# =============================================================================
+# SHARED INFRASTRUCTURE
+#
+# Changes to these paths run ALL tests for ALL components.
+# =============================================================================
+shared_fallback_paths:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "build_common.rs"
+  - "rust-toolchain.toml"
+  - "error_trace/**"
+  - "error_trace_derive/**"
+  - "protobuf/**"
+  - "thrift/**"
+  - "proto_utils/**"
+  - "proto_generator/**"
+  - ".github/workflows/**"
+  - "scripts/**"
+  - "ci/**"
+  - "tests/definitions/**"

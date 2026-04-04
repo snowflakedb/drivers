@@ -283,10 +283,11 @@ impl LoginMethod {
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
+        let auth_upper = authenticator.to_ascii_uppercase();
 
         // Auto-detect JWT authentication if private key params are present
         // and authenticator is not explicitly set to something else
-        let use_jwt = authenticator == "SNOWFLAKE_JWT"
+        let use_jwt = auth_upper == "SNOWFLAKE_JWT"
             || (authenticator.is_empty() && Self::has_private_key_params(settings));
 
         if use_jwt {
@@ -300,8 +301,8 @@ impl LoginMethod {
             });
         }
 
-        match authenticator.as_str() {
-            "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
+        match auth_upper.as_str() {
+            "SNOWFLAKE" | "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
                 username: Self::non_empty_string(settings, "user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 password: Self::non_empty_string(settings, "password")
@@ -315,7 +316,7 @@ impl LoginMethod {
                     .context(MissingParameterSnafu { parameter: "token" })?
                     .into(),
             }),
-            _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
+            _ if auth_upper.starts_with("HTTPS://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
                 // This is intentionally broad (vanity domains may not contain "okta").
                 // Validate the URL is well-formed early to provide a clear error message.
@@ -389,7 +390,7 @@ impl LoginMethod {
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA, or an https:// URL for native Okta SSO",
+                explanation: "Allowed values are snowflake, snowflake_jwt, snowflake_password, programmatic_access_token, username_password_mfa, or an https:// URL for native Okta SSO (case-insensitive)",
             }
             .fail()?,
         }
@@ -543,6 +544,82 @@ mod tests {
                 assert_eq!(password.reveal(), "test_password");
             }
             _ => panic!("Expected Password login method"),
+        }
+    }
+
+    #[test]
+    fn test_snowflake_lowercase_resolves_to_password() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+            ("authenticator", Setting::String("snowflake".to_string())),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::Password { username, password } => {
+                assert_eq!(username, "test_user");
+                assert_eq!(password.reveal(), "test_password");
+            }
+            _ => panic!("Expected Password login method for 'snowflake'"),
+        }
+    }
+
+    #[test]
+    fn test_snowflake_mixed_case_resolves_to_password() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+            ("authenticator", Setting::String("Snowflake".to_string())),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::Password { .. } => {}
+            _ => panic!("Expected Password login method for 'Snowflake'"),
+        }
+    }
+
+    #[test]
+    fn test_pat_lowercase_resolves_to_pat() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("token", Setting::String("test_token".to_string())),
+            (
+                "authenticator",
+                Setting::String("programmatic_access_token".to_string()),
+            ),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::Pat { username, token } => {
+                assert_eq!(username, "test_user");
+                assert_eq!(token.reveal(), "test_token");
+            }
+            _ => panic!("Expected Pat login method for lowercase 'programmatic_access_token'"),
+        }
+    }
+
+    #[test]
+    fn test_mfa_lowercase_resolves_to_mfa() {
+        let settings = create_test_settings(vec![
+            ("user", Setting::String("test_user".to_string())),
+            ("password", Setting::String("test_password".to_string())),
+            (
+                "authenticator",
+                Setting::String("username_password_mfa".to_string()),
+            ),
+        ]);
+
+        let result = LoginMethod::from_settings(&settings);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            LoginMethod::UserPasswordMfa { .. } => {}
+            _ => panic!("Expected UserPasswordMfa login method"),
         }
     }
 

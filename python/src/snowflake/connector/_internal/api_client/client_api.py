@@ -128,7 +128,9 @@ def _convert_application_error(proto_exc: ProtoApplicationException) -> Error:
     # Prefer the server-provided sql_state; fall back to a type-derived value.
     sqlstate = _get_optional_str(driver_exc, "sql_state") or _derive_sqlstate(driver_exc)
 
-    return exc_class(message, errno=errno, sqlstate=sqlstate)
+    sfqid = _get_optional_str(driver_exc, "query_id")
+
+    return exc_class(message, errno=errno, sqlstate=sqlstate, sfqid=sfqid)
 
 
 def _get_optional_int(msg: Any, field: str) -> int | None:

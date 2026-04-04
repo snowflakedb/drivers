@@ -52,7 +52,8 @@ where
         Some(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
-                .with_writer(log_file),
+                .with_writer(log_file)
+                .with_filter(LevelFilter::INFO),
         )
     } else {
         None
