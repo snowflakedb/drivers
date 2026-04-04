@@ -391,6 +391,28 @@ pub(crate) fn validate_statement_option_write(
     Ok(())
 }
 
+/// Collect string-typed settings whose keys are not recognized by the param
+/// registry. These are forwarded as session parameters at login time so that
+/// drivers can set arbitrary Snowflake session parameters (e.g. `QUERY_TAG`)
+/// via regular connection options.
+pub(crate) fn collect_unknown_settings(settings: &ParamStore) -> HashMap<String, String> {
+    let registry = param_registry::registry();
+    settings
+        .iter()
+        .filter(|(key, _)| registry.resolve(key).is_none())
+        .filter_map(|(key, value)| {
+            let str_value = match value {
+                Setting::String(s) => s.clone(),
+                Setting::Int(i) => i.to_string(),
+                Setting::Bool(b) => b.to_string(),
+                Setting::Double(d) => d.to_string(),
+                Setting::Bytes(_) => return None,
+            };
+            Some((key.to_uppercase(), str_value))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,5 +788,32 @@ mod tests {
                 "abc_test.snowflakecomputing.com".to_string()
             )),
         );
+    }
+
+    #[test]
+    fn collect_unknown_settings_returns_only_unregistered_keys() {
+        let mut store = ParamStore::new();
+        // Known key — should NOT appear in result
+        store.insert(
+            "host".to_string(),
+            Setting::String("example.com".to_string()),
+        );
+        // Unknown string key — should appear uppercased
+        store.insert(
+            "query_tag".to_string(),
+            Setting::String("my_tag".to_string()),
+        );
+        // Unknown non-string keys — should be stringified
+        store.insert("some_int_key".to_string(), Setting::Int(42));
+        store.insert("some_bool_key".to_string(), Setting::Bool(true));
+
+        let unknown = collect_unknown_settings(&store);
+
+        assert_eq!(unknown.len(), 3);
+        assert_eq!(unknown.get("QUERY_TAG"), Some(&"my_tag".to_string()));
+        assert_eq!(unknown.get("SOME_INT_KEY"), Some(&"42".to_string()));
+        assert_eq!(unknown.get("SOME_BOOL_KEY"), Some(&"true".to_string()));
+        assert!(!unknown.contains_key("host"));
+        assert!(!unknown.contains_key("HOST"));
     }
 }

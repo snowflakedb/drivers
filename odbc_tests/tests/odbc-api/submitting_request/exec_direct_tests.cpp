@@ -11,7 +11,6 @@
 #include "ODBCFixtures.hpp"
 #include "Schema.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -408,8 +407,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: HY010 during SQL_NEED_DA
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecDirect: 24000 for cursor already open",
                  "[odbc-api][execdirect][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

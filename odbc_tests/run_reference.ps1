@@ -99,6 +99,9 @@ try {
 
     New-Item -ItemType Directory -Force -Path cmake-build-reference | Out-Null
     $cmakeArgs = @("-B", "cmake-build-reference", "-D", "DRIVER_TYPE=OLD")
+    if (Get-Command ccache -ErrorAction SilentlyContinue) {
+        $cmakeArgs += @("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", "-DCMAKE_C_COMPILER_LAUNCHER=ccache")
+    }
     $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } elseif ($env:VCPKG_ROOT) { $env:VCPKG_ROOT } else { $null }
     if ($vcpkgRoot) {
         $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$vcpkgRoot/scripts/buildsystems/vcpkg.cmake"

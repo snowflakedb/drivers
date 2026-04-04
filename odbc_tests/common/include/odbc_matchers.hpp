@@ -2,12 +2,10 @@
 #define ODBC_MATCHERS_HPP
 
 #include <sql.h>
-#include <sqlext.h>
 
 #include <string>
 #include <vector>
 
-#include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_tostring.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 
@@ -26,7 +24,8 @@ struct OdbcResult {
     }
   }
 
-  OdbcResult(SQLRETURN ret, const HandleWrapper& handle) : OdbcResult(ret, handle.getType(), handle.getHandle()) {}
+  OdbcResult(const SQLRETURN ret, const HandleWrapper& handle)
+      : OdbcResult(ret, handle.getType(), handle.getHandle()) {}
 };
 
 namespace Catch {

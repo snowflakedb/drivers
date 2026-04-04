@@ -17,8 +17,6 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::RestError;
 use crate::rest::snowflake::logout::logout_session;
-use snafu::ResultExt;
-use std::sync::{Arc, Mutex};
 
 /// Data extracted from a locked connection needed to perform HTTP logout.
 pub(super) struct LogoutData {
@@ -144,15 +142,11 @@ fn validate_config(config: &LogoutConfig) -> Result<(), ApiError> {
 /// - `Ok(None)`: Logout should be skipped (explicit config or missing fields)
 /// - `Err(ApiError)`: Validation failed or preparation error (error_strategy decides propagation)
 pub(super) fn prepare_logout(
-    conn_ptr: &Arc<Mutex<Connection>>,
+    conn: &Connection,
     config: &LogoutConfig,
 ) -> Result<Option<LogoutData>, ApiError> {
     // Validate config first
     validate_config(config)?;
-
-    let conn = conn_ptr
-        .lock()
-        .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
     tracing::info!("Closing connection");
 
@@ -176,7 +170,7 @@ pub(super) fn prepare_logout(
     ) {
         (Some(client), Some(url), Some(info)) => {
             // Try to create RefreshContext - if it fails, this is a preparation failure
-            let refresh_ctx = RefreshContext::new(&conn)?;
+            let refresh_ctx = RefreshContext::new(conn)?;
 
             let mut retry_policy = conn.retry_policy.clone();
             if let Some(max_attempts) = config.max_attempts {
@@ -217,26 +211,28 @@ pub(super) fn prepare_logout(
 ///
 /// Uses the same RefreshContext loop pattern as statement.rs.
 pub(super) fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
-    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+    let handle = tokio::runtime::Handle::current();
     let mut ctx = data.refresh_ctx;
 
-    let result = rt.block_on(async {
-        let mut last_error: Option<RestError> = None;
-        loop {
-            let session_token = ctx.refresh_token(last_error).await?;
-            match logout_session(
-                &data.client,
-                &data.url,
-                &session_token,
-                &data.info,
-                &data.retry_policy,
-            )
-            .await
-            {
-                Ok(()) => return Ok(()),
-                Err(e) => last_error = Some(e),
+    let result = tokio::task::block_in_place(|| {
+        handle.block_on(async {
+            let mut last_error: Option<RestError> = None;
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match logout_session(
+                    &data.client,
+                    &data.url,
+                    session_token.reveal(),
+                    &data.info,
+                    &data.retry_policy,
+                )
+                .await
+                {
+                    Ok(()) => return Ok(()),
+                    Err(e) => last_error = Some(e),
+                }
             }
-        }
+        })
     });
 
     // Remap ApiError::Query (from RefreshContext) to ApiError::LogoutFailed

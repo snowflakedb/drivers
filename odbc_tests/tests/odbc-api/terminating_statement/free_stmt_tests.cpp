@@ -344,7 +344,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQL_CLOSE after DML",
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQLNumResultCols after SQL_CLOSE on prepared statement",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_OLD_DRIVER("BD#22", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
+  SKIP_OLD_DRIVER("BD#20", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1, 2, 3"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -619,7 +619,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: prepared flag preserved th
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQLDescribeCol after SQL_CLOSE on prepared statement",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_OLD_DRIVER("BD#23", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
+  SKIP_OLD_DRIVER("BD#21", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1 AS COL_A, 2 AS COL_B"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -699,7 +699,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
 TEST_CASE_METHOD(StmtDefaultDSNFixture,
                  "SQLFreeStmt: SQLDescribeCol works after Prepare, fetch to Done, then SQL_CLOSE",
                  "[odbc-api][freestmt][terminating_statement]") {
-  SKIP_OLD_DRIVER("BD#23", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
+  SKIP_OLD_DRIVER("BD#21", "Old driver does not preserve column metadata after SQL_CLOSE on prepared statement");
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1 AS COL_X"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -780,8 +780,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: SQLDescribeCol after SQL_C
   SQLSMALLINT nullable = 0;
   ret = SQLDescribeCol(stmt_handle(), 1, col_name, sizeof(col_name), &name_len, &data_type, &col_size, &decimal_digits,
                        &nullable);
-  OLD_DRIVER_ONLY("BD#23") { REQUIRE_EXPECTED_ERROR(ret, "07009", stmt_handle(), SQL_HANDLE_STMT); }
-  NEW_DRIVER_ONLY("BD#23") {
+  OLD_DRIVER_ONLY("BD#21") { REQUIRE_EXPECTED_ERROR(ret, "07009", stmt_handle(), SQL_HANDLE_STMT); }
+  NEW_DRIVER_ONLY("BD#21") {
     REQUIRE(ret == SQL_SUCCESS);
     CHECK(std::string(reinterpret_cast<char*>(col_name)) == "COL_A");
   }

@@ -32,8 +32,8 @@ TEST_CASE("SQLRowCount returns HY009 when called with null pointer.", "[query]")
   ret = SQLRowCount(stmt.getHandle(), nullptr);
 
   // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY009 (Invalid use of null pointer)
-  OLD_DRIVER_ONLY("BD#27") { REQUIRE(ret == SQL_SUCCESS); }
-  NEW_DRIVER_ONLY("BD#27") {
+  OLD_DRIVER_ONLY("BD#25") { REQUIRE(ret == SQL_SUCCESS); }
+  NEW_DRIVER_ONLY("BD#25") {
     REQUIRE(ret == SQL_ERROR);
     CHECK(get_sqlstate(stmt) == "HY009");
   }

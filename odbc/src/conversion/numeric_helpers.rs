@@ -26,6 +26,45 @@ pub fn fractional_warning(has_fractional: bool) -> Warnings {
     }
 }
 
+pub fn check_leading_precision(
+    abs_int: u128,
+    display_value: impl std::fmt::Display,
+    binding: &Binding,
+) -> Result<(), WriteOdbcError> {
+    let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
+    let exceeds = if leading_precision >= 39 {
+        // u128 values have at most 39 digits, so any u128 fits within
+        // a precision of 39+ digits.
+        false
+    } else {
+        abs_int >= 10u128.pow(leading_precision)
+    };
+    if exceeds {
+        return IntervalFieldOverflowSnafu {
+            reason: format!(
+                "Value {display_value} exceeds leading field precision of {leading_precision} digits"
+            ),
+        }
+        .fail();
+    }
+    Ok(())
+}
+
+pub fn checked_u32(
+    abs_int: u128,
+    display_value: impl std::fmt::Display,
+) -> Result<u32, WriteOdbcError> {
+    u32::try_from(abs_int).map_err(|_| {
+        IntervalFieldOverflowSnafu {
+            reason: format!(
+                "Value {display_value} exceeds maximum interval field value ({})",
+                u32::MAX
+            ),
+        }
+        .build()
+    })
+}
+
 pub fn whole_digits_len(num_str: &str) -> usize {
     match num_str.find('.') {
         Some(pos) => pos,
@@ -76,17 +115,8 @@ pub fn write_single_field_interval(
     binding: &Binding,
 ) -> Result<Warnings, WriteOdbcError> {
     let abs_int = int_value.unsigned_abs();
-    let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
-    let max_leading = 10u128.pow(leading_precision);
-    if abs_int >= max_leading {
-        return IntervalFieldOverflowSnafu {
-            reason: format!(
-                "Value {int_value} exceeds leading field precision of {leading_precision} digits"
-            ),
-        }
-        .fail();
-    }
-    let field_val = abs_int as u32;
+    check_leading_precision(abs_int, int_value, binding)?;
+    let field_val = checked_u32(abs_int, int_value)?;
     let is_negative = is_source_negative && field_val > 0;
     let mut interval = sql::IntervalStruct {
         interval_type: 0,
@@ -159,28 +189,15 @@ pub fn compute_interval_fraction(abs_value: u128, scale: u32) -> (u32, bool) {
     }
 }
 
-/// Builds and writes an `IntervalStruct` for IntervalSecond, including the
-/// fractional microseconds component. Checks leading precision overflow.
-pub fn write_interval_second(
-    int_value: i128,
-    abs_raw_value: u128,
-    scale: u32,
+/// Writes a fully-computed IntervalSecond struct to the binding.
+/// Shared by both FLOAT (f64-based fraction) and DECFLOAT/NUMBER (integer-based fraction).
+pub fn build_and_write_interval_second(
+    second_val: u32,
+    frac_value: u32,
+    frac_truncated: bool,
     is_source_negative: bool,
     binding: &Binding,
-) -> Result<Warnings, WriteOdbcError> {
-    let abs_int = int_value.unsigned_abs();
-    let leading_precision = binding.datetime_interval_precision.unwrap_or(2) as u32;
-    let max_leading = 10u128.pow(leading_precision);
-    if abs_int >= max_leading {
-        return IntervalFieldOverflowSnafu {
-            reason: format!(
-                "Value {int_value} exceeds leading field precision of {leading_precision} digits"
-            ),
-        }
-        .fail();
-    }
-    let second_val = abs_int as u32;
-    let (frac_value, frac_truncated) = compute_interval_fraction(abs_raw_value, scale);
+) -> Warnings {
     let is_negative = is_source_negative && (second_val > 0 || frac_value > 0);
     let interval = sql::IntervalStruct {
         interval_type: sql::Interval::Second as i32,
@@ -196,11 +213,33 @@ pub fn write_interval_second(
         },
     };
     binding.write_fixed(interval);
-    Ok(if frac_truncated {
+    if frac_truncated {
         vec![Warning::NumericValueTruncated]
     } else {
         vec![]
-    })
+    }
+}
+
+/// Builds and writes an `IntervalStruct` for IntervalSecond, including the
+/// fractional microseconds component. Checks leading precision overflow.
+pub fn write_interval_second(
+    int_value: i128,
+    abs_raw_value: u128,
+    scale: u32,
+    is_source_negative: bool,
+    binding: &Binding,
+) -> Result<Warnings, WriteOdbcError> {
+    let abs_int = int_value.unsigned_abs();
+    check_leading_precision(abs_int, int_value, binding)?;
+    let second_val = checked_u32(abs_int, int_value)?;
+    let (frac_value, frac_truncated) = compute_interval_fraction(abs_raw_value, scale);
+    Ok(build_and_write_interval_second(
+        second_val,
+        frac_value,
+        frac_truncated,
+        is_source_negative,
+        binding,
+    ))
 }
 
 pub fn reject_multi_field_interval(target_type: CDataType) -> Result<Warnings, WriteOdbcError> {

@@ -10,6 +10,7 @@ use sf_core::protobuf::generated::database_driver_v1::{
     StatementNewRequest, StatementReleaseRequest,
 };
 use snafu::ResultExt;
+use tokio_util::sync::CancellationToken;
 use tracing;
 
 /// Allocate a new environment handle
@@ -70,6 +71,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 max_length: 0,
                 used_extended_fetch: false,
                 last_query_id: None,
+                cancel_token: CancellationToken::new(),
             });
             Ok(Box::into_raw(stmt))
         }

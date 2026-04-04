@@ -4,7 +4,9 @@ extern crate tracing_subscriber;
 
 use super::arrow_deserialize::ArrowDeserialize;
 use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
-use arrow::array::{Array, ArrayRef, AsArray};
+use arrow::array::{
+    Array, ArrayRef, AsArray, Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array,
+};
 use arrow::buffer::NullBuffer;
 use arrow::compute::kernels::cmp::not_distinct;
 use arrow::datatypes::{DataType, FieldRef, Schema};
@@ -192,6 +194,17 @@ pub fn assert_schemas_match(left: &Schema, right: &Schema) {
     }
 }
 
+fn is_integer_or_decimal(dt: &DataType) -> bool {
+    matches!(
+        dt,
+        DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::Decimal128(_, _)
+    )
+}
+
 fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
     assert_eq!(left.name(), right.name(), "Field name mismatch");
     assert_eq!(
@@ -200,18 +213,26 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
         "Nullability mismatch for field '{}'",
         left.name()
     );
-    assert_eq!(
-        discriminant(left.data_type()),
-        discriminant(right.data_type()),
-        "Data type variant mismatch for field '{}', left type: {:?}, right type: {:?}",
-        left.name(),
-        left.data_type(),
-        right.data_type()
-    );
+
     let logical_type = left
         .metadata()
         .get("logicalType")
         .unwrap_or_else(|| panic!("logicalType metadata key missing for field {}", left.name()));
+
+    // FIXED columns may use different integer widths (e.g. Arrow-native Int8
+    // vs JSON-converted Int64). Accept any integer/decimal pair.
+    let is_fixed = logical_type == "FIXED";
+    if !is_fixed {
+        assert_eq!(
+            discriminant(left.data_type()),
+            discriminant(right.data_type()),
+            "Data type variant mismatch for field '{}', left type: {:?}, right type: {:?}",
+            left.name(),
+            left.data_type(),
+            right.data_type()
+        );
+    }
+
     let excluded = metadata_keys_to_exclude(logical_type);
 
     let filter_metadata = |metadata: &BTreeMap<String, String>| -> BTreeMap<String, String> {
@@ -251,6 +272,15 @@ fn assert_fields_match(left: &FieldRef, right: &FieldRef) {
                 .zip(right_fields.iter())
                 .for_each(|(a, j)| assert_fields_match(a, j));
         }
+        (left_dt, right_dt) if is_fixed => {
+            assert!(
+                is_integer_or_decimal(left_dt) && is_integer_or_decimal(right_dt),
+                "FIXED field '{}' has non-numeric types: left={:?}, right={:?}",
+                left.name(),
+                left_dt,
+                right_dt
+            );
+        }
         (left_data_type, right_data_type) => {
             assert_eq!(
                 left_data_type,
@@ -283,7 +313,100 @@ pub fn assert_record_batches_match(left: &RecordBatch, right: &RecordBatch) {
     }
 }
 
+fn integer_value(array: &ArrayRef, idx: usize) -> Option<i128> {
+    if array.is_null(idx) {
+        return None;
+    }
+    match array.data_type() {
+        DataType::Int8 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int8Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Int16 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int16Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Int32 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Int64 => Some(
+            array
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .value(idx) as i128,
+        ),
+        DataType::Decimal128(_, _) => Some(
+            array
+                .as_any()
+                .downcast_ref::<Decimal128Array>()
+                .unwrap()
+                .value(idx),
+        ),
+        _ => panic!(
+            "Expected integer or decimal array, got {:?}",
+            array.data_type()
+        ),
+    }
+}
+
 fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
+    if is_integer_or_decimal(left.data_type()) && is_integer_or_decimal(right.data_type()) {
+        assert_integer_or_decimal_arrays_match(left, right, field_path)
+    } else {
+        assert_other_arrays_match(left, right, field_path)
+    }
+}
+
+// For fixed fields we do not care about exact type, just the value
+// This is because backend uses specific types depending on the column values
+// In JSON parser we convert all integers to Int64 or Decimal128 (if some value is too large for Int64)
+// Downstream converters don't(or should not) differentiate between different fixed representations
+fn assert_integer_or_decimal_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
+    let mismatches: Vec<(usize, String)> = (0..left.len())
+        .filter_map(|idx| {
+            let left_value = integer_value(left, idx);
+            let right_value = integer_value(right, idx);
+            if left_value != right_value {
+                Some((
+                    idx,
+                    format!(
+                        "At {idx} | {}: {:?} != {}: {:?}",
+                        left.data_type(),
+                        left_value,
+                        right.data_type(),
+                        right_value
+                    ),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (_, mismatch) in mismatches.iter().take(5) {
+        println!("Mismatch in {field_path}: {mismatch}");
+    }
+
+    let indices: Vec<usize> = mismatches.iter().map(|(idx, _)| *idx).collect();
+
+    assert!(
+        mismatches.is_empty(),
+        "'{field_path}' has mismatched values at rows: {indices:?}",
+    );
+}
+
+fn assert_other_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
     match (left.data_type(), right.data_type()) {
         (DataType::Struct(_), DataType::Struct(_)) => {
             let left_struct = left.as_struct();
@@ -299,7 +422,7 @@ fn assert_arrays_match(left: &ArrayRef, right: &ArrayRef, field_path: &str) {
                 // filler values at positions where the parent struct is null
                 let left_child = nullify_child(left_struct.nulls(), left_struct.column(i));
                 let right_child = nullify_child(right_struct.nulls(), right_struct.column(i));
-                assert_arrays_match(&left_child, &right_child, &child_name);
+                assert_other_arrays_match(&left_child, &right_child, &child_name);
             }
         }
         _ => {

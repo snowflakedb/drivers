@@ -325,12 +325,35 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_connection_option_bool(&self, option_name: &str, option_value: bool) {
-        DatabaseDriverClient::connection_set_option_bool(ConnectionSetOptionBoolRequest {
+        self.client
+            .connection_set_option_bool_blocking(ConnectionSetOptionBoolRequest {
+                conn_handle: Some(self.conn_handle),
+                key: option_name.to_string(),
+                value: option_value,
+            })
+            .unwrap();
+    }
+
+    /// Initialize the connection (calls connection_init_blocking)
+    #[allow(clippy::result_large_err)]
+    pub fn init_connection_blocking(
+        &self,
+    ) -> Result<ConnectionInitResponse, proto_utils::ProtoError<DriverException>> {
+        self.client.connection_init_blocking(ConnectionInitRequest {
             conn_handle: Some(self.conn_handle),
-            key: option_name.to_string(),
-            value: option_value,
+            db_handle: Some(self.db_handle),
         })
-        .unwrap();
+    }
+
+    /// Close the connection (calls connection_close_blocking)
+    #[allow(clippy::result_large_err)]
+    pub fn close_connection_blocking(
+        &self,
+    ) -> Result<ConnectionCloseResponse, proto_utils::ProtoError<DriverException>> {
+        self.client
+            .connection_close_blocking(ConnectionCloseRequest {
+                conn_handle: Some(self.conn_handle),
+            })
     }
 
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {

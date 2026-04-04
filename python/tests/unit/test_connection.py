@@ -9,6 +9,7 @@ import pytest
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
     ConnectionGetInfoResponse,
+    ConnectionGetQueryStatusResponse,
     ConnectionHandle,
     ConnectionSetOptionsResponse,
     DatabaseHandle,
@@ -259,7 +260,7 @@ class TestConnectionSetOptions:
 
         assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout"}
+        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}
 
     def test_validation_warnings_forwarded_via_warnings_warn(self, mock_db_api):
         """ValidationIssue warnings from the response should be surfaced via warnings.warn."""
@@ -283,14 +284,17 @@ class TestConnectionSetOptions:
         assert "param 'x' is deprecated" in str(caught[0].message)
         assert "param 'y' has no effect" in str(caught[1].message)
 
-    def test_no_options_skips_rpc(self, mock_db_api):
-        """When there are no typed kwargs, connection_set_options should not be called."""
+    def test_no_user_options_sends_only_client_app_id(self, mock_db_api):
+        """When there are no user-supplied kwargs, only the injected client_app_id is sent."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(session_parameters={"AUTOCOMMIT": "true"})
 
-        mock_db_api.connection_set_options.assert_not_called()
+        assert mock_db_api.connection_set_options.call_count == 1
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert set(request.options.keys()) == {"client_app_id"}
+        assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
 
 
 class TestContextManagerUnit:
@@ -518,6 +522,67 @@ class TestIsAnError:
         assert Connection.is_an_error(status) == expected
 
 
+class TestApplicationProperty:
+    """Unit tests for the Connection.application property."""
+
+    def test_application_defaults_to_python_connector(self, connection):
+        assert connection.application == "PythonConnector"
+
+    def test_application_custom_value(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="MyApp")
+        assert conn.application == "MyApp"
+
+    def test_application_maps_to_client_app_id_option(self, mock_db_api):
+        """The application value should be forwarded to sf_core as client_app_id."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", application="CustomApp")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value="CustomApp")
+        assert "application" not in request.options
+
+    def test_application_none_defaults_to_client_name(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application=None)
+        assert conn.application == "PythonConnector"
+
+    def test_application_empty_string_defaults_to_client_name(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="")
+        assert conn.application == "PythonConnector"
+
+    def test_application_rejects_non_string(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            with pytest.raises(ProgrammingError, match="Invalid application parameter"):
+                Connection(user="u", account="a", application=123)
+
+    def test_application_rejects_invalid_characters(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            with pytest.raises(ProgrammingError, match="Invalid application name"):
+                Connection(user="u", account="a", application="My App!")
+
+    def test_application_not_in_stored_kwargs(self, mock_db_api):
+        """application should be popped from kwargs so it doesn't leak into stored kwargs."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="MyApp")
+        assert "application" not in conn.kwargs
+
+
 class TestConnectionArrowProperties:
     """Unit tests for Connection properties (getters/setters)."""
 
@@ -543,3 +608,95 @@ class TestConnectionArrowProperties:
 
         connection.arrow_number_to_decimal = 0
         assert connection.arrow_number_to_decimal is False
+
+
+class TestGetQueryStatus:
+    """Unit tests for Connection.get_query_status."""
+
+    @pytest.mark.parametrize(
+        "status_name, expected",
+        [
+            ("SUCCESS", QueryStatus.SUCCESS),
+            ("RUNNING", QueryStatus.RUNNING),
+            ("FAILED_WITH_ERROR", QueryStatus.FAILED_WITH_ERROR),
+            ("QUEUED", QueryStatus.QUEUED),
+            ("ABORTING", QueryStatus.ABORTING),
+            ("ABORTED", QueryStatus.ABORTED),
+            ("RESUMING_WAREHOUSE", QueryStatus.RESUMING_WAREHOUSE),
+            ("QUEUED_REPARING_WAREHOUSE", QueryStatus.QUEUED_REPARING_WAREHOUSE),
+            ("FAILED_WITH_INCIDENT", QueryStatus.FAILED_WITH_INCIDENT),
+            ("DISCONNECTED", QueryStatus.DISCONNECTED),
+            ("RESTARTED", QueryStatus.RESTARTED),
+            ("BLOCKED", QueryStatus.BLOCKED),
+            ("NO_DATA", QueryStatus.NO_DATA),
+        ],
+    )
+    def test_maps_status_name_to_enum(self, connection, mock_db_api, status_name, expected):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name=status_name,
+        )
+        assert connection.get_query_status("test-query-id") == expected
+
+    def test_unknown_status_returns_no_data(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SOME_FUTURE_STATUS",
+        )
+        assert connection.get_query_status("test-query-id") == QueryStatus.NO_DATA
+
+    def test_passes_correct_conn_handle_and_query_id(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SUCCESS",
+        )
+        connection.get_query_status("abc-123")
+
+        args, _ = mock_db_api.connection_get_query_status.call_args
+        request = args[0]
+        assert request.conn_handle == connection.conn_handle
+        assert request.query_id == "abc-123"
+
+    def test_propagates_proto_error(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.side_effect = ProgrammingError("Query not found")
+        with pytest.raises(ProgrammingError, match="Query not found"):
+            connection.get_query_status("invalid-id")
+
+
+class TestGetQueryStatusThrowIfError:
+    """Unit tests for Connection.get_query_status_throw_if_error."""
+
+    def test_returns_status_on_success(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="SUCCESS",
+        )
+        assert connection.get_query_status_throw_if_error("qid") == QueryStatus.SUCCESS
+
+    def test_returns_status_when_running(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="RUNNING",
+        )
+        assert connection.get_query_status_throw_if_error("qid") == QueryStatus.RUNNING
+
+    def test_raises_on_error_status_with_details(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="FAILED_WITH_ERROR",
+            error_code=1003,
+            error_message="SQL compilation error",
+        )
+        with pytest.raises(ProgrammingError, match="SQL compilation error") as exc_info:
+            connection.get_query_status_throw_if_error("failed-qid")
+        assert exc_info.value.errno == 1003
+        assert exc_info.value.sfqid == "failed-qid"
+
+    def test_raises_on_aborted_status(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="ABORTED",
+        )
+        with pytest.raises(ProgrammingError) as exc_info:
+            connection.get_query_status_throw_if_error("aborted-qid")
+        assert exc_info.value.sfqid == "aborted-qid"
+
+    def test_raises_with_fallback_message_when_no_error_message(self, connection, mock_db_api):
+        mock_db_api.connection_get_query_status.return_value = ConnectionGetQueryStatusResponse(
+            status_name="FAILED_WITH_ERROR",
+        )
+        with pytest.raises(ProgrammingError, match="Query failed-qid-2 failed"):
+            connection.get_query_status_throw_if_error("failed-qid-2")

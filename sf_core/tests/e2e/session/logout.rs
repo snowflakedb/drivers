@@ -5,8 +5,6 @@
 //! Core-specific integration tests with mock servers are in tests/integration/session/logout.rs.
 
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf::generated::database_driver_v1::*;
 
 // ===========================================================================
 //                          Token Cleanup
@@ -37,9 +35,7 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
         client.connect().expect("Connection should succeed");
 
         //When Connection is closed
-        let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(client.conn_handle),
-        });
+        let result = client.close_connection_blocking();
 
         //Then Session token in Connection.tokens is null
         //And Master token in Connection.tokens is null
@@ -60,19 +56,13 @@ fn should_be_idempotent_when_close_called_multiple_times() {
     let client = SnowflakeTestClient::connect_with_default_auth();
 
     //When Connection is closed
-    let result1 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-    });
+    let result1 = client.close_connection_blocking();
 
     //And Connection is closed again
-    let result2 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-    });
+    let result2 = client.close_connection_blocking();
 
     //And Connection is closed a third time
-    let result3 = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-    });
+    let result3 = client.close_connection_blocking();
 
     //Then Only one logout request is sent
     //And No errors are thrown
@@ -100,11 +90,7 @@ fn should_handle_concurrent_close_calls_safely() {
     let handles: Vec<_> = (0..5)
         .map(|_| {
             let client_clone = Arc::clone(&client);
-            thread::spawn(move || {
-                DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                    conn_handle: Some(client_clone.conn_handle),
-                })
-            })
+            thread::spawn(move || client_clone.close_connection_blocking())
         })
         .collect();
 
@@ -133,9 +119,7 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
     let _result_before = client.execute_query("SELECT 1");
 
     //When Connection is closed
-    let close_result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-    });
+    let close_result = client.close_connection_blocking();
     assert!(close_result.is_ok(), "Close should succeed");
 
     //And Query is attempted on closed connection

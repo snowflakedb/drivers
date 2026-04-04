@@ -262,7 +262,7 @@ TEST_CASE("DECFLOAT with positive exponent to interval", "[decfloat][conversion]
 
 TEST_CASE("DECFLOAT to interval - default precision rejects values >= 100",
           "[decfloat][conversion][c_interval][precision]") {
-  SKIP_OLD_DRIVER("BD#20", "Old driver does not enforce interval leading precision");
+  SKIP_OLD_DRIVER("BD#18", "Old driver does not enforce interval leading precision");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -295,7 +295,7 @@ TEST_CASE("DECFLOAT to interval - default precision rejects values >= 100",
 
 TEST_CASE("DECFLOAT to interval - custom precision via SQLSetDescField",
           "[decfloat][conversion][c_interval][precision][descriptor]") {
-  SKIP_OLD_DRIVER("BD#20", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
+  SKIP_OLD_DRIVER("BD#18", "Old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION");
   // Given Snowflake client is logged in
   Connection conn;
 

@@ -434,11 +434,7 @@ impl DatabaseDriverV1 {
 
         Ok(StoredChunkInfo {
             initial_chunk_base64: chunk_info.initial_chunk_base64.clone(),
-            chunks: chunk_info
-                .chunks
-                .iter()
-                .map(|c| ChunkDownloadData::new(&c.url, &c.headers))
-                .collect(),
+            chunks: chunk_info.chunks.clone(),
         })
     }
 

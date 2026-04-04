@@ -59,6 +59,8 @@ docker run --rm \
             -D ODBC_LIBRARY=\"\$ODBC_LIB\" \\
             -D ODBC_INCLUDE_DIR='/usr/include' \\
             -D DRIVER_TYPE=OLD \\
+            -D CMAKE_CXX_COMPILER_LAUNCHER=ccache \\
+            -D CMAKE_C_COMPILER_LAUNCHER=ccache \\
             .
         
         # Build tests

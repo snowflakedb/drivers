@@ -82,7 +82,6 @@ pub fn env_allocated() -> Result<(), OdbcRuntimeError> {
     let mut guard = STATE.write().map_err(|_| LockPoisonedSnafu.build())?;
     if guard.globals.is_none() {
         let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
             .enable_all()
             .build()
             .context(RuntimeCreationSnafu)?;

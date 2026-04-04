@@ -9,6 +9,8 @@ EXPORTS
     SQLAllocHandle
     SQLBindCol
     SQLBindParameter
+    SQLCancel
+    SQLCloseCursor
     SQLColAttributeW
     SQLConnectW
     SQLDescribeColW
@@ -30,6 +32,7 @@ EXPORTS
     SQLGetInfoW
     SQLGetStmtAttrW
     SQLMoreResults
+    SQLNativeSqlW
     SQLNumParams
     SQLNumResultCols
     SQLDescribeParam

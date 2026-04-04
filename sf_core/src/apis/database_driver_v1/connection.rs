@@ -12,8 +12,9 @@ use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::logout;
 use super::validation::{
-    ValidationIssue, ValidationSeverity, canonicalize_setting_key, normalize_host_underscores,
-    resolve_options, validate_connection_seed_write, validate_session_override_write,
+    ValidationIssue, ValidationSeverity, canonicalize_setting_key, collect_unknown_settings,
+    normalize_host_underscores, resolve_options, validate_connection_seed_write,
+    validate_session_override_write,
 };
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
@@ -51,6 +52,29 @@ impl DatabaseDriverV1 {
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
+
+                    // Forward unrecognized settings as session parameters so
+                    // drivers can set arbitrary Snowflake session params
+                    // via regular connection options.
+                    let unknown_settings = collect_unknown_settings(&conn.connection_seed);
+                    let init_params = match init_params {
+                        Some(explicit) => {
+                            // Normalize explicit keys to uppercase so precedence
+                            // is case-insensitive (unknown settings are uppercased).
+                            let mut merged: HashMap<String, String> = explicit
+                                .into_iter()
+                                .map(|(k, v)| (k.to_uppercase(), v))
+                                .collect();
+                            // Explicit session params take precedence
+                            for (k, v) in unknown_settings {
+                                merged.entry(k).or_insert(v);
+                            }
+                            Some(merged)
+                        }
+                        None if !unknown_settings.is_empty() => Some(unknown_settings),
+                        None => None,
+                    };
+
                     (
                         config,
                         host,
@@ -949,6 +973,103 @@ impl DatabaseDriverV1 {
     }
 }
 
+/// Atomically mark connection as closed.
+///
+/// Returns true if the connection was already closed (duplicate close attempt).
+/// This provides idempotent close() behavior - multiple calls are safe.
+async fn mark_connection_closed(conn_ptr: &Arc<Mutex<Connection>>) -> Result<bool, ApiError> {
+    let conn = conn_ptr.lock().await;
+    // Atomic swap returns the previous value
+    Ok(conn.is_closed.swap(true, Ordering::SeqCst))
+}
+
+/// Clear tokens, HTTP client, and stop background tasks.
+async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
+    let mut conn = conn_ptr.lock().await;
+    *conn.tokens.write().await = None;
+    conn.http_client = None;
+    tracing::debug!("Cleared session tokens and HTTP client");
+
+    // TODO: SNOW-2881763 - Stop heartbeat thread
+    // TODO: SNOW-2912513 - Flush telemetry cache
+    // TODO: Implement QCC (query result cache) clearing
+
+    Ok(())
+}
+
+impl DatabaseDriverV1 {
+    /// Check if a connection has been closed.
+    ///
+    /// Returns true if close() has been called, false otherwise.
+    pub async fn connection_is_closed(&self, conn_handle: Handle) -> Result<bool, ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        let conn = conn_ptr.lock().await;
+        Ok(conn.is_closed.load(Ordering::SeqCst))
+    }
+
+    /// Close a connection and optionally send logout request.
+    ///
+    /// Behavior depends on `config.error_strategy`:
+    /// - `Strict`: surface errors to the caller (close() may fail)
+    /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
+    ///
+    /// Close the connection using logout configuration set during initialization.
+    ///
+    /// Logout behavior is determined by connection fields set via ConnectionSetOption*:
+    /// - `server_session_keep_alive`: Control server session lifecycle
+    /// - `enable_logout_auto_detection`: Enable async query detection
+    /// - `logout_error_strategy`: Error handling (Strict or BestEffort)
+    /// - `logout_total_timeout`: Total timeout budget
+    /// - `logout_max_attempts`: Maximum total attempts (1 = no retries, 3 = 2 retries)
+    /// - `logout_request_timeout`: Per-request timeout
+    ///
+    /// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
+    /// which configure logout behavior at connection initialization, not at close time.
+    pub async fn connection_close(&self, conn_handle: Handle) -> Result<(), ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        // Check if already closed (idempotent close)
+        let was_already_closed = mark_connection_closed(&conn_ptr).await?;
+        if was_already_closed {
+            tracing::debug!("Connection already closed, skipping duplicate close");
+            return Ok(());
+        }
+
+        // TODO: SNOW-2912513 - Record telemetry for logout decision
+
+        // Single lock: read config + prepare logout data before releasing for I/O
+        let (config, logout_data) = {
+            let conn = conn_ptr.lock().await;
+            let config = conn.logout_config.clone();
+            let logout_data = logout::prepare_logout(&conn, &config)?;
+            (config, logout_data)
+        };
+
+        // Send logout if needed - all failures go through error_strategy
+        let logout_result =
+            logout::execute_logout_with_strategy(logout_data, config.error_strategy);
+
+        // Cleanup connection resources
+        cleanup_connection(&conn_ptr).await?;
+
+        if logout_result.is_ok() {
+            tracing::info!("Connection closed successfully");
+        }
+        logout_result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1294,103 +1415,4 @@ mod tests {
         assert_eq!(names.database, Some("new_db".into()));
         assert_eq!(names.schema, Some("new_schema".into()));
     }
-}
-
-impl DatabaseDriverV1 {
-    /// Check if a connection has been closed.
-    ///
-    /// Returns true if close() has been called, false otherwise.
-    pub async fn connection_is_closed(&self, conn_handle: Handle) -> Result<bool, ApiError> {
-        let conn_ptr = self
-            .connections
-            .get_obj(conn_handle)
-            .context(InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            })?;
-
-        let conn = conn_ptr.lock().await;
-        Ok(conn.is_closed.load(Ordering::SeqCst))
-    }
-
-    /// Close a connection and optionally send logout request.
-    ///
-    /// Behavior depends on `config.error_strategy`:
-    /// - `Strict`: surface errors to the caller (close() may fail)
-    /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
-    ///
-    /// Close the connection using logout configuration set during initialization.
-    ///
-    /// Logout behavior is determined by connection fields set via ConnectionSetOption*:
-    /// - `server_session_keep_alive`: Control server session lifecycle
-    /// - `enable_logout_auto_detection`: Enable async query detection
-    /// - `logout_error_strategy`: Error handling (Strict or BestEffort)
-    /// - `logout_total_timeout`: Total timeout budget
-    /// - `logout_max_attempts`: Maximum total attempts (1 = no retries, 3 = 2 retries)
-    /// - `logout_request_timeout`: Per-request timeout
-    ///
-    /// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
-    /// which configure logout behavior at connection initialization, not at close time.
-    pub async fn connection_close(&self, conn_handle: Handle) -> Result<(), ApiError> {
-        let conn_ptr = self
-            .connections
-            .get_obj(conn_handle)
-            .context(InvalidArgumentSnafu {
-                argument: "Connection handle not found".to_string(),
-            })?;
-
-        // Check if already closed (idempotent close)
-        let was_already_closed = mark_connection_closed(&conn_ptr).await?;
-        if was_already_closed {
-            tracing::debug!("Connection already closed, skipping duplicate close");
-            return Ok(());
-        }
-
-        // Get logout config and prepare logout
-        let config = get_logout_config(&conn_ptr).await?;
-
-        // TODO: SNOW-2912513 - Record telemetry for logout decision
-
-        // Prepare logout and send if needed - all failures go through error_strategy
-        let logout_data = logout::prepare_logout(&conn_ptr, &config).await?;
-        let logout_result =
-            logout::execute_logout_with_strategy(logout_data, config.error_strategy).await;
-
-        // Cleanup connection resources
-        cleanup_connection(&conn_ptr).await?;
-
-        if logout_result.is_ok() {
-            tracing::info!("Connection closed successfully");
-        }
-        logout_result
-    }
-}
-
-/// Atomically mark connection as closed.
-///
-/// Returns true if the connection was already closed (duplicate close attempt).
-/// This provides idempotent close() behavior - multiple calls are safe.
-async fn mark_connection_closed(conn_ptr: &Arc<Mutex<Connection>>) -> Result<bool, ApiError> {
-    let conn = conn_ptr.lock().await;
-    // Atomic swap returns the previous value
-    Ok(conn.is_closed.swap(true, Ordering::SeqCst))
-}
-
-/// Clear tokens, HTTP client, and stop background tasks.
-async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
-    let mut conn = conn_ptr.lock().await;
-    *conn.tokens.write().await = None;
-    conn.http_client = None;
-    tracing::debug!("Cleared session tokens and HTTP client");
-
-    // TODO: SNOW-2881763 - Stop heartbeat thread
-    // TODO: SNOW-2912513 - Flush telemetry cache
-    // TODO: Implement QCC (query result cache) clearing
-
-    Ok(())
-}
-
-/// Get logout configuration from a connection.
-async fn get_logout_config(conn_ptr: &Arc<Mutex<Connection>>) -> Result<LogoutConfig, ApiError> {
-    let conn = conn_ptr.lock().await;
-    Ok(conn.logout_config.clone())
 }

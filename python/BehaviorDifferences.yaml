@@ -43,3 +43,11 @@ behavior_differences:
     description: |
       NEW driver: cursor session parameters (e.g. cursor.timestamp_output_format) read from a shared connection-level cache, so changes made by one cursor are immediately visible to other cursors on the same connection without requiring a query.
       OLD driver: Each cursor populates its session parameters independently from query responses, so a cursor that has not executed a query will not reflect changes made by another cursor.
+
+  16:
+    name: "MFA token caching parameter renamed"
+    description: |
+      NEW driver: `client_store_temporary_credential` enables MFA token caching. The legacy name
+        `client_request_mfa_token` is also accepted as a backward-compatible alias and is silently
+        mapped to `client_store_temporary_credential`.
+      OLD driver: `client_request_mfa_token` enables MFA token caching.

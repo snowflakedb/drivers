@@ -89,7 +89,7 @@ pub struct Data {
     #[serde(rename = "resultTypes")]
     _result_types: Option<String>,
     #[serde(rename = "queryResultFormat")]
-    query_result_format: Option<String>,
+    pub query_result_format: Option<String>,
     #[serde(rename = "asyncResult")]
     _async_result: Option<SnowflakeResult>,
     #[serde(rename = "asyncRows")]
@@ -137,14 +137,14 @@ pub struct QueryContextEntry {
 #[derive(Deserialize)]
 pub struct Chunk {
     #[serde(rename = "url")]
-    url: String,
+    pub url: String,
     //unused fields
     #[serde(rename = "rowCount")]
-    _row_count: i32,
+    pub row_count: i32,
     #[serde(rename = "uncompressedSize")]
-    _uncompressed_size: i64,
+    pub uncompressed_size: i64,
     #[serde(rename = "compressedSize")]
-    _compressed_size: i64,
+    pub compressed_size: i64,
 }
 
 #[derive(Deserialize)]
@@ -483,7 +483,7 @@ impl Data {
                 }
                 let chunk_download_data = chunks
                     .iter()
-                    .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
+                    .map(|chunk| ChunkDownloadData::new(chunk, chunk_headers))
                     .collect();
                 Some(chunk_download_data)
             }

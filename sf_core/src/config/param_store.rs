@@ -15,6 +15,10 @@ impl ParamStore {
         }
     }
 
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Setting)> {
+        self.inner.iter()
+    }
+
     pub fn get(&self, key: ParamKey) -> Option<&Setting> {
         self.inner.get(key.as_str())
     }

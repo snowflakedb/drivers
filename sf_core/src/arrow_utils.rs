@@ -1,15 +1,11 @@
+pub use crate::chunks::convert_string_rowset_to_arrow_reader;
 use crate::query_types::RowType;
-use arrow::array::{
-    Array, BinaryArray, BooleanArray, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
-    StringArray,
-};
-use arrow::datatypes;
-use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type, Schema};
+use arrow::array::Array;
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use datatypes::{Int8Type, Int16Type};
 use hex::FromHexError;
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, Snafu};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -222,622 +218,6 @@ pub fn create_field_with_type(
     }
 }
 
-fn cast_fixed_to_arrow<T>(
-    row_type: &RowType,
-    data_type: DataType,
-    parsed: Vec<Option<i128>>,
-) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError>
-where
-    T: datatypes::ArrowPrimitiveType,
-    T::Native: TryFrom<i128>,
-    arrow::array::PrimitiveArray<T>: From<Vec<Option<T::Native>>>,
-{
-    let values: Vec<Option<T::Native>> = parsed
-        .into_iter()
-        .map(|v| v.and_then(|x| T::Native::try_from(x).ok()))
-        .collect();
-    Ok((
-        create_field_with_type(row_type, Some(data_type))?,
-        Arc::new(arrow::array::PrimitiveArray::<T>::from(values)),
-    ))
-}
-
-/// Parses a decimal string like "123.45" into the unscaled i128 representation
-/// that Arrow's Decimal128Array expects. For scale=2, "123.45" becomes 12345i128.
-fn parse_decimal_str(v: &str, scale: u32) -> Result<i128, ArrowUtilsError> {
-    if scale == 0 {
-        return v.parse::<i128>().context(IntegerParsingSnafu {
-            value: v.to_string(),
-        });
-    }
-
-    let (integer_str, frac_str) = match v.split_once('.') {
-        Some((int_part, frac_part)) => (int_part, frac_part),
-        None => (v, ""),
-    };
-
-    let negative = integer_str.starts_with('-');
-    let abs_int: i128 = integer_str
-        .trim_start_matches('-')
-        .parse::<i128>()
-        .context(IntegerParsingSnafu {
-            value: v.to_string(),
-        })?;
-
-    let frac_scaled: i128 = if frac_str.is_empty() {
-        0
-    } else {
-        let scale_usize = scale as usize;
-        // Pad with trailing zeros or truncate to match the target scale
-        let adjusted = if frac_str.len() < scale_usize {
-            format!("{:0<width$}", frac_str, width = scale_usize)
-        } else {
-            frac_str[..scale_usize].to_string()
-        };
-        adjusted.parse::<i128>().context(IntegerParsingSnafu {
-            value: v.to_string(),
-        })?
-    };
-
-    let unscaled = abs_int * 10i128.pow(scale) + frac_scaled;
-    Ok(if negative { -unscaled } else { unscaled })
-}
-
-/// Parses a DECFLOAT string (decimal or scientific notation) into (exponent, mantissa_bytes).
-/// The mantissa is normalized by stripping trailing zeros, and the mantissa bytes are
-/// minimal big-endian two's complement.
-fn parse_decfloat_str(v: &str) -> Result<(i16, Vec<u8>), ArrowUtilsError> {
-    if v == "0" || v == "0.0" || v == "-0" || v == "-0.0" {
-        return Ok((0_i16, vec![0]));
-    }
-
-    // Parse into integer mantissa (i128) and exponent (i16).
-    // Handle scientific notation: "1.23e5" or "1.23E-5"
-    let lowered = v.to_lowercase();
-    let (coeff_str, exp_offset) = match lowered.split_once('e') {
-        Some((c, e)) => {
-            let exp: i16 = e.parse().context(DecfloatParsingSnafu {
-                value: v.to_string(),
-            })?;
-            (c, exp)
-        }
-        None => (v, 0_i16),
-    };
-
-    let negative = coeff_str.starts_with('-');
-    let abs_coeff = coeff_str.trim_start_matches('-');
-
-    // Split on decimal point
-    let (int_part, frac_part) = match abs_coeff.split_once('.') {
-        Some((i, f)) => (i, f),
-        None => (abs_coeff, ""),
-    };
-
-    // Combine into integer mantissa: "123.456" -> 123456, with implicit exponent = -3
-    let digits = format!("{int_part}{frac_part}");
-    let frac_len = frac_part.len() as i16;
-
-    let mut mantissa: i128 = digits.parse().context(DecfloatParsingSnafu {
-        value: v.to_string(),
-    })?;
-    let mut exponent: i16 = exp_offset - frac_len;
-
-    if negative {
-        mantissa = -mantissa;
-    }
-
-    // Strip trailing zeros from mantissa, adjust exponent (Snowflake normalization)
-    if mantissa != 0 {
-        while mantissa % 10 == 0 {
-            mantissa /= 10;
-            exponent += 1;
-        }
-    }
-
-    // Convert mantissa i128 to minimal big-endian two's complement bytes
-    let bytes = i128::to_be_bytes(mantissa);
-    let mantissa_bytes = minimal_twos_complement(&bytes);
-
-    Ok((exponent, mantissa_bytes))
-}
-
-/// Strips leading redundant bytes from a big-endian two's complement representation,
-/// keeping the sign bit intact.
-fn minimal_twos_complement(bytes: &[u8]) -> Vec<u8> {
-    if bytes.is_empty() {
-        return vec![0];
-    }
-
-    let is_negative = bytes[0] & 0x80 != 0;
-    let pad_byte: u8 = if is_negative { 0xFF } else { 0x00 };
-
-    let mut start = 0;
-    while start < bytes.len() - 1 && bytes[start] == pad_byte {
-        // Keep this byte if removing it would change the sign
-        let next_sign = bytes[start + 1] & 0x80 != 0;
-        if next_sign != is_negative {
-            break;
-        }
-        start += 1;
-    }
-
-    bytes[start..].to_vec()
-}
-
-/// Creates an Arrow array from column values and data type
-fn create_column_array(
-    values: Vec<Option<&str>>,
-    row_type: &RowType,
-) -> Result<(Field, Arc<dyn Array>), ArrowUtilsError> {
-    match row_type {
-        RowType::Text { .. } => Ok((create_field(row_type)?, Arc::new(StringArray::from(values)))),
-        RowType::Fixed {
-            scale, precision, ..
-        } => {
-            let len = values.len();
-            let decimal_values: Result<Vec<Option<i128>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| match v {
-                    None => Ok(None),
-                    Some(s) => Ok(Some(parse_decimal_str(s, *scale as u32)?)),
-                })
-                .collect();
-
-            let decimal_values = decimal_values?;
-            let min_value = decimal_values.iter().flatten().min().copied();
-            let max_value = decimal_values.iter().flatten().max().copied();
-            if min_value.is_none() {
-                if *scale > 0 {
-                    return Ok((
-                        create_field_with_type(row_type, Some(DataType::Int8))?,
-                        Arc::new(Int8Array::new_null(len)),
-                    ));
-                }
-                return Ok((
-                    create_field_with_type(row_type, Some(DataType::Int8))?,
-                    Arc::new(Int8Array::new_null(len)),
-                ));
-            }
-            let min_value = min_value.unwrap();
-            let max_value = max_value.unwrap();
-
-            if min_value >= i8::MIN as i128 && max_value <= i8::MAX as i128 {
-                cast_fixed_to_arrow::<Int8Type>(row_type, DataType::Int8, decimal_values)
-            } else if min_value >= i16::MIN as i128 && max_value <= i16::MAX as i128 {
-                cast_fixed_to_arrow::<Int16Type>(row_type, DataType::Int16, decimal_values)
-            } else if min_value >= i32::MIN as i128 && max_value <= i32::MAX as i128 {
-                cast_fixed_to_arrow::<Int32Type>(row_type, DataType::Int32, decimal_values)
-            } else if min_value >= i64::MIN as i128 && max_value <= i64::MAX as i128 {
-                cast_fixed_to_arrow::<Int64Type>(row_type, DataType::Int64, decimal_values)
-            } else {
-                Ok((
-                    create_field_with_type(
-                        row_type,
-                        Some(DataType::Decimal128(*precision as u8, *scale as i8)),
-                    )?,
-                    Arc::new(
-                        arrow::array::Decimal128Array::from(decimal_values)
-                            .with_precision_and_scale(*precision as u8, *scale as i8)
-                            .context(ArrowSnafu {})?,
-                    ),
-                ))
-            }
-        }
-        RowType::Boolean { .. } => {
-            let bool_values: Result<Vec<Option<bool>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| match v {
-                    None => Ok(None),
-                    Some(s) if s.eq_ignore_ascii_case("true") || s == "1" => Ok(Some(true)),
-                    Some(s) if s.eq_ignore_ascii_case("false") || s == "0" => Ok(Some(false)),
-                    Some(other) => BooleanParsingSnafu {
-                        value: other.to_string(),
-                    }
-                    .fail(),
-                })
-                .collect();
-            Ok((
-                create_field(row_type)?,
-                Arc::new(BooleanArray::from(bool_values?)),
-            ))
-        }
-        RowType::Real { .. } => {
-            let float_values: Result<Vec<Option<f64>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| match v {
-                    None => Ok(None),
-                    Some(s) => Ok(Some(s.parse::<f64>().context(FloatParsingSnafu {
-                        value: s.to_string(),
-                    })?)),
-                })
-                .collect();
-            Ok((
-                create_field(row_type)?,
-                Arc::new(Float64Array::from(float_values?)),
-            ))
-        }
-        RowType::Date { .. } => {
-            let day_values: Result<Vec<Option<i32>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| match v {
-                    None => Ok(None),
-                    Some(s) => Ok(Some(s.parse::<i32>().context(IntegerParsingSnafu {
-                        value: s.to_string(),
-                    })?)),
-                })
-                .collect();
-            Ok((
-                create_field(row_type)?,
-                Arc::new(arrow::array::PrimitiveArray::<Date32Type>::from(
-                    day_values?,
-                )),
-            ))
-        }
-        RowType::TimestampNtz { scale, .. } | RowType::TimestampLtz { scale, .. } => {
-            let all_values: Result<Vec<Option<(i64, i32)>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| {
-                    let v = match v {
-                        None => return Ok(None),
-                        Some(s) => s,
-                    };
-                    let (epoch_str, fraction_str) = match v.split_once(".") {
-                        None => (v, None),
-                        Some((epoch, fraction)) => (epoch, Some(fraction)),
-                    };
-                    let epoch: i64 = epoch_str.parse().context(IntegerParsingSnafu {
-                        value: epoch_str.to_string(),
-                    })?;
-                    let fraction: i32 = match fraction_str {
-                        None => Ok(0),
-                        Some(f) => {
-                            let filled_with_zeros =
-                                format!("{:0<width$}", f, width = *scale as usize);
-                            let parsed_fraction =
-                                filled_with_zeros
-                                    .parse::<i32>()
-                                    .context(IntegerParsingSnafu {
-                                        value: f.to_string(),
-                                    })?;
-                            Ok(parsed_fraction)
-                        }
-                    }?;
-                    Ok(Some((epoch, fraction)))
-                })
-                .collect();
-            let all_values = all_values?;
-
-            let field = create_field(row_type)?;
-            match field.data_type() {
-                DataType::Int64 => {
-                    let normalized_epoch_values: Vec<Option<i64>> = all_values
-                        .iter()
-                        .map(|v| {
-                            v.map(|(epoch, fraction)| {
-                                epoch * 10i64.pow(*scale as u32) + fraction as i64
-                            })
-                        })
-                        .collect();
-                    Ok((field, Arc::new(Int64Array::from(normalized_epoch_values))))
-                }
-                DataType::Struct(fields) => {
-                    let validity_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
-                    let epoch_values: Vec<i64> =
-                        all_values.iter().map(|v| v.map_or(0, |(e, _)| e)).collect();
-                    let fraction_values: Vec<i32> =
-                        all_values.iter().map(|v| v.map_or(0, |(_, f)| f)).collect();
-                    let normalized_fraction_values: Vec<i32> = fraction_values
-                        .iter()
-                        .map(|f| f * 10i32.pow((9 - *scale) as u32))
-                        .collect();
-                    let epoch_array: Arc<dyn Array> =
-                        Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
-                            epoch_values,
-                        ));
-                    let fraction_array: Arc<dyn Array> =
-                        Arc::new(arrow::array::PrimitiveArray::<Int32Type>::from(
-                            normalized_fraction_values,
-                        ));
-                    let arrays = vec![
-                        (fields[0].clone(), epoch_array),
-                        (fields[1].clone(), fraction_array),
-                    ];
-                    let struct_array = arrow::array::StructArray::from(arrays);
-                    let null_buffer = arrow::buffer::NullBuffer::from(validity_mask);
-                    let nullable_struct = arrow::array::StructArray::new(
-                        struct_array.fields().clone(),
-                        struct_array.columns().to_vec(),
-                        Some(null_buffer),
-                    );
-                    Ok((field, Arc::new(nullable_struct)))
-                }
-                _ => UnsupportedDataTypeSnafu {
-                    data_type: format!("{:?}", field.data_type()),
-                    row_type: "TIMESTAMP_NTZ".to_string(),
-                }
-                .fail(),
-            }
-        }
-        RowType::TimestampTz { scale, .. } => {
-            #[allow(clippy::type_complexity)]
-            let all_values: Result<Vec<Option<((i64, i32), i32)>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| {
-                    let v = match v {
-                        None => return Ok(None),
-                        Some(s) => s,
-                    };
-                    let (epoch_part, tz_part) = v.split_once(' ').unwrap_or((v, ""));
-                    let (epoch_str, fraction_str) =
-                        epoch_part.split_once('.').unwrap_or((epoch_part, ""));
-                    let epoch: i64 = epoch_str.parse().context(IntegerParsingSnafu {
-                        value: epoch_str.to_string(),
-                    })?;
-                    let fraction: i32 = if fraction_str.is_empty() {
-                        0
-                    } else {
-                        let filled_with_zeros =
-                            format!("{:0<width$}", fraction_str, width = *scale as usize);
-                        filled_with_zeros
-                            .parse::<i32>()
-                            .context(IntegerParsingSnafu {
-                                value: fraction_str.to_string(),
-                            })?
-                    };
-                    let tz = if tz_part.is_empty() {
-                        // Snowflake uses zone offset [-24h, +24h], which means
-                        // [-1440,1440] in minutes. But it is aligned to be zero based
-                        // which means the values scope is [0, 2880].
-                        // This value means actually zone offset 0.
-                        1440
-                    } else {
-                        tz_part.parse::<i32>().context(IntegerParsingSnafu {
-                            value: tz_part.to_string(),
-                        })?
-                    };
-                    Ok(Some(((epoch, fraction), tz)))
-                })
-                .collect();
-            let all_values = all_values?;
-
-            let field = create_field(row_type)?;
-            match field.data_type() {
-                DataType::Struct(fields) if fields.len() == 2 => {
-                    let validity_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
-                    let normalized_epoch_values: Vec<i64> = all_values
-                        .iter()
-                        .map(|v| {
-                            v.map_or(0, |((epoch, fraction), _)| {
-                                epoch * 10i64.pow(*scale as u32) + fraction as i64
-                            })
-                        })
-                        .collect();
-                    let tz_values: Vec<i32> = all_values
-                        .iter()
-                        .map(|v| v.map_or(0, |(_, tz)| tz))
-                        .collect();
-                    let epoch_array: Arc<dyn Array> =
-                        Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
-                            normalized_epoch_values,
-                        ));
-                    let tz_array: Arc<dyn Array> = Arc::new(Int32Array::from(tz_values));
-                    let arrays = vec![
-                        (fields[0].clone(), epoch_array),
-                        (fields[1].clone(), tz_array),
-                    ];
-                    let struct_array = arrow::array::StructArray::from(arrays);
-                    let null_buffer = arrow::buffer::NullBuffer::from(validity_mask);
-                    let nullable_struct = arrow::array::StructArray::new(
-                        struct_array.fields().clone(),
-                        struct_array.columns().to_vec(),
-                        Some(null_buffer),
-                    );
-                    Ok((field, Arc::new(nullable_struct)))
-                }
-                DataType::Struct(fields) if fields.len() == 3 => {
-                    let validity_mask: Vec<bool> = all_values.iter().map(|v| v.is_some()).collect();
-                    let epoch_values: Vec<i64> = all_values
-                        .iter()
-                        .map(|v| v.map_or(0, |((e, _), _)| e))
-                        .collect();
-                    let fraction_values: Vec<i32> = all_values
-                        .iter()
-                        .map(|v| v.map_or(0, |((_, f), _)| f))
-                        .collect();
-                    let tz_values: Vec<i32> = all_values
-                        .iter()
-                        .map(|v| v.map_or(0, |(_, tz)| tz))
-                        .collect();
-                    let normalized_fraction_values: Vec<i32> = fraction_values
-                        .iter()
-                        .map(|f| f * 10i32.pow((9 - *scale) as u32))
-                        .collect();
-                    let epoch_array: Arc<dyn Array> =
-                        Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
-                            epoch_values,
-                        ));
-                    let fraction_array: Arc<dyn Array> =
-                        Arc::new(arrow::array::PrimitiveArray::<Int32Type>::from(
-                            normalized_fraction_values,
-                        ));
-                    let tz_array: Arc<dyn Array> = Arc::new(Int32Array::from(tz_values));
-                    let arrays = vec![
-                        (fields[0].clone(), epoch_array),
-                        (fields[1].clone(), fraction_array),
-                        (fields[2].clone(), tz_array),
-                    ];
-                    let struct_array = arrow::array::StructArray::from(arrays);
-                    let null_buffer = arrow::buffer::NullBuffer::from(validity_mask);
-                    let nullable_struct = arrow::array::StructArray::new(
-                        struct_array.fields().clone(),
-                        struct_array.columns().to_vec(),
-                        Some(null_buffer),
-                    );
-                    Ok((field, Arc::new(nullable_struct)))
-                }
-                _ => UnsupportedDataTypeSnafu {
-                    data_type: format!("{:?}", field.data_type()),
-                    row_type: "TIMESTAMP_TZ".to_string(),
-                }
-                .fail(),
-            }
-        }
-        RowType::Time { scale, .. } => {
-            let field = create_field(row_type)?;
-            match field.data_type() {
-                DataType::Int32 => {
-                    let normalized: Result<Vec<Option<i32>>, ArrowUtilsError> = values
-                        .into_iter()
-                        .map(|v| match v {
-                            None => Ok(None),
-                            Some(v) => {
-                                let (seconds_str, fraction_str) =
-                                    v.split_once('.').unwrap_or((v, ""));
-                                let seconds: i32 =
-                                    seconds_str.parse().context(IntegerParsingSnafu {
-                                        value: v.to_string(),
-                                    })?;
-                                let fraction: i32 = if fraction_str.is_empty() {
-                                    0
-                                } else {
-                                    let filled = format!(
-                                        "{:0<width$}",
-                                        fraction_str,
-                                        width = *scale as usize
-                                    );
-                                    filled.parse::<i32>().context(IntegerParsingSnafu {
-                                        value: v.to_string(),
-                                    })?
-                                };
-                                Ok(Some(seconds * 10i32.pow(*scale as u32) + fraction))
-                            }
-                        })
-                        .collect();
-                    Ok((field, Arc::new(Int32Array::from(normalized?))))
-                }
-                DataType::Int64 => {
-                    let normalized: Result<Vec<Option<i64>>, ArrowUtilsError> = values
-                        .into_iter()
-                        .map(|v| match v {
-                            None => Ok(None),
-                            Some(v) => {
-                                let scale1 = *scale;
-                                let (seconds_str, fraction_str) =
-                                    v.split_once('.').unwrap_or((v, ""));
-                                let seconds: i64 =
-                                    seconds_str.parse().context(IntegerParsingSnafu {
-                                        value: v.to_string(),
-                                    })?;
-                                let fraction: i64 = if fraction_str.is_empty() {
-                                    0
-                                } else {
-                                    let filled = format!(
-                                        "{:0<width$}",
-                                        fraction_str,
-                                        width = scale1 as usize
-                                    );
-                                    filled.parse::<i64>().context(IntegerParsingSnafu {
-                                        value: v.to_string(),
-                                    })?
-                                };
-                                Ok(Some(seconds * 10i64.pow(scale1 as u32) + fraction))
-                            }
-                        })
-                        .collect();
-                    Ok((field, Arc::new(Int64Array::from(normalized?))))
-                }
-                _ => UnsupportedDataTypeSnafu {
-                    data_type: format!("{:?}", field.data_type()),
-                    row_type: "TIME".to_string(),
-                }
-                .fail(),
-            }
-        }
-        RowType::Binary { .. } => {
-            let binary_values: Result<Vec<Option<Vec<u8>>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| match v {
-                    None => Ok(None),
-                    Some(s) => Ok(Some(hex::decode(s).context(BinaryParsingSnafu {})?)),
-                })
-                .collect();
-            let binary_values = binary_values?;
-            let refs: Vec<Option<&[u8]>> = binary_values.iter().map(|v| v.as_deref()).collect();
-            Ok((create_field(row_type)?, Arc::new(BinaryArray::from(refs))))
-        }
-        RowType::Decfloat { .. } => {
-            #[allow(clippy::type_complexity)]
-            let parsed: Result<Vec<Option<(i16, Vec<u8>)>>, ArrowUtilsError> = values
-                .into_iter()
-                .map(|v| match v {
-                    None => Ok(None),
-                    Some(s) => Ok(Some(parse_decfloat_str(s)?)),
-                })
-                .collect();
-            let parsed = parsed?;
-            let exponents: Vec<i16> = parsed
-                .iter()
-                .map(|v| v.as_ref().map_or(0, |(e, _)| *e))
-                .collect();
-            let mantissas: Vec<&[u8]> = parsed
-                .iter()
-                .map(|v| v.as_ref().map_or(&[] as &[u8], |(_, m)| m.as_slice()))
-                .collect();
-            let null_buffer = arrow::buffer::NullBuffer::from(
-                parsed.iter().map(|v| v.is_some()).collect::<Vec<bool>>(),
-            );
-
-            let field = create_field(row_type)?;
-            match field.data_type() {
-                DataType::Struct(fields) => {
-                    let exponent_array: Arc<dyn Array> = Arc::new(Int16Array::from(exponents));
-                    let mantissa_array: Arc<dyn Array> = Arc::new(BinaryArray::from(mantissas));
-                    let struct_array = arrow::array::StructArray::new(
-                        fields.clone(),
-                        vec![exponent_array, mantissa_array],
-                        Some(null_buffer),
-                    );
-                    Ok((field, Arc::new(struct_array)))
-                }
-                _ => UnsupportedDataTypeSnafu {
-                    data_type: format!("{:?}", field.data_type()),
-                    row_type: "DECFLOAT".to_string(),
-                }
-                .fail(),
-            }
-        }
-        RowType::Variant { .. } | RowType::Object { .. } | RowType::Array { .. } => {
-            Ok((create_field(row_type)?, Arc::new(StringArray::from(values))))
-        }
-    }
-}
-
-/// Converts a string rowset with RowType metadata to Arrow format.
-/// Null values in the rowset are preserved as Arrow nulls.
-/// Assumes rowset and row_types have been validated to have matching column counts.
-pub fn convert_string_rowset_to_arrow_reader(
-    rowset: &[Vec<Option<String>>],
-    row_types: &[RowType],
-) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowUtilsError> {
-    // Create Arrow arrays for each column
-    #[allow(clippy::type_complexity)]
-    let schema_and_columns: Result<Vec<(Field, Arc<dyn Array>)>, ArrowUtilsError> = row_types
-        .iter()
-        .enumerate()
-        .map(|(col_idx, row_type)| {
-            let values: Vec<Option<&str>> =
-                rowset.iter().map(|row| row[col_idx].as_deref()).collect();
-            create_column_array(values, row_type)
-        })
-        .collect();
-
-    let (fields, columns): (Vec<Field>, Vec<Arc<dyn Array>>) =
-        schema_and_columns?.into_iter().unzip();
-    let schema = Arc::new(Schema::new(fields));
-
-    boxed_arrow_reader(schema, columns).context(ArrowSnafu)
-}
-
 /// Creates an Arrow Schema from a list of RowType definitions
 pub fn create_schema(row_types: &[(RowType, DataType)]) -> Result<Arc<Schema>, ArrowUtilsError> {
     let fields: Vec<Field> = row_types
@@ -917,6 +297,7 @@ pub enum ArrowUtilsError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::{BooleanArray, Float64Array, Int64Array, StringArray};
     use arrow::record_batch::RecordBatchReader;
 
     #[test]
@@ -953,7 +334,7 @@ mod tests {
 
         // FIXED column
         assert_eq!(fields[1].name(), "col_fixed");
-        assert_eq!(format!("{:?}", fields[1].data_type()), "Int16");
+        assert_eq!(*fields[1].data_type(), DataType::Int64);
         let meta1 = fields[1].metadata();
         assert_eq!(meta1.get("logicalType"), Some(&"FIXED".to_string()));
         assert_eq!(meta1.get("scale"), Some(&"0".to_string()));
@@ -977,7 +358,7 @@ mod tests {
             let col1 = batch
                 .column(1)
                 .as_any()
-                .downcast_ref::<Int16Array>()
+                .downcast_ref::<Int64Array>()
                 .unwrap();
             assert_eq!(col1.value(0), 7);
             assert_eq!(col1.value(1), 123);
@@ -1032,7 +413,7 @@ mod tests {
 
         // FIXED column
         assert_eq!(fields[1].name(), "col_fixed");
-        assert_eq!(format!("{:?}", fields[1].data_type()), "Int64");
+        assert_eq!(*fields[1].data_type(), DataType::Int64);
         let meta1 = fields[1].metadata();
         assert_eq!(meta1.get("logicalType"), Some(&"FIXED".to_string()));
         assert_eq!(meta1.get("scale"), Some(&"0".to_string()));
@@ -1108,7 +489,7 @@ mod tests {
 
         assert_eq!(batch.num_rows(), 3);
         let col = batch.column(0);
-        let arr = col.as_any().downcast_ref::<Int8Array>().unwrap();
+        let arr = col.as_any().downcast_ref::<Int64Array>().unwrap();
         assert!(arr.is_valid(0));
         assert_eq!(arr.value(0), 42);
         assert!(arr.is_null(1));
@@ -1127,11 +508,11 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Int8);
+        assert_eq!(*col.data_type(), DataType::Int64);
     }
 
     #[test]
-    fn test_all_null_fixed_column_int8() {
+    fn test_all_null_fixed_column_small_precision() {
         let rowset = vec![vec![None], vec![None]];
         let row_types = vec![RowType::fixed("col", true, 2, 0)];
 
@@ -1141,7 +522,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Int8);
+        assert_eq!(*col.data_type(), DataType::Int64);
     }
 
     #[test]
@@ -1155,14 +536,14 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Int8);
+        assert_eq!(*col.data_type(), DataType::Int64);
         let schema = batch.schema();
         let field = schema.field(0);
         assert_eq!(field.metadata().get("scale").unwrap(), "2");
     }
 
     #[test]
-    fn test_null_values_in_fixed_column_int16() {
+    fn test_null_values_in_fixed_column_medium() {
         let rowset = vec![
             vec![Some("1000".to_string())],
             vec![None],
@@ -1175,7 +556,7 @@ mod tests {
             let col = batch
                 .column(0)
                 .as_any()
-                .downcast_ref::<Int16Array>()
+                .downcast_ref::<Int64Array>()
                 .unwrap();
             assert_eq!(col.len(), 3);
             assert!(!col.is_null(0));
@@ -1189,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn test_null_values_in_fixed_column_int32() {
+    fn test_null_values_in_fixed_column_large() {
         let rowset = vec![
             vec![Some("100000".to_string())],
             vec![None],
@@ -1202,7 +583,7 @@ mod tests {
             let col = batch
                 .column(0)
                 .as_any()
-                .downcast_ref::<arrow::array::Int32Array>()
+                .downcast_ref::<Int64Array>()
                 .unwrap();
             assert_eq!(col.len(), 3);
             assert!(!col.is_null(0));
@@ -1243,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn test_all_null_fixed_column_decimal128() {
+    fn test_all_null_fixed_column_high_precision() {
         let rowset = vec![vec![None], vec![None]];
         let row_types = vec![RowType::fixed("col", true, 20, 0)];
 
@@ -1253,7 +634,7 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
         let col = batch.column(0);
         assert_eq!(col.null_count(), 2);
-        assert_eq!(*col.data_type(), DataType::Int8);
+        assert_eq!(*col.data_type(), DataType::Int64);
     }
 
     #[test]
@@ -1284,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fixed_column_with_scale_narrows_to_int() {
+    fn test_fixed_column_with_scale() {
         let rowset = vec![
             vec![Some("123.45".to_string())],
             vec![None],
@@ -1297,9 +678,9 @@ mod tests {
             let col = batch
                 .column(0)
                 .as_any()
-                .downcast_ref::<Int32Array>()
+                .downcast_ref::<Int64Array>()
                 .unwrap();
-            assert_eq!(*col.data_type(), DataType::Int32);
+            assert_eq!(*col.data_type(), DataType::Int64);
             assert_eq!(col.len(), 3);
             assert!(!col.is_null(0));
             assert_eq!(col.value(0), 12345);

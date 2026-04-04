@@ -17,8 +17,6 @@ use sf_core::apis::database_driver_v1::{
 use sf_core::config::logout::{ErrorStrategy, LogoutConfig};
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
-use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::logout::logout_session;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -60,13 +58,9 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
 
     //When Logout is initiated
     let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
+    let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+        .await
+        .unwrap();
 
     //Then Logout succeeds
     assert!(result.is_ok(), "Close should succeed: {:?}", result.err());
@@ -213,11 +207,7 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
         client.set_connection_option_bool("server_session_keep_alive", true);
 
         // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
-        .unwrap();
+        client.init_connection_blocking().unwrap();
 
         client.set_temp_key_file(temp_key_file);
         client
@@ -227,13 +217,9 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
 
     //When Connection is closed
     let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
+    let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+        .await
+        .unwrap();
 
     //Then No logout HTTP request is sent to server
     assert!(result.is_ok(), "Close should succeed");
@@ -294,11 +280,7 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
         client.set_connection_option_bool("server_session_keep_alive", false);
 
         // Initialize connection
-        DatabaseDriverClient::connection_init(ConnectionInitRequest {
-            conn_handle: Some(client.conn_handle),
-            db_handle: Some(client.db_handle),
-        })
-        .unwrap();
+        client.init_connection_blocking().unwrap();
 
         client.set_temp_key_file(temp_key_file);
         client
@@ -308,13 +290,9 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
 
     //When Connection is closed
     let conn_handle = client.conn_handle;
-    let result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
+    let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+        .await
+        .unwrap();
 
     //Then Logout HTTP request is sent to server
     assert!(result.is_ok(), "Close should succeed");
@@ -899,11 +877,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
             client.set_connection_option_int("logout_max_attempts", 1); // 1 attempt (0 retries)
 
             // Initialize connection
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.init_connection_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -913,13 +887,9 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
 
         //When Logout is executed
         let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+            .await
+            .unwrap();
 
         //Then Token refresh request is sent to server
         //And Logout is retried with new session token
@@ -1030,11 +1000,7 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
             client.set_connection_option_int("logout_max_attempts", 1); // 1 attempt (0 retries)
 
             // Initialize connection
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.init_connection_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1044,13 +1010,9 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
 
         //When Connection close is initiated
         let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+            .await
+            .unwrap();
 
         if should_succeed {
             //Then BestEffort: Close succeeds (error suppressed)
@@ -1261,11 +1223,7 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.init_connection_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1275,13 +1233,9 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
 
         //When Logout is executed
         let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+            .await
+            .unwrap();
 
         //Then Exactly <max_attempts> attempts are made
         //And No further retries after max reached
@@ -1344,11 +1298,7 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", max_attempts as i64);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.init_connection_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1358,13 +1308,9 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
 
         //When Logout is executed
         let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+            .await
+            .unwrap();
 
         //Then Exactly <max_attempts> attempts are made
         //And No further retries after max reached
@@ -1448,11 +1394,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 3);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.init_connection_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1462,13 +1404,9 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
 
         //When Logout is executed
         let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+            .await
+            .unwrap();
 
         //Then Close throws error immediately
         //And Error is surfaced to caller
@@ -1551,11 +1489,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
             client.set_connection_option_int("logout_total_timeout_seconds", 30);
             client.set_connection_option_int("logout_max_attempts", 3);
 
-            DatabaseDriverClient::connection_init(ConnectionInitRequest {
-                conn_handle: Some(client.conn_handle),
-                db_handle: Some(client.db_handle),
-            })
-            .unwrap();
+            client.init_connection_blocking().unwrap();
 
             client.set_temp_key_file(temp_key_file);
             client
@@ -1565,13 +1499,9 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
 
         //When Logout is executed
         let conn_handle = client.conn_handle;
-        let result = tokio::task::spawn_blocking(move || {
-            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-                conn_handle: Some(conn_handle),
-            })
-        })
-        .await
-        .unwrap();
+        let result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+            .await
+            .unwrap();
 
         //Then Error is logged as WARN
         //And Close succeeds without throwing
@@ -1791,13 +1721,9 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
 
     //When Connection is closed
     let conn_handle = client.conn_handle;
-    let close_result = tokio::task::spawn_blocking(move || {
-        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-            conn_handle: Some(conn_handle),
-        })
-    })
-    .await
-    .unwrap();
+    let close_result = tokio::task::spawn_blocking(move || connection_close(conn_handle))
+        .await
+        .unwrap();
     assert!(close_result.is_ok(), "Connection close should succeed");
 
     //And Query is attempted on closed connection

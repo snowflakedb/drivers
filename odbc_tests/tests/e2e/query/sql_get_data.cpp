@@ -370,8 +370,8 @@ TEST_CASE("SQLGetData truncates character data when buffer is too small.", "[que
   CHECK(std::string((char*)buffer) == "Hello");
 
   // And the indicator should show the full length of the original data
-  NEW_DRIVER_ONLY("BD#25") { CHECK(indicator == 11); }
-  OLD_DRIVER_ONLY("BD#25") { CHECK((indicator == 11 || indicator == SQL_NO_TOTAL)); }
+  NEW_DRIVER_ONLY("BD#23") { CHECK(indicator == 11); }
+  OLD_DRIVER_ONLY("BD#23") { CHECK((indicator == 11 || indicator == SQL_NO_TOTAL)); }
 }
 
 TEST_CASE("SQLGetData truncates binary data to BufferLength bytes.", "[query][get_data]") {
@@ -1660,8 +1660,8 @@ TEST_CASE("SQLGetData with BufferLength 1 for character data returns only null t
   CHECK(buffer[0] == '\0');
 
   // And the indicator should show the full data length
-  NEW_DRIVER_ONLY("BD#25") { CHECK(indicator == 3); }
-  OLD_DRIVER_ONLY("BD#25") { CHECK((indicator == 3 || indicator == SQL_NO_TOTAL)); }
+  NEW_DRIVER_ONLY("BD#23") { CHECK(indicator == 3); }
+  OLD_DRIVER_ONLY("BD#23") { CHECK((indicator == 3 || indicator == SQL_NO_TOTAL)); }
 }
 
 // =============================================================================
