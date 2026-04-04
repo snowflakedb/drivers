@@ -997,7 +997,7 @@ impl DatabaseDriverV1 {
     ///
     /// Logout behavior is determined by connection fields set via ConnectionSetOption*:
     /// - `server_session_keep_alive`: Control server session lifecycle
-    /// - `enable_logout_auto_detection`: Enable async query detection
+    /// - `enable_server_session_keep_alive_auto_detection`: Enable async query detection
     /// - `logout_error_strategy`: Error handling (Strict or BestEffort)
     /// - `logout_total_timeout`: Total timeout budget
     /// - `logout_max_attempts`: Maximum total attempts (1 = no retries, 3 = 2 retries)

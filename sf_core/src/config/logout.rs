@@ -28,7 +28,7 @@ pub struct LogoutConfig {
     /// - Some(true): Check async query registry before logout
     /// - Some(false): Don't check registry
     /// - None: Treated as false (no auto-detection)
-    pub enable_logout_auto_detection: Option<bool>,
+    pub enable_server_session_keep_alive_auto_detection: Option<bool>,
 
     /// Error handling strategy for logout failures
     pub error_strategy: ErrorStrategy,
@@ -60,7 +60,7 @@ impl Default for LogoutConfig {
     fn default() -> Self {
         Self {
             server_session_keep_alive: None,
-            enable_logout_auto_detection: None,
+            enable_server_session_keep_alive_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
             logout_total_timeout: Duration::from_secs(5),
             max_attempts: None,
@@ -131,7 +131,8 @@ impl LogoutConfig {
 
         Ok(Self {
             server_session_keep_alive: settings.get_bool("server_session_keep_alive"),
-            enable_logout_auto_detection: settings.get_bool("enable_logout_auto_detection"),
+            enable_server_session_keep_alive_auto_detection: settings
+                .get_bool("enable_server_session_keep_alive_auto_detection"),
             error_strategy,
             logout_total_timeout,
             max_attempts,
@@ -230,7 +231,7 @@ mod tests {
     fn test_default_config() {
         let config = LogoutConfig::default();
         assert_eq!(config.server_session_keep_alive, None);
-        assert_eq!(config.enable_logout_auto_detection, None);
+        assert_eq!(config.enable_server_session_keep_alive_auto_detection, None);
         assert_eq!(config.error_strategy, ErrorStrategy::Strict);
         assert_eq!(config.logout_total_timeout, Duration::from_secs(5));
     }

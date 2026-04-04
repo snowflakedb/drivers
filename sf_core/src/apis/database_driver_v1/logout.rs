@@ -32,7 +32,7 @@ pub(super) struct LogoutData {
 ///
 /// Implements Phase 3 unified truth table (SNOW-2314152):
 ///
-/// | server_session_keep_alive | enable_logout_auto_detection | Auto-detect result | Logout? |
+/// | server_session_keep_alive | enable_server_session_keep_alive_auto_detection | Auto-detect result | Logout? |
 /// |---------------------------|----------------------|-------------------|---------|
 /// | Some(true)                | any                  | not consulted     | No      |
 /// | Some(false)               | any                  | not consulted     | Yes     |
@@ -70,7 +70,7 @@ pub fn should_send_logout(
     }
 
     // server_session_keep_alive is None - check auto-detection setting
-    match config.enable_logout_auto_detection {
+    match config.enable_server_session_keep_alive_auto_detection {
         Some(true) => {
             // Auto-detection enabled - check registry
             if let Some(reg) = registry {
@@ -110,8 +110,8 @@ pub fn should_send_logout(
         Some(false) | None => {
             // Auto-detection disabled or not set - default to logout (Phase 3 - SNOW-2314152)
             tracing::info!(
-                "Sending logout: auto-detection disabled (enable_logout_auto_detection={:?})",
-                config.enable_logout_auto_detection
+                "Sending logout: auto-detection disabled (enable_server_session_keep_alive_auto_detection={:?})",
+                config.enable_server_session_keep_alive_auto_detection
             );
             (true, None)
         }
@@ -313,7 +313,7 @@ mod tests {
         // Given server_session_keep_alive = Some(true)
         let config = LogoutConfig {
             server_session_keep_alive: Some(true),
-            enable_logout_auto_detection: None,
+            enable_server_session_keep_alive_auto_detection: None,
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -331,7 +331,7 @@ mod tests {
         // Given server_session_keep_alive = Some(false)
         let config = LogoutConfig {
             server_session_keep_alive: Some(false),
-            enable_logout_auto_detection: Some(true), // Should be ignored
+            enable_server_session_keep_alive_auto_detection: Some(true), // Should be ignored
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -347,10 +347,10 @@ mod tests {
 
     #[test]
     fn test_auto_detection_enabled_with_running_queries() {
-        // Given server_session_keep_alive = None, enable_logout_auto_detection = Some(true)
+        // Given server_session_keep_alive = None, enable_server_session_keep_alive_auto_detection = Some(true)
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_logout_auto_detection: Some(true),
+            enable_server_session_keep_alive_auto_detection: Some(true),
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -366,10 +366,10 @@ mod tests {
 
     #[test]
     fn test_auto_detection_enabled_with_no_queries() {
-        // Given server_session_keep_alive = None, enable_logout_auto_detection = Some(true)
+        // Given server_session_keep_alive = None, enable_server_session_keep_alive_auto_detection = Some(true)
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_logout_auto_detection: Some(true),
+            enable_server_session_keep_alive_auto_detection: Some(true),
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -385,10 +385,10 @@ mod tests {
 
     #[test]
     fn test_auto_detection_disabled() {
-        // Given enable_logout_auto_detection = Some(false)
+        // Given enable_server_session_keep_alive_auto_detection = Some(false)
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_logout_auto_detection: Some(false),
+            enable_server_session_keep_alive_auto_detection: Some(false),
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
@@ -422,7 +422,7 @@ mod tests {
         // Given auto-detection enabled but no registry provided
         let config = LogoutConfig {
             server_session_keep_alive: None,
-            enable_logout_auto_detection: Some(true),
+            enable_server_session_keep_alive_auto_detection: Some(true),
             ..Default::default()
         };
 

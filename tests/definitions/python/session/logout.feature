@@ -61,14 +61,25 @@ Feature: Session Logout - Python-specific behavior
     And No deprecation warning is emitted
 
   @python_e2e
-  Scenario: should pass correct parameters when server_session_keep_alive is false
+  Scenario: should remap server_session_keep_alive false to none when auto_detection defaults to true
     # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
-    # Phase 2: False + auto_detection=True (default) → remap → Core receives None for registry check
+    # Phase 2 backward compat (SNOW-2314152): False + auto_detection=True (default)
+    # → remap → Core receives None and checks registry. Remap will be removed in Phase 3.
     Given Snowflake Python client is created with server_session_keep_alive set to false
     When Client closes connection
-    Then server_session_keep_alive is remapped to none by Phase 2 mapping
+    Then server_session_keep_alive false is remapped to none
     And Deprecation warning is emitted
     And Warning mentions that false will force logout in Phase 3
+
+  @python_e2e
+  Scenario: should pass server_session_keep_alive false to Core when auto_detection explicitly disabled
+    # False + auto_detection=False (explicit) → no Phase 2 remap → Core receives False (force logout)
+    # No deprecation warning: user opted out of auto-detection consciously
+    Given Snowflake Python client is created with server_session_keep_alive set to false
+    And enable_server_session_keep_alive_auto_detection is set to false
+    When Client closes connection
+    Then server_session_keep_alive false is passed to Core
+    And No deprecation warning is emitted
 
   # ===========================================================================
   #                     Wrapper Defaults

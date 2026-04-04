@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 _UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
 
 
-def _parse_auto_detection(kwargs: dict[str, Any]) -> bool | None:
+def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
     """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
 
     If not provided, defaults to True and emits a FutureWarning:
@@ -72,11 +72,13 @@ def _parse_auto_detection(kwargs: dict[str, Any]) -> bool | None:
     raw = kwargs.pop("enable_server_session_keep_alive_auto_detection", _UNSET)
     if raw is _UNSET:
         warnings.warn(
-            "enable_server_session_keep_alive_auto_detection defaults to True "
-            "(async query registry is checked before logout). In a future version, "
-            "the default will change to None (always logout on close). "
-            "To preserve current behavior, explicitly pass "
-            "enable_server_session_keep_alive_auto_detection=True.",
+            "enable_server_session_keep_alive_auto_detection was not set and defaults "
+            "to True. In a future version, the default will change to None. "
+            "Please provide an explicit value: "
+            "True = check for running async queries before logout (queries are preserved); "
+            "False/None = always send logout on close (async queries may be terminated by server). "
+            "Logout behavior can also be overridden with server_session_keep_alive. "
+            "See the connection parameter docs for more info.",
             FutureWarning,
             stacklevel=5,
         )
@@ -125,10 +127,12 @@ class Connection:
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             session_parameters: Optional dict of session parameters to set at connection time
             server_session_keep_alive: Optional[bool] - Control server session lifecycle
-                - True: Never send logout (Fire & Forget; session persists on server)
-                - False: Always send logout on close (no auto-detection at Core level).
-                  Phase 2 note: if auto-detection is also enabled, the Python wrapper
-                  remaps False → None so Core applies auto-detection (SNOW-2314152).
+                - True: Never send logout (Fire & Forget; session persists on server
+                  as long as there is activity in it, e.g. running queries)
+                - False: Always send logout on close. For backward compatibility,
+                  False is currently remapped to None when auto-detection is enabled,
+                  so Core checks the async query registry before logout.
+                  This remapping will be removed in a future version.
                 - None: Delegate to auto-detection setting
             enable_server_session_keep_alive_auto_detection: Optional[bool]
                 - True (default): Check async query registry before logout (backward compat)
@@ -197,9 +201,7 @@ class Connection:
 
         # Session params use a dedicated RPC (connection_set_session_parameters),
         # not the generic connection_set_options path, so pop them from kwargs.
-        self._session_params: SessionParameters = kwargs.pop("session_parameters", None) or {}
-        if autocommit is not None:
-            self._session_params["AUTOCOMMIT"] = str(autocommit).lower()
+        self._session_params = self._extract_session_params(kwargs, autocommit)
 
         # Transform in-place (stays in kwargs for generic path)
         if "private_key" in kwargs:
@@ -210,29 +212,22 @@ class Connection:
         # so post-init overrides like close(retry=False) won't be reflected here.
         self.logout_config = self._parse_logout_config(kwargs)
 
+    @staticmethod
+    def _extract_session_params(kwargs: dict[str, Any], autocommit: bool | None) -> SessionParameters:
+        """Pop session_parameters from kwargs and fold in autocommit."""
+        params: SessionParameters = kwargs.pop("session_parameters", None) or {}
+        if autocommit is not None:
+            params["AUTOCOMMIT"] = str(autocommit).lower()
+        return params
+
     def _parse_logout_config(self, kwargs: dict[str, Any]) -> LogoutConfig:
         """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
         keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
-        auto_detection = _parse_auto_detection(kwargs)
-
-        # Only warn when auto_detection=True: that's when the Phase 2 remap applies
-        # (False + True → None). With auto_detection=False/None, False already means
-        # "force logout" in Phase 2 and Phase 3 alike — no behavior change, no warning.
-        if keep_alive is False and auto_detection:
-            warnings.warn(
-                "server_session_keep_alive=False currently respects auto-detection "
-                "(async query registry is checked before logout). In a future version, "
-                "False will mean 'always logout' without registry check. "
-                "To keep current behavior, use server_session_keep_alive=None with "
-                "enable_server_session_keep_alive_auto_detection=True.",
-                FutureWarning,
-                stacklevel=4,
-            )
-
+        auto_detection = _extract_auto_detection_param(kwargs)
         keep_alive = remap_keep_alive_phase2(keep_alive, auto_detection)
         return LogoutConfig(
             server_session_keep_alive=keep_alive,
-            enable_logout_auto_detection=auto_detection,
+            enable_server_session_keep_alive_auto_detection=auto_detection,
         )
 
     def _send_logout_config(self, logout_config: LogoutConfig) -> None:
@@ -250,12 +245,12 @@ class Connection:
                 )
             )
 
-        if logout_config.enable_logout_auto_detection is not None:
+        if logout_config.enable_server_session_keep_alive_auto_detection is not None:
             self.db_api.connection_set_option_bool(
                 ConnectionSetOptionBoolRequest(
                     conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.ENABLE_LOGOUT_AUTO_DETECTION,
-                    value=logout_config.enable_logout_auto_detection,
+                    key=LogoutOptionKeys.ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION,
+                    value=logout_config.enable_server_session_keep_alive_auto_detection,
                 )
             )
 
