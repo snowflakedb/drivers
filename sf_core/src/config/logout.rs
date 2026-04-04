@@ -147,8 +147,9 @@ impl LogoutConfig {
 
         Ok(Self {
             server_session_keep_alive: server_session_keep_alive.or(self.server_session_keep_alive),
-            enable_server_session_keep_alive_auto_detection: enable_server_session_keep_alive_auto_detection
-                .or(self.enable_server_session_keep_alive_auto_detection),
+            enable_server_session_keep_alive_auto_detection:
+                enable_server_session_keep_alive_auto_detection
+                    .or(self.enable_server_session_keep_alive_auto_detection),
             error_strategy: error_strategy.unwrap_or(self.error_strategy),
             logout_total_timeout,
             max_attempts,
@@ -428,7 +429,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(merged.server_session_keep_alive, Some(false));
-        assert_eq!(merged.enable_server_session_keep_alive_auto_detection, Some(true));
+        assert_eq!(
+            merged.enable_server_session_keep_alive_auto_detection,
+            Some(true)
+        );
         assert_eq!(merged.error_strategy, ErrorStrategy::BestEffort);
         assert_eq!(merged.logout_total_timeout, Duration::from_secs(10));
         assert_eq!(merged.max_attempts, Some(1)); // 0 retries + 1 = 1 total attempt
@@ -451,7 +455,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(merged.server_session_keep_alive, Some(true));
-        assert_eq!(merged.enable_server_session_keep_alive_auto_detection, Some(true));
+        assert_eq!(
+            merged.enable_server_session_keep_alive_auto_detection,
+            Some(true)
+        );
         assert_eq!(merged.error_strategy, ErrorStrategy::BestEffort);
         assert_eq!(merged.logout_total_timeout, Duration::from_secs(7));
         assert_eq!(merged.max_attempts, Some(5));
