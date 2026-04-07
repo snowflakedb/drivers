@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import logging
+import platform
 import re
 import threading
 
@@ -44,11 +45,13 @@ from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
+from ._internal.telemetry import TelemetryClient as InternalTelemetryClient
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import Error, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
+from .version import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -197,6 +200,7 @@ class Connection:
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self._telemetry_client = InternalTelemetryClient(self.db_api, self.conn_handle)
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False

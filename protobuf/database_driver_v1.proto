@@ -674,6 +674,43 @@ message ConfigGetPathsResponse {
   string connections_file = 2;
 }
 
+// =============================================================================
+// TELEMETRY - In-band telemetry messages sent from wrappers via core
+// =============================================================================
+
+// Register wrapper identity (driver name, version, language info) with sf_core
+// so that subsequent telemetry events carry it automatically.
+// Call once BEFORE connection_init. The session_init telemetry event is emitted
+// by sf_core during connection_init using the stored identity.
+message TelemetryInitRequest {
+  ConnectionHandle conn_handle = 1;
+  string driver_name = 2;
+  string driver_version = 3;
+  string language_runtime = 4;
+  string language_version = 5;
+  optional string language_compiler = 6;
+}
+
+message TelemetryInitResponse {
+}
+
+message TelemetrySendApiUsageRequest {
+  ConnectionHandle conn_handle = 1;
+  string api_method = 2;
+}
+
+message TelemetrySendApiUsageResponse {
+}
+
+message TelemetrySendWrapperErrorRequest {
+  ConnectionHandle conn_handle = 1;
+  string exception_type = 2;
+  string error_source = 3;
+}
+
+message TelemetrySendWrapperErrorResponse {
+}
+
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
@@ -731,4 +768,9 @@ service DatabaseDriver {
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
   rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
+
+  // Telemetry operations
+  rpc TelemetryInit(TelemetryInitRequest) returns (TelemetryInitResponse);
+  rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendApiUsageResponse);
+  rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendWrapperErrorResponse);
 }

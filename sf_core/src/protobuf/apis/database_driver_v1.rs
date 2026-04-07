@@ -1467,6 +1467,130 @@ impl DatabaseDriver for DatabaseDriverImpl {
             connections_file: connections_file.to_string_lossy().into_owned(),
         })
     }
+
+    // -- Telemetry operations --
+
+    #[instrument(name = "DatabaseDriverV1::telemetry_init", skip(self, input))]
+    async fn telemetry_init(
+        &self,
+        input: TelemetryInitRequest,
+    ) -> Result<TelemetryInitResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let handle = Handle::from(conn_handle);
+
+        // Validate that required identity fields are non-empty.
+        if input.driver_name.is_empty() {
+            return Err(DriverException {
+                message: "driver_name must not be empty".to_string(),
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            });
+        }
+        if input.driver_version.is_empty() {
+            return Err(DriverException {
+                message: "driver_version must not be empty".to_string(),
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            });
+        }
+        if input.language_runtime.is_empty() {
+            return Err(DriverException {
+                message: "language_runtime must not be empty".to_string(),
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            });
+        }
+        if input.language_version.is_empty() {
+            return Err(DriverException {
+                message: "language_version must not be empty".to_string(),
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            });
+        }
+
+        let identity = crate::apis::database_driver_v1::connection::WrapperIdentity {
+            driver_name: input.driver_name.clone(),
+            driver_version: input.driver_version.clone(),
+            language_runtime: input.language_runtime.clone(),
+            language_version: input.language_version.clone(),
+            language_compiler: input.language_compiler,
+        };
+
+        // Store wrapper identity on the connection. The session_init telemetry
+        // event is emitted by connection_init, not here.
+        self.driver
+            .set_wrapper_identity(handle, identity.clone())
+            .await
+            .to_protobuf()?;
+
+        tracing::debug!(
+            driver_name = %identity.driver_name,
+            driver_version = %identity.driver_version,
+            language_runtime = %identity.language_runtime,
+            language_version = %identity.language_version,
+            "Telemetry: wrapper identity stored"
+        );
+
+        Ok(TelemetryInitResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::telemetry_send_api_usage", skip(self, input))]
+    async fn telemetry_send_api_usage(
+        &self,
+        input: TelemetrySendApiUsageRequest,
+    ) -> Result<TelemetrySendApiUsageResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let handle = Handle::from(conn_handle);
+
+        let identity = self
+            .driver
+            .get_wrapper_identity(handle)
+            .await
+            .to_protobuf()?;
+        if identity.is_none() {
+            tracing::warn!(api_method = %input.api_method, "Telemetry: api_usage called before TelemetryInit; event will lack wrapper identity");
+        }
+
+        tracing::debug!(
+            api_method = %input.api_method,
+            driver_name = identity.as_ref().map_or("", |i| &i.driver_name),
+            "Telemetry: api_usage"
+        );
+
+        // TODO: increment OTel counter snowflake.driver.api.call with api_method + identity attributes
+        Ok(TelemetrySendApiUsageResponse {})
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::telemetry_send_wrapper_error",
+        skip(self, input)
+    )]
+    async fn telemetry_send_wrapper_error(
+        &self,
+        input: TelemetrySendWrapperErrorRequest,
+    ) -> Result<TelemetrySendWrapperErrorResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let handle = Handle::from(conn_handle);
+
+        let identity = self
+            .driver
+            .get_wrapper_identity(handle)
+            .await
+            .to_protobuf()?;
+        if identity.is_none() {
+            tracing::warn!(exception_type = %input.exception_type, "Telemetry: wrapper_error called before TelemetryInit; event will lack wrapper identity");
+        }
+
+        tracing::debug!(
+            exception_type = %input.exception_type,
+            error_source = %input.error_source,
+            driver_name = identity.as_ref().map_or("", |i| &i.driver_name),
+            "Telemetry: wrapper_error"
+        );
+
+        // TODO: create OTel span with exception event + identity attributes
+        Ok(TelemetrySendWrapperErrorResponse {})
+    }
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}

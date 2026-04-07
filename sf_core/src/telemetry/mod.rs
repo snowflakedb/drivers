@@ -1,3 +1,4 @@
+pub mod environment;
 pub mod types;
 
 // These modules are public for integration tests but are not part of the stable API.
