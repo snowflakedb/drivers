@@ -89,7 +89,7 @@ proto_generator = { path = "../proto_generator" }
 libc = "0.2"
 
 [dev-dependencies]
-opentelemetry_sdk = { version = "0.30.0", features = ["experimental_metrics_custom_reader"] }
+opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"

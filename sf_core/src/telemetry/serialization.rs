@@ -18,14 +18,26 @@ fn span_to_log_entry(span: &SpanData) -> Value {
     message.insert("type".to_string(), Value::String(span.name.to_string()));
 
     for kv in &span.attributes {
-        message.insert(kv.key.as_str().to_string(), otel_value_to_json(&kv.value));
+        let key = kv.key.as_str();
+        if key == "type" {
+            tracing::warn!("Span attribute key 'type' conflicts with span name field, skipping");
+            continue;
+        }
+        message.insert(key.to_string(), otel_value_to_json(&kv.value));
     }
 
-    // Flatten span events (e.g., exception events) into the message
+    // Flatten span events (e.g., exception events) into the message.
+    // Event attributes are prefixed with "exception." to avoid overwriting span attributes.
     for event in span.events.iter() {
         if event.name.as_ref() == "exception" {
             for kv in &event.attributes {
-                message.insert(kv.key.as_str().to_string(), otel_value_to_json(&kv.value));
+                let key = kv.key.as_str();
+                let prefixed = if key.starts_with("exception.") {
+                    key.to_string()
+                } else {
+                    format!("exception.{key}")
+                };
+                message.insert(prefixed, otel_value_to_json(&kv.value));
             }
         }
     }
@@ -36,6 +48,24 @@ fn span_to_log_entry(span: &SpanData) -> Value {
         "message": message,
         "timestamp": timestamp.to_string()
     })
+}
+
+macro_rules! collect_sum_data_points {
+    ($logs:expr, $metric_name:expr, $sum:expr, $ty:ty) => {{
+        let timestamp = system_time_to_epoch_millis($sum.time());
+        for dp in $sum.data_points() {
+            let mut message = serde_json::Map::new();
+            message.insert("type".to_string(), Value::String($metric_name.to_string()));
+            message.insert("value".to_string(), json!(dp.value()));
+            for kv in dp.attributes() {
+                message.insert(kv.key.as_str().to_string(), otel_value_to_json(&kv.value));
+            }
+            $logs.push(json!({
+                "message": message,
+                "timestamp": timestamp.to_string()
+            }));
+        }
+    }};
 }
 
 /// Convert aggregated metric data into Snowflake's `/telemetry/send` JSON payload.
@@ -65,25 +95,6 @@ pub fn metrics_to_snowflake_payload(metrics: &ResourceMetrics) -> Value {
     json!({ "logs": logs })
 }
 
-macro_rules! collect_sum_data_points {
-    ($logs:expr, $metric_name:expr, $sum:expr, $ty:ty) => {{
-        let timestamp = system_time_to_epoch_millis($sum.time());
-        for dp in $sum.data_points() {
-            let mut message = serde_json::Map::new();
-            message.insert("type".to_string(), Value::String($metric_name.to_string()));
-            message.insert("value".to_string(), json!(dp.value()));
-            for kv in dp.attributes() {
-                message.insert(kv.key.as_str().to_string(), otel_value_to_json(&kv.value));
-            }
-            $logs.push(json!({
-                "message": message,
-                "timestamp": timestamp.to_string()
-            }));
-        }
-    }};
-}
-use collect_sum_data_points;
-
 fn otel_value_to_json(value: &opentelemetry::Value) -> Value {
     use opentelemetry::Value as OtelValue;
     match value {
@@ -97,9 +108,13 @@ fn otel_value_to_json(value: &opentelemetry::Value) -> Value {
 }
 
 fn system_time_to_epoch_millis(time: SystemTime) -> u128 {
-    time.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_millis(),
+        Err(_) => {
+            tracing::warn!("SystemTime before UNIX_EPOCH, using 0");
+            0
+        }
+    }
 }
 
 #[cfg(test)]
