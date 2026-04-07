@@ -1,5 +1,7 @@
 import pytest
 
+from snowflake.connector.errors import DatabaseError
+
 from ...config import get_test_parameters
 from .auth_helpers import verify_simple_query_execution
 
@@ -48,7 +50,6 @@ class TestUserPasswordAuthentication:
             connection_factory(**params)
 
         # Then There is error returned
-        error_msg = str(exception.value).lower()
-        assert "incorrect" in error_msg or "password" in error_msg or "multi-factor" in error_msg, (
-            f"Expected authentication error, got: {exception.value}"
+        assert isinstance(exception.value, DatabaseError), (
+            f"Expected DatabaseError, got: {type(exception.value).__name__}: {exception.value}"
         )

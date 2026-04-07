@@ -106,7 +106,7 @@ TEST_CASE("should authenticate using username and password", "[user_password]") 
 }
 
 TEST_CASE("should authenticate using explicit snowflake authenticator", "[user_password]") {
-  SKIP_OLD_DRIVER("N/A", "Old driver already accepts 'snowflake' — test verifies new driver does too");
+  SKIP_OLD_DRIVER("", "Old driver already accepts 'snowflake' — test verifies new driver does too");
 
   // Given Authentication is explicitly set to snowflake with valid username and password
   std::string connection_string = get_password_connection_string_with_explicit_authenticator();
