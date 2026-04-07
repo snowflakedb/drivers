@@ -46,10 +46,12 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR.", "[query][bind_parameter][c_
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE negative zero to SQL_VARCHAR.", "[query][bind_parameter][c_real_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = -0.0;
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -57,6 +59,7 @@ TEST_CASE("should bind SQL_C_DOUBLE negative zero to SQL_VARCHAR.", "[query][bin
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "0");
 }
 
@@ -79,10 +82,12 @@ static bool is_negative_infinity_str(const std::string& s) {
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE NaN to SQL_VARCHAR.", "[query][bind_parameter][c_real_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = std::numeric_limits<double>::quiet_NaN();
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -90,14 +95,17 @@ TEST_CASE("should bind SQL_C_DOUBLE NaN to SQL_VARCHAR.", "[query][bind_paramete
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(is_nan_str(get_data<SQL_C_CHAR>(stmt, 1)));
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE positive infinity to SQL_VARCHAR.", "[query][bind_parameter][c_real_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = std::numeric_limits<double>::infinity();
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -105,14 +113,17 @@ TEST_CASE("should bind SQL_C_DOUBLE positive infinity to SQL_VARCHAR.", "[query]
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE negative infinity to SQL_VARCHAR.", "[query][bind_parameter][c_real_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = -std::numeric_limits<double>::infinity();
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -120,14 +131,17 @@ TEST_CASE("should bind SQL_C_DOUBLE negative infinity to SQL_VARCHAR.", "[query]
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(is_negative_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
 }
 
 TEST_CASE("should bind SQL_C_FLOAT NaN to SQL_VARCHAR.", "[query][bind_parameter][c_real_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = std::numeric_limits<float>::quiet_NaN();
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -135,14 +149,17 @@ TEST_CASE("should bind SQL_C_FLOAT NaN to SQL_VARCHAR.", "[query][bind_parameter
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(is_nan_str(get_data<SQL_C_CHAR>(stmt, 1)));
 }
 
 TEST_CASE("should bind SQL_C_FLOAT positive infinity to SQL_VARCHAR.", "[query][bind_parameter][c_real_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = std::numeric_limits<float>::infinity();
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -150,14 +167,17 @@ TEST_CASE("should bind SQL_C_FLOAT positive infinity to SQL_VARCHAR.", "[query][
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(is_positive_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
 }
 
 TEST_CASE("should bind SQL_C_FLOAT negative infinity to SQL_VARCHAR.", "[query][bind_parameter][c_real_to_varchar]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = -std::numeric_limits<float>::infinity();
   SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
   SQLRETURN ret =
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
@@ -165,5 +185,6 @@ TEST_CASE("should bind SQL_C_FLOAT negative infinity to SQL_VARCHAR.", "[query][
   REQUIRE_ODBC(ret, stmt);
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
   CHECK(is_negative_infinity_str(get_data<SQL_C_CHAR>(stmt, 1)));
 }
