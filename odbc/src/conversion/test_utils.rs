@@ -44,4 +44,46 @@ pub(crate) mod helpers {
             ..Default::default()
         }
     }
+
+    pub fn zero_interval() -> sql::IntervalStruct {
+        sql::IntervalStruct {
+            interval_type: 0,
+            interval_sign: 0,
+            interval_value: sql::IntervalUnion {
+                day_second: sql::DaySecond::default(),
+            },
+        }
+    }
+
+    pub fn binding_for_interval(
+        target_type: CDataType,
+        value: &mut sql::IntervalStruct,
+        str_len: &mut sql::Len,
+    ) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
+            buffer_length: 0,
+            octet_length_ptr: str_len as *mut sql::Len,
+            indicator_ptr: str_len as *mut sql::Len,
+            ..Default::default()
+        }
+    }
+
+    pub fn binding_for_interval_with_precision(
+        target_type: CDataType,
+        value: &mut sql::IntervalStruct,
+        str_len: &mut sql::Len,
+        precision: i16,
+    ) -> Binding {
+        Binding {
+            target_type,
+            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
+            buffer_length: 0,
+            octet_length_ptr: str_len as *mut sql::Len,
+            indicator_ptr: str_len as *mut sql::Len,
+            datetime_interval_precision: Some(precision),
+            ..Default::default()
+        }
+    }
 }

@@ -4,7 +4,8 @@ mod tests {
     use crate::conversion::WriteODBCType;
     use crate::conversion::number::{NumericSettings, NumericSqlType, SnowflakeNumber};
     use crate::conversion::test_utils::helpers::{
-        binding_for_char_buffer, binding_for_value, binding_for_wchar_buffer,
+        binding_for_char_buffer, binding_for_interval, binding_for_value, binding_for_wchar_buffer,
+        zero_interval,
     };
     use crate::conversion::traits::Binding;
     use odbc_sys as sql;
@@ -894,31 +895,6 @@ mod tests {
     // ========================================================================
     // Interval conversions -- single-field (SQLSTATE 01S07 for fractional)
     // ========================================================================
-
-    fn binding_for_interval(
-        target_type: CDataType,
-        value: &mut sql::IntervalStruct,
-        str_len: &mut sql::Len,
-    ) -> Binding {
-        Binding {
-            target_type,
-            target_value_ptr: value as *mut sql::IntervalStruct as sql::Pointer,
-            buffer_length: 0,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
-            ..Default::default()
-        }
-    }
-
-    fn zero_interval() -> sql::IntervalStruct {
-        sql::IntervalStruct {
-            interval_type: 0,
-            interval_sign: 0,
-            interval_value: sql::IntervalUnion {
-                day_second: sql::DaySecond::default(),
-            },
-        }
-    }
 
     #[test]
     fn interval_year_positive_integer() {

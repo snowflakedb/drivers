@@ -3,6 +3,9 @@ mod tests {
     use crate::api::CDataType;
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
+    use crate::conversion::test_utils::helpers::{
+        binding_for_interval, binding_for_interval_with_precision, zero_interval,
+    };
     use crate::conversion::traits::Binding;
     use crate::conversion::warning::Warning;
     use odbc_sys as sql;
@@ -1227,5 +1230,498 @@ mod tests {
         let binding = binding_for_value(CDataType::TypeDate, &mut value, &mut str_len);
 
         assert!(sr.write_odbc_type(1.0, &binding, &mut None).is_err());
+    }
+
+    // ======================================================================
+    // Interval types
+    // ======================================================================
+
+    #[test]
+    fn interval_year_positive() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(5.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn interval_year_negative() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(-3.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Year as i32);
+        assert_eq!(interval.interval_sign, 1);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 3);
+    }
+
+    #[test]
+    fn interval_year_zero() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 0);
+    }
+
+    #[test]
+    fn interval_month_positive() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalMonth, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(10.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Month as i32);
+        assert_eq!(unsafe { interval.interval_value.year_month.month }, 10);
+    }
+
+    #[test]
+    fn interval_day_positive() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalDay, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(15.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Day as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.day }, 15);
+    }
+
+    #[test]
+    fn interval_hour_positive() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalHour, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(23.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Hour as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.hour }, 23);
+    }
+
+    #[test]
+    fn interval_minute_positive() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalMinute, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(59.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Minute as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.minute }, 59);
+    }
+
+    #[test]
+    fn interval_second_integer() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(45.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_type, sql::Interval::Second as i32);
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 45);
+        assert_eq!(unsafe { interval.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn interval_second_with_fraction() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(45.5, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 45);
+        assert_eq!(
+            unsafe { interval.interval_value.day_second.fraction },
+            500000
+        );
+    }
+
+    #[test]
+    fn interval_second_negative_with_fraction() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(-10.25, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_sign, 1);
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 10);
+        assert_eq!(
+            unsafe { interval.interval_value.day_second.fraction },
+            250000
+        );
+    }
+
+    #[test]
+    fn interval_second_zero() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(0.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(interval.interval_sign, 0);
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 0);
+        assert_eq!(unsafe { interval.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn interval_year_fractional_truncation() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(5.7, &binding, &mut None).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 5);
+    }
+
+    #[test]
+    fn interval_day_fractional_truncation() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalDay, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(15.9, &binding, &mut None).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(unsafe { interval.interval_value.day_second.day }, 15);
+    }
+
+    #[test]
+    fn interval_negative_zero_no_negative_sign() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(-0.5, &binding, &mut None).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+        assert_eq!(
+            interval.interval_sign, 0,
+            "-0.5 truncated to 0 should be positive"
+        );
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 0);
+    }
+
+    #[test]
+    fn interval_multi_field_returns_error() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+
+        for target_type in [
+            CDataType::IntervalYearToMonth,
+            CDataType::IntervalDayToHour,
+            CDataType::IntervalDayToMinute,
+            CDataType::IntervalDayToSecond,
+            CDataType::IntervalHourToMinute,
+            CDataType::IntervalHourToSecond,
+            CDataType::IntervalMinuteToSecond,
+        ] {
+            let binding = binding_for_interval(target_type, &mut interval, &mut str_len);
+            let result = sr.write_odbc_type(42.0, &binding, &mut None);
+            assert!(matches!(
+                result,
+                Err(WriteOdbcError::IntervalFieldOverflow { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn interval_nan_returns_error() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+
+        for target_type in [
+            CDataType::IntervalYear,
+            CDataType::IntervalMonth,
+            CDataType::IntervalDay,
+            CDataType::IntervalHour,
+            CDataType::IntervalMinute,
+            CDataType::IntervalSecond,
+        ] {
+            let binding = binding_for_interval(target_type, &mut interval, &mut str_len);
+            let result = sr.write_odbc_type(f64::NAN, &binding, &mut None);
+            assert!(
+                matches!(result, Err(WriteOdbcError::NumericValueOutOfRange { .. })),
+                "NaN should fail for {target_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn interval_infinity_returns_error() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+
+        for target_type in [CDataType::IntervalYear, CDataType::IntervalSecond] {
+            let binding = binding_for_interval(target_type, &mut interval, &mut str_len);
+            let result = sr.write_odbc_type(f64::INFINITY, &binding, &mut None);
+            assert!(
+                matches!(result, Err(WriteOdbcError::NumericValueOutOfRange { .. })),
+                "Infinity should fail for {target_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn interval_neg_infinity_returns_error() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+        let result = sr.write_odbc_type(f64::NEG_INFINITY, &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+        let result = sr.write_odbc_type(f64::NEG_INFINITY, &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::NumericValueOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn interval_leading_precision_default_99_succeeds() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(99.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { interval.interval_value.year_month.year }, 99);
+    }
+
+    #[test]
+    fn interval_leading_precision_default_100_fails() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalYear, &mut interval, &mut str_len);
+
+        let result = sr.write_odbc_type(100.0, &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::IntervalFieldOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn interval_leading_precision_custom_3_allows_999() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval_with_precision(
+            CDataType::IntervalDay,
+            &mut interval,
+            &mut str_len,
+            3,
+        );
+
+        let warnings = sr.write_odbc_type(999.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { interval.interval_value.day_second.day }, 999);
+    }
+
+    #[test]
+    fn interval_leading_precision_custom_3_rejects_1000() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval_with_precision(
+            CDataType::IntervalDay,
+            &mut interval,
+            &mut str_len,
+            3,
+        );
+
+        let result = sr.write_odbc_type(1000.0, &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::IntervalFieldOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn interval_second_leading_precision_overflow() {
+        use crate::conversion::error::WriteOdbcError;
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let result = sr.write_odbc_type(100.0, &binding, &mut None);
+        assert!(matches!(
+            result,
+            Err(WriteOdbcError::IntervalFieldOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn interval_second_precision_9_allows_large_value() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval_with_precision(
+            CDataType::IntervalSecond,
+            &mut interval,
+            &mut str_len,
+            9,
+        );
+
+        let warnings = sr
+            .write_odbc_type(999999999.0, &binding, &mut None)
+            .unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            unsafe { interval.interval_value.day_second.second },
+            999999999
+        );
+        assert_eq!(unsafe { interval.interval_value.day_second.fraction }, 0);
+    }
+
+    #[test]
+    fn interval_second_sub_microsecond_truncation() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(45.1234567, &binding, &mut None).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, Warning::NumericValueTruncated)),
+            "sub-microsecond precision should be truncated"
+        );
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 45);
+        assert_eq!(
+            unsafe { interval.interval_value.day_second.fraction },
+            123456
+        );
+    }
+
+    #[test]
+    fn interval_second_exact_microseconds_no_truncation() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(10.250000, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 10);
+        assert_eq!(
+            unsafe { interval.interval_value.day_second.fraction },
+            250000
+        );
+    }
+
+    #[test]
+    fn interval_second_frac_microsecond_carry() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        // 0.999999_f64.fract() * 1_000_000.0 = 999_999.0 (no carry).
+        // Verify the fraction stays below 1_000_000 for a clean boundary value.
+        let warnings = sr.write_odbc_type(0.999999, &binding, &mut None).unwrap();
+        let frac = unsafe { interval.interval_value.day_second.fraction };
+        assert!(frac < 1_000_000, "fraction must be < 1_000_000, got {frac}");
+        assert_eq!(unsafe { interval.interval_value.day_second.second }, 0);
+        assert!(
+            warnings.is_empty()
+                || warnings
+                    .iter()
+                    .any(|w| matches!(w, Warning::NumericValueTruncated))
+        );
+    }
+
+    #[test]
+    fn interval_second_negative_zero_no_negative_sign() {
+        let sr = make_real();
+        let mut interval = zero_interval();
+        let mut str_len: sql::Len = 0;
+        let binding = binding_for_interval(CDataType::IntervalSecond, &mut interval, &mut str_len);
+
+        let warnings = sr.write_odbc_type(-0.0, &binding, &mut None).unwrap();
+
+        assert!(warnings.is_empty());
+        assert_eq!(
+            interval.interval_sign, 0,
+            "-0.0 should produce positive interval"
+        );
     }
 }

@@ -3,7 +3,7 @@ Unit tests for PEP 249 Cursor class.
 """
 
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -28,8 +28,9 @@ class TestFetchone:
 
     @pytest.fixture
     def mock_connection(self):
-        """Create a mock connection for testing."""
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -42,7 +43,7 @@ class TestFetchone:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchone()
 
         assert result == (1,)
@@ -52,7 +53,7 @@ class TestFetchone:
         mock_iterator = iter([])
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchone()
 
         assert result is None
@@ -63,7 +64,7 @@ class TestFetchone:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             first = cursor.fetchone()
             second = cursor.fetchone()
             third = cursor.fetchone()
@@ -74,11 +75,11 @@ class TestFetchone:
         assert third == (3,)
         assert fourth is None
 
-    def test_fetchone_calls_get_iterator_if_iterator_is_none(self, cursor):
-        """Test fetchone calls _get_iterator."""
+    def test_fetchone_calls_create_row_iterator_if_iterator_is_none(self, cursor):
+        """Test fetchone calls _create_row_iterator."""
         mock_ensure = MagicMock(return_value=iter([(1,)]))
 
-        with patch.object(cursor, "_get_iterator", mock_ensure):
+        with patch.object(cursor, "_create_row_iterator", mock_ensure):
             cursor.fetchone()
 
         mock_ensure.assert_called_once()
@@ -88,7 +89,7 @@ class TestFetchone:
         mock_rows = [(1, "hello", 3.14)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchone()
 
         assert result == (1, "hello", 3.14)
@@ -98,7 +99,7 @@ class TestFetchone:
         mock_rows = [(1, "text", Decimal("3.14"), None, True)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchone()
 
         assert result[0] == 1
@@ -113,7 +114,7 @@ class TestFetchone:
         mock_rows = [()]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchone()
 
         assert result == ()
@@ -123,7 +124,7 @@ class TestFetchone:
         mock_rows = [(1,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()  # Consume the row
             result1 = cursor.fetchone()
             result2 = cursor.fetchone()
@@ -137,8 +138,9 @@ class TestFetchall:
 
     @pytest.fixture
     def mock_connection(self):
-        """Create a mock connection for testing."""
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -150,7 +152,7 @@ class TestFetchall:
         mock_rows = [(1,), (2,), (3,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
 
         assert result == [(1,), (2,), (3,)]
@@ -159,16 +161,16 @@ class TestFetchall:
         """Test fetchall returns empty list when no rows."""
         cursor._iterator = iter([])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
 
         assert result == []
 
-    def test_fetchall_calls_get_iterator_if_iterator_is_none(self, cursor):
-        """Test fetchall calls _get_iterator."""
+    def test_fetchall_calls_create_row_iterator_if_iterator_is_none(self, cursor):
+        """Test fetchall calls _create_row_iterator."""
         mock_ensure = MagicMock()
 
-        with patch.object(cursor, "_get_iterator", mock_ensure):
+        with patch.object(cursor, "_create_row_iterator", mock_ensure):
             cursor.fetchall()
 
         mock_ensure.assert_called_once()
@@ -178,7 +180,7 @@ class TestFetchall:
         mock_rows = [(42,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
 
         assert result == [(42,)]
@@ -193,7 +195,7 @@ class TestFetchall:
         ]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
 
         assert result == [(1, "a", 1.0), (2, "b", 2.0), (3, "c", 3.0)]
@@ -206,7 +208,7 @@ class TestFetchall:
         ]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
 
         assert result[0] == (1, "text", Decimal("3.14"), None)
@@ -220,7 +222,7 @@ class TestFetchall:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             # Fetch first two rows
             cursor.fetchone()
             cursor.fetchone()
@@ -235,7 +237,7 @@ class TestFetchall:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()  # Consume all rows
             result = cursor.fetchall()
 
@@ -246,7 +248,7 @@ class TestFetchall:
         mock_rows = [(i,) for i in range(1000)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
 
         assert len(result) == 1000
@@ -258,7 +260,7 @@ class TestFetchall:
         mock_rows = [(1,), (2,), (3,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
 
         assert isinstance(result, list)
@@ -270,7 +272,9 @@ class TestFetchmany:
     @pytest.fixture
     def mock_connection(self):
         """Create a mock connection for testing."""
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -615,6 +619,40 @@ class TestSqlstate:
         assert cursor.sqlstate is None
 
 
+class TestSfqidOnFailedQuery:
+    """Unit tests for cursor.sfqid propagation when execute raises."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_sfqid_set_from_error_on_failed_execute(self, cursor, mock_connection):
+        """sfqid is captured from ProgrammingError when execute raises."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error", sfqid="01abc-def-12345")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.sfqid == "01abc-def-12345"
+
+    def test_sfqid_none_when_error_has_no_sfqid(self, cursor, mock_connection):
+        """sfqid is None when error carries no sfqid."""
+        mock_connection.db_api.statement_execute_query.side_effect = ProgrammingError("error")
+
+        with pytest.raises(ProgrammingError):
+            cursor.execute("INVALID SQL")
+
+        assert cursor.sfqid is None
+
+
 class TestQueryResultStats:
     """Unit tests for QueryResultStats NamedTuple."""
 
@@ -728,7 +766,7 @@ class TestStats:
         """stats returns all-None when execute_result has no stats field."""
         mock_result = MagicMock()
         mock_result.HasField.return_value = False
-        cursor.execute_result = mock_result
+        cursor._execute_result = mock_result
 
         result = cursor.stats
 
@@ -747,7 +785,7 @@ class TestStats:
         mock_result = MagicMock()
         mock_result.HasField.return_value = True
         mock_result.stats = mock_stats
-        cursor.execute_result = mock_result
+        cursor._execute_result = mock_result
 
         result = cursor.stats
 
@@ -774,7 +812,7 @@ class TestStats:
         mock_result = MagicMock()
         mock_result.HasField.return_value = True
         mock_result.stats = mock_stats
-        cursor.execute_result = mock_result
+        cursor._execute_result = mock_result
 
         result = cursor.stats
 
@@ -795,7 +833,7 @@ class TestStats:
         mock_result = MagicMock()
         mock_result.HasField.return_value = True
         mock_result.stats = mock_stats
-        cursor.execute_result = mock_result
+        cursor._execute_result = mock_result
 
         result = cursor.stats
 
@@ -807,7 +845,7 @@ class TestStats:
 
         mock_result = MagicMock()
         mock_result.HasField.return_value = False
-        cursor.execute_result = mock_result
+        cursor._execute_result = mock_result
         assert isinstance(cursor.stats, QueryResultStats)
 
     def test_stats_updates_on_subsequent_execute(self, cursor):
@@ -819,7 +857,7 @@ class TestStats:
         first_result = MagicMock()
         first_result.HasField.return_value = True
         first_result.stats = first_stats
-        cursor.execute_result = first_result
+        cursor._execute_result = first_result
 
         assert cursor.stats.num_rows_inserted == 5
 
@@ -830,7 +868,7 @@ class TestStats:
         second_result = MagicMock()
         second_result.HasField.return_value = True
         second_result.stats = second_stats
-        cursor.execute_result = second_result
+        cursor._execute_result = second_result
 
         assert cursor.stats.num_rows_inserted == 20
 
@@ -847,7 +885,7 @@ class TestStats:
         mock_result = MagicMock()
         mock_result.HasField.return_value = True
         mock_result.stats = mock_stats
-        cursor.execute_result = mock_result
+        cursor._execute_result = mock_result
 
         result = cursor.stats
         assert result == QueryResultStats(
@@ -860,8 +898,9 @@ class TestFetchmanyArraysizeAttribute:
 
     @pytest.fixture
     def mock_connection(self):
-        """Create a mock connection for testing."""
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -899,7 +938,9 @@ class TestRownumber:
 
     @pytest.fixture
     def mock_connection(self):
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -913,7 +954,7 @@ class TestRownumber:
         """rownumber increments by 1 for each fetchone call."""
         cursor._iterator = iter([(1,), (2,), (3,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
             assert cursor.rownumber == 0
             cursor.fetchone()
@@ -925,7 +966,7 @@ class TestRownumber:
         """rownumber stays at last value when fetchone returns None."""
         cursor._iterator = iter([(1,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
             assert cursor.rownumber == 0
             cursor.fetchone()  # returns None
@@ -935,7 +976,7 @@ class TestRownumber:
         """rownumber reflects total rows fetched after fetchall."""
         cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()
             assert cursor.rownumber == 4
 
@@ -943,7 +984,7 @@ class TestRownumber:
         """rownumber is correct when fetchall follows partial fetchone consumption."""
         cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
             cursor.fetchone()
             assert cursor.rownumber == 1
@@ -954,7 +995,7 @@ class TestRownumber:
         """rownumber increments correctly through fetchmany calls."""
         cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchmany(3)
             assert cursor.rownumber == 2
             cursor.fetchmany(2)
@@ -964,7 +1005,7 @@ class TestRownumber:
         """rownumber stays None when fetchall returns no rows."""
         cursor._iterator = iter([])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()
             assert cursor.rownumber is None
 
@@ -972,7 +1013,7 @@ class TestRownumber:
         """rownumber resets to None after a new execute call."""
         cursor._iterator = iter([(1,), (2,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
             assert cursor.rownumber == 0
 
@@ -1047,7 +1088,9 @@ class TestFetchArrowBatches:
 
     @pytest.fixture
     def mock_connection(self):
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -1068,7 +1111,10 @@ class TestFetchArrowBatches:
         table1, table2 = MagicMock(), MagicMock()
         self.pa.Table.from_batches.side_effect = [table1, table2]
 
-        with patch.object(cursor, "_get_table_iterator", return_value=iter([batch1, batch2])):
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([batch1, batch2])),
+        ):
             tables = list(cursor.fetch_arrow_batches())
 
         assert tables == [table1, table2]
@@ -1076,7 +1122,10 @@ class TestFetchArrowBatches:
         self.pa.Table.from_batches.assert_any_call([batch2])
 
     def test_yields_nothing_for_empty_stream(self, cursor):
-        with patch.object(cursor, "_get_table_iterator", return_value=iter([])):
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])),
+        ):
             tables = list(cursor.fetch_arrow_batches())
 
         assert tables == []
@@ -1091,10 +1140,13 @@ class TestFetchArrowBatches:
                 list(cursor.fetch_arrow_batches())
 
     def test_passes_force_microsecond_precision(self, cursor):
-        with patch.object(cursor, "_get_table_iterator", return_value=iter([])) as mock_get:
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])) as mock_get,
+        ):
             list(cursor.fetch_arrow_batches(force_microsecond_precision=True))
 
-        mock_get.assert_called_once_with(force_microsecond_precision=True)
+        mock_get.assert_called_once_with(stream_ptr=42, force_microsecond_precision=True, number_to_decimal=ANY)
 
 
 class TestFetchArrowAll:
@@ -1102,7 +1154,9 @@ class TestFetchArrowAll:
 
     @pytest.fixture
     def mock_connection(self):
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -1114,6 +1168,7 @@ class TestFetchArrowAll:
         with (
             patch("snowflake.connector._internal.extras.check_dependency"),
             patch("snowflake.connector.cursor._base.pyarrow", new=mock_pa),
+            patch("snowflake.connector._internal.arrow_stream_utils.pyarrow", new=mock_pa),
         ):
             self.pa = mock_pa
             yield
@@ -1123,7 +1178,10 @@ class TestFetchArrowAll:
         mock_table = MagicMock()
         self.pa.Table.from_batches.return_value = mock_table
 
-        with patch.object(cursor, "_get_table_iterator", return_value=iter([batch1, batch2])):
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([batch1, batch2])),
+        ):
             result = cursor.fetch_arrow_all()
 
         assert result is mock_table
@@ -1133,7 +1191,10 @@ class TestFetchArrowAll:
         mock_iterator = MagicMock()
         mock_iterator.__iter__ = MagicMock(return_value=iter([]))
 
-        with patch.object(cursor, "_get_table_iterator", return_value=mock_iterator):
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=mock_iterator),
+        ):
             result = cursor.fetch_arrow_all()
 
         assert result is None
@@ -1147,7 +1208,10 @@ class TestFetchArrowAll:
         mock_iterator.__iter__ = MagicMock(return_value=iter([]))
         mock_iterator.get_converted_schema.return_value = mock_schema
 
-        with patch.object(cursor, "_get_table_iterator", return_value=mock_iterator):
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=mock_iterator),
+        ):
             result = cursor.fetch_arrow_all(force_return_table=True)
 
         assert result is mock_empty_table
@@ -1155,19 +1219,22 @@ class TestFetchArrowAll:
         mock_schema.empty_table.assert_called_once()
 
     def test_returns_none_without_force_return_table(self, cursor):
-        mock_iterator = MagicMock()
-        mock_iterator.__iter__ = MagicMock(return_value=iter([]))
-
-        with patch.object(cursor, "_get_table_iterator", return_value=mock_iterator):
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])),
+        ):
             result = cursor.fetch_arrow_all(force_return_table=False)
 
         assert result is None
 
     def test_passes_force_microsecond_precision(self, cursor):
-        with patch.object(cursor, "_get_table_iterator", return_value=iter([])) as mock_get:
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])) as mock_get,
+        ):
             cursor.fetch_arrow_all(force_microsecond_precision=True)
 
-        mock_get.assert_called_once_with(force_microsecond_precision=True)
+        mock_get.assert_called_once_with(stream_ptr=42, force_microsecond_precision=True, number_to_decimal=ANY)
 
 
 class TestFetchPandasBatches:
@@ -1175,7 +1242,9 @@ class TestFetchPandasBatches:
 
     @pytest.fixture
     def mock_connection(self):
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -1214,7 +1283,9 @@ class TestFetchPandasAll:
 
     @pytest.fixture
     def mock_connection(self):
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -1270,7 +1341,9 @@ class TestFetchModeValidation:
 
     @pytest.fixture
     def mock_connection(self):
-        return MagicMock()
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        return mock_connection
 
     @pytest.fixture
     def cursor(self, mock_connection):
@@ -1288,14 +1361,17 @@ class TestFetchModeValidation:
     def test_row_then_arrow_raises(self, cursor):
         cursor._iterator = iter([(1,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
 
         with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
             list(cursor.fetch_arrow_batches())
 
     def test_arrow_then_row_raises(self, cursor):
-        with patch.object(cursor, "_get_table_iterator", return_value=iter([])):
+        with (
+            patch("snowflake.connector.cursor._base.get_stream_ptr", return_value=42),
+            patch("snowflake.connector.cursor._base.create_table_iterator", return_value=iter([])),
+        ):
             cursor.fetch_arrow_all()
 
         with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
@@ -1304,7 +1380,7 @@ class TestFetchModeValidation:
     def test_row_then_pandas_raises(self, cursor):
         cursor._iterator = iter([(1,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
 
         with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
@@ -1319,7 +1395,7 @@ class TestFetchModeValidation:
     def test_fetchall_then_arrow_raises(self, cursor):
         cursor._iterator = iter([(1,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()
 
         with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
@@ -1328,7 +1404,7 @@ class TestFetchModeValidation:
     def test_same_mode_is_fine(self, cursor):
         cursor._iterator = iter([(1,), (2,)])
 
-        with patch.object(cursor, "_get_iterator"):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
             cursor.fetchone()
 
@@ -1342,10 +1418,10 @@ class TestFetchModeValidation:
 
         cursor._fetch_mode = FetchMode.ARROW
         with (
-            patch("snowflake.connector._internal.query_utils.StatementNewRequest"),
-            patch("snowflake.connector._internal.query_utils.StatementSetSqlQueryRequest"),
+            patch("snowflake.connector._internal.statement_utils.StatementNewRequest"),
+            patch("snowflake.connector._internal.statement_utils.StatementSetSqlQueryRequest"),
             patch("snowflake.connector.cursor._base.StatementExecuteQueryRequest"),
-            patch("snowflake.connector._internal.query_utils.StatementReleaseRequest"),
+            patch("snowflake.connector._internal.statement_utils.StatementReleaseRequest"),
         ):
             cursor.execute("SELECT 1")
 
@@ -1365,7 +1441,7 @@ class TestReset:
 
     def test_reset_clears_all_state_together(self, cursor):
         """reset() frees heavy result data but preserves lightweight metadata."""
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
         cursor._iterator = iter([(1,)])
         cursor._binding_data = b"data"
         cursor._rownumber = 10
@@ -1380,7 +1456,7 @@ class TestReset:
         cursor.reset()
 
         # Cleared by reset
-        assert cursor.execute_result is None
+        assert cursor._execute_result is None
         assert cursor._iterator is None
         assert cursor._binding_data is None
         assert cursor._fetch_mode is None
@@ -1394,7 +1470,7 @@ class TestReset:
 
     def test_reset_is_idempotent(self, cursor):
         """Calling reset() twice produces the same state as calling it once."""
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
         cursor._iterator = iter([(1,)])
         cursor._fetch_mode = FetchMode.ROW
         cursor._rowcount = 42
@@ -1402,7 +1478,7 @@ class TestReset:
         cursor.reset()
         cursor.reset()
 
-        assert cursor.execute_result is None
+        assert cursor._execute_result is None
         assert cursor._iterator is None
         assert cursor._fetch_mode is None
         assert cursor._rowcount is None
@@ -1412,7 +1488,7 @@ class TestReset:
         """reset() on a freshly created cursor doesn't break anything."""
         cursor.reset()
 
-        assert cursor.execute_result is None
+        assert cursor._execute_result is None
         assert cursor._iterator is None
         assert cursor._sqlstate is None
         assert cursor._fetch_mode is None
@@ -1422,7 +1498,7 @@ class TestReset:
 
     def test_reset_closing_true_clears_everything_except_rowcount(self, cursor):
         """reset(closing=True) preserves _rowcount in addition to the usual preserved fields."""
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
         cursor._iterator = iter([(1,)])
         cursor._binding_data = b"data"
         cursor._rownumber = 10
@@ -1437,7 +1513,7 @@ class TestReset:
         cursor.reset(closing=True)
 
         # Cleared by reset
-        assert cursor.execute_result is None
+        assert cursor._execute_result is None
         assert cursor._iterator is None
         assert cursor._binding_data is None
         assert cursor._fetch_mode is None
@@ -1503,7 +1579,7 @@ class TestClose:
 
     def test_close_clears_result_state(self, cursor):
         """close() clears result-related state via reset (except description)."""
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
         cursor._iterator = iter([(1,)])
         mock_desc = [MagicMock()]
         cursor._description = mock_desc
@@ -1511,7 +1587,7 @@ class TestClose:
 
         cursor.close()
 
-        assert cursor.execute_result is None
+        assert cursor._execute_result is None
         assert cursor._iterator is None
         assert cursor._description is mock_desc
         assert cursor._fetch_mode is None
@@ -1560,7 +1636,7 @@ class TestResetIntegration:
     def test_close_calls_reset_with_closing_true(self, cursor):
         """close() calls reset(closing=True) to preserve rowcount."""
         cursor._rowcount = 42
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
         cursor._iterator = iter([(1,)])
 
         cursor.close()
@@ -1568,13 +1644,13 @@ class TestResetIntegration:
         # Rowcount should be preserved
         assert cursor._rowcount == 42
         # Other state should be cleared
-        assert cursor.execute_result is None
+        assert cursor._execute_result is None
         assert cursor._iterator is None
         assert cursor._closed is True
 
     def test_execute_calls_reset_before_executing(self, cursor, mock_connection):
         """execute() calls reset() before executing to clear old state."""
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
         cursor._iterator = iter([(1,)])
         cursor._description = [MagicMock()]
         cursor._rowcount = 100
@@ -1642,13 +1718,13 @@ class TestResetIntegration:
         """executemany() with empty seq_of_parameters returns early without calling reset."""
         cursor._fetch_mode = FetchMode.ARROW
         cursor._rowcount = 42
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
 
         cursor.executemany("INSERT INTO t VALUES (?)", [])
 
         assert cursor._fetch_mode == FetchMode.ARROW
         assert cursor._rowcount == 42
-        assert cursor.execute_result is not None
+        assert cursor._execute_result is not None
 
 
 class TestDescribe:
@@ -1704,7 +1780,7 @@ class TestDescribe:
         with patch("snowflake.connector.cursor._base.release_arrow_stream"):
             cursor.describe("SELECT 1")
 
-        assert cursor.execute_result is None
+        assert cursor._execute_result is None
         assert cursor.sfqid is None
         assert cursor.rowcount is None
         assert cursor._fetch_mode is None
@@ -1783,7 +1859,7 @@ class TestQueryResult:
         ret = cursor.query_result("01234567-abcd-ef01-0000-000000000001")
 
         assert ret is cursor
-        assert cursor.execute_result is result
+        assert cursor._execute_result is result
         assert cursor.description is not None
         assert len(cursor.description) == 1
         assert cursor.description[0].name == "ID"
@@ -1796,7 +1872,7 @@ class TestQueryResult:
 
     def test_query_result_resets_prior_state(self, cursor, mock_connection):
         """query_result clears iterator and fetch mode from a previous execute."""
-        cursor.execute_result = MagicMock()
+        cursor._execute_result = MagicMock()
         cursor._iterator = iter([(1,)])
         cursor._fetch_mode = FetchMode.ROW
 

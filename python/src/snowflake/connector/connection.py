@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import logging
+import re
 
 from collections.abc import Generator, Iterable
 from functools import cached_property
@@ -38,12 +39,15 @@ from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
-from .cursor import CursorInstance, CursorType, SnowflakeCursor
+from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
 logger = logging.getLogger(__name__)
+
+CLIENT_NAME = "PythonConnector"
+APPLICATION_RE = re.compile(r"^[\w\d_]+$")
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -103,6 +107,17 @@ class Connection:
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
+
+        application = kwargs.pop("application", None)
+        if application is None or (isinstance(application, str) and not application):
+            self._application = CLIENT_NAME
+        elif isinstance(application, str):
+            if not APPLICATION_RE.match(application):
+                raise ProgrammingError(f"Invalid application name: {application!r}")
+            self._application = application
+        else:
+            raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
+        kwargs["client_app_id"] = self._application
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
@@ -515,7 +530,7 @@ class Connection:
     @property
     def application(self) -> str:
         """The name of the client application connecting to Snowflake."""
-        raise NotImplementedError("application is not yet implemented")
+        return self._application
 
     @property
     @pep249
@@ -608,11 +623,10 @@ class Connection:
     @cached_property
     def snowflake_version(self) -> str:
         """The current Snowflake server version string."""
-        cur = self.cursor()
-        try:
-            return str(cur.execute("SELECT CURRENT_VERSION()").fetchall()[0][0]).split(" ")[0]
-        finally:
-            cur.close()
+        with self.cursor(DictCursor) as cur:
+            cur.execute("SELECT CURRENT_VERSION() AS version")
+            row: dict[str, Any] = cur.fetchone()  # type: ignore[assignment]
+        return str(row["VERSION"]).split(" ")[0]
 
     def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""

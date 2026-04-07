@@ -1,59 +1,16 @@
 // Float incompatible C type conversion tests
 // Tests that converting Snowflake FLOAT/DOUBLE/REAL SQL type to C types
 // not listed in the ODBC spec conversion table returns the appropriate error.
-// Per the ODBC spec (Appendix D, "SQL to C: Numeric"), approximate numeric
-// types (SQL_REAL, SQL_FLOAT, SQL_DOUBLE) cannot be converted to temporal,
-// interval, or GUID C types.
 
 #include <sql.h>
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <string>
-
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
-#include "get_diag_rec.hpp"
-#include "odbc_matchers.hpp"
-
-static void check_single_interval_conversion(Connection& conn, const char* query, SQLSMALLINT target_type) {
-  auto stmt = conn.execute_fetch(query);
-  SQL_INTERVAL_STRUCT value = {};
-  SQLLEN indicator = -999;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, target_type, &value, sizeof(value), &indicator);
-  auto records = get_diag_rec(stmt);
-  std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
-  INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
-
-  OLD_DRIVER_ONLY("BD#18") { CHECK((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO)); }
-
-  NEW_DRIVER_ONLY("BD#18") {
-    REQUIRE(ret == SQL_ERROR);
-    REQUIRE(!records.empty());
-    CHECK(sqlstate == "07006");
-  }
-}
-
-static void check_compound_interval_conversion(Connection& conn, const char* query, SQLSMALLINT target_type) {
-  auto stmt = conn.execute_fetch(query);
-  SQL_INTERVAL_STRUCT value = {};
-  SQLLEN indicator = -999;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, target_type, &value, sizeof(value), &indicator);
-  auto records = get_diag_rec(stmt);
-  std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
-  INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
-
-  REQUIRE(ret == SQL_ERROR);
-  REQUIRE(!records.empty());
-
-  OLD_DRIVER_ONLY("BD#19") { CHECK(sqlstate == "22015"); }
-
-  NEW_DRIVER_ONLY("BD#19") { CHECK(sqlstate == "07006"); }
-}
 
 // ============================================================================
 // INCOMPATIBLE CONVERSIONS - Float to Temporal C Types
@@ -83,70 +40,6 @@ TEST_CASE("should fail converting float to temporal C types", "[datatype][float]
     SQL_TIMESTAMP_STRUCT value = {};
     check_incompatible_conversion(stmt, 1, SQL_C_TYPE_TIMESTAMP, &value, sizeof(value));
   }
-}
-
-// ============================================================================
-// INCOMPATIBLE CONVERSIONS - Float to Single-Component Interval C Types
-// ============================================================================
-
-TEST_CASE("should fail converting float to single-component interval C types",
-          "[datatype][float][conversion][negative]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-
-  // When Query "SELECT 42.5::FLOAT" is executed
-  const auto* query = "SELECT 42.5::FLOAT";
-
-  // Then SQL_C_INTERVAL_YEAR conversion should fail with restricted data type error
-  check_single_interval_conversion(conn, query, SQL_C_INTERVAL_YEAR);
-
-  // And SQL_C_INTERVAL_MONTH conversion should fail with restricted data type error
-  check_single_interval_conversion(conn, query, SQL_C_INTERVAL_MONTH);
-
-  // And SQL_C_INTERVAL_DAY conversion should fail with restricted data type error
-  check_single_interval_conversion(conn, query, SQL_C_INTERVAL_DAY);
-
-  // And SQL_C_INTERVAL_HOUR conversion should fail with restricted data type error
-  check_single_interval_conversion(conn, query, SQL_C_INTERVAL_HOUR);
-
-  // And SQL_C_INTERVAL_MINUTE conversion should fail with restricted data type error
-  check_single_interval_conversion(conn, query, SQL_C_INTERVAL_MINUTE);
-
-  // And SQL_C_INTERVAL_SECOND conversion should fail with restricted data type error
-  check_single_interval_conversion(conn, query, SQL_C_INTERVAL_SECOND);
-}
-
-// ============================================================================
-// INCOMPATIBLE CONVERSIONS - Float to Compound Interval C Types
-// ============================================================================
-
-TEST_CASE("should fail converting float to compound interval C types", "[datatype][float][conversion][negative]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-
-  // When Query "SELECT 42.5::FLOAT" is executed
-  const auto* query = "SELECT 42.5::FLOAT";
-
-  // Then SQL_C_INTERVAL_YEAR_TO_MONTH conversion should fail with error
-  check_compound_interval_conversion(conn, query, SQL_C_INTERVAL_YEAR_TO_MONTH);
-
-  // And SQL_C_INTERVAL_DAY_TO_HOUR conversion should fail with error
-  check_compound_interval_conversion(conn, query, SQL_C_INTERVAL_DAY_TO_HOUR);
-
-  // And SQL_C_INTERVAL_DAY_TO_MINUTE conversion should fail with error
-  check_compound_interval_conversion(conn, query, SQL_C_INTERVAL_DAY_TO_MINUTE);
-
-  // And SQL_C_INTERVAL_DAY_TO_SECOND conversion should fail with error
-  check_compound_interval_conversion(conn, query, SQL_C_INTERVAL_DAY_TO_SECOND);
-
-  // And SQL_C_INTERVAL_HOUR_TO_MINUTE conversion should fail with error
-  check_compound_interval_conversion(conn, query, SQL_C_INTERVAL_HOUR_TO_MINUTE);
-
-  // And SQL_C_INTERVAL_HOUR_TO_SECOND conversion should fail with error
-  check_compound_interval_conversion(conn, query, SQL_C_INTERVAL_HOUR_TO_SECOND);
-
-  // And SQL_C_INTERVAL_MINUTE_TO_SECOND conversion should fail with error
-  check_compound_interval_conversion(conn, query, SQL_C_INTERVAL_MINUTE_TO_SECOND);
 }
 
 // ============================================================================

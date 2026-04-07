@@ -20,5 +20,9 @@ strip = true
 opt-level = "z"
 lto = false
 
+[profile.bench]
+debug = 1
+strip = false
+
 [profile.dev]
 opt-level = 1

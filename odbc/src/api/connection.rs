@@ -48,6 +48,12 @@ const PARAM_MAPPINGS: &[(&str, &str)] = &[
     ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
     ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
     ("CRL_ENABLED", "crl_enabled"),
+    ("PASSCODE", "passcode"),
+    ("PASSCODEINPASSWORD", "passcodeInPassword"),
+    (
+        "CLIENT_STORE_TEMPORARY_CREDENTIAL",
+        "client_store_temporary_credential",
+    ),
 ];
 
 /// Parse connection string into key-value pairs
@@ -89,6 +95,7 @@ fn connect_with_params(
             "PRIV_KEY_FILE_PWD",
             "PRIV_KEY_PWD",
             "PRIV_KEY_BASE64",
+            "PASSCODE",
         ];
         let redacted_map: HashMap<&String, &str> = params
             .iter()

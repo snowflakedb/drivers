@@ -109,7 +109,7 @@ Feature: ODBC number to interval type conversions
   Scenario: NUMBER to interval - default precision rejects values >= 100
     # Per ODBC spec, the default interval leading precision is 2 digits.
     # Values with 3+ digits in the leading field must fail with 22015.
-    # The old driver does not enforce this (BD#22).
+    # The old driver does not enforce this (BD#18).
     Given Snowflake client is logged in
     When Value 99 is fetched as SQL_C_INTERVAL_YEAR with default precision
     Then Value 99 should succeed for SQL_C_INTERVAL_YEAR with default precision
@@ -126,7 +126,7 @@ Feature: ODBC number to interval type conversions
     # Applications can increase or decrease the leading field precision
     # by calling SQLSetDescField with SQL_DESC_DATETIME_INTERVAL_PRECISION
     # on the ARD before fetching.
-    # The old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION (BD#22).
+    # The old driver does not support SQL_DESC_DATETIME_INTERVAL_PRECISION (BD#18).
     Given Snowflake client is logged in
     When SQL_DESC_DATETIME_INTERVAL_PRECISION is set to 5 on the ARD
     Then Precision 5 should allow value 99999 for SQL_C_INTERVAL_YEAR

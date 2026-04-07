@@ -186,9 +186,15 @@ impl From<result_chunk::Data> for FetchChunkInput {
     fn from(data: result_chunk::Data) -> Self {
         match data {
             result_chunk::Data::Inline(bytes) => FetchChunkInput::Inline(bytes),
-            result_chunk::Data::Remote(remote) => FetchChunkInput::Remote(
-                crate::chunks::ChunkDownloadData::new(&remote.url, &remote.headers),
-            ),
+            result_chunk::Data::Remote(remote) => {
+                FetchChunkInput::Remote(crate::chunks::ChunkDownloadData {
+                    url: remote.url,
+                    row_count: 0,
+                    uncompressed_size: 0,
+                    compressed_size: 0,
+                    headers: remote.headers,
+                })
+            }
         }
     }
 }
@@ -479,6 +485,16 @@ fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
     }
 }
 
+fn extract_query_id(error: &ApiError) -> Option<String> {
+    match error {
+        ApiError::Query {
+            source: RestError::QueryFailed { query_id, .. },
+            ..
+        } => query_id.clone(),
+        _ => None,
+    }
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let status_code = match &error {
         ApiError::GenericError { .. } => StatusCode::GenericError,
@@ -552,6 +568,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
     };
 
     let (vendor_code, sql_state) = extract_vendor_info(&error);
+    let query_id = extract_query_id(&error);
     let message = error.to_string();
     let root_cause = extract_root_cause(&error);
     let driver_error = to_driver_error(&error);
@@ -574,6 +591,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         vendor_code,
         sql_state,
         root_cause,
+        query_id,
     }
 }
 

@@ -149,7 +149,7 @@ fn make_converter(
 
         sql::SqlDataType::TIMESTAMP | sql::SqlDataType::EXT_TIMESTAMP => {
             Ok(Box::new(JsonParamConverter {
-                snowflake_type: SnowflakeTimestampNtz,
+                snowflake_type: SnowflakeTimestampNtz { scale: 9 },
             }))
         }
 
@@ -836,6 +836,223 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
         assert_eq!(v, Value::String("3.14".to_string()));
+        Ok(())
+    }
+
+    // -- Structured C types → VARCHAR -----------------------------------------
+
+    #[test]
+    fn convert_timestamp_as_varchar() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 2024,
+            month: 1,
+            day: 15,
+            hour: 10,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let binding = make_binding(
+            CDataType::TypeTimestamp,
+            sql::SqlDataType::VARCHAR,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("2024-01-15 10:30:45".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_timestamp_with_fraction_as_varchar() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 1,
+            month: 1,
+            day: 1,
+            hour: 1,
+            minute: 1,
+            second: 1,
+            fraction: 1,
+        };
+        let binding = make_binding(
+            CDataType::TimeStamp,
+            sql::SqlDataType::VARCHAR,
+            &ts as *const sql::Timestamp as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(
+            v,
+            Value::String("0001-01-01 01:01:01.000000001".to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn convert_date_as_varchar() -> TestResult {
+        let d = sql::Date {
+            year: 2024,
+            month: 12,
+            day: 25,
+        };
+        let binding = make_binding(
+            CDataType::TypeDate,
+            sql::SqlDataType::VARCHAR,
+            &d as *const sql::Date as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("2024-12-25".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_time_as_varchar() -> TestResult {
+        let t = sql::Time {
+            hour: 14,
+            minute: 30,
+            second: 59,
+        };
+        let binding = make_binding(
+            CDataType::TypeTime,
+            sql::SqlDataType::VARCHAR,
+            &t as *const sql::Time as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("14:30:59".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_as_varchar() -> TestResult {
+        let n = sql::Numeric {
+            precision: 10,
+            scale: 0,
+            sign: 1,
+            val: 42u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::VARCHAR,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_negative_numeric_as_varchar() -> TestResult {
+        let n = sql::Numeric {
+            precision: 10,
+            scale: 2,
+            sign: 0,
+            val: 12345u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::VARCHAR,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("-123.45".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_small_scale_as_varchar() -> TestResult {
+        let n = sql::Numeric {
+            precision: 5,
+            scale: 3,
+            sign: 1,
+            val: 5u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::VARCHAR,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("0.005".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_negative_scale_as_varchar() -> TestResult {
+        // scale = -2 means value = 123 * 10^2 = 12300
+        let n = sql::Numeric {
+            precision: 10,
+            scale: -2,
+            sign: 1,
+            val: 123u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::VARCHAR,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("12300".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_negative_scale_negative_value_as_varchar() -> TestResult {
+        // scale = -3, sign = 0 (negative), val = 5 → -5000
+        let n = sql::Numeric {
+            precision: 10,
+            scale: -3,
+            sign: 0,
+            val: 5u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::VARCHAR,
+            &n as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("-5000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_as_varchar() -> TestResult {
+        let val: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+        let mut ind: sql::Len = 4;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::VARCHAR,
+            val.as_ptr() as sql::Pointer,
+            4,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("deadbeef".to_string()));
         Ok(())
     }
 }

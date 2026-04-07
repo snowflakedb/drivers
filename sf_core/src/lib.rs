@@ -6,7 +6,7 @@ pub mod apis;
 pub mod arrow_utils;
 mod auth;
 pub mod c_api;
-mod chunks;
+pub mod chunks;
 mod compression;
 mod compression_types;
 pub mod config;

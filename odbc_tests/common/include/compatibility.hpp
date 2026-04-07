@@ -91,4 +91,11 @@ inline bool is_ascii_locale() {
     }                                                     \
   } while (0)
 
+#define REQUIRE_DAILY_RUN_JENKINS_JOB(message)         \
+  do {                                                 \
+    if (std::getenv("JENKINS_DAILY_JOB") == nullptr) { \
+      SKIP("Requires daily jenkins job: " << message); \
+    }                                                  \
+  } while (0)
+
 #endif  // COMPATIBILITY_HPP

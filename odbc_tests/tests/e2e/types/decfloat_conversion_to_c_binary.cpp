@@ -102,8 +102,8 @@ TEST_CASE("DECFLOAT extreme exponent to SQL_C_BINARY returns 22003", "[decfloat]
     char buffer[100] = {};
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    OLD_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_SUCCESS); }
-    NEW_DRIVER_ONLY("BD#31") {
+    OLD_DRIVER_ONLY("BD#29") { CHECK(ret == SQL_SUCCESS); }
+    NEW_DRIVER_ONLY("BD#29") {
       CHECK(ret == SQL_ERROR);
       CHECK(get_sqlstate(stmt) == "22003");
     }
@@ -115,8 +115,8 @@ TEST_CASE("DECFLOAT extreme exponent to SQL_C_BINARY returns 22003", "[decfloat]
     char buffer[100] = {};
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-    OLD_DRIVER_ONLY("BD#31") { CHECK(ret == SQL_SUCCESS); }
-    NEW_DRIVER_ONLY("BD#31") {
+    OLD_DRIVER_ONLY("BD#29") { CHECK(ret == SQL_SUCCESS); }
+    NEW_DRIVER_ONLY("BD#29") {
       CHECK(ret == SQL_ERROR);
       CHECK(get_sqlstate(stmt) == "22003");
     }

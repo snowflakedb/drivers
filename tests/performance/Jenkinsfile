@@ -32,6 +32,9 @@ pipeline {
                 // Benchstore upload settings
                 BUILD_NUMBER = "${env.BUILD_NUMBER}"
                 BRANCH_NAME = "${params.BRANCH ?: 'main'}"
+                
+                // Trigger metadata for Benchstore (scheduled vs manual)
+                TRIGGER_TYPE = "${getTriggerType()}"
             }
             
             stages {
@@ -242,6 +245,16 @@ def getDockerPlatform(architecture) {
         default:
             error "Unsupported architecture: ${architecture}. Use 'x86_64' or 'arm64'."
     }
+}
+
+def getTriggerType() {
+    def causes = currentBuild.getBuildCauses()
+    for (cause in causes) {
+        if (cause._class?.contains('TimerTrigger')) {
+            return 'scheduled'
+        }
+    }
+    return 'manual'
 }
 
 def parseBenchDashUrls() {

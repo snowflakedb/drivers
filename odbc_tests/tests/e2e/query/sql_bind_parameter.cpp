@@ -135,10 +135,10 @@ TEST_CASE("should return HY104 for invalid precision or scale.", "[query][bind_p
                                    sizeof(param), &indicator);
 
   // Then the new driver rejects with HY104, the old driver accepts it
-  NEW_DRIVER_ONLY("BD#28") {
+  NEW_DRIVER_ONLY("BD#26") {
     REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY104"));
   }
-  OLD_DRIVER_ONLY("BD#28") { REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded()); }
+  OLD_DRIVER_ONLY("BD#26") { REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::Succeeded()); }
 }
 
 // TODO: Add HY021 (inconsistent descriptor) and HYC00 (unsupported conversion)
@@ -638,8 +638,8 @@ TEST_CASE("should return SQL_NO_DATA for unbound IPD record.", "[query][bind_par
   ret = SQLGetDescField(ipd, 1, SQL_DESC_CONCISE_TYPE, &type, 0, nullptr);
 
   // Then the record should not be found (SQL_NO_DATA per spec; old driver returns SQL_ERROR)
-  NEW_DRIVER_ONLY("BD#30") { CHECK(ret == SQL_NO_DATA); }
-  OLD_DRIVER_ONLY("BD#30") { CHECK(ret == SQL_ERROR); }
+  NEW_DRIVER_ONLY("BD#28") { CHECK(ret == SQL_NO_DATA); }
+  OLD_DRIVER_ONLY("BD#28") { CHECK(ret == SQL_ERROR); }
 }
 
 TEST_CASE("should return error for negative descriptor record number.", "[query][bind_parameter][descriptor]") {
@@ -1412,4 +1412,196 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_WLONGVARCHAR.", "[query][bind_paramete
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
+// =============================================================================
+// C structured type → VARCHAR conversions
+// =============================================================================
+
+TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQL_TIMESTAMP_STRUCT param = {};
+  param.year = 2024;
+  param.month = 1;
+  param.day = 15;
+  param.hour = 10;
+  param.minute = 30;
+  param.second = 45;
+  param.fraction = 0;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_VARCHAR, 100, 0,
+                                   &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "2024-01-15 10:30:45");
+}
+
+TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP with fraction to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQL_TIMESTAMP_STRUCT param = {};
+  param.year = 2024;
+  param.month = 6;
+  param.day = 15;
+  param.hour = 12;
+  param.minute = 0;
+  param.second = 0;
+  param.fraction = 123456789;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_VARCHAR, 100, 0,
+                                   &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "2024-06-15 12:00:00.123456789");
+}
+
+TEST_CASE("should bind SQL_C_TYPE_DATE to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQL_DATE_STRUCT param = {};
+  param.year = 2024;
+  param.month = 12;
+  param.day = 25;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_VARCHAR, 100, 0, &param,
+                                   0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "2024-12-25");
+}
+
+TEST_CASE("should bind SQL_C_TYPE_TIME to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQL_TIME_STRUCT param = {};
+  param.hour = 14;
+  param.minute = 30;
+  param.second = 59;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIME, SQL_VARCHAR, 100, 0, &param,
+                                   0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "14:30:59");
+}
+
+TEST_CASE("should bind SQL_C_NUMERIC to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQL_NUMERIC_STRUCT param = {};
+  param.precision = 10;
+  param.scale = 0;
+  param.sign = 1;
+  memset(param.val, 0, SQL_MAX_NUMERIC_LEN);
+  param.val[0] = 42;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_NUMERIC, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "42");
+}
+
+TEST_CASE("should bind negative SQL_C_NUMERIC with scale to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQL_NUMERIC_STRUCT param = {};
+  param.precision = 10;
+  param.scale = 2;
+  param.sign = 0;
+  memset(param.val, 0, SQL_MAX_NUMERIC_LEN);
+  // 12345 in little-endian: 0x39, 0x30
+  param.val[0] = 0x39;
+  param.val[1] = 0x30;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_NUMERIC, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  NEW_DRIVER_ONLY("BD#33") { CHECK(result == "-123.45"); }
+  OLD_DRIVER_ONLY("BD#33") { CHECK(result == "-12345"); }
+}
+
+TEST_CASE("should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQL_NUMERIC_STRUCT param = {};
+  param.precision = 10;
+  param.scale = static_cast<SQLSCHAR>(-2);
+  param.sign = 1;
+  memset(param.val, 0, SQL_MAX_NUMERIC_LEN);
+  param.val[0] = 123;
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_NUMERIC, SQL_VARCHAR, 100, 0, &param, 0, &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  NEW_DRIVER_ONLY("BD#33") { CHECK(result == "12300"); }
+  OLD_DRIVER_ONLY("BD#33") { CHECK(result == "123"); }
+}
+
+TEST_CASE("should bind SQL_C_BINARY to SQL_VARCHAR.", "[query][bind_parameter][c_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  unsigned char param[] = {0xDE, 0xAD, 0xBE, 0xEF};
+  SQLLEN indicator = sizeof(param);
+  // When the C type value is bound as a string SQL type and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_BINARY, SQL_VARCHAR, 100, 0, &param,
+                                   sizeof(param), &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  NEW_DRIVER_ONLY("BD#34") {
+    REQUIRE_ODBC(ret, stmt);
+    ret = SQLFetch(stmt.getHandle());
+    REQUIRE_ODBC(ret, stmt);
+    // Then the result should be the expected string
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "deadbeef");
+  }
+  OLD_DRIVER_ONLY("BD#34") { CHECK(ret == SQL_ERROR); }
 }

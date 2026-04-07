@@ -101,6 +101,60 @@ pub unsafe extern "C" fn SQLFreeStmt(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLCloseCursor(statement_handle: sql::Handle) -> sql::RetCode {
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::close_cursor(statement_handle);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+///
+/// ODBC allows SQLCancel to be called from a different thread.
+/// `cancel()` accesses the `Statement` via `stmt_from_handle()` — the
+/// same pattern used by every other C API entry point. Cross-thread
+/// calls therefore create concurrent `&mut Statement` references, which
+/// is a pre-existing codebase-wide aliasing issue. A future handle
+/// manager will introduce proper interior mutability to eliminate this UB.
+///
+/// This function does not modify statement diagnostics. Any diagnostic
+/// information related to cancellation must be produced by the executing
+/// thread (e.g., returning HY008) or by code that can ensure exclusive
+/// access to the statement.
+///
+/// NOTE: On Unix platforms, the Driver Manager (unixODBC/iODBC) updates its
+/// internal state machine to close the cursor after SQLCancel, even though
+/// this function is a no-op. Subsequent SQLFetch calls are rejected by the
+/// DM with HY010 before reaching the driver. This is an ODBC 2.x behavior
+/// that both Unix DMs implement regardless of SQL_ATTR_ODBC_VERSION.
+///
+/// KNOWN LIMITATION: Same-thread SQLCancel (for no-op / synchronous
+/// cancel) also skips clearing stale diagnostics, which diverges from the
+/// driver's pattern of clearing diagnostics on entry for every API call.
+/// This means `SQLGetDiagRec` may return records from a previous call
+/// after a successful `SQLCancel`. We accept this because we currently
+/// cannot distinguish same-thread vs cross-thread callers.
+///
+/// TODO(SNOW-3258918, SNOW-3258919): When async or DAE cancel is
+/// implemented, add thread-ID tracking to distinguish same-thread vs
+/// cross-thread. Same-thread cancel must clear_diag_info and post its own
+/// diagnostic records per spec. Only cross-thread cancel skips diagnostics.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCode {
+    if statement_handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    let result = api::statement::cancel(statement_handle);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLConnect(
     connection_handle: sql::Handle,
     server_name: *const sql::Char,

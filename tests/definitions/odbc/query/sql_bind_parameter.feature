@@ -445,3 +445,55 @@ Feature: ODBC SQLBindParameter spec compliance
     Given Snowflake client is logged in
     When the C type value is bound as a string SQL type and SELECT ? is executed
     Then the result should be the expected string
+
+  # ============================================================================
+  # C structured type → VARCHAR conversions
+  # ============================================================================
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_TYPE_TIMESTAMP to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_TYPE_TIMESTAMP with fraction to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_TYPE_DATE to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_TYPE_TIME to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_NUMERIC to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind negative SQL_C_NUMERIC with scale to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_BINARY to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound as a string SQL type and SELECT ? is executed
+    Then the result should be the expected string

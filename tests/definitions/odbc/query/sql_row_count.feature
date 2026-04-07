@@ -34,7 +34,7 @@ Feature: ODBC SQLRowCount function behavior
   Scenario: SQLRowCount returns HY009 when called with null pointer.
     Given Snowflake client is logged in and a statement has been executed
     When SQLRowCount is called with a null pointer for RowCountPtr
-    # The old driver silently returns SQL_SUCCESS (BD#26).
+    # The old driver silently returns SQL_SUCCESS (BD#24).
     Then SQLRowCount should return SQL_ERROR with SQLSTATE HY009 (Invalid use of null pointer)
 
   @odbc_e2e

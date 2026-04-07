@@ -105,14 +105,25 @@ fn next_non_empty_batch(
 }
 
 /// Advance the cursor by one row. Handles state transitions from
-/// `Executed` → `Fetching` and from one batch to the next.
+/// `QueryExecuted` → `Fetching` and from one batch to the next.
 #[allow(clippy::result_large_err)]
 fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<()> {
     state.transition_or_err(|s| match s {
-        StatementState::NoResultSet { schema, prepared } => InvalidCursorStateSnafu
+        StatementState::DdlExecuted { schema, prepared } => InvalidCursorStateSnafu
             .fail()
-            .with_state(StatementState::NoResultSet { schema, prepared }),
-        StatementState::Executed {
+            .with_state(StatementState::DdlExecuted { schema, prepared }),
+        StatementState::DmlExecuted {
+            rows_affected,
+            schema,
+            prepared,
+        } => InvalidCursorStateSnafu
+            .fail()
+            .with_state(StatementState::DmlExecuted {
+                rows_affected,
+                schema,
+                prepared,
+            }),
+        StatementState::QueryExecuted {
             reader,
             rows_affected,
             prepared,
@@ -563,7 +574,7 @@ pub fn get_data(
 
             Ok(())
         }
-        StatementState::NoResultSet { .. } => {
+        StatementState::DdlExecuted { .. } | StatementState::DmlExecuted { .. } => {
             tracing::error!("get_data: no result set associated with the statement");
             NoMoreDataSnafu.fail()
         }
@@ -579,9 +590,9 @@ pub fn get_data(
             tracing::error!("get_data: statement error");
             StatementErrorStateSnafu.fail()
         }
-        StatementState::Executed { .. } => {
-            tracing::error!("get_data: statement not executed");
-            StatementNotExecutedSnafu.fail()
+        StatementState::QueryExecuted { .. } => {
+            tracing::error!("get_data: data not fetched yet");
+            DataNotFetchedSnafu.fail()
         }
     }
 }

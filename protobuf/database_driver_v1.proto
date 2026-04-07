@@ -123,6 +123,8 @@ message DriverException {
   // The deepest cause in the error chain (root cause).
   // More informative than the top-level message for end users.
   optional string root_cause = 7;
+  // Snowflake Query ID (sfqid) associated with the failed query, if available.
+  optional string query_id = 8;
 }
 
 // Column metadata for description

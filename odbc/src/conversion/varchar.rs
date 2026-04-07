@@ -14,7 +14,9 @@ use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     RustParsingSnafu, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+};
 use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -412,6 +414,64 @@ impl ReadODBC for SnowflakeVarchar {
                 } else {
                     "0".to_string()
                 }
+            }
+            CDataType::TypeTimestamp | CDataType::TimeStamp => {
+                let ts = read_unaligned::<sql::Timestamp>(binding);
+                if ts.fraction == 0 {
+                    format!(
+                        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                        ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second
+                    )
+                } else {
+                    format!(
+                        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
+                        ts.year, ts.month, ts.day, ts.hour, ts.minute, ts.second, ts.fraction
+                    )
+                }
+            }
+            CDataType::TypeDate | CDataType::Date => {
+                let d = read_unaligned::<sql::Date>(binding);
+                format!("{:04}-{:02}-{:02}", d.year, d.month, d.day)
+            }
+            CDataType::TypeTime | CDataType::Time => {
+                let t = read_unaligned::<sql::Time>(binding);
+                format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second)
+            }
+            CDataType::Numeric => {
+                let n = read_unaligned::<sql::Numeric>(binding);
+                let magnitude = u128::from_le_bytes(n.val);
+                let abs_str = magnitude.to_string();
+                let scaled = if n.scale > 0 {
+                    let s = n.scale as usize;
+                    if abs_str.len() <= s {
+                        let padded = format!("{:0>width$}", abs_str, width = s + 1);
+                        let (whole, frac) = padded.split_at(padded.len() - s);
+                        format!("{}.{}", whole, frac)
+                    } else {
+                        let (whole, frac) = abs_str.split_at(abs_str.len() - s);
+                        format!("{}.{}", whole, frac)
+                    }
+                } else if n.scale < 0 {
+                    let zeros = (-(i16::from(n.scale))) as usize;
+                    format!("{}{}", abs_str, "0".repeat(zeros))
+                } else {
+                    abs_str
+                };
+                if n.sign == 0 && magnitude != 0 {
+                    format!("-{}", scaled)
+                } else {
+                    scaled
+                }
+            }
+            CDataType::Binary => {
+                let len = buffer_data_len(binding);
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
+                };
+                bytes
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>()
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

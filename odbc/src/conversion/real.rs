@@ -8,7 +8,11 @@ use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::numeric_helpers::{whole_digits_len, write_numeric_as_binary};
+use crate::conversion::numeric_helpers::{
+    build_and_write_interval_second, check_leading_precision, checked_u32,
+    reject_multi_field_interval, whole_digits_len, write_numeric_as_binary,
+    write_single_field_interval,
+};
 use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -54,6 +58,37 @@ fn check_float_range(value: f64, min: f64, max: f64) -> Result<(), WriteOdbcErro
     } else {
         Ok(())
     }
+}
+
+fn write_float_interval_second(value: f64, binding: &Binding) -> Result<Warnings, WriteOdbcError> {
+    let abs = value.abs();
+    let abs_int = (abs.trunc() as i128).unsigned_abs();
+
+    let frac_micros_f64 = abs.fract() * 1_000_000.0;
+    let mut frac_microseconds = frac_micros_f64.trunc() as u32;
+    let mut frac_truncated = frac_micros_f64.fract() != 0.0;
+
+    // Guard against floating-point rounding producing >= 1_000_000 microseconds.
+    // If that happens, carry into the seconds field and normalize the fraction.
+    let carry = if frac_microseconds >= 1_000_000 {
+        frac_microseconds = 0;
+        frac_truncated = true;
+        1u128
+    } else {
+        0u128
+    };
+
+    let final_abs_int = abs_int + carry;
+    check_leading_precision(final_abs_int, value, binding)?;
+    let second_val = checked_u32(final_abs_int, value)?;
+
+    Ok(build_and_write_interval_second(
+        second_val,
+        frac_microseconds,
+        frac_truncated,
+        value.is_sign_negative(),
+        binding,
+    ))
 }
 
 fn fractional_warning(value: f64) -> Warnings {
@@ -271,6 +306,41 @@ impl WriteODBCType for SnowflakeReal {
                 write_numeric_as_binary(&numeric, binding)?;
                 Ok(fractional_warning(snowflake_value))
             }
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond => {
+                if !snowflake_value.is_finite() {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: format!(
+                            "Value {snowflake_value} cannot be converted to an interval type"
+                        ),
+                    }
+                    .fail();
+                }
+                if target_type == CDataType::IntervalSecond {
+                    write_float_interval_second(snowflake_value, binding)
+                } else {
+                    let int_value = snowflake_value.trunc() as i128;
+                    let has_fractional = snowflake_value.fract() != 0.0;
+                    write_single_field_interval(
+                        target_type,
+                        int_value,
+                        snowflake_value.is_sign_negative(),
+                        has_fractional,
+                        binding,
+                    )
+                }
+            }
+            CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => reject_multi_field_interval(target_type),
             _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
         }
     }
