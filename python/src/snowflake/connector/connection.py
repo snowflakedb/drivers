@@ -47,7 +47,11 @@ from .telemetry import TelemetryClient
 logger = logging.getLogger(__name__)
 
 CLIENT_NAME = "PythonConnector"
-APPLICATION_RE = re.compile(r"^[\w\d_]+$")
+# The old connector used re.match(r"[\w\d_]+") without anchors, so any string
+# starting with a word character was accepted (dots, hyphens, etc. in the tail
+# were silently ignored).  We keep a start-anchored pattern without $ so that
+# callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
+APPLICATION_RE = re.compile(r"^[\w\d_]+")
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
