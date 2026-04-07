@@ -23,13 +23,13 @@ fn should_authenticate_using_username_and_password() {
     let result = client.connect();
 
     //Then Login is successful and simple query can be executed
-    match result {
-        Ok(()) => client.verify_simple_query(Ok(())),
-        Err(ref e) if is_mfa_enforced(e) => {
+    if let Err(ref e) = result {
+        if is_mfa_enforced(e) {
             eprintln!("SKIPPED: account has MFA enforcement enabled");
+            return;
         }
-        Err(e) => panic!("Expected login to succeed, got: {e}"),
     }
+    client.verify_simple_query(result);
 }
 
 #[test]
@@ -47,13 +47,13 @@ fn should_authenticate_using_explicit_snowflake_authenticator() {
     let result = client.connect();
 
     //Then Login is successful and simple query can be executed
-    match result {
-        Ok(()) => client.verify_simple_query(Ok(())),
-        Err(ref e) if is_mfa_enforced(e) => {
+    if let Err(ref e) = result {
+        if is_mfa_enforced(e) {
             eprintln!("SKIPPED: account has MFA enforcement enabled");
+            return;
         }
-        Err(e) => panic!("Expected login to succeed, got: {e}"),
     }
+    client.verify_simple_query(result);
 }
 
 #[test]
