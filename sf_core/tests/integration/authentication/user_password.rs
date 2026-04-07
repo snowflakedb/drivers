@@ -34,10 +34,10 @@ fn should_authenticate_with_password_via_wiremock() {
 }
 
 #[test]
-fn should_fail_authentication_when_server_returns_error() {
-    //Given Wiremock is running and has password login failure mapping
+fn should_fail_authentication_when_wrong_credentials_are_provided() {
+    //Given Wiremock is running and has password login failure mapping for wrong credentials
     let fixture = PasswordTestFixture::new();
-    //And Snowflake client is configured for password authentication
+    //And Snowflake client is configured for password authentication with wrong password
     fixture
         .client
         .set_connection_option("password", "wrong_password"); // pragma: allowlist secret

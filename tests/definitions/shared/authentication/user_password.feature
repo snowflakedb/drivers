@@ -48,8 +48,8 @@ Feature: Username and Password Authentication
     Then There is error returned with missing parameter
 
   @core_int
-  Scenario: should fail authentication when server returns error
-    Given Wiremock is running and has password login failure mapping
-    And Snowflake client is configured for password authentication
+  Scenario: should fail authentication when wrong credentials are provided
+    Given Wiremock is running and has password login failure mapping for wrong credentials
+    And Snowflake client is configured for password authentication with wrong password
     When Trying to Connect
     Then There is error returned
