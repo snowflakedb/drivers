@@ -23,11 +23,11 @@ fn should_authenticate_using_username_and_password() {
     let result = client.connect();
 
     //Then Login is successful and simple query can be executed
-    if let Err(ref e) = result {
-        if is_mfa_enforced(e) {
-            eprintln!("SKIPPED: account has MFA enforcement enabled");
-            return;
-        }
+    if let Err(ref e) = result
+        && is_mfa_enforced(e)
+    {
+        eprintln!("SKIPPED: account has MFA enforcement enabled");
+        return;
     }
     client.verify_simple_query(result);
 }
@@ -47,11 +47,11 @@ fn should_authenticate_using_explicit_snowflake_authenticator() {
     let result = client.connect();
 
     //Then Login is successful and simple query can be executed
-    if let Err(ref e) = result {
-        if is_mfa_enforced(e) {
-            eprintln!("SKIPPED: account has MFA enforcement enabled");
-            return;
-        }
+    if let Err(ref e) = result
+        && is_mfa_enforced(e)
+    {
+        eprintln!("SKIPPED: account has MFA enforcement enabled");
+        return;
     }
     client.verify_simple_query(result);
 }
