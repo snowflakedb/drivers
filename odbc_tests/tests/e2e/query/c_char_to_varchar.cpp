@@ -6,6 +6,36 @@
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 
+TEST_CASE("should bind SQL_C_CHAR to SQL_VARCHAR.", "[query][bind_parameter][c_char_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  char param[] = "hello";
+  SQLLEN indicator = SQL_NTS;
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0, param,
+                                   sizeof(param), &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+}
+
+TEST_CASE("should bind SQL_C_WCHAR to SQL_VARCHAR.", "[query][bind_parameter][c_char_to_varchar]") {
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLWCHAR param[] = {'h', 'e', 'l', 'l', 'o', 0};
+  SQLLEN indicator = 5 * sizeof(SQLWCHAR);
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_VARCHAR, 100, 0, param,
+                                   sizeof(param), &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+}
+
 TEST_CASE("should bind SQL_C_DEFAULT to SQL_VARCHAR.", "[query][bind_parameter][c_char_to_varchar]") {
   Connection conn;
   auto stmt = conn.createStatement();
