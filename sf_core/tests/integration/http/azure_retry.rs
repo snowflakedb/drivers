@@ -206,7 +206,13 @@ async fn azure_error_response_redacts_sas_token() {
 
 #[tokio::test]
 async fn azure_transport_error_does_not_leak_sas_token() {
-    // Use a non-scheme endpoint that resolves to a nonexistent host
+    // Bind a TCP listener, get its address, then drop it so the port is closed.
+    // Connecting to this port produces a deterministic "connection refused" transport
+    // error without any real DNS lookups.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
     let stage = StageInfo {
         location_type: LocationType::Azure,
         bucket: "test-container".to_string(),
@@ -215,11 +221,11 @@ async fn azure_transport_error_does_not_leak_sas_token() {
         creds: CloudCredentials::Azure {
             sas_token: SensitiveString::from("sv=2021-08-06&sig=test-secret-sig&se=2099-01-01"),
         },
-        end_point: Some("blob.core.windows.net".to_string()),
+        end_point: Some(format!("http://{addr}")),
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
-        storage_account: Some("nonexistentaccount".to_string()),
+        storage_account: Some("test".to_string()),
     };
 
     let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;

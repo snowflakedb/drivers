@@ -180,6 +180,22 @@ pub struct MaterialDescription {
     pub key_size: String,
 }
 
+/// Encryption metadata envelope returned by cloud storage providers.
+/// Matches the JSON format produced by `build_encryption_metadata_json`.
+#[derive(Debug, Deserialize)]
+pub(super) struct EncryptionData {
+    #[serde(rename = "WrappedContentKey")]
+    pub wrapped_content_key: WrappedContentKey,
+    #[serde(rename = "ContentEncryptionIV")]
+    pub content_encryption_iv: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WrappedContentKey {
+    #[serde(rename = "EncryptedKey")]
+    pub encrypted_key: String,
+}
+
 /// Builds the Snowflake encryption metadata JSON envelope (shared across all cloud providers).
 /// Matches the format used by JDBC/Python/ODBC drivers.
 pub(super) fn build_encryption_metadata_json(
