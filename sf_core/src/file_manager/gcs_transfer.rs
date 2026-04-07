@@ -1,6 +1,6 @@
 use super::types::{
-    CloudCredentials, EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    CloudCredentials, EncryptedFileMetadata, EncryptionData, EncryptionResult, MaterialDescription,
+    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
@@ -66,29 +66,15 @@ pub async fn download_from_gcs(
     let mat_desc_str = get_header(headers, GCS_META_MATDESC)?;
 
     // Parse encryption data JSON to extract key and IV
-    let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
+    let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
         .context(gcs_download_error::DeserializationSnafu)?;
-
-    let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
-        .as_str()
-        .context(gcs_download_error::MissingMetadataSnafu {
-            field: "WrappedContentKey.EncryptedKey",
-        })?
-        .to_string();
-
-    let iv = enc_data["ContentEncryptionIV"]
-        .as_str()
-        .context(gcs_download_error::MissingMetadataSnafu {
-            field: "ContentEncryptionIV",
-        })?
-        .to_string();
 
     let material_desc: MaterialDescription =
         serde_json::from_str(&mat_desc_str).context(gcs_download_error::DeserializationSnafu)?;
 
     let file_metadata = EncryptedFileMetadata {
-        encrypted_key,
-        iv,
+        encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+        iv: enc_data.content_encryption_iv,
         material_desc,
         digest,
     };
