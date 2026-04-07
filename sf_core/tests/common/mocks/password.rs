@@ -63,6 +63,7 @@ pub fn login_failure_wrong_credentials() -> Mock {
                 "PASSWORD": "wrong_password"
             }
         })))
+        .and(AuthenticatorFieldAbsent)
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "success": false,
             "code": "390100",
