@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ._base import DictRow, SnowflakeCursorBase
+from ._base import DictRow, FetchMode, SnowflakeCursorBase, _requires_fetch_mode, _requires_open
 
 
 class DictCursor(SnowflakeCursorBase):
@@ -20,6 +20,8 @@ class DictCursor(SnowflakeCursorBase):
     def _use_dict_result(self) -> bool:
         return True
 
+    @_requires_open
+    @_requires_fetch_mode(FetchMode.ROW)
     def fetchone(self) -> DictRow | None:
         """
         Fetch the next row of a query result set as a dictionary.

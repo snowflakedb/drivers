@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ._base import Row, SnowflakeCursorBase
+from ._base import FetchMode, Row, SnowflakeCursorBase, _requires_fetch_mode, _requires_open
 
 
 class SnowflakeCursor(SnowflakeCursorBase):
@@ -15,6 +15,8 @@ class SnowflakeCursor(SnowflakeCursorBase):
     def _use_dict_result(self) -> bool:
         return False
 
+    @_requires_open
+    @_requires_fetch_mode(FetchMode.ROW)
     def fetchone(self) -> Row | None:
         """
         Fetch the next row of a query result set.

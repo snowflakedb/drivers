@@ -287,7 +287,7 @@ class TestFetchmany:
         mock_rows = [(1,), (2,), (3,), (4,), (5,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany()
 
         assert result == [(1,), (2,), (3,)]
@@ -297,7 +297,7 @@ class TestFetchmany:
         mock_rows = [(1,), (2,), (3,), (4,), (5,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany(2)
 
         assert result == [(1,), (2,)]
@@ -307,14 +307,14 @@ class TestFetchmany:
         mock_rows = [(1,), (2,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany(5)
 
         assert result == [(1,), (2,)]
 
     def test_fetchmany_returns_empty_list_when_no_rows(self, cursor):
         """Test fetchmany returns empty list when no rows available."""
-        with patch.object(cursor, "fetchone", return_value=None):
+        with patch.object(cursor, "_fetchone", return_value=None):
             result = cursor.fetchmany(5)
 
         assert result == []
@@ -322,7 +322,7 @@ class TestFetchmany:
     def test_fetchmany_with_size_zero(self, cursor):
         """Test fetchmany(0) returns empty list."""
         mock_fetchone = MagicMock()
-        with patch.object(cursor, "fetchone", mock_fetchone):
+        with patch.object(cursor, "_fetchone", mock_fetchone):
             result = cursor.fetchmany(0)
 
         assert result == []
@@ -347,7 +347,7 @@ class TestFetchmany:
         mock_rows = [(1,), (2,), (3,), (4,), (5,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             first_batch = cursor.fetchmany(2)
             second_batch = cursor.fetchmany(2)
             third_batch = cursor.fetchmany(2)
@@ -361,7 +361,7 @@ class TestFetchmany:
         mock_rows = [(1,), (2,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             cursor.fetchmany(5)  # Consume all rows
             result = cursor.fetchmany(5)
 
@@ -372,7 +372,7 @@ class TestFetchmany:
         mock_rows = [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             cursor.arraysize = 2
             first_batch = cursor.fetchmany()
 
@@ -387,7 +387,7 @@ class TestFetchmany:
         mock_rows = [(1,), (2,), (3,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany(1)
 
         assert result == [(1,)]
@@ -397,7 +397,7 @@ class TestFetchmany:
         mock_rows = [(i,) for i in range(10)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany(1000)
 
         assert result == [(i,) for i in range(10)]
@@ -409,7 +409,7 @@ class TestFetchmany:
         mock_rows = [(1,), (2,), (3,)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany()
 
         # Default arraysize is 1, so should fetch 1 row
@@ -424,7 +424,7 @@ class TestFetchmany:
         ]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany(2)
 
         assert result == [(1, "a", 1.0), (2, "b", 2.0)]
@@ -437,7 +437,7 @@ class TestFetchmany:
         ]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany(2)
 
         assert result[0] == (1, "text", Decimal("3.14"), None)
@@ -927,7 +927,7 @@ class TestFetchmanyArraysizeAttribute:
         mock_rows = [(i,) for i in range(10)]
         row_iter = iter(mock_rows)
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_fetchone", side_effect=lambda: next(row_iter, None)):
             result = cursor.fetchmany()
 
         assert len(result) == 5

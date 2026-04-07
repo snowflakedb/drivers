@@ -77,7 +77,7 @@ def _requires_open(func: F) -> F:
 
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
-        if self.is_closed():
+        if self._closed or self._connection.is_closed():
             raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
 
         return func(self, *args, **kwargs)
@@ -542,8 +542,6 @@ class SnowflakeCursorBase(abc.ABC):
     # Fetch – shared implementation
     # ------------------------------------------------------------------
 
-    @_requires_open
-    @_requires_fetch_mode(FetchMode.ROW)
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
 
@@ -566,6 +564,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @pep249
     @_requires_open
+    @_requires_fetch_mode(FetchMode.ROW)
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -587,7 +586,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         ret = []
         while size > 0:
-            row = self.fetchone()
+            row = self._fetchone()
             if row is None:
                 break
             ret.append(row)
