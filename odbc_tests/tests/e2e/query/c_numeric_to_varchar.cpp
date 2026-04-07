@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 
@@ -52,7 +53,9 @@ TEST_CASE("should bind negative SQL_C_NUMERIC with scale to SQL_VARCHAR.",
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "-123.45");
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  NEW_DRIVER_ONLY("BD#33") { CHECK(result == "-123.45"); }
+  OLD_DRIVER_ONLY("BD#33") { CHECK(result == "-12345"); }
 }
 
 TEST_CASE("should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.",
@@ -76,5 +79,7 @@ TEST_CASE("should bind SQL_C_NUMERIC with negative scale to SQL_VARCHAR.",
   ret = SQLFetch(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
   // Then the result should be the expected string
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "12300");
+  auto result = get_data<SQL_C_CHAR>(stmt, 1);
+  NEW_DRIVER_ONLY("BD#33") { CHECK(result == "12300"); }
+  OLD_DRIVER_ONLY("BD#33") { CHECK(result == "123"); }
 }

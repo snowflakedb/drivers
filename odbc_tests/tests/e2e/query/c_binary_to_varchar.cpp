@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 
@@ -15,9 +16,12 @@ TEST_CASE("should bind SQL_C_BINARY to SQL_VARCHAR.", "[query][bind_parameter][c
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  REQUIRE_ODBC(ret, stmt);
-  ret = SQLFetch(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
-  // Then the result should be the expected string
-  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "deadbeef");
+  NEW_DRIVER_ONLY("BD#34") {
+    REQUIRE_ODBC(ret, stmt);
+    ret = SQLFetch(stmt.getHandle());
+    REQUIRE_ODBC(ret, stmt);
+    // Then the result should be the expected string
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "deadbeef");
+  }
+  OLD_DRIVER_ONLY("BD#34") { CHECK(ret == SQL_ERROR); }
 }
