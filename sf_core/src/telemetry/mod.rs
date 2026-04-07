@@ -1,3 +1,4 @@
+pub mod environment;
 pub mod types;
 
 #[cfg(feature = "otlp_debug")]

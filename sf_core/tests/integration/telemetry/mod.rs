@@ -3,3 +3,4 @@ mod exporter_pipeline;
 mod otlp_debug;
 mod rest_endpoint;
 mod serialization;
+mod wrapper_identity;

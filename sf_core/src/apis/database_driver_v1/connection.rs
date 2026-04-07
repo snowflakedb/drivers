@@ -99,21 +99,32 @@ impl DatabaseDriverV1 {
                     role: login_result.role_name,
                 };
 
-                conn_ptr
-                    .lock()
-                    .await
-                    .initialize(
-                        login_result.tokens,
-                        http_client,
-                        host,
-                        port,
-                        login_parameters.server_url.clone(),
-                        login_parameters.client_info.clone(),
-                        merged_params,
-                        login_final_names,
-                        resolved_snapshot,
-                    )
-                    .await;
+                let mut conn = conn_ptr.lock().await;
+                conn.initialize(
+                    login_result.tokens,
+                    http_client,
+                    host,
+                    port,
+                    login_parameters.server_url.clone(),
+                    login_parameters.client_info.clone(),
+                    merged_params,
+                    login_final_names,
+                    resolved_snapshot,
+                )
+                .await;
+
+                // Emit session_init telemetry using stored wrapper identity (if set).
+                if let Some(ref identity) = conn.wrapper_identity {
+                    tracing::info!(
+                        driver_name = %identity.driver_name,
+                        driver_version = %identity.driver_version,
+                        language_runtime = %identity.language_runtime,
+                        language_version = %identity.language_version,
+                        "Telemetry: session_init"
+                    );
+                    // TODO: emit OTel session_init span with wrapper identity + environment attributes
+                }
+
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -271,6 +282,58 @@ impl DatabaseDriverV1 {
             .fail(),
         }
     }
+
+    /// Store wrapper identity on a connection. Called once from `TelemetryInit`.
+    pub async fn set_wrapper_identity(
+        &self,
+        conn_handle: Handle,
+        identity: WrapperIdentity,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                if conn.wrapper_identity.is_some() {
+                    tracing::warn!(
+                        "TelemetryInit called more than once on the same connection; overwriting previous wrapper identity"
+                    );
+                }
+                conn.wrapper_identity = Some(identity);
+                Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Invalid connection handle".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    /// Read the stored wrapper identity for a connection, if `TelemetryInit` was called.
+    pub async fn get_wrapper_identity(
+        &self,
+        conn_handle: Handle,
+    ) -> Result<Option<WrapperIdentity>, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                Ok(conn.wrapper_identity.clone())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Invalid connection handle".to_string(),
+            }
+            .fail(),
+        }
+    }
+}
+
+/// Wrapper identity set once via `TelemetryInit` and attached to all subsequent telemetry events.
+#[derive(Debug, Clone, Default)]
+pub struct WrapperIdentity {
+    pub driver_name: String,
+    pub driver_version: String,
+    pub language_runtime: String,
+    pub language_version: String,
+    /// `None` means compiler info is not applicable for this language.
+    pub language_compiler: Option<String>,
 }
 
 pub struct Connection {
@@ -299,6 +362,8 @@ pub struct Connection {
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
+    /// Wrapper identity for telemetry, set once via TelemetryInit.
+    pub wrapper_identity: Option<WrapperIdentity>,
 }
 
 impl Default for Connection {
@@ -323,6 +388,7 @@ impl Connection {
             session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             init_session_parameters: None,
             final_session_names: RwLock::new(FinalSessionNames::default()),
+            wrapper_identity: None,
         }
     }
 

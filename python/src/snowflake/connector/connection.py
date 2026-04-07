@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import logging
+import platform
 
 from collections.abc import Generator, Iterable
 from io import StringIO
@@ -26,6 +27,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
+    TelemetryInitRequest,
 )
 from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 
@@ -33,11 +35,13 @@ from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.telemetry import TelemetryClient as InternalTelemetryClient
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, SnowflakeCursor
 from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
+from .version import __version__
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +87,18 @@ class Connection:
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+
+        # Register wrapper identity so sf_core can attach it to telemetry events.
+        self.db_api.telemetry_init(
+            TelemetryInitRequest(
+                conn_handle=self.conn_handle,
+                driver_name="snowflake-connector-python",
+                driver_version=__version__,
+                language_runtime=platform.python_implementation(),
+                language_version=platform.python_version(),
+                language_compiler=platform.python_compiler(),
+            )
+        )
 
         # Extract session_parameters before processing other kwargs
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
@@ -134,6 +150,7 @@ class Connection:
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self._telemetry_client = InternalTelemetryClient(self.db_api, self.conn_handle)
         _sensitive_keys = {"password", "private_key"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
