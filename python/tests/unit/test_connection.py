@@ -596,6 +596,14 @@ class TestApplicationProperty:
             conn = Connection(user="u", account="a", application="")
         assert conn.application == "PythonConnector"
 
+    def test_application_accepts_dotted_name(self, mock_db_api):
+        """Snow CLI passes dotted names like 'SNOWCLI.STAGE.COPY'."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="SNOWCLI.STAGE.COPY")
+        assert conn.application == "SNOWCLI.STAGE.COPY"
+
     def test_application_rejects_non_string(self, mock_db_api):
         from snowflake.connector.connection import Connection
 
