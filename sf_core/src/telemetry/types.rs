@@ -15,6 +15,7 @@ impl ErrorOrigin {
 }
 
 /// Data provided by wrappers for session_init.
+/// Used by the wrapper-identity telemetry layer (see PR #795).
 #[derive(Debug, Clone)]
 pub struct SessionInitData {
     pub driver_name: String,
@@ -22,8 +23,6 @@ pub struct SessionInitData {
     pub language_runtime: String,
     pub language_version: String,
     pub language_compiler: Option<String>,
-    //pub release_date: Option<String>,
-    //pub is_lts: Option<bool>,
     pub svn_revision: Option<String>,
     pub application: Option<String>,
     pub application_path: Option<String>,
@@ -34,10 +33,11 @@ pub struct SessionInitData {
 }
 
 /// Data for driver_exception events reported by wrappers.
+/// Used by the wrapper-identity telemetry layer (see PR #795).
 #[derive(Debug, Clone)]
 pub struct WrapperErrorData {
     pub exception_type: String,
-    pub error_source: String,
+    pub error_source: ErrorOrigin,
 }
 
 #[cfg(test)]

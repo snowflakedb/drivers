@@ -45,21 +45,25 @@ impl SnowflakeInBandExporter {
     }
 }
 
-/// Acquire the read guard and send telemetry while the guard is held.
-/// This avoids cloning the session token into a plain String, preserving
-/// the SensitiveString zeroization guarantees.
+/// Clone the session token under a short-lived read guard, then send
+/// telemetry without holding the lock across the network call.
 async fn send_with_token(session: &ExporterSession, payload: &serde_json::Value) -> OTelSdkResult {
-    let guard = session.session_token.read().await;
-    let Some(tokens) = guard.as_ref() else {
-        tracing::debug!("No active session token, dropping telemetry");
-        return Ok(());
+    let token = {
+        let guard = session.session_token.read().await;
+        match guard.as_ref() {
+            Some(tokens) => tokens.session_token.clone(),
+            None => {
+                tracing::debug!("No active session token, dropping telemetry");
+                return Ok(());
+            }
+        }
     };
 
     if let Err(e) = rest::send_telemetry(
         &session.client,
         &session.server_url,
         &session.client_info,
-        tokens.session_token.reveal(),
+        token.reveal(),
         payload,
     )
     .await
@@ -105,15 +109,6 @@ impl PushMetricExporter for SnowflakeInBandExporter {
         async move {
             if !has_metrics {
                 return Ok(());
-            }
-
-            // Check token availability before serializing to avoid wasted work.
-            {
-                let guard = session.session_token.read().await;
-                if guard.is_none() {
-                    tracing::debug!("No active session token, dropping telemetry metrics");
-                    return Ok(());
-                }
             }
 
             let payload = serialization::metrics_to_snowflake_payload(metrics);

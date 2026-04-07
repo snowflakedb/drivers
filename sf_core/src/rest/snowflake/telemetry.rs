@@ -15,6 +15,8 @@ const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, serde::Deserialize)]
 struct TelemetryResponse {
     success: bool,
+    message: Option<String>,
+    code: Option<String>,
 }
 
 /// POST a batch of telemetry events to the Snowflake in-band endpoint.
@@ -56,7 +58,11 @@ pub async fn send_telemetry(
         .context(InvalidSnowflakeResponseSnafu)?;
 
     if !parsed.success {
-        tracing::warn!("Telemetry endpoint returned success=false");
+        tracing::warn!(
+            code = parsed.code.as_deref().unwrap_or("none"),
+            message = parsed.message.as_deref().unwrap_or("none"),
+            "Telemetry endpoint returned success=false",
+        );
     }
 
     Ok(())
