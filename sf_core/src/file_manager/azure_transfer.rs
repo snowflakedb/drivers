@@ -1,9 +1,10 @@
 use super::types::{
-    CloudCredentials, EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo,
-    UploadStatus, build_encryption_metadata_json, percent_encode_path,
+    CloudCredentials, EncryptedFileMetadata, EncryptionData, MaterialDescription, PreparedUpload,
+    StageInfo, UploadStatus, build_encryption_metadata_json, percent_encode_path,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry as http_execute_with_retry};
+use crate::sensitive::SensitiveString;
 use reqwest::{Method, StatusCode};
 use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::time::Duration;
@@ -26,12 +27,12 @@ pub async fn upload_to_azure_or_skip(
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
 
-    if !overwrite && check_blob_exists(&client, &url, sas_token).await {
+    if !overwrite && check_blob_exists(&client, &url, sas_token.reveal()).await {
         tracing::info!("Blob already exists in Azure: {}", key);
         return Ok(UploadStatus::Skipped);
     }
 
-    upload_to_azure(&client, &url, sas_token, prepared).await?;
+    upload_to_azure(&client, &url, sas_token.reveal(), prepared).await?;
     Ok(UploadStatus::Uploaded)
 }
 
@@ -44,7 +45,7 @@ pub async fn download_from_azure(
     let client = create_azure_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, sas_token) = resolve_url_and_token(stage_info, &key)?;
-    let full_url = build_sas_url(&url, sas_token);
+    let full_url = build_sas_url(&url, sas_token.reveal());
 
     let response = azure_request_with_retry(|| client.get(&full_url), Method::GET).await?;
 
@@ -54,22 +55,8 @@ pub async fn download_from_azure(
 
     let file_metadata = match try_get_header(headers, AZURE_META_ENCRYPTIONDATA)? {
         Some(encryption_data_str) => {
-            let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
+            let enc_data: EncryptionData = serde_json::from_str(&encryption_data_str)
                 .context(azure_download_error::DeserializationSnafu)?;
-
-            let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
-                .as_str()
-                .context(azure_download_error::MissingMetadataSnafu {
-                    field: "WrappedContentKey.EncryptedKey",
-                })?
-                .to_string();
-
-            let iv = enc_data["ContentEncryptionIV"]
-                .as_str()
-                .context(azure_download_error::MissingMetadataSnafu {
-                    field: "ContentEncryptionIV",
-                })?
-                .to_string();
 
             let mat_desc_str = try_get_header(headers, AZURE_META_MATDESC)?.context(
                 azure_download_error::MissingMetadataSnafu {
@@ -80,8 +67,8 @@ pub async fn download_from_azure(
                 .context(azure_download_error::DeserializationSnafu)?;
 
             Some(EncryptedFileMetadata {
-                encrypted_key,
-                iv,
+                encrypted_key: enc_data.wrapped_content_key.encrypted_key,
+                iv: enc_data.content_encryption_iv,
                 material_desc,
             })
         }
@@ -270,9 +257,9 @@ fn create_azure_client() -> Result<reqwest::Client, AzureRequestError> {
 fn resolve_url_and_token<'a>(
     stage_info: &'a StageInfo,
     key: &str,
-) -> Result<(String, &'a str), AzureRequestError> {
+) -> Result<(String, &'a SensitiveString), AzureRequestError> {
     let sas_token = match &stage_info.creds {
-        CloudCredentials::Azure { sas_token } => sas_token.reveal(),
+        CloudCredentials::Azure { sas_token } => sas_token,
         _ => return Err(AzureRequestError::MissingAzureCredentials),
     };
 
@@ -692,7 +679,7 @@ mod tests {
         let stage = make_stage_info(StageInfoOverrides::default());
         let (url, token) = resolve_url_and_token(&stage, "prefix/file.csv.gz").unwrap();
         assert!(url.starts_with("https://mystorageaccount.blob.core.windows.net/"));
-        assert_eq!(token, "fake-sas-token");
+        assert_eq!(token.reveal(), "fake-sas-token");
     }
 
     #[test]
