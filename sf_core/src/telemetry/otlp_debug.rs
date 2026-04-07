@@ -41,16 +41,16 @@ pub fn otlp_span_exporter()
 /// Create an OTLP metric exporter targeting a local collector.
 ///
 /// Uses `SF_OTLP_ENDPOINT` env var if set, otherwise defaults to
-/// `http://localhost:8318`.
+/// `http://localhost:8318`. Metrics are exported to `{endpoint}/v1/metrics`.
 pub fn otlp_metric_exporter()
 -> Result<opentelemetry_otlp::MetricExporter, opentelemetry_otlp::ExporterBuildError> {
     let endpoint = endpoint();
-    tracing::info!("OTLP debug metric exporter → {endpoint}");
+    tracing::info!("OTLP debug metric exporter → {endpoint}/v1/metrics");
 
     opentelemetry_otlp::MetricExporter::builder()
         .with_http()
         .with_temporality(opentelemetry_sdk::metrics::Temporality::Delta)
-        .with_endpoint(&endpoint)
+        .with_endpoint(format!("{endpoint}/v1/metrics"))
         .build()
 }
 

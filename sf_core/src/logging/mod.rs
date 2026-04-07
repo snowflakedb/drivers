@@ -21,6 +21,9 @@ mod opentelemetry;
 pub struct LoggingConfig {
     pub log_file: Option<PathBuf>,
     pub stderr: bool,
+    /// Enable the OpenTelemetry tracing bridge. Only has an effect when the
+    /// crate is built with `--features otlp_debug`; in the default build,
+    /// setting this to `true` emits a `tracing::warn!` and does nothing.
     pub opentelemetry: bool,
 }
 
