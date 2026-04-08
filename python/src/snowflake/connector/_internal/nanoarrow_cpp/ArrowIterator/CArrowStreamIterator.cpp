@@ -234,8 +234,17 @@ PyObject* CArrowStreamIterator::nextN(int64_t size) {
       // Load next batch if needed
       while (m_currentRowIndex >= m_rowCount) {
         if (!loadNextBatch()) {
-          // Stream exhausted before filling — shrink list to actual size
-          // PyList_SetSlice with NULL removes the trailing slots
+          // loadNextBatch returns false on both exhaustion and error.
+          // If a Python exception is set, this was an error — discard partial results.
+          if (py::checkPyError()) {
+            // Slots [0..collected) hold owned refs released by Py_DECREF(pylist).
+            // Slots [collected..size) are NULL (PyList_New zero-initializes).
+            PyList_SetSlice(pylist, collected, size, nullptr);
+            Py_DECREF(pylist);
+            return nullptr;
+          }
+          // Stream exhausted before filling — shrink list to actual size.
+          // PyList_SetSlice with NULL removes the trailing slots.
           if (PyList_SetSlice(pylist, collected, size, nullptr) != 0) {
             Py_DECREF(pylist);
             return nullptr;
@@ -272,6 +281,10 @@ PyObject* CArrowStreamIterator::nextN(int64_t size) {
   for (;;) {
     while (m_currentRowIndex >= m_rowCount) {
       if (!loadNextBatch()) {
+        if (py::checkPyError()) {
+          Py_DECREF(pylist);
+          return nullptr;
+        }
         return pylist;
       }
     }
@@ -316,7 +329,11 @@ PyObject* CArrowStreamIterator::createRowForList() {
         return nullptr;
       }
 
-      PyDict_SetItemString(pydict, colName, val);
+      if (PyDict_SetItemString(pydict, colName, val) != 0) {
+        Py_DECREF(val);
+        Py_DECREF(pydict);
+        return nullptr;
+      }
       Py_DECREF(val);
     }
     return pydict;

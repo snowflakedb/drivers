@@ -354,13 +354,12 @@ class TestFetchmany:
         assert result == []
 
     def test_fetchmany_with_size_zero(self, cursor):
-        """Test fetchmany(0) returns empty list."""
-        cursor._iterator = MockRowIterator([(1,), (2,)])
-
-        with patch.object(cursor, "_create_row_iterator"):
+        """Test fetchmany(0) returns empty list without creating iterator."""
+        with patch.object(cursor, "_create_row_iterator") as mock_create:
             result = cursor.fetchmany(0)
 
         assert result == []
+        mock_create.assert_not_called()
 
     def test_fetchmany_with_negative_size_raises_error(self, cursor):
         """Test fetchmany with negative size raises ProgrammingError."""

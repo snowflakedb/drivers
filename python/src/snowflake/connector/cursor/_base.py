@@ -594,6 +594,9 @@ class SnowflakeCursorBase(abc.ABC):
         if size < 0:
             raise ProgrammingError(f"The number of rows is not zero or positive number: {size}")
 
+        if size == 0:
+            return []
+
         if not self._iterator:
             self._iterator = self._create_row_iterator()
         rows = self._iterator.fetch_many(size)
