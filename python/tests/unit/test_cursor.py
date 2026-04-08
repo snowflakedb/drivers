@@ -1407,6 +1407,12 @@ class TestFetchModeValidation:
         with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
             cursor.fetchmany(5)
 
+    def test_arrow_then_fetchall_raises(self, cursor):
+        cursor._fetch_mode = FetchMode.ARROW
+
+        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
+            cursor.fetchall()
+
     def test_fetchmany_then_arrow_raises(self, cursor):
         cursor._iterator = MockRowIterator([(1,), (2,)])
 
