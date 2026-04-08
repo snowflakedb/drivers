@@ -9,11 +9,9 @@ from __future__ import annotations
 import atexit
 import logging
 import re
-import threading
 import warnings
 
 from collections.abc import Generator, Iterable
-from dataclasses import dataclass
 from functools import cached_property
 from io import StringIO
 from typing import Any, Callable, Union, cast
