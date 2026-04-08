@@ -397,6 +397,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::ConnectionNotInitialized { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::ConnectionClosed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
         ApiError::TlsClientCreation { source, .. } => DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: source.to_string(),
@@ -417,6 +420,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
                 detail: "Master token expired, full re-authentication required".to_string(),
             })),
+        },
+        ApiError::LogoutFailed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
         },
         ApiError::InvalidRefreshState { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
@@ -572,11 +578,13 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
         ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
         ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
+        ApiError::ConnectionClosed { .. } => StatusCode::InternalError,
         ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
         ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
         ApiError::Statement { .. } => StatusCode::InternalError,
         ApiError::Query { .. } => StatusCode::InternalError,
         ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
+        ApiError::LogoutFailed { .. } => StatusCode::GenericError,
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
         ApiError::TokenCacheInitialization { .. } => StatusCode::AuthenticationError,
         ApiError::ChunkFetch { .. } => StatusCode::InternalError,
@@ -1049,6 +1057,35 @@ impl DatabaseDriver for DatabaseDriverImpl {
             info,
             input.include_master_token,
         ))
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_close", skip(self, input))]
+    async fn connection_close(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        self.driver
+            .connection_close(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionCloseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_is_closed", skip(self, input))]
+    async fn connection_is_closed(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let is_closed = self
+            .driver
+            .connection_is_closed(conn_handle.into())
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionIsClosedResponse { is_closed })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self, _input))]
@@ -1698,6 +1735,18 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: StatementSetOptionBoolRequest,
     ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_set_option_bool_blocking(
+        &self,
+        input: ConnectionSetOptionBoolRequest,
+    ) -> Result<ConnectionSetOptionBoolResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, proto_utils::ProtoError<DriverException>>;
     fn connection_release_blocking(
         &self,
         input: ConnectionReleaseRequest,
@@ -1806,6 +1855,27 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: StatementSetOptionBoolRequest,
     ) -> Result<StatementSetOptionBoolResponse, proto_utils::ProtoError<DriverException>> {
         BLOCKING_CLIENT_RUNTIME.block_on(self.statement_set_option_bool(input))
+    }
+
+    fn connection_set_option_bool_blocking(
+        &self,
+        input: ConnectionSetOptionBoolRequest,
+    ) -> Result<ConnectionSetOptionBoolResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_set_option_bool(input))
+    }
+
+    fn connection_close_blocking(
+        &self,
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_close(input))
+    }
+
+    fn connection_is_closed_blocking(
+        &self,
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_is_closed(input))
     }
 
     fn connection_release_blocking(

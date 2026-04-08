@@ -3,6 +3,7 @@ pub mod async_exec;
 mod auth;
 pub mod error;
 pub mod heartbeat;
+pub mod logout;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
@@ -1527,6 +1528,13 @@ pub enum RestError {
     HttpRetry {
         context: &'static str,
         source: crate::http::retry::HttpError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Logout failed: {message} (code: {code})"))]
+    LogoutFailed {
+        message: String,
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },

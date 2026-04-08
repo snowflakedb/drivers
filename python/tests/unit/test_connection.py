@@ -11,6 +11,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionGetInfoResponse,
     ConnectionGetQueryStatusResponse,
     ConnectionHandle,
+    ConnectionIsClosedResponse,
     ConnectionSetOptionsResponse,
     DatabaseHandle,
     ValidationIssue,
@@ -30,6 +31,7 @@ def mock_db_api():
     db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
     db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
     db_api.connection_get_parameter.return_value = MagicMock(value="")
+    db_api.connection_is_closed.return_value = ConnectionIsClosedResponse(is_closed=False)
     return db_api
 
 
@@ -322,7 +324,8 @@ class TestContextManagerUnit:
         with pytest.raises(RuntimeError, match="commit failed"):
             connection.__exit__(None, None, None)
 
-        assert connection._closed is True
+        # Verify Core's connection_close RPC was invoked (close() was called in finally block)
+        connection.db_api.connection_close.assert_called_once()
 
     def test_exit_rollback_failure_does_not_mask_original_exception(self, connection):
         """If rollback fails during exception handling, the original exception should propagate."""
@@ -629,6 +632,16 @@ class TestApplicationProperty:
 
 class TestConnectionArrowProperties:
     """Unit tests for Connection properties (getters/setters)."""
+
+    def test_arrow_number_to_decimal_initialized_in_init(self, connection):
+        # Regression: _arrow_number_to_decimal was previously in dead code after a `return`
+        # statement inside _map_logout_config(), making it unreachable during __init__.
+        # This test catches that regression — AttributeError would occur if the attribute
+        # is not initialized before the property getter is accessed.
+        assert hasattr(connection, "_arrow_number_to_decimal"), (
+            "_arrow_number_to_decimal must be initialized in __init__, not in unreachable code"
+        )
+        assert connection._arrow_number_to_decimal is False
 
     def test_arrow_number_to_decimal_default_is_false(self, connection):
         assert connection.arrow_number_to_decimal is False

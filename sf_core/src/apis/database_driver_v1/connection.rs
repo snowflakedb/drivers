@@ -1,13 +1,16 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Setting;
+use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
+use super::logout;
 use super::validation::{
     ValidationIssue, ValidationSeverity, canonicalize_setting_key, collect_unknown_settings,
     normalize_host_underscores, resolve_options, validate_connection_seed_write,
@@ -15,6 +18,7 @@ use super::validation::{
 };
 use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
+use crate::config::logout::LogoutConfig;
 use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
 use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters, QueryParameters};
@@ -123,10 +127,12 @@ impl DatabaseDriverV1 {
                     role: login_result.role_name,
                 };
 
-                conn_ptr
-                    .lock()
-                    .await
-                    .initialize(
+                let logout_config =
+                    LogoutConfig::from_settings(&resolved_snapshot).context(ConfigurationSnafu)?;
+
+                {
+                    let mut conn = conn_ptr.lock().await;
+                    conn.initialize(
                         login_result.tokens,
                         http_client,
                         host,
@@ -138,6 +144,8 @@ impl DatabaseDriverV1 {
                         resolved_snapshot,
                     )
                     .await;
+                    conn.logout_config = logout_config;
+                }
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -320,6 +328,21 @@ pub struct Connection {
     pub session_parameters: Arc<AsyncRwLock<HashMap<String, String>>>,
     /// Session parameters to send during initialization (set before connection_init)
     pub init_session_parameters: Option<HashMap<String, String>>,
+    /// Registry for tracking async queries (for Fire & Forget auto-detection)
+    pub async_query_registry: AsyncQueryRegistry,
+    /// Flag indicating if connection has been closed.
+    ///
+    /// `Arc<AtomicBool>` is used (rather than a `Mutex<State>` state machine) because:
+    /// - `Arc` provides shared ownership across concurrent async tasks — the logout task,
+    ///   token refresh, and query cancellation all need to observe the closed state.
+    /// - `AtomicBool` allows lock-free closed-state checks without async lock acquisition.
+    ///
+    /// A state machine (`Open → Closing → Closed`) would require a single owner or
+    /// message-passing, conflicting with the parallel-task architecture.
+    pub is_closed: Arc<AtomicBool>,
+
+    /// Logout configuration (set via ConnectionSetOption* before init, parsed at init time)
+    pub logout_config: LogoutConfig,
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
@@ -346,6 +369,9 @@ impl Connection {
             client_info: None,
             session_parameters: Arc::new(AsyncRwLock::new(HashMap::new())),
             init_session_parameters: None,
+            async_query_registry: AsyncQueryRegistry::new(),
+            is_closed: Arc::new(AtomicBool::new(false)),
+            logout_config: LogoutConfig::default(),
             final_session_names: RwLock::new(FinalSessionNames::default()),
         }
     }
@@ -552,11 +578,25 @@ pub struct RefreshContext {
 }
 
 impl RefreshContext {
+    /// Create a `RefreshContext` for a query operation.
+    ///
+    /// Rejects context creation if the connection is already closed, preventing
+    /// in-flight queries from performing token refreshes after `close()` is called.
+    /// This is safe because the query's early `is_closed` check already rejected
+    /// the operation; this provides a second gate for races between that check and
+    /// the token refresh setup.
     pub async fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().await;
+        if guard.is_closed.load(Ordering::SeqCst) {
+            return Err(ConnectionClosedSnafu {}.build());
+        }
         Self::new(&guard)
     }
     /// Create a new `RefreshContext` by extracting connection info.
+    ///
+    /// Does **not** check `is_closed`. Use `from_arc` for query paths (which
+    /// must reject creation on a closed connection). The logout path calls
+    /// `new` directly because logout itself runs after `is_closed` is set.
     pub fn new(conn: &Connection) -> Result<Self, ApiError> {
         Ok(Self {
             tokens_lock: conn.tokens.clone(),
@@ -1184,6 +1224,112 @@ impl DatabaseDriverV1 {
         .await
         .context(TokenRequestSnafu)
     }
+}
+
+impl DatabaseDriverV1 {
+    /// Check if a connection has been closed.
+    ///
+    /// Returns true if close() has been called, false otherwise.
+    pub async fn connection_is_closed(&self, conn_handle: Handle) -> Result<bool, ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        let conn = conn_ptr.lock().await;
+        Ok(conn.is_closed.load(Ordering::SeqCst))
+    }
+
+    /// Close a connection and optionally send logout request.
+    ///
+    /// Behavior depends on `config.error_strategy`:
+    /// - `Strict`: surface errors to the caller (close() may fail)
+    /// - `BestEffort`: suppress errors, log WARN (close() always succeeds)
+    ///
+    /// Close the connection using logout configuration set during initialization.
+    ///
+    /// Logout behavior is determined by connection fields set via ConnectionSetOption*:
+    /// - `server_session_keep_alive`: Control server session lifecycle
+    /// - `enable_server_session_keep_alive_auto_detection`: Enable async query detection
+    /// - `logout_error_strategy`: Error handling (Strict or BestEffort)
+    /// - `logout_total_timeout`: Total timeout budget
+    /// - `logout_max_attempts`: Maximum total attempts (1 = no retries, 3 = 2 retries)
+    /// - `logout_request_timeout`: Per-request timeout
+    ///
+    /// This design matches all existing Snowflake drivers (Python, Go, JDBC, .NET, Node.js)
+    /// which configure logout behavior at connection initialization, not at close time.
+    pub async fn connection_close(&self, conn_handle: Handle) -> Result<(), ApiError> {
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        // Single lock acquisition for all pre-network synchronous work:
+        // atomically mark closed, capture config, and extract logout data.
+        // Holding the lock here prevents a concurrent set_option_int from racing
+        // between the "mark closed" and "read config" steps.
+        let prepare_result = {
+            let conn = conn_ptr.lock().await;
+
+            // Atomic swap returns true if connection was already closed (idempotent guard)
+            let was_already_closed = conn.is_closed.swap(true, Ordering::SeqCst);
+            if was_already_closed {
+                tracing::debug!("Connection already closed, skipping duplicate close");
+                // Return None to signal early exit after the block
+                None
+            } else {
+                // Re-derive logout config from connection_seed at close()-time so
+                // post-init overrides (e.g. retry=False sets logout_max_attempts=1)
+                // take effect. Falls back to init-time defaults for unset keys.
+                let config = LogoutConfig::from_settings(&conn.connection_seed)
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "Failed to re-derive LogoutConfig at close-time; using init-time config");
+                        conn.logout_config.clone()
+                    });
+                let error_strategy = config.error_strategy;
+
+                // TODO: SNOW-2912513 - Record telemetry for logout decision
+
+                // Prepare logout data while holding the lock (pure reads, no network I/O)
+                let logout_data = logout::prepare_logout_from_conn(&conn, &config)?;
+
+                Some((logout_data, error_strategy))
+            }
+        };
+
+        let Some((logout_data, error_strategy)) = prepare_result else {
+            return Ok(());
+        };
+
+        // Execute logout — network I/O, lock must not be held
+        let logout_result = logout::execute_logout_with_strategy(logout_data, error_strategy).await;
+
+        // Cleanup connection resources (separate lock acquisition after I/O)
+        cleanup_connection(&conn_ptr).await?;
+
+        if logout_result.is_ok() {
+            tracing::info!("Connection closed successfully");
+        }
+        logout_result
+    }
+}
+
+/// Clear tokens, HTTP client, and stop background tasks.
+async fn cleanup_connection(conn_ptr: &Arc<Mutex<Connection>>) -> Result<(), ApiError> {
+    let mut conn = conn_ptr.lock().await;
+    *conn.tokens.write().await = None;
+    conn.http_client = None;
+    tracing::debug!("Cleared session tokens and HTTP client");
+
+    // TODO: SNOW-2881763 - Stop heartbeat thread
+    // TODO: SNOW-2912513 - Flush telemetry cache
+    // TODO: Implement QCC (query result cache) clearing
+
+    Ok(())
 }
 
 #[cfg(test)]

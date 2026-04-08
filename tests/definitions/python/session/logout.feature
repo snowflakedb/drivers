@@ -5,6 +5,7 @@ Feature: Session Logout - Python-specific behavior
   #                   Python Default Configuration
   # ===========================================================================
 
+  @python_e2e
   Scenario: should use Python default 15 second timeout and 3 max retries
     # Old Python driver used 5s timeout and 3 attempts.
     Given Snowflake Python client is created with default timeout configuration
@@ -21,22 +22,22 @@ Feature: Session Logout - Python-specific behavior
   # always logout by default. ODBC already implements Phase 3 behavior.
   # Auto-detection logic scenarios moved to fire-and-forget ticket (SNOW-2923705)
 
+  # TODO: SNOW-2872349 - Requires improved assertions (weak log file parsing)
   Scenario: should have auto_detection enabled and server_session_keep_alive none by default
-    # Phase 2 (doc for: SNOW-2314152) defaults for backward compatibility. Will change in Phase 3.
-    # Python Phase 2 defaults: server_session_keep_alive=none (actually False in old driver),
-    # enable_server_session_keep_alive_auto_detection=true
-    # NOTE: Per design doc, Python defaults do NOT emit deprecation warning.
-    # Deprecation only happens when server_session_keep_alive is explicitly set to False.
+    # Backward-compat defaults (SNOW-2314152): mirrors old Python driver behavior.
+    # auto_detection defaults to True now but will change to None in a future version (SNOW-2314152).
+    # Per design doc Extension 2: warn when user relies on a default that will change.
     Given Snowflake Python client is created with default parameters
     When Connection configuration is checked
     Then server_session_keep_alive defaults to none
     And enable_server_session_keep_alive_auto_detection defaults to true
-    And No deprecation warning is emitted for default configuration
+    And Deprecation warning is emitted about auto_detection default changing
 
   # ===========================================================================
   #                   Parameter Passing Verification
   # ===========================================================================
 
+  @python_e2e
   Scenario: should pass correct parameters when server_session_keep_alive is none and auto_detection true
     # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
     # Phase 2 (doc for: SNOW-2314152) truth table: None + True → parameters passed to Core
@@ -47,6 +48,7 @@ Feature: Session Logout - Python-specific behavior
     And enable_server_session_keep_alive_auto_detection true is passed to Core
     And No deprecation warning is emitted
 
+  @python_e2e
   Scenario: should send logout when server_session_keep_alive is none and auto_detection false
     # E2E sanity check: Verifies Python wrapper + Core integration works end-to-end
     # Phase 2 (doc for: SNOW-2314152) truth table: None + False → Send logout (no detection), No deprecation
@@ -58,19 +60,32 @@ Feature: Session Logout - Python-specific behavior
     And Connection close metrics are recorded in telemetry
     And No deprecation warning is emitted
 
-  Scenario: should pass correct parameters when server_session_keep_alive is false
+  @python_e2e
+  Scenario: should remap server_session_keep_alive false to none when auto_detection defaults to true
     # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
-    # Phase 2: False (explicit) always emits deprecation warning
+    # Phase 2 backward compat (SNOW-2314152): False + auto_detection=True (default)
+    # → remap → Core receives None and checks registry. Remap will be removed in Phase 3.
     Given Snowflake Python client is created with server_session_keep_alive set to false
     When Client closes connection
-    Then server_session_keep_alive false is passed to Core
+    Then server_session_keep_alive false is remapped to none
     And Deprecation warning is emitted
     And Warning mentions that false will force logout in Phase 3
+
+  @python_e2e
+  Scenario: should pass server_session_keep_alive false to Core when auto_detection explicitly disabled
+    # False + auto_detection=False (explicit) → no Phase 2 remap → Core receives False (force logout)
+    # No deprecation warning: user opted out of auto-detection consciously
+    Given Snowflake Python client is created with server_session_keep_alive set to false
+    And enable_server_session_keep_alive_auto_detection is set to false
+    When Client closes connection
+    Then server_session_keep_alive false is passed to Core
+    And No deprecation warning is emitted
 
   # ===========================================================================
   #                     Wrapper Defaults
   # ===========================================================================
 
+  # TODO: SNOW-2872349 - Requires improved assertions (weak log file parsing)
   Scenario Outline: should skip logout when server_session_keep_alive is true regardless of auto_detection
     # Phase 2 truth table: True + any + any → No logout, No deprecation
     # Verifies Python correctly passes true to Core
@@ -86,13 +101,25 @@ Feature: Session Logout - Python-specific behavior
       | true           |
       | false          |
 
+  @python_e2e
   Scenario: should have enable_server_session_keep_alive_auto_detection default to true
-    # Phase 2 (doc for: SNOW-2314152) default for backward compatibility. Phase 3 defaults to false.
+    # Backward-compat default (SNOW-2314152). Will change to None in a future version.
     Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
     When Connection configuration is checked
     Then enable_server_session_keep_alive_auto_detection defaults to true
     And Auto-detection is enabled by default
+    And Deprecation warning is emitted about auto_detection default changing
 
+  @python_e2e
+  Scenario: should not emit auto_detection deprecation warning when explicitly set to true
+    # Explicit True means user has made a conscious choice — no warning needed.
+    Given Snowflake Python client is created with enable_server_session_keep_alive_auto_detection set to true
+    When Connection configuration is checked
+    Then enable_server_session_keep_alive_auto_detection is true
+    And No deprecation warning is emitted about auto_detection default
+
+  # TODO: SNOW-2314153 - Requires logging integration between Rust Core and Python
+  @python_e2e
   Scenario: should use best-effort error handling strategy by default
     Given Snowflake Python client is created with default parameters
     And Server will return 500 Internal Server Error on logout on all attempts
@@ -110,6 +137,7 @@ Feature: Session Logout - Python-specific behavior
   # Old Python driver: close(retry: bool = True) parameter (line 1182)
   # Tests observable retry behavior by introducing transient failures
 
+  @python_e2e
   Scenario: should retry logout on transient failure when close called with default retry
     # Old Python driver: close(retry=True) is default (line 1182)
     Given Snowflake Python client is logged in
@@ -118,6 +146,7 @@ Feature: Session Logout - Python-specific behavior
     Then Logout succeeds after retry
     And Two logout requests were sent to server
 
+  @python_e2e
   Scenario: should not retry logout on transient failure when close called with retry false
     # Old Python driver: close(retry=False) disables retries (line 1182)
     # Used by atexit handler (line 2390)
@@ -137,6 +166,11 @@ Feature: Session Logout - Python-specific behavior
   #          Log deprecation warning whenever auto-cleanup runs.
   # Phase 3: flip default so auto_cleanup is off unless explicitly enabled.
   # Phase 4: remove auto_cleanup and its config entirely.
+  #
+  # TODO: SNOW-2314153 - Requires logging integration for deprecation warning validation
+  # TODO: SNOW-2912513 - Requires telemetry for connection leak metrics
+  # NOTE: The following 6 scenarios require subprocess-based testing approach
+  # NOTE: Implementation exists in connection.py:245-322 but is untested
 
   Scenario: should have auto_cleanup enabled by default
     # Phase 2 (doc for: SNOW-2314152): preserve backward compatibility.

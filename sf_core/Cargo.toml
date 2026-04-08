@@ -99,6 +99,7 @@ reqwest = { version = "0.12.23", features = ["blocking"] }
 wiremock = "0.6"
 rcgen = "0.13"
 tokio-rustls = "0.26"
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
 
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
