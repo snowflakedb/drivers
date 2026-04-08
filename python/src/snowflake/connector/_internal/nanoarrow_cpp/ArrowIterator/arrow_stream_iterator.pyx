@@ -117,11 +117,17 @@ cdef class ArrowStreamIterator:
 
     def fetch_many(self, int64_t size):
         """Fetch up to `size` rows as a list in a single C++ call."""
-        return self.iterator.get().nextN(size)
+        try:
+            return self.iterator.get().nextN(size)
+        except Exception as e:
+            raise RuntimeError(f"Error converting row: {e}") from e
 
     def fetch_all(self):
         """Fetch all remaining rows as a list in a single C++ call."""
-        return self.iterator.get().nextN(-1)
+        try:
+            return self.iterator.get().nextN(-1)
+        except Exception as e:
+            raise RuntimeError(f"Error converting row: {e}") from e
 
 cdef class ArrowStreamTableIterator:
     """
