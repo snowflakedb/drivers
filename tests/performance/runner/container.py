@@ -157,7 +157,6 @@ def run_container(container: DockerContainer) -> str:
         
         if exit_code != 0:
             logger.error(f"\nContainer exited with code {exit_code}")
-            # If streaming failed, show all logs now
             if stream_error or not logs_buffer:
                 logger.error("="*80)
                 logger.error("FULL CONTAINER OUTPUT:")
@@ -166,6 +165,12 @@ def run_container(container: DockerContainer) -> str:
                     if line.strip():
                         logger.error(line)
                 logger.error("="*80)
+
+            tail_lines = [l for l in logs_combined.splitlines() if l.strip()][-20:]
+            raise RuntimeError(
+                f"Container exited with code {exit_code}. "
+                f"Last output:\n" + "\n".join(tail_lines)
+            )
         
     return logs_combined
 

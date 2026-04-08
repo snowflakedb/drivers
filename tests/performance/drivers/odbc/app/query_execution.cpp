@@ -21,6 +21,7 @@ void validate_row_counts(const std::vector<TestResult>& results);
 void print_statistics(const std::vector<TestResult>& results);
 TestResult run_query(SQLHDBC dbc, const std::string& sql, int iteration);
 std::pair<std::size_t, std::size_t> get_expected_row_count(const std::vector<TestResult>& results);
+void assert_nonzero_row_count(std::size_t count);
 void check_row_count_match(std::size_t actual_count, std::size_t expected_count, std::size_t iteration);
 void bind_columns_for_bulk_fetch(SQLHSTMT stmt, SQLSMALLINT column_count, std::vector<std::vector<char>>& char_bufs,
                                  std::vector<std::vector<SQLLEN>>& indicators);
@@ -112,14 +113,24 @@ std::pair<std::size_t, std::size_t> get_expected_row_count(const std::vector<Tes
   if (expected_from_recording) {
     expected_count = std::stoull(expected_from_recording);
     std::cout << "Row count baseline: " << expected_count << " rows (from recording phase)\n";
+    assert_nonzero_row_count(expected_count);
     start_idx = 0;
   } else {
     expected_count = results[0].row_count;
     std::cout << "Row count baseline: " << expected_count << " rows (from first iteration)\n";
+    assert_nonzero_row_count(expected_count);
     start_idx = 1;
   }
 
   return {expected_count, start_idx};
+}
+
+void assert_nonzero_row_count(std::size_t count) {
+  if (count == 0) {
+    std::cerr << "ERROR: Row count baseline is 0 — this likely indicates a silent query failure "
+              << "(e.g. async execution timeout). Refusing to use 0 as baseline.\n";
+    exit(1);
+  }
 }
 
 void check_row_count_match(std::size_t actual_count, std::size_t expected_count, std::size_t iteration) {

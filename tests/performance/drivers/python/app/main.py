@@ -38,18 +38,25 @@ def main():
     
     try:
         execute_setup_queries(cursor, setup_queries)
-    except Exception:
+    except Exception as e:
+        print(f"❌ Setup query failed: {e}")
         cursor.close()
         conn.close()
         sys.exit(1)
     
-    results, memory_timeline = execute_test(
-        config.test_type, 
-        cursor, 
-        config.sql_command, 
-        config.warmup_iterations, 
-        config.iterations
-    )
+    try:
+        results, memory_timeline = execute_test(
+            config.test_type, 
+            cursor, 
+            config.sql_command, 
+            config.warmup_iterations, 
+            config.iterations
+        )
+    except Exception as e:
+        print(f"❌ Test execution failed: {e}")
+        cursor.close()
+        conn.close()
+        sys.exit(1)
     
     # In replay mode, skip server version query and use N/A
     if os.getenv("WIREMOCK_REPLAY") == "true":

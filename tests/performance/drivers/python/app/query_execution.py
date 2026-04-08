@@ -63,17 +63,30 @@ def _get_expected_row_count(results):
     
     Returns:
         tuple: (expected_count, start_idx) where start_idx is the first index to validate
+    
+    Raises:
+        RuntimeError: If the expected row count is 0 (indicates a silent query failure)
     """
     expected_from_recording = os.getenv("EXPECTED_ROW_COUNT")
     if expected_from_recording:
         expected_count = int(expected_from_recording)
         print(f"Row count baseline: {expected_count} rows (from recording phase)")
+        _assert_nonzero_row_count(expected_count)
         return expected_count, 0  # Validate all iterations including first
     else:
-        # Use first iteration as baseline
         expected_count = results[0]['row_count']
         print(f"Row count baseline: {expected_count} rows (from first iteration)")
+        _assert_nonzero_row_count(expected_count)
         return expected_count, 1  # Skip first iteration since it's the baseline
+
+
+def _assert_nonzero_row_count(count):
+    """Reject 0-row baselines that indicate silent query failures."""
+    if count == 0:
+        raise RuntimeError(
+            "Row count baseline is 0 — this likely indicates a silent "
+            "query failure (e.g. async execution timeout). Refusing to use 0 as baseline."
+        )
 
 
 def _check_row_count_match(actual_count, expected_count, iteration):
