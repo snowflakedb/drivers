@@ -190,8 +190,26 @@ impl ReadODBC for SnowflakeBoolean {
             CDataType::UShort => Ok(read_unaligned::<u16>(binding) != 0),
             CDataType::SBigInt => Ok(read_unaligned::<i64>(binding) != 0),
             CDataType::UBigInt => Ok(read_unaligned::<u64>(binding) != 0),
-            CDataType::Float => Ok(read_unaligned::<f32>(binding) != 0.0),
-            CDataType::Double => Ok(read_unaligned::<f64>(binding) != 0.0),
+            CDataType::Float => {
+                let v = read_unaligned::<f32>(binding);
+                if !v.is_finite() {
+                    return UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .fail();
+                }
+                Ok(v != 0.0)
+            }
+            CDataType::Double => {
+                let v = read_unaligned::<f64>(binding);
+                if !v.is_finite() {
+                    return UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .fail();
+                }
+                Ok(v != 0.0)
+            }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
                 parse_str_to_bool(&s, binding.value_type)

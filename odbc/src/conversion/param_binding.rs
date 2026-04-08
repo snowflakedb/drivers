@@ -1273,6 +1273,86 @@ mod tests {
     }
 
     #[test]
+    fn convert_float_nan_to_boolean_fails() {
+        let val: f32 = f32::NAN;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Float NaN should not convert to boolean"
+        );
+    }
+
+    #[test]
+    fn convert_float_inf_to_boolean_fails() {
+        let val: f32 = f32::INFINITY;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Float infinity should not convert to boolean"
+        );
+    }
+
+    #[test]
+    fn convert_double_nan_to_boolean_fails() {
+        let val: f64 = f64::NAN;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Double NaN should not convert to boolean"
+        );
+    }
+
+    #[test]
+    fn convert_double_inf_to_boolean_fails() {
+        let val: f64 = f64::INFINITY;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Double infinity should not convert to boolean"
+        );
+    }
+
+    #[test]
+    fn convert_double_neg_inf_to_boolean_fails() {
+        let val: f64 = f64::NEG_INFINITY;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Double -infinity should not convert to boolean"
+        );
+    }
+
+    #[test]
     fn convert_slong_negative_to_boolean_true() -> TestResult {
         let val: i32 = -99;
         let binding = make_binding(
