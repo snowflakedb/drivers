@@ -119,6 +119,24 @@ class WiremockClient:
             if response.status_code not in (200, 201):
                 raise RuntimeError(f"Failed to add mapping: {response.status_code} {response.text}")
 
+    def get_requests(self, url_path_pattern: str) -> list[dict]:
+        """Get all requests received by Wiremock matching a URL path pattern.
+
+        Args:
+            url_path_pattern: Regex pattern to match against request URL paths
+                             (e.g., "/telemetry/send")
+
+        Returns:
+            List of request objects captured by Wiremock.
+        """
+        response = requests.post(
+            f"{self.http_url()}/__admin/requests/find",
+            json={"urlPathPattern": url_path_pattern},
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Failed to query requests: {response.status_code} {response.text}")
+        return response.json().get("requests", [])
+
     def stop(self) -> None:
         """Stop the Wiremock process.
 
