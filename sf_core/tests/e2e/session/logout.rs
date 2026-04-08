@@ -206,10 +206,8 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
 
     let error_msg = result_after.unwrap_err();
     assert!(
-        error_msg.contains("closed")
-            || error_msg.contains("Closed")
-            || error_msg.contains("not initialized"),
-        "Error should mention connection is closed or not initialized, got: {}",
+        error_msg.contains("closed") || error_msg.contains("Closed"),
+        "Error must mention connection is closed, got: {}",
         error_msg
     );
 }

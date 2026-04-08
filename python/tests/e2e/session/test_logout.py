@@ -118,9 +118,7 @@ class TestLogoutSessionInvalidation:
 
         # Then The query fails with a connection-closed error
         error_msg = str(exc_info.value).lower()
-        assert "closed" in error_msg or "not initialized" in error_msg, (
-            f"Error should mention connection is closed or not initialized, got: {exc_info.value}"
-        )
+        assert "closed" in error_msg, f"Error must mention connection is closed, got: {exc_info.value}"
 
 
 class TestLogoutEdgeCases:
