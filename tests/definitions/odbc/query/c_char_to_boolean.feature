@@ -26,3 +26,21 @@ Feature: ODBC SQLBindParameter C char types to SQL_BIT conversion
     Given Snowflake client is logged in
     When the C type value is bound as SQL_BIT and SELECT ? is executed
     Then the result should be FALSE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_CHAR 'true' to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_CHAR 'false' to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be FALSE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_CHAR numeric '42' to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE (nonzero numeric string)

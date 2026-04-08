@@ -31,3 +31,39 @@ Feature: ODBC SQLBindParameter C integer types to SQL_BIT conversion
     Given Snowflake client is logged in
     When the C type value is bound as SQL_BIT and SELECT ? is executed
     Then the result should be TRUE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG negative to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE (negative nonzero)
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_ULONG nonzero to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_ULONG zero to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be FALSE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_UTINYINT nonzero to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_USHORT nonzero to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_UBIGINT nonzero to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
