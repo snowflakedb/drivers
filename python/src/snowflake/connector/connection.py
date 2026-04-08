@@ -13,6 +13,8 @@ import threading
 import warnings
 
 from collections.abc import Generator, Iterable
+from dataclasses import dataclass
+from functools import cached_property
 from io import StringIO
 from typing import Any, Callable, Union, cast
 
@@ -51,13 +53,17 @@ from ._internal.logout_config_mapping import (
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
-from .cursor import CursorInstance, CursorType, SnowflakeCursor
+from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
 CLIENT_NAME = "PythonConnector"
-APPLICATION_RE = re.compile(r"^[\w\d_]+$")
+# The old connector used re.match(r"[\w\d_]+") without anchors, so any string
+# starting with a word character was accepted (dots, hyphens, etc. in the tail
+# were silently ignored).  We keep a start-anchored pattern without $ so that
+# callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
+APPLICATION_RE = re.compile(r"^[\w\d_]+")
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -603,9 +609,14 @@ class Connection:
         return SnowflakeRestful(connection=self)
 
     @internal_api
-    def _get_connection_info(self) -> ConnectionGetInfoResponse:
+    def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
         """Refresh connection details for connection"""
-        return self.db_api.connection_get_info(ConnectionGetInfoRequest(conn_handle=self.conn_handle))
+        return self.db_api.connection_get_info(
+            ConnectionGetInfoRequest(
+                conn_handle=self.conn_handle,
+                include_master_token=include_master_token,
+            )
+        )
 
     @internal_api
     @backward_compatibility
@@ -840,10 +851,13 @@ class Connection:
         """Whether to cache the IdP token for browser-based SSO authentication."""
         raise NotImplementedError("consent_cache_id_token is not yet implemented")
 
-    @property
+    @cached_property
     def snowflake_version(self) -> str:
         """The current Snowflake server version string."""
-        raise NotImplementedError("snowflake_version is not yet implemented")
+        with self.cursor(DictCursor) as cur:
+            cur.execute("SELECT CURRENT_VERSION() AS version")
+            row: dict[str, Any] = cur.fetchone()  # type: ignore[assignment]
+        return str(row["VERSION"]).split(" ")[0]
 
     def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""

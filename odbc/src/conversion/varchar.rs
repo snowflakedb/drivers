@@ -9,6 +9,7 @@ use snafu::ResultExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::binary::hex_encode_lowercase;
 use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
@@ -468,10 +469,7 @@ impl ReadODBC for SnowflakeVarchar {
                 let bytes = unsafe {
                     std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
                 };
-                bytes
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>()
+                hex_encode_lowercase(bytes)
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

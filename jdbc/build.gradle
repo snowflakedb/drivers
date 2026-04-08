@@ -49,7 +49,7 @@ dependencies {
     implementation 'org.apache.arrow:arrow-memory-core:17.0.0'
     implementation 'org.apache.arrow:arrow-memory-netty:17.0.0'
     implementation 'org.apache.arrow:arrow-c-data:17.0.0'
-    implementation 'com.google.protobuf:protobuf-java:4.32.1'
+    implementation 'com.google.protobuf:protobuf-java:4.33.2'
     compileOnly "org.projectlombok:lombok:${lombokVersion}"
     annotationProcessor "org.projectlombok:lombok:${lombokVersion}"
 

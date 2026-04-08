@@ -840,6 +840,11 @@ mod tests {
     }
 
     // -- Structured C types → VARCHAR -----------------------------------------
+    //
+    // These tests live here (not in varchar.rs) because they validate the full
+    // C-to-SQL pipeline: make_converter → ParamConverter::convert → ReadODBC +
+    // WriteJson. This mirrors all other conversion tests above (integer, float,
+    // char, bit, binary) which also exercise the end-to-end binding path.
 
     #[test]
     fn convert_timestamp_as_varchar() -> TestResult {

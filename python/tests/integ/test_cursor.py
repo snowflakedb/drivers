@@ -1896,15 +1896,10 @@ class TestDictCursorMultipleQueries:
 class TestCursorDescribe:
     """Integration tests for Cursor.describe method."""
 
-    def test_describe_returns_column_metadata(self, cursor):
-        """describe() returns ResultMetadata with correct names, types, and structure."""
-        result = cursor.describe("""
-            SELECT
-                1::INTEGER AS int_col,
-                'hello'::VARCHAR AS str_col,
-                3.14::FLOAT AS float_col,
-                TRUE::BOOLEAN AS bool_col
-        """)
+    def test_describe_returns_result_metadata(self, cursor):
+        """describe() returns ResultMetadata with correct column information."""
+        sql = "SELECT 1 AS int_col, 'hello'::VARCHAR AS str_col, 3.14::FLOAT AS float_col, TRUE::BOOLEAN AS bool_col"
+        result = cursor.describe(sql)
 
         assert result is not None
         assert len(result) == 4
@@ -1919,13 +1914,15 @@ class TestCursorDescribe:
         assert result[3].type_code == 13  # BOOLEAN
         assert cursor.description == result
 
-    def test_describe_side_effects(self, cursor):
-        """describe() sets description and row count but not sqlstate."""
-        cursor.describe("SELECT 1 AS col1")
+    def test_describe_sets_cursor_state(self, cursor):
+        """describe() sets sfqid, query, rowcount, and rownumber on the cursor."""
+        sql = "SELECT 1 AS int_col, 'hello'::VARCHAR AS str_col"
+        cursor.describe(sql)
 
-        assert cursor.description is not None
         assert cursor.rowcount == 0
         assert cursor.sqlstate is None
+        assert cursor.sfqid is not None
+        assert cursor.query == sql
         assert cursor.rownumber is None
 
     def test_describe_matches_execute_description(self, cursor):
