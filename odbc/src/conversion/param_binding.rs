@@ -359,11 +359,33 @@ pub(crate) fn read_char_str(binding: &ParameterBinding) -> Result<String, JsonBi
 }
 
 /// Read a SQL_C_WCHAR (UTF-16) value and convert to a UTF-8 string.
+///
+/// When `StrLen_or_IndPtr` is NULL or points to `SQL_NTS`, the buffer is
+/// treated as null-terminated (scans for the first `0x0000` code unit).
+/// Otherwise the indicated byte length is used (clamped to `buffer_length`).
 pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonBindingError> {
-    let byte_len = buffer_data_len(binding);
-    let unit_len = byte_len / mem::size_of::<u16>();
-    let units =
-        unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u16, unit_len) };
+    let null_terminated =
+        binding.str_len_or_ind_ptr.is_null() || unsafe { *binding.str_len_or_ind_ptr } == sql::NTS;
+
+    let units = if null_terminated {
+        let ptr = binding.parameter_value_ptr as *const u16;
+        let max_units = if binding.buffer_length > 0 {
+            binding.buffer_length as usize / mem::size_of::<u16>()
+        } else {
+            usize::MAX
+        };
+        let mut len = 0;
+        unsafe {
+            while len < max_units && *ptr.add(len) != 0 {
+                len += 1;
+            }
+            slice::from_raw_parts(ptr, len)
+        }
+    } else {
+        let byte_len = buffer_data_len(binding);
+        let unit_len = byte_len / mem::size_of::<u16>();
+        unsafe { slice::from_raw_parts(binding.parameter_value_ptr as *const u16, unit_len) }
+    };
     String::from_utf16(units).map_err(|_| WCharConversionSnafu.build())
 }
 
@@ -433,6 +455,67 @@ mod tests {
     ) -> Result<(SnowflakeLogicalType, Value), JsonBindingError> {
         let converter = make_converter(&binding.sql_data_type)?;
         converter.convert(binding)
+    }
+
+    // -- read_wchar_str tests -------------------------------------------------
+
+    #[test]
+    fn read_wchar_str_with_explicit_length() -> TestResult {
+        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
+        let mut ind: sql::Len = 3 * mem::size_of::<u16>() as sql::Len;
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            (4 * mem::size_of::<u16>()) as sql::Len,
+            &mut ind,
+        );
+        assert_eq!(read_wchar_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    #[test]
+    fn read_wchar_str_with_sql_nts() -> TestResult {
+        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            (4 * mem::size_of::<u16>()) as sql::Len,
+            &mut ind,
+        );
+        assert_eq!(read_wchar_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    #[test]
+    fn read_wchar_str_with_null_indicator() -> TestResult {
+        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            (4 * mem::size_of::<u16>()) as sql::Len,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(read_wchar_str(&binding)?, "hi!");
+        Ok(())
+    }
+
+    #[test]
+    fn read_wchar_str_sql_nts_zero_buffer_length() -> TestResult {
+        let data: [u16; 4] = ['h' as u16, 'i' as u16, '!' as u16, 0];
+        let mut ind: sql::Len = sql::NTS;
+        let binding = make_binding(
+            CDataType::WChar,
+            sql::SqlDataType::VARCHAR,
+            data.as_ptr() as sql::Pointer,
+            0,
+            &mut ind,
+        );
+        assert_eq!(read_wchar_str(&binding)?, "hi!");
+        Ok(())
     }
 
     // -- ParamConverter tests per type ----------------------------------------

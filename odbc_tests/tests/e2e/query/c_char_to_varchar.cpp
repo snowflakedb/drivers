@@ -42,6 +42,24 @@ TEST_CASE("should bind SQL_C_WCHAR to SQL_VARCHAR.", "[query][bind_parameter][c_
   CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
 }
 
+TEST_CASE("should bind SQL_C_WCHAR with SQL_NTS to SQL_VARCHAR.", "[query][bind_parameter][c_char_to_varchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLWCHAR param[] = {'h', 'e', 'l', 'l', 'o', 0};
+  SQLLEN indicator = SQL_NTS;
+  // When the C type value is bound with SQL_NTS indicator and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_VARCHAR, 100, 0, param,
+                                   sizeof(param), &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be the expected string
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+}
+
 TEST_CASE("should bind SQL_C_DEFAULT to SQL_VARCHAR.", "[query][bind_parameter][c_char_to_varchar]") {
   // Given Snowflake client is logged in
   Connection conn;
