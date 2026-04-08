@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
+    from .._internal.arrow_stream_iterator import ArrowStreamIterator
     from ..connection import Connection
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         # -- Active iteration state (cleared on reset) --
         self._result_chunks: list[ResultChunk] | None = None
-        self._iterator: Iterator[Row | DictRow] | None = None
+        self._iterator: ArrowStreamIterator | None = None
         self._fetch_mode: FetchMode | None = None
 
         # Keep binding data reference to prevent garbage collection while Rust uses it
@@ -560,7 +561,7 @@ class SnowflakeCursorBase(abc.ABC):
         if not self._iterator:
             self._iterator = self._create_row_iterator()
         try:
-            row = next(self._iterator)
+            row: Row | DictRow = next(self._iterator)
             self._rownumber += 1
             return row
         except StopIteration:
@@ -595,7 +596,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         if not self._iterator:
             self._iterator = self._create_row_iterator()
-        rows: list[Any] = self._iterator.fetch_many(size)  # type: ignore[attr-defined]
+        rows = self._iterator.fetch_many(size)
         self._rownumber += len(rows)
         return rows
 
@@ -612,7 +613,7 @@ class SnowflakeCursorBase(abc.ABC):
         """
         if not self._iterator:
             self._iterator = self._create_row_iterator()
-        rows: list[Any] = self._iterator.fetch_all()  # type: ignore[attr-defined]
+        rows = self._iterator.fetch_all()
         self._rownumber += len(rows)
         return rows
 
@@ -620,7 +621,7 @@ class SnowflakeCursorBase(abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
-    def _create_row_iterator(self) -> Iterator[Row | DictRow]:
+    def _create_row_iterator(self) -> ArrowStreamIterator:
         return create_row_iterator(
             stream_ptr=self._query_result.consume_stream(),
             use_dict_result=self._use_dict_result,

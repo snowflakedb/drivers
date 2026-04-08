@@ -246,9 +246,9 @@ PyObject* CArrowStreamIterator::nextN(int64_t size) {
 
       PyObject* row = createRowForList();
       if (row == nullptr) {
-        // Error: clean up slots already set and return
-        // Slots [0..collected) hold owned refs; trailing slots are nullptr.
-        // Truncate the list to collected so Py_DECREF only frees valid refs.
+        // Slots [0..collected) hold owned refs that Py_DECREF(pylist) will release.
+        // Slots [collected..size) are NULL (PyList_New zero-initializes items).
+        // PyList_SetSlice removes them; Py_XDECREF(NULL) inside is a safe no-op.
         PyList_SetSlice(pylist, collected, size, nullptr);
         Py_DECREF(pylist);
         return nullptr;
