@@ -29,6 +29,19 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
         // Connect (shared setup, not a Gherkin step)
         client.connect().expect("Connection should succeed");
 
+        // Precondition: tokens are non-null before close
+        let info_before = client
+            .connection_get_info_blocking(true)
+            .expect("get_info before close");
+        assert!(
+            !info_before.session_token.unwrap_or_default().is_empty(),
+            "session_token must be non-null before close"
+        );
+        assert!(
+            !info_before.master_token.unwrap_or_default().is_empty(),
+            "master_token must be non-null before close"
+        );
+
         //When Connection is closed
         let result = client.connection_close_blocking();
         assert!(

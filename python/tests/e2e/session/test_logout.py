@@ -49,6 +49,49 @@ def assert_logout_request_format(logout_request: dict):
     )
 
 
+class TestLogoutTokenCleanup:
+    """Token cleanup tests from shared/session/logout.feature.
+
+    Verifies that session and master tokens are null after close,
+    regardless of whether a logout HTTP request was actually sent.
+    """
+
+    @pytest.mark.parametrize(
+        "server_session_keep_alive",
+        [False, True, None],
+        ids=["keep_alive=False", "keep_alive=True", "keep_alive=None"],
+    )
+    def test_should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent(
+        self, int_test_connection_factory, server_session_keep_alive
+    ):
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            # Given Snowflake client is logged in
+            kwargs = {"server_url": wiremock.http_url()}
+
+            # And server_session_keep_alive is set to <server_session_keep_alive>
+            if server_session_keep_alive is not None:
+                kwargs["server_session_keep_alive"] = server_session_keep_alive
+            conn = int_test_connection_factory(**kwargs)
+            assert conn.rest.token, "session_token must be non-null before close"
+            assert conn.rest.master_token, "master_token must be non-null before close"
+
+            # When Connection is closed
+            conn.close()
+
+            # Then Session token in Connection.tokens is null
+            assert not conn.rest.token, (
+                f"session_token must be null after close (keep_alive={server_session_keep_alive})"
+            )
+
+            # And Master token in Connection.tokens is null
+            assert not conn.rest.master_token, (
+                f"master_token must be null after close (keep_alive={server_session_keep_alive})"
+            )
+
+
 class TestLogoutSessionInvalidation:
     """Post-logout session validation tests from shared/session/logout.feature.
 
