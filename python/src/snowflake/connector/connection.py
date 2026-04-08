@@ -121,7 +121,12 @@ class Connection:
             self._application = application
         else:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
-        kwargs["client_app_id"] = self._application
+        # client_app_id → CLIENT_APP_ID in the login request; always the driver name.
+        # client_application → CLIENT_ENVIRONMENT.APPLICATION; the user-facing app name.
+        # This mirrors the old connector where internal_application_name and application
+        # were independent parameters.
+        kwargs["client_app_id"] = CLIENT_NAME
+        kwargs["client_application"] = self._application
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle

@@ -170,7 +170,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
         client_app_id: login_parameters.client_info.application.clone(),
         client_app_version: login_parameters.client_info.version.clone(),
         client_environment: AuthRequestClientEnvironment {
-            application: login_parameters.client_info.application.clone(),
+            application: login_parameters.client_info.client_application.clone(),
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
@@ -1962,6 +1962,7 @@ mod tests {
     fn test_client_info() -> ClientInfo {
         ClientInfo {
             application: "TestApp".to_string(),
+            client_application: "TestApp".to_string(),
             version: "1.0.0".to_string(),
             os: "Linux".to_string(),
             os_version: "5.15".to_string(),

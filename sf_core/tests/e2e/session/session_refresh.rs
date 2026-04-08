@@ -76,6 +76,7 @@ fn should_refresh_session_proactively() {
 
         let client_info = ClientInfo {
             application: "sf_core_test".to_string(),
+            client_application: "sf_core_test".to_string(),
             version: "1.0.0".to_string(),
             os: std::env::consts::OS.to_string(),
             os_version: "1.0".to_string(),

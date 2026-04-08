@@ -82,6 +82,7 @@ mod tests {
         use crate::tls::config::TlsConfig;
         ClientInfo {
             application: "TestApp".to_string(),
+            client_application: "TestApp".to_string(),
             version: "1.0.0".to_string(),
             os: "Linux".to_string(),
             os_version: "5.15".to_string(),

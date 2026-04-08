@@ -14,6 +14,7 @@ use tokio::net::TcpListener;
 fn test_client_info() -> ClientInfo {
     ClientInfo {
         application: "test".to_string(),
+        client_application: "test".to_string(),
         version: "1.0".to_string(),
         os: "test-os".to_string(),
         os_version: "1.0".to_string(),

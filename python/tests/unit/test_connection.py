@@ -260,7 +260,7 @@ class TestConnectionSetOptions:
 
         assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}
+        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout", "client_app_id", "client_application"}
 
     def test_validation_warnings_forwarded_via_warnings_warn(self, mock_db_api):
         """ValidationIssue warnings from the response should be surfaced via warnings.warn."""
@@ -284,8 +284,8 @@ class TestConnectionSetOptions:
         assert "param 'x' is deprecated" in str(caught[0].message)
         assert "param 'y' has no effect" in str(caught[1].message)
 
-    def test_no_user_options_sends_only_client_app_id(self, mock_db_api):
-        """When there are no user-supplied kwargs, only the injected client_app_id is sent."""
+    def test_no_user_options_sends_only_injected_keys(self, mock_db_api):
+        """When there are no user-supplied kwargs, only the injected client_app_id and client_application are sent."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
@@ -293,8 +293,9 @@ class TestConnectionSetOptions:
 
         assert mock_db_api.connection_set_options.call_count == 1
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert set(request.options.keys()) == {"client_app_id"}
+        assert set(request.options.keys()) == {"client_app_id", "client_application"}
         assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
+        assert request.options["client_application"] == ConfigSetting(string_value="PythonConnector")
 
 
 class TestContextManagerUnit:
@@ -571,15 +572,17 @@ class TestApplicationProperty:
             conn = Connection(user="u", account="a", application="MyApp")
         assert conn.application == "MyApp"
 
-    def test_application_maps_to_client_app_id_option(self, mock_db_api):
-        """The application value should be forwarded to sf_core as client_app_id."""
-        from snowflake.connector.connection import Connection
+    def test_application_sent_as_client_application_option(self, mock_db_api):
+        """The user's application value goes to client_application (CLIENT_ENVIRONMENT.APPLICATION),
+        while client_app_id (CLIENT_APP_ID) always stays as the driver name."""
+        from snowflake.connector.connection import CLIENT_NAME, Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", application="CustomApp")
 
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert request.options["client_app_id"] == ConfigSetting(string_value="CustomApp")
+        assert request.options["client_app_id"] == ConfigSetting(string_value=CLIENT_NAME)
+        assert request.options["client_application"] == ConfigSetting(string_value="CustomApp")
         assert "application" not in request.options
 
     def test_application_none_defaults_to_client_name(self, mock_db_api):
@@ -625,6 +628,26 @@ class TestApplicationProperty:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             conn = Connection(user="u", account="a", application="MyApp")
         assert "application" not in conn.kwargs
+
+    def test_custom_application_does_not_override_client_app_id(self, mock_db_api):
+        """In the old connector, setting application='SNOWCLI.STAGE.COPY' only affects
+        CLIENT_ENVIRONMENT.APPLICATION in the login request.  CLIENT_APP_ID always comes
+        from internal_application_name (defaults to 'PythonConnector').
+
+        The new connector currently sends the custom application value as client_app_id,
+        which changes what the server sees in CLIENT_APP_ID — a behavioral difference
+        that may break server-side feature gating tied to the client type.
+        """
+        from snowflake.connector.connection import CLIENT_NAME, Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", application="SNOWCLI.STAGE.COPY")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value=CLIENT_NAME), (
+            "client_app_id (CLIENT_APP_ID) must remain the default driver name "
+            "regardless of the application parameter — the old connector keeps these separate"
+        )
 
 
 class TestConnectionArrowProperties:

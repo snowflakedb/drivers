@@ -57,7 +57,11 @@ impl QueryParameters {
 }
 #[derive(Clone)]
 pub struct ClientInfo {
+    /// Driver identity sent as CLIENT_APP_ID and used in User-Agent.
     pub application: String,
+    /// User-facing application name sent as CLIENT_ENVIRONMENT.APPLICATION.
+    /// Falls back to `application` when not explicitly provided.
+    pub client_application: String,
     pub version: String,
     pub os: String,
     pub os_version: String,
@@ -73,10 +77,15 @@ impl ClientInfo {
 
         // TODO: ClientInfo should be dynamically created based on the real hardware and
         // the wrapper client type
+        let application = settings
+            .get_string("client_app_id")
+            .unwrap_or_else(|| "PythonConnector".to_string());
+        let client_application = settings
+            .get_string("client_application")
+            .unwrap_or_else(|| application.clone());
         let client_info = ClientInfo {
-            application: settings
-                .get_string("client_app_id")
-                .unwrap_or_else(|| "PythonConnector".to_string()),
+            application,
+            client_application,
             version: "3.15.0".to_string(),
             os: "Darwin".to_string(),
             os_version: "macOS-15.5-arm64-arm-64bit".to_string(),

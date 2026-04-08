@@ -116,6 +116,7 @@ fn load_parameters(path: &PathBuf) -> Result<Parameters, Box<dyn std::error::Err
 fn default_client_info() -> ClientInfo {
     ClientInfo {
         application: "PythonConnector".to_string(),
+        client_application: "PythonConnector".to_string(),
         version: "3.15.0".to_string(),
         os: "Darwin".to_string(),
         os_version: "macOS-15.5-arm64-arm-64bit".to_string(),

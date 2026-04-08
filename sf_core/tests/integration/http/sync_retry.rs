@@ -208,6 +208,7 @@ fn test_query_params(addr: &SocketAddr) -> QueryParameters {
         server_url: format!("http://{}", addr),
         client_info: ClientInfo {
             application: "test".to_string(),
+            client_application: "test".to_string(),
             version: "1.0.0".to_string(),
             os: "test-os".to_string(),
             os_version: "1.0".to_string(),
