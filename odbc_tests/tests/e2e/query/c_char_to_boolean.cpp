@@ -132,3 +132,21 @@ TEST_CASE("should bind SQL_C_CHAR numeric '42' to SQL_BIT.", "[query][bind_param
   // Then the result should be TRUE (nonzero numeric string)
   CHECK(get_data<SQL_C_BIT>(stmt, 1) == 1);
 }
+
+TEST_CASE("should bind SQL_C_WCHAR with SQL_NTS to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLWCHAR param[] = {'1', 0};
+  SQLLEN indicator = SQL_NTS;
+  // When SQL_C_WCHAR is bound with SQL_NTS indicator as SQL_BIT
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_BIT, 1, 0, param,
+                                   sizeof(param), &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be TRUE
+  CHECK(get_data<SQL_C_BIT>(stmt, 1) == 1);
+}

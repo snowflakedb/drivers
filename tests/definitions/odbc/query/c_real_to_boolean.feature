@@ -32,3 +32,21 @@ Feature: ODBC SQLBindParameter C float/double types to SQL_BIT conversion
     Given Snowflake client is logged in
     When the C type value is bound as SQL_BIT and SELECT ? is executed
     Then the result should be FALSE
+
+  @odbc_e2e
+  Scenario: should reject SQL_C_DOUBLE NaN to SQL_BIT.
+    Given Snowflake client is logged in
+    When SQL_C_DOUBLE NaN is bound as SQL_BIT and SELECT ? is executed
+    Then the execution should fail because NaN is not a valid boolean value
+
+  @odbc_e2e
+  Scenario: should reject SQL_C_DOUBLE infinity to SQL_BIT.
+    Given Snowflake client is logged in
+    When SQL_C_DOUBLE infinity is bound as SQL_BIT and SELECT ? is executed
+    Then the execution should fail because infinity is not a valid boolean value
+
+  @odbc_e2e
+  Scenario: should reject SQL_C_FLOAT NaN to SQL_BIT.
+    Given Snowflake client is logged in
+    When SQL_C_FLOAT NaN is bound as SQL_BIT and SELECT ? is executed
+    Then the execution should fail because NaN is not a valid boolean value
