@@ -29,7 +29,7 @@ final class ConnectionOptionsResolver {
     setIfAbsent(resolved, "host", parsed.getHost());
     setIfAbsent(resolved, "protocol", parsed.getScheme());
     if (parsed.getPort() > 0) {
-      setIfAbsent(resolved, "port", Integer.toString(parsed.getPort()));
+      setIfAbsentInt(resolved, "port", parsed.getPort());
     }
 
     if (parsed.getAccount() != null) {
@@ -49,6 +49,12 @@ final class ConnectionOptionsResolver {
   private static void setIfAbsent(Properties resolved, String key, String value) {
     if (value != null && !value.isEmpty() && !resolved.containsKey(key)) {
       resolved.setProperty(key, value);
+    }
+  }
+
+  private static void setIfAbsentInt(Properties resolved, String key, int value) {
+    if (!resolved.containsKey(key)) {
+      resolved.put(key, value);
     }
   }
 

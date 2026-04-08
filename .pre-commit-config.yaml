@@ -40,7 +40,7 @@ repos:
     -   id: python-checks
         name: Python code checks (ruff + mypy)
         description: Run linting, formatting, and type checks on changed Python files
-        entry: bash -c 'cd python && hatch run precommit:check'
+        entry: bash -c 'cd python && uv run hatch run precommit:check'
         pass_filenames: false
         files: ^python/.*\.py$
         language: system
