@@ -29,6 +29,7 @@ cdef extern from "CArrowStreamIterator.hpp" namespace "sf":
             bint use_dict_result
         )
         ReturnVal next()
+        object nextN(int64_t size)
 
 
 cdef extern from "CArrowStreamTableIterator.hpp" namespace "sf":
@@ -113,6 +114,14 @@ cdef class ArrowStreamIterator:
         # Return the row
         row = <object>ret.successObj
         return row
+
+    def fetch_many(self, int64_t size):
+        """Fetch up to `size` rows as a list in a single C++ call."""
+        return self.iterator.get().nextN(size)
+
+    def fetch_all(self):
+        """Fetch all remaining rows as a list in a single C++ call."""
+        return self.iterator.get().nextN(-1)
 
 cdef class ArrowStreamTableIterator:
     """

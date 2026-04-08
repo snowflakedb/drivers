@@ -38,6 +38,13 @@ class CArrowStreamIterator {
    */
   ReturnVal next();
 
+  /**
+   * Fetch up to `size` rows as a Python list in a single C++ call.
+   * If size < 0, fetch all remaining rows.
+   * @return New reference to a Python list, or nullptr with Python exception set on error.
+   */
+  PyObject* nextN(int64_t size);
+
  private:
   /**
    * Private constructor - use from_stream() factory method instead.

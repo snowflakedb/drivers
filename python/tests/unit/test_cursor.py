@@ -36,6 +36,34 @@ def _no_native_stream_ops():
         yield
 
 
+class MockRowIterator:
+    """A mock row iterator that supports fetch_many/fetch_all like ArrowStreamIterator."""
+
+    def __init__(self, rows):
+        self._rows = list(rows)
+        self._pos = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._pos >= len(self._rows):
+            raise StopIteration
+        row = self._rows[self._pos]
+        self._pos += 1
+        return row
+
+    def fetch_many(self, size):
+        result = self._rows[self._pos : self._pos + size]
+        self._pos += len(result)
+        return result
+
+    def fetch_all(self):
+        result = self._rows[self._pos :]
+        self._pos = len(self._rows)
+        return result
+
+
 class TestFetchone:
     """Unit tests for Cursor.fetchone method."""
 
@@ -162,8 +190,7 @@ class TestFetchall:
 
     def test_fetchall_returns_all_rows(self, cursor):
         """Test fetchall returns all rows as a list."""
-        mock_rows = [(1,), (2,), (3,)]
-        cursor._iterator = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
@@ -172,7 +199,7 @@ class TestFetchall:
 
     def test_fetchall_returns_empty_list_when_no_rows(self, cursor):
         """Test fetchall returns empty list when no rows."""
-        cursor._iterator = iter([])
+        cursor._iterator = MockRowIterator([])
 
         with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
@@ -181,7 +208,7 @@ class TestFetchall:
 
     def test_fetchall_calls_create_row_iterator_if_iterator_is_none(self, cursor):
         """Test fetchall calls _create_row_iterator."""
-        mock_ensure = MagicMock()
+        mock_ensure = MagicMock(return_value=MockRowIterator([]))
 
         with patch.object(cursor, "_create_row_iterator", mock_ensure):
             cursor.fetchall()
@@ -190,8 +217,7 @@ class TestFetchall:
 
     def test_fetchall_with_single_row(self, cursor):
         """Test fetchall with single row."""
-        mock_rows = [(42,)]
-        cursor._iterator = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(42,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
@@ -201,12 +227,13 @@ class TestFetchall:
 
     def test_fetchall_with_multi_column_rows(self, cursor):
         """Test fetchall with multiple columns per row."""
-        mock_rows = [
-            (1, "a", 1.0),
-            (2, "b", 2.0),
-            (3, "c", 3.0),
-        ]
-        cursor._iterator = iter(mock_rows)
+        cursor._iterator = MockRowIterator(
+            [
+                (1, "a", 1.0),
+                (2, "b", 2.0),
+                (3, "c", 3.0),
+            ]
+        )
 
         with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
@@ -215,11 +242,12 @@ class TestFetchall:
 
     def test_fetchall_preserves_types(self, cursor):
         """Test fetchall preserves data types in rows."""
-        mock_rows = [
-            (1, "text", Decimal("3.14"), None),
-            (2, "more", Decimal("2.71"), True),
-        ]
-        cursor._iterator = iter(mock_rows)
+        cursor._iterator = MockRowIterator(
+            [
+                (1, "text", Decimal("3.14"), None),
+                (2, "more", Decimal("2.71"), True),
+            ]
+        )
 
         with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
@@ -231,9 +259,7 @@ class TestFetchall:
 
     def test_fetchall_after_partial_fetchone(self, cursor):
         """Test fetchall returns remaining rows after fetchone."""
-        mock_rows = [(1,), (2,), (3,), (4,), (5,)]
-        mock_iterator = iter(mock_rows)
-        cursor._iterator = mock_iterator
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             # Fetch first two rows
@@ -246,9 +272,7 @@ class TestFetchall:
 
     def test_fetchall_returns_empty_after_exhaustion(self, cursor):
         """Test fetchall returns empty list after all rows consumed."""
-        mock_rows = [(1,), (2,)]
-        mock_iterator = iter(mock_rows)
-        cursor._iterator = mock_iterator
+        cursor._iterator = MockRowIterator([(1,), (2,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()  # Consume all rows
@@ -258,8 +282,7 @@ class TestFetchall:
 
     def test_fetchall_with_large_result_set(self, cursor):
         """Test fetchall with large number of rows."""
-        mock_rows = [(i,) for i in range(1000)]
-        cursor._iterator = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(i,) for i in range(1000)])
 
         with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
@@ -270,8 +293,7 @@ class TestFetchall:
 
     def test_fetchall_returns_list_not_iterator(self, cursor):
         """Test fetchall returns a list, not an iterator."""
-        mock_rows = [(1,), (2,), (3,)]
-        cursor._iterator = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchall()
@@ -297,49 +319,48 @@ class TestFetchmany:
     def test_fetchmany_default_uses_arraysize(self, cursor):
         """Test that fetchmany() without size argument uses arraysize."""
         cursor.arraysize = 3
-        mock_rows = [(1,), (2,), (3,), (4,), (5,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany()
 
         assert result == [(1,), (2,), (3,)]
 
     def test_fetchmany_with_explicit_size(self, cursor):
         """Test fetchmany with explicit size argument."""
-        mock_rows = [(1,), (2,), (3,), (4,), (5,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(2)
 
         assert result == [(1,), (2,)]
 
     def test_fetchmany_returns_fewer_rows_when_exhausted(self, cursor):
         """Test fetchmany returns fewer rows when result set is exhausted."""
-        mock_rows = [(1,), (2,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(5)
 
         assert result == [(1,), (2,)]
 
     def test_fetchmany_returns_empty_list_when_no_rows(self, cursor):
         """Test fetchmany returns empty list when no rows available."""
-        with patch.object(cursor, "fetchone", return_value=None):
+        cursor._iterator = MockRowIterator([])
+
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(5)
 
         assert result == []
 
     def test_fetchmany_with_size_zero(self, cursor):
         """Test fetchmany(0) returns empty list."""
-        mock_fetchone = MagicMock()
-        with patch.object(cursor, "fetchone", mock_fetchone):
+        cursor._iterator = MockRowIterator([(1,), (2,)])
+
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(0)
 
         assert result == []
-        mock_fetchone.assert_not_called()
 
     def test_fetchmany_with_negative_size_raises_error(self, cursor):
         """Test fetchmany with negative size raises ProgrammingError."""
@@ -357,10 +378,9 @@ class TestFetchmany:
 
     def test_fetchmany_sequential_calls(self, cursor):
         """Test multiple sequential fetchmany calls consume rows correctly."""
-        mock_rows = [(1,), (2,), (3,), (4,), (5,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             first_batch = cursor.fetchmany(2)
             second_batch = cursor.fetchmany(2)
             third_batch = cursor.fetchmany(2)
@@ -371,10 +391,9 @@ class TestFetchmany:
 
     def test_fetchmany_after_exhausted_returns_empty(self, cursor):
         """Test fetchmany returns empty list after all rows consumed."""
-        mock_rows = [(1,), (2,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchmany(5)  # Consume all rows
             result = cursor.fetchmany(5)
 
@@ -382,10 +401,9 @@ class TestFetchmany:
 
     def test_fetchmany_respects_changed_arraysize(self, cursor):
         """Test fetchmany respects dynamically changed arraysize."""
-        mock_rows = [(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             cursor.arraysize = 2
             first_batch = cursor.fetchmany()
 
@@ -397,20 +415,18 @@ class TestFetchmany:
 
     def test_fetchmany_with_size_one(self, cursor):
         """Test fetchmany(1) returns single row list."""
-        mock_rows = [(1,), (2,), (3,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(1)
 
         assert result == [(1,)]
 
     def test_fetchmany_with_large_size(self, cursor):
         """Test fetchmany with size larger than available rows."""
-        mock_rows = [(i,) for i in range(10)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(i,) for i in range(10)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(1000)
 
         assert result == [(i,) for i in range(10)]
@@ -419,10 +435,9 @@ class TestFetchmany:
         """Test that default arraysize is 1."""
         assert cursor.arraysize == 1
 
-        mock_rows = [(1,), (2,), (3,)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany()
 
         # Default arraysize is 1, so should fetch 1 row
@@ -430,27 +445,29 @@ class TestFetchmany:
 
     def test_fetchmany_with_multi_column_rows(self, cursor):
         """Test fetchmany with rows containing multiple columns."""
-        mock_rows = [
-            (1, "a", 1.0),
-            (2, "b", 2.0),
-            (3, "c", 3.0),
-        ]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator(
+            [
+                (1, "a", 1.0),
+                (2, "b", 2.0),
+                (3, "c", 3.0),
+            ]
+        )
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(2)
 
         assert result == [(1, "a", 1.0), (2, "b", 2.0)]
 
     def test_fetchmany_preserves_row_types(self, cursor):
         """Test that fetchmany preserves the types in rows."""
-        mock_rows = [
-            (1, "text", Decimal("3.14"), None),
-            (2, "more", Decimal("2.71"), True),
-        ]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator(
+            [
+                (1, "text", Decimal("3.14"), None),
+                (2, "more", Decimal("2.71"), True),
+            ]
+        )
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany(2)
 
         assert result[0] == (1, "text", Decimal("3.14"), None)
@@ -870,10 +887,9 @@ class TestFetchmanyArraysizeAttribute:
     def test_fetchmany_uses_instance_arraysize(self, cursor):
         """Test fetchmany uses instance arraysize, not class attribute."""
         cursor.arraysize = 5
-        mock_rows = [(i,) for i in range(10)]
-        row_iter = iter(mock_rows)
+        cursor._iterator = MockRowIterator([(i,) for i in range(10)])
 
-        with patch.object(cursor, "fetchone", side_effect=lambda: next(row_iter, None)):
+        with patch.object(cursor, "_create_row_iterator"):
             result = cursor.fetchmany()
 
         assert len(result) == 5
@@ -898,7 +914,7 @@ class TestRownumber:
 
     def test_rownumber_increments_with_fetchone(self, cursor):
         """rownumber increments by 1 for each fetchone call."""
-        cursor._iterator = iter([(1,), (2,), (3,)])
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
@@ -910,7 +926,7 @@ class TestRownumber:
 
     def test_rownumber_stays_after_fetchone_exhausted(self, cursor):
         """rownumber stays at last value when fetchone returns None."""
-        cursor._iterator = iter([(1,)])
+        cursor._iterator = MockRowIterator([(1,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
@@ -920,7 +936,7 @@ class TestRownumber:
 
     def test_rownumber_updated_by_fetchall(self, cursor):
         """rownumber reflects total rows fetched after fetchall."""
-        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()
@@ -928,7 +944,7 @@ class TestRownumber:
 
     def test_rownumber_updated_by_fetchall_after_partial_fetchone(self, cursor):
         """rownumber is correct when fetchall follows partial fetchone consumption."""
-        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
@@ -939,7 +955,7 @@ class TestRownumber:
 
     def test_rownumber_updated_by_fetchmany(self, cursor):
         """rownumber increments correctly through fetchmany calls."""
-        cursor._iterator = iter([(1,), (2,), (3,), (4,), (5,)])
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchmany(3)
@@ -949,7 +965,7 @@ class TestRownumber:
 
     def test_rownumber_fetchall_on_empty_result(self, cursor):
         """rownumber stays None when fetchall returns no rows."""
-        cursor._iterator = iter([])
+        cursor._iterator = MockRowIterator([])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()
@@ -957,7 +973,7 @@ class TestRownumber:
 
     def test_rownumber_none_after_execute_resets(self, cursor):
         """rownumber resets to None after a new execute call."""
-        cursor._iterator = iter([(1,), (2,)])
+        cursor._iterator = MockRowIterator([(1,), (2,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()
@@ -1366,7 +1382,7 @@ class TestFetchModeValidation:
             cursor.fetchall()
 
     def test_fetchall_then_arrow_raises(self, cursor):
-        cursor._iterator = iter([(1,)])
+        cursor._iterator = MockRowIterator([(1,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()
@@ -1375,7 +1391,7 @@ class TestFetchModeValidation:
             cursor.fetch_arrow_all()
 
     def test_same_mode_is_fine(self, cursor):
-        cursor._iterator = iter([(1,), (2,)])
+        cursor._iterator = MockRowIterator([(1,), (2,)])
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchone()

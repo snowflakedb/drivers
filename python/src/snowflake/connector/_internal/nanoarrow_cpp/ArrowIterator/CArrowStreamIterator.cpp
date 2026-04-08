@@ -217,6 +217,74 @@ ReturnVal CArrowStreamIterator::next() {
   return ReturnVal(m_latestReturnedRow.get(), nullptr);
 }
 
+PyObject* CArrowStreamIterator::nextN(int64_t size) {
+  PyObject* pylist = PyList_New(0);
+  if (pylist == nullptr) {
+    return nullptr;
+  }
+
+  bool fetchAll = (size < 0);
+  int64_t collected = 0;
+
+  while (fetchAll || collected < size) {
+    // Load next batch if needed
+    while (m_currentRowIndex >= m_rowCount) {
+      if (!loadNextBatch()) {
+        // Stream exhausted — return what we have
+        return pylist;
+      }
+    }
+
+    // Handle empty schema (no columns)
+    if (m_columnCount == 0) {
+      PyObject* row;
+      if (m_useDictResult) {
+        row = PyDict_New();
+      } else {
+        row = PyTuple_New(0);
+      }
+      if (row == nullptr) {
+        Py_DECREF(pylist);
+        return nullptr;
+      }
+      if (PyList_Append(pylist, row) != 0) {
+        Py_DECREF(row);
+        Py_DECREF(pylist);
+        return nullptr;
+      }
+      Py_DECREF(row);
+      m_currentRowIndex++;
+      m_totalRowsReturned++;
+      collected++;
+      continue;
+    }
+
+    // Convert current row
+    if (m_useDictResult) {
+      createDictRowPyObject();
+    } else {
+      createRowPyObject();
+    }
+
+    if (py::checkPyError()) {
+      Py_DECREF(pylist);
+      return nullptr;
+    }
+
+    // Append to list (PyList_Append increments refcount)
+    if (PyList_Append(pylist, m_latestReturnedRow.get()) != 0) {
+      Py_DECREF(pylist);
+      return nullptr;
+    }
+
+    m_currentRowIndex++;
+    m_totalRowsReturned++;
+    collected++;
+  }
+
+  return pylist;
+}
+
 void CArrowStreamIterator::createRowPyObject() {
   PyObject* pytuple = PyTuple_New(m_columnCount);
 
