@@ -1,0 +1,11 @@
+{
+  "name": "Query returns HTTP 503",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 503,
+    "body": "Service Unavailable"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Chunk download returns HTTP 500",
+  "request": {
+    "urlPathPattern": "/queries/.*/result.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 500,
+    "body": "Internal Server Error"
+  }
+}

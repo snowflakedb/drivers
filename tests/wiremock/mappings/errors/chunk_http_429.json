@@ -1,0 +1,11 @@
+{
+  "name": "Chunk download returns HTTP 429",
+  "request": {
+    "urlPathPattern": "/queries/.*/result.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 429,
+    "body": "Too Many Requests"
+  }
+}

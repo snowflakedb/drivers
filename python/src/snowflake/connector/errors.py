@@ -145,3 +145,27 @@ class ForbiddenError(Error):
 
 class BadGatewayError(Error):
     """Exception for 502 HTTP error for retry."""
+
+
+class InternalServerError(Error):
+    """Exception for 500 HTTP error."""
+
+
+class ServiceUnavailableError(Error):
+    """Exception for 503 HTTP error."""
+
+
+class GatewayTimeoutError(Error):
+    """Exception for 504 HTTP error."""
+
+
+class MethodNotAllowed(Error):
+    """Exception for 405 HTTP error."""
+
+
+class TooManyRequests(Error):
+    """Exception for 429 HTTP error."""
+
+
+class RequestExceedMaxRetryError(Error):
+    """Exception when a request exceeds the maximum number of retries."""

@@ -1,0 +1,11 @@
+{
+  "name": "Query returns HTTP 500",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 500,
+    "body": "Internal Server Error"
+  }
+}

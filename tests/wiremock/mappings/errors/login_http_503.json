@@ -1,0 +1,11 @@
+{
+  "name": "Login returns HTTP 503",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 503,
+    "body": "Service is unavailable"
+  }
+}

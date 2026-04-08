@@ -1,0 +1,11 @@
+{
+  "name": "Query returns HTTP 429",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 429,
+    "body": "Too Many Requests"
+  }
+}

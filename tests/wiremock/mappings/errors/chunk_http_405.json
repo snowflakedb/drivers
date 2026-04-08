@@ -1,0 +1,11 @@
+{
+  "name": "Chunk download returns HTTP 405",
+  "request": {
+    "urlPathPattern": "/queries/.*/result.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 405,
+    "body": "Method Not Allowed"
+  }
+}

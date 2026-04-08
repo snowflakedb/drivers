@@ -1,0 +1,24 @@
+{
+  "name": "Query returns success with chunk references",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "test-query-id-chunks",
+        "rowset": [["1", "first"]],
+        "chunks": [
+          {
+            "url": "/queries/test-query-id-chunks/result?page=1",
+            "rowCount": 1
+          }
+        ],
+        "chunkHeaders": {}
+      }
+    }
+  }
+}

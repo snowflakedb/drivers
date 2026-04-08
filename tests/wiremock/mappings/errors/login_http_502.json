@@ -1,0 +1,11 @@
+{
+  "name": "Login returns HTTP 502",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 502,
+    "body": "Service is unavailable"
+  }
+}

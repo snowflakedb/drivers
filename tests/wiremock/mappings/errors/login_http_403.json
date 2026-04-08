@@ -1,0 +1,14 @@
+{
+  "name": "Login returns HTTP 403",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 403,
+    "jsonBody": {
+      "success": false,
+      "message": "Failed to connect to DB: Forbidden"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Query returns HTTP 502",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 502,
+    "body": "Bad Gateway"
+  }
+}

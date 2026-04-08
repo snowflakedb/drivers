@@ -1,0 +1,37 @@
+{
+  "mappings": [
+    {
+      "name": "First query returns 400",
+      "scenarioName": "query-400-transient",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "first-failure",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 400,
+        "body": "Bad Request"
+      }
+    },
+    {
+      "name": "Second query returns 200",
+      "scenarioName": "query-400-transient",
+      "requiredScenarioState": "first-failure",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "test-query-id",
+            "rowset": [["1"]]
+          }
+        }
+      }
+    }
+  ]
+}

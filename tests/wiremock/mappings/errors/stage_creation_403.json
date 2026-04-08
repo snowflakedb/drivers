@@ -1,0 +1,48 @@
+{
+  "mappings": [
+    {
+      "name": "Stage creation returns 403",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          {
+            "matchesJsonPath": "$.sqlText",
+            "contains": "CREATE TEMPORARY STAGE"
+          }
+        ]
+      },
+      "response": {
+        "status": 403,
+        "jsonBody": {
+          "success": false,
+          "message": "Forbidden: insufficient privileges to create stage"
+        }
+      }
+    },
+    {
+      "name": "INSERT query succeeds (inline binding fallback)",
+      "request": {
+        "urlPathPattern": "/queries/v1/query-request.*",
+        "method": "POST",
+        "bodyPatterns": [
+          {
+            "matchesJsonPath": "$.sqlText",
+            "contains": "INSERT"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "test-insert-id",
+            "rowset": [],
+            "rowtype": []
+          }
+        }
+      }
+    }
+  ]
+}
