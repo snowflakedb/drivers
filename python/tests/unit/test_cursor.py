@@ -476,6 +476,17 @@ class TestFetchmany:
         assert result[0][3] is None
         assert result[1][3] is True
 
+    def test_fetchmany_after_partial_fetchone(self, cursor):
+        """Test fetchmany returns correct rows after partial fetchone consumption."""
+        cursor._iterator = MockRowIterator([(1,), (2,), (3,), (4,), (5,)])
+
+        with patch.object(cursor, "_create_row_iterator"):
+            cursor.fetchone()
+            cursor.fetchone()
+            result = cursor.fetchmany(2)
+
+        assert result == [(3,), (4,)]
+
 
 class TestStatementLifecycle:
     """Unit tests for statement handle lifecycle (create/release).
@@ -1386,6 +1397,21 @@ class TestFetchModeValidation:
 
         with patch.object(cursor, "_create_row_iterator"):
             cursor.fetchall()
+
+        with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
+            cursor.fetch_arrow_all()
+
+    def test_arrow_then_fetchmany_raises(self, cursor):
+        cursor._fetch_mode = FetchMode.ARROW
+
+        with pytest.raises(ProgrammingError, match="Cannot use row-by-row fetch methods"):
+            cursor.fetchmany(5)
+
+    def test_fetchmany_then_arrow_raises(self, cursor):
+        cursor._iterator = MockRowIterator([(1,), (2,)])
+
+        with patch.object(cursor, "_create_row_iterator"):
+            cursor.fetchmany(1)
 
         with pytest.raises(ProgrammingError, match="Cannot use arrow/pandas fetch methods"):
             cursor.fetch_arrow_all()

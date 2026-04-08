@@ -75,6 +75,13 @@ class CArrowStreamIterator {
    */
   void createDictRowPyObject();
 
+  /**
+   * Create a Python tuple or dict for the current row, returning a new reference.
+   * Unlike createRowPyObject/createDictRowPyObject, does not route through m_latestReturnedRow.
+   * @return New reference to the row object, or nullptr with Python exception set on error.
+   */
+  PyObject* createRowForList();
+
   /** The Arrow stream we're reading from (owned by this iterator) */
   std::unique_ptr<ArrowArrayStream, void (*)(ArrowArrayStream*)> m_stream;
 

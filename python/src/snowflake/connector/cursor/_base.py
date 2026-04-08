@@ -15,7 +15,7 @@ import functools
 import logging
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, Protocol, TypeVar, cast
 
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -54,13 +54,21 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
-    from .._internal.arrow_stream_iterator import ArrowStreamIterator
     from ..connection import Connection
 
 logger = logging.getLogger(__name__)
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
+
+
+class RowIterator(Protocol):
+    """Protocol for row iterators that support batch fetching."""
+
+    def __next__(self) -> Row | DictRow: ...
+    def fetch_many(self, size: int) -> list[Any]: ...
+    def fetch_all(self) -> list[Any]: ...
+
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -154,7 +162,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         # -- Active iteration state (cleared on reset) --
         self._result_chunks: list[ResultChunk] | None = None
-        self._iterator: ArrowStreamIterator | None = None
+        self._iterator: RowIterator | None = None
         self._fetch_mode: FetchMode | None = None
 
         # Keep binding data reference to prevent garbage collection while Rust uses it
@@ -573,6 +581,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @pep249
     @_requires_open
+    @_requires_fetch_mode(FetchMode.ROW)
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -619,7 +628,7 @@ class SnowflakeCursorBase(abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
-    def _create_row_iterator(self) -> ArrowStreamIterator:
+    def _create_row_iterator(self) -> RowIterator:
         return create_row_iterator(
             stream_ptr=self._query_result.consume_stream(),
             use_dict_result=self._use_dict_result,
