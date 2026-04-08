@@ -382,6 +382,20 @@ impl SnowflakeTestClient {
             .map(|r| r.is_closed)
     }
 
+    /// Get connection info (tokens, host, etc.) for inspection after close.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_get_info_blocking(
+        &self,
+        include_master_token: bool,
+    ) -> Result<ConnectionGetInfoResponse, proto_utils::ProtoError<DriverException>> {
+        self.client
+            .connection_get_info_blocking(ConnectionGetInfoRequest {
+                conn_handle: Some(self.conn_handle),
+                include_master_token,
+                ..Default::default()
+            })
+    }
+
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
         self.client
             .statement_set_option_bool_blocking(StatementSetOptionBoolRequest {

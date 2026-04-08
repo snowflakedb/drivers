@@ -1747,6 +1747,10 @@ pub trait DatabaseDriverClientBlockingExt {
         &self,
         input: ConnectionIsClosedRequest,
     ) -> Result<ConnectionIsClosedResponse, proto_utils::ProtoError<DriverException>>;
+    fn connection_get_info_blocking(
+        &self,
+        input: ConnectionGetInfoRequest,
+    ) -> Result<ConnectionGetInfoResponse, proto_utils::ProtoError<DriverException>>;
     fn connection_release_blocking(
         &self,
         input: ConnectionReleaseRequest,
@@ -1876,6 +1880,13 @@ impl DatabaseDriverClientBlockingExt for DatabaseDriverClient {
         input: ConnectionIsClosedRequest,
     ) -> Result<ConnectionIsClosedResponse, proto_utils::ProtoError<DriverException>> {
         BLOCKING_CLIENT_RUNTIME.block_on(self.connection_is_closed(input))
+    }
+
+    fn connection_get_info_blocking(
+        &self,
+        input: ConnectionGetInfoRequest,
+    ) -> Result<ConnectionGetInfoResponse, proto_utils::ProtoError<DriverException>> {
+        BLOCKING_CLIENT_RUNTIME.block_on(self.connection_get_info(input))
     }
 
     fn connection_release_blocking(

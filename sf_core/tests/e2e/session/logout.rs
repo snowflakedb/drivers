@@ -1,20 +1,20 @@
 //! E2E tests for session logout functionality.
 //!
-//! These tests connect to real Snowflake and verify logout behavior end-to-end.
 //! These tests implement scenarios from shared/session/logout.feature.
-//! Core-specific integration tests with mock servers are in tests/integration/session/logout.rs.
+//! Token cleanup tests use real Snowflake; idempotent/concurrent close tests
+//! use WireMock so "Only one logout request is sent" can be honestly verified
+//! via HTTP request counting.
 
+use crate::common::mocks::auth::mount_jwt_login_success;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
+use serde_json::json;
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ===========================================================================
 //                          Token Cleanup
 // ===========================================================================
 
-// TODO(gherkin): "Then Session token in Connection.tokens is null" and
-// "And Master token in Connection.tokens is null" cannot be directly verified —
-// Python connection does not expose token field inspection.
-// Verified indirectly: close() succeeds, confirming Core cleared tokens before returning.
-// Requires SnowflakeTestClient to expose token field inspection (SNOW-2872349).
 #[test]
 fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
     for keep_alive in [Some(true), Some(false), None] {
@@ -31,29 +31,44 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
 
         //When Connection is closed
         let result = client.connection_close_blocking();
-
-        //Then Session token in Connection.tokens is null
         assert!(
             result.is_ok(),
             "Close should succeed with server_session_keep_alive={:?}",
             keep_alive
         );
 
+        //Then Session token in Connection.tokens is null
+        let info = client
+            .connection_get_info_blocking(true)
+            .expect("get_info should work on closed connection handle");
+        assert!(
+            info.session_token.unwrap_or_default().is_empty(),
+            "session_token must be null after close (keep_alive={:?})",
+            keep_alive
+        );
+
         //And Master token in Connection.tokens is null
         assert!(
-            result.is_ok(),
-            "Master token cleared atomically with session token on close"
+            info.master_token.unwrap_or_default().is_empty(),
+            "master_token must be null after close (keep_alive={:?})",
+            keep_alive
         );
     }
 }
 
-// TODO(gherkin): "Then Only one logout request is sent" is verified indirectly —
-// we confirm exactly one close() causes an HTTP logout by checking Core's idempotent
-// is_closed() flag. Direct HTTP counting requires a mock server.
-#[test]
-fn should_be_idempotent_when_close_called_multiple_times() {
+#[tokio::test]
+async fn should_be_idempotent_when_close_called_multiple_times() {
     //Given Snowflake client is logged in
-    let client = SnowflakeTestClient::connect_with_default_auth();
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+    mount_logout_success(&server).await;
+
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    })
+    .await
+    .unwrap();
 
     //When Connection is closed
     let result1 = client.connection_close_blocking();
@@ -65,12 +80,15 @@ fn should_be_idempotent_when_close_called_multiple_times() {
     let result3 = client.connection_close_blocking();
 
     //Then Only one logout request is sent
-    assert!(
-        result1.is_ok(),
-        "First close should succeed: exactly one logout dispatched"
+    let requests = server.received_requests().await.unwrap();
+    let logout_count = requests.iter().filter(|r| is_logout_request(r)).count();
+    assert_eq!(
+        logout_count, 1,
+        "Exactly one logout HTTP request should be sent"
     );
 
     //And No errors are thrown
+    assert!(result1.is_ok(), "First close should succeed");
     assert!(result2.is_ok(), "Second close should succeed (idempotent)");
     assert!(result3.is_ok(), "Third close should succeed (idempotent)");
 }
@@ -79,30 +97,63 @@ fn should_be_idempotent_when_close_called_multiple_times() {
 //                        Concurrency
 // ===========================================================================
 
-// TODO(gherkin): "Then Only one logout request is sent" is verified indirectly —
-// all concurrent close() calls succeed because Core's atomic is_closed flag ensures
-// exactly one thread proceeds with logout. Direct HTTP counting requires a mock server.
-#[test]
-fn should_handle_concurrent_close_calls_safely() {
-    use std::sync::Arc;
+#[tokio::test]
+async fn should_handle_concurrent_close_calls_safely() {
+    use std::sync::{Arc, Barrier};
     use std::thread;
+    use std::time::Duration;
 
     //Given Snowflake client is logged in
-    let client = Arc::new(SnowflakeTestClient::connect_with_default_auth());
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    // Logout response with delay: thread 1 blocks on I/O while threads 2-5 race
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .and(query_param("delete", "true"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "success": true }))
+                .insert_header("Content-Type", "application/json")
+                .set_delay(Duration::from_millis(500)),
+        )
+        .mount(&server)
+        .await;
+
+    let server_uri = server.uri();
+    let client = Arc::new(
+        tokio::task::spawn_blocking(move || {
+            SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+        })
+        .await
+        .unwrap(),
+    );
+    let barrier = Arc::new(Barrier::new(5));
 
     //When Connection is closed from multiple threads concurrently
     let handles: Vec<_> = (0..5)
         .map(|_| {
             let client_clone = Arc::clone(&client);
-            thread::spawn(move || client_clone.connection_close_blocking())
+            let barrier_clone = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier_clone.wait();
+                client_clone.connection_close_blocking()
+            })
         })
         .collect();
 
-    //Then Only one logout request is sent
     let results: Vec<_> = handles
         .into_iter()
         .map(|h| h.join().expect("Thread should not panic"))
         .collect();
+
+    //Then Only one logout request is sent
+    let requests = server.received_requests().await.unwrap();
+    let logout_count = requests.iter().filter(|r| is_logout_request(r)).count();
+    assert_eq!(
+        logout_count, 1,
+        "Exactly one logout HTTP request despite 5 concurrent close() calls"
+    );
 
     //And All close calls return successfully
     for result in results {
@@ -148,4 +199,29 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
         "Error should mention connection is closed or not initialized, got: {}",
         error_msg
     );
+}
+
+// ===========================================================================
+//                          WireMock Helpers
+// ===========================================================================
+
+async fn mount_logout_success(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .and(query_param("delete", "true"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "success": true }))
+                .insert_header("Content-Type", "application/json"),
+        )
+        .mount(server)
+        .await;
+}
+
+fn is_logout_request(r: &wiremock::Request) -> bool {
+    r.url.path() == "/session"
+        && r.url
+            .query()
+            .map(|q| q.contains("delete=true"))
+            .unwrap_or(false)
 }
