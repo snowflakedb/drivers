@@ -97,3 +97,59 @@ class TestApplicationLoginPayload:
                 assert conn.application == "PythonConnector"
             finally:
                 conn.close()
+
+
+class TestInternalApplicationNameLoginPayload:
+    """Verify internal_application_name and internal_application_version in the login request."""
+
+    def test_internal_application_name_overrides_client_app_id_in_payload(self, int_test_connection_factory):
+        """internal_application_name='SnowSQL' should override CLIENT_APP_ID
+        while CLIENT_ENVIRONMENT.APPLICATION stays at the default."""
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            conn = int_test_connection_factory(
+                server_url=wiremock.http_url(),
+                internal_application_name="SnowSQL",
+            )
+            try:
+                body = _get_login_request_body(wiremock)
+                data = body["data"]
+
+                assert data["CLIENT_APP_ID"] == "SnowSQL"
+                assert data["CLIENT_ENVIRONMENT"]["APPLICATION"] == "PythonConnector"
+            finally:
+                conn.close()
+
+    def test_internal_application_name_with_custom_application(self, int_test_connection_factory):
+        """Both internal_application_name and application set independently."""
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            conn = int_test_connection_factory(
+                server_url=wiremock.http_url(),
+                internal_application_name="SnowSQL",
+                application="SNOWCLI.STAGE.COPY",
+            )
+            try:
+                body = _get_login_request_body(wiremock)
+                data = body["data"]
+
+                assert data["CLIENT_APP_ID"] == "SnowSQL"
+                assert data["CLIENT_ENVIRONMENT"]["APPLICATION"] == "SNOWCLI.STAGE.COPY"
+            finally:
+                conn.close()
+
+    def test_internal_application_version_overrides_client_app_version_in_payload(self, int_test_connection_factory):
+        """internal_application_version='1.2.3' should appear as CLIENT_APP_VERSION."""
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            conn = int_test_connection_factory(
+                server_url=wiremock.http_url(),
+                internal_application_version="1.2.3",
+            )
+            try:
+                body = _get_login_request_body(wiremock)
+                data = body["data"]
+
+                assert data["CLIENT_APP_VERSION"] == "1.2.3"
+            finally:
+                conn.close()

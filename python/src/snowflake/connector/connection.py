@@ -121,11 +121,18 @@ class Connection:
             self._application = application
         else:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
-        # client_app_id → CLIENT_APP_ID in the login request; always the driver name.
+        # client_app_id → CLIENT_APP_ID in the login request.
+        # Defaults to the driver name, but can be overridden by internal_application_name
+        # (used by tools like SnowSQL to identify themselves to the server).
+        internal_app_name = kwargs.pop("internal_application_name", None)
+        kwargs["client_app_id"] = internal_app_name if isinstance(internal_app_name, str) and internal_app_name else CLIENT_NAME
+
+        # client_app_version → CLIENT_APP_VERSION; only sent when explicitly overridden.
+        internal_app_version = kwargs.pop("internal_application_version", None)
+        if isinstance(internal_app_version, str) and internal_app_version:
+            kwargs["client_app_version"] = internal_app_version
+
         # client_application → CLIENT_ENVIRONMENT.APPLICATION; the user-facing app name.
-        # This mirrors the old connector where internal_application_name and application
-        # were independent parameters.
-        kwargs["client_app_id"] = CLIENT_NAME
         kwargs["client_application"] = self._application
 
         self.db_api = database_driver_client()

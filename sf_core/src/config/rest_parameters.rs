@@ -86,7 +86,9 @@ impl ClientInfo {
         let client_info = ClientInfo {
             application,
             client_application,
-            version: "3.15.0".to_string(),
+            version: settings
+                .get_string("client_app_version")
+                .unwrap_or_else(|| "3.15.0".to_string()),
             os: "Darwin".to_string(),
             os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),

@@ -650,6 +650,83 @@ class TestApplicationProperty:
         )
 
 
+class TestInternalApplicationName:
+    """Unit tests for internal_application_name and internal_application_version kwargs."""
+
+    def test_internal_application_name_overrides_client_app_id(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", internal_application_name="SnowSQL")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value="SnowSQL")
+
+    def test_internal_application_name_defaults_to_client_name(self, mock_db_api):
+        from snowflake.connector.connection import CLIENT_NAME, Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value=CLIENT_NAME)
+
+    def test_internal_application_name_does_not_affect_application_property(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", internal_application_name="SnowSQL")
+        assert conn.application == "PythonConnector"
+
+    def test_internal_application_name_combined_with_application(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(
+                user="u",
+                account="a",
+                internal_application_name="SnowSQL",
+                application="SNOWCLI.STAGE.COPY",
+            )
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["client_app_id"] == ConfigSetting(string_value="SnowSQL")
+        assert request.options["client_application"] == ConfigSetting(string_value="SNOWCLI.STAGE.COPY")
+        assert conn.application == "SNOWCLI.STAGE.COPY"
+
+    def test_internal_application_name_popped_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", internal_application_name="SnowSQL")
+        assert "internal_application_name" not in conn.kwargs
+
+    def test_internal_application_version_overrides_client_app_version(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", internal_application_version="1.2.3")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["client_app_version"] == ConfigSetting(string_value="1.2.3")
+
+    def test_internal_application_version_not_sent_when_omitted(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert "client_app_version" not in request.options
+
+    def test_internal_application_version_popped_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", internal_application_version="1.2.3")
+        assert "internal_application_version" not in conn.kwargs
+
+
 class TestConnectionArrowProperties:
     """Unit tests for Connection properties (getters/setters)."""
 
