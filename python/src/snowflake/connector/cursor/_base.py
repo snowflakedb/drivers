@@ -15,7 +15,7 @@ import functools
 import logging
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -60,14 +60,6 @@ logger = logging.getLogger(__name__)
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
-
-
-class RowIterator(Protocol):
-    """Protocol for row iterators that support batch fetching."""
-
-    def __next__(self) -> Row | DictRow: ...
-    def fetch_many(self, size: int) -> list[Any]: ...
-    def fetch_all(self) -> list[Any]: ...
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -162,7 +154,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         # -- Active iteration state (cleared on reset) --
         self._result_chunks: list[ResultChunk] | None = None
-        self._iterator: RowIterator | None = None
+        self._iterator: Iterator[Row | DictRow] | None = None
         self._fetch_mode: FetchMode | None = None
 
         # Keep binding data reference to prevent garbage collection while Rust uses it
@@ -568,7 +560,7 @@ class SnowflakeCursorBase(abc.ABC):
         if not self._iterator:
             self._iterator = self._create_row_iterator()
         try:
-            row: Row | DictRow = next(self._iterator)
+            row = next(self._iterator)
             self._rownumber += 1
             return row
         except StopIteration:
@@ -603,7 +595,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         if not self._iterator:
             self._iterator = self._create_row_iterator()
-        rows = self._iterator.fetch_many(size)
+        rows: list[Any] = self._iterator.fetch_many(size)  # type: ignore[attr-defined]
         self._rownumber += len(rows)
         return rows
 
@@ -620,7 +612,7 @@ class SnowflakeCursorBase(abc.ABC):
         """
         if not self._iterator:
             self._iterator = self._create_row_iterator()
-        rows = self._iterator.fetch_all()
+        rows: list[Any] = self._iterator.fetch_all()  # type: ignore[attr-defined]
         self._rownumber += len(rows)
         return rows
 
@@ -628,7 +620,7 @@ class SnowflakeCursorBase(abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
-    def _create_row_iterator(self) -> RowIterator:
+    def _create_row_iterator(self) -> Iterator[Row | DictRow]:
         return create_row_iterator(
             stream_ptr=self._query_result.consume_stream(),
             use_dict_result=self._use_dict_result,
