@@ -198,18 +198,16 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
     let result_after = client.execute_query_no_unwrap("SELECT 1");
 
     //Then The query fails with a connection-closed error
-    assert!(
-        result_after.is_err(),
-        "Query should fail after close, but got: {:?}",
-        result_after
-    );
-
-    let error_msg = result_after.unwrap_err();
-    assert!(
-        error_msg.contains("closed") || error_msg.contains("Closed"),
-        "Error must mention connection is closed, got: {}",
-        error_msg
-    );
+    match result_after.expect_err("Query should fail after close") {
+        proto_utils::ProtoError::Application(exc) => {
+            assert!(
+                exc.message.contains("closed"),
+                "Error must mention connection is closed, got: {}",
+                exc.message,
+            );
+        }
+        other => panic!("Expected application error, got: {other:?}"),
+    }
 }
 
 // ===========================================================================

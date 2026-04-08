@@ -260,32 +260,30 @@ impl SnowflakeTestClient {
         response.result.unwrap()
     }
 
-    pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
+    /// Execute a query, returning the typed proto error on failure instead of
+    /// erasing it to `String`. This lets callers match on `DriverException`
+    /// fields (error code, message) rather than parsing Debug output.
+    #[allow(clippy::result_large_err)]
+    pub fn execute_query_no_unwrap(
+        &self,
+        sql: &str,
+    ) -> Result<ExecuteResult, proto_utils::ProtoError<DriverException>> {
         let stmt_handle = self.new_statement();
 
-        if let Err(e) = self
-            .client
+        self.client
             .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 query: sql.to_string(),
-            })
-        {
-            return Err(format!("Failed to set SQL query: {e:?}"));
-        }
+            })?;
 
-        match self
-            .client
-            .statement_execute_query_blocking(StatementExecuteQueryRequest {
-                stmt_handle: Some(stmt_handle),
-                bindings: None,
-            }) {
-            Ok(response) => {
-                let proto_result = response.result.unwrap();
-                Ok(proto_result)
-            }
-            Err(ProtoError::Application(e)) => Err(format!("Failed to execute query: {e:?}")),
-            Err(ProtoError::Transport(e)) => Err(format!("Transport error: {e:?}")),
-        }
+        let response =
+            self.client
+                .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings: None,
+                })?;
+
+        Ok(response.result.unwrap())
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
