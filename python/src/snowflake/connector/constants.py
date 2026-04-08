@@ -2,6 +2,7 @@
 
 from enum import Enum, unique
 
+from ._internal.type_codes import FIELD_ID_TO_NAME  # noqa: F401 - backward compatibility re-exports
 from .config_manager import CONFIG_FILE, CONNECTIONS_FILE  # noqa: F401 - backward compatibility re-exports
 
 
