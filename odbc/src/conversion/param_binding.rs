@@ -371,8 +371,10 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
         let ptr = binding.parameter_value_ptr as *const u16;
         let max_units = if binding.buffer_length > 0 {
             binding.buffer_length as usize / mem::size_of::<u16>()
-        } else {
+        } else if binding.buffer_length == 0 {
             usize::MAX
+        } else {
+            0
         };
         let mut len = 0;
         unsafe {
