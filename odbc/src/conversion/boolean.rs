@@ -157,21 +157,22 @@ impl WriteODBCType for SnowflakeBoolean {
 
 /// Parse a string value to a boolean per ODBC spec: the string is first
 /// converted to a numeric value, then 0 → false, nonzero → true.
-fn parse_str_to_bool(s: &str) -> Result<bool, JsonBindingError> {
+/// Also accepts "true"/"false" literals for Snowflake compatibility.
+fn parse_str_to_bool(s: &str, c_type: CDataType) -> Result<bool, JsonBindingError> {
     let trimmed = s.trim();
     if let Ok(i) = trimmed.parse::<i64>() {
         return Ok(i != 0);
     }
     if let Ok(f) = trimmed.parse::<f64>() {
-        return Ok(f != 0.0);
+        return match f.is_finite() {
+            true => Ok(f != 0.0),
+            false => UnsupportedCDataTypeSnafu { c_type }.fail(),
+        };
     }
     match trimmed.to_ascii_lowercase().as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
-        _ => UnsupportedCDataTypeSnafu {
-            c_type: CDataType::Char,
-        }
-        .fail(),
+        _ => UnsupportedCDataTypeSnafu { c_type }.fail(),
     }
 }
 
@@ -193,11 +194,11 @@ impl ReadODBC for SnowflakeBoolean {
             CDataType::Double => Ok(read_unaligned::<f64>(binding) != 0.0),
             CDataType::Char => {
                 let s = read_char_str(binding)?;
-                parse_str_to_bool(&s)
+                parse_str_to_bool(&s, binding.value_type)
             }
             CDataType::WChar => {
                 let s = read_wchar_str(binding)?;
-                parse_str_to_bool(&s)
+                parse_str_to_bool(&s, binding.value_type)
             }
             CDataType::Numeric => {
                 let n = read_unaligned::<sql::Numeric>(binding);

@@ -1113,6 +1113,326 @@ mod tests {
     }
 
     #[test]
+    fn convert_stinyint_to_boolean_true() -> TestResult {
+        let val: i8 = -1;
+        let binding = make_binding(
+            CDataType::STinyInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_stinyint_to_boolean_false() -> TestResult {
+        let val: i8 = 0;
+        let binding = make_binding(
+            CDataType::STinyInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_utinyint_to_boolean_true() -> TestResult {
+        let val: u8 = 255;
+        let binding = make_binding(
+            CDataType::UTinyInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_ulong_to_boolean_true() -> TestResult {
+        let val: u32 = 1;
+        let binding = make_binding(
+            CDataType::ULong,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_ulong_to_boolean_false() -> TestResult {
+        let val: u32 = 0;
+        let binding = make_binding(
+            CDataType::ULong,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_ushort_to_boolean_true() -> TestResult {
+        let val: u16 = 1;
+        let binding = make_binding(
+            CDataType::UShort,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u16 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_ushort_to_boolean_false() -> TestResult {
+        let val: u16 = 0;
+        let binding = make_binding(
+            CDataType::UShort,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u16 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_ubigint_to_boolean_true() -> TestResult {
+        let val: u64 = 1;
+        let binding = make_binding(
+            CDataType::UBigInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_ubigint_to_boolean_false() -> TestResult {
+        let val: u64 = 0;
+        let binding = make_binding(
+            CDataType::UBigInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_float_to_boolean_false() -> TestResult {
+        let val: f32 = 0.0;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_slong_negative_to_boolean_true() -> TestResult {
+        let val: i32 = -99;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_nan_to_boolean_fails() {
+        let val = b"NaN\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "NaN should not be accepted as a boolean value"
+        );
+    }
+
+    #[test]
+    fn convert_char_inf_to_boolean_fails() {
+        let val = b"inf\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "inf should not be accepted as a boolean value"
+        );
+    }
+
+    #[test]
+    fn convert_char_garbage_to_boolean_fails() {
+        let val = b"hello\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Non-numeric non-boolean string should fail"
+        );
+    }
+
+    #[test]
+    fn convert_sshort_to_boolean_false() -> TestResult {
+        let val: i16 = 0;
+        let binding = make_binding(
+            CDataType::SShort,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i16 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_sbigint_to_boolean_false() -> TestResult {
+        let val: i64 = 0;
+        let binding = make_binding(
+            CDataType::SBigInt,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_numeric_nonzero_to_boolean() -> TestResult {
+        let val = b"42\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_negative_to_boolean() -> TestResult {
+        let val = b"-1\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_float_string_to_boolean() -> TestResult {
+        let val = b"0.5\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_float_zero_string_to_boolean() -> TestResult {
+        let val = b"0.0\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn convert_binary() -> TestResult {
         let val: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
         let mut ind: sql::Len = 4;
