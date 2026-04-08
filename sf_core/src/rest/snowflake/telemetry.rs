@@ -1,5 +1,9 @@
+use std::io::Write;
 use std::time::Duration;
 
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use reqwest::header;
 use snafu::ResultExt;
 use url::Url;
 
@@ -35,12 +39,23 @@ pub async fn send_telemetry(
         path: TELEMETRY_SEND_PATH,
     })?;
 
+    // Serializing a serde_json::Value and gzip-compressing into a Vec are infallible.
+    let json_bytes = serde_json::to_vec(payload).expect("JSON Value serialization cannot fail");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(&json_bytes)
+        .expect("gzip write to Vec cannot fail");
+    let compressed = encoder.finish().expect("gzip finish on Vec cannot fail");
+
     let request = apply_json_content_type(apply_query_headers(
         client.post(url),
         client_info,
         session_token,
     ))
-    .json(payload)
+    .header(header::CONTENT_ENCODING, "gzip")
+    .header(header::ACCEPT_ENCODING, "gzip, deflate")
+    .header(header::CONNECTION, "keep-alive")
+    .body(compressed)
     .timeout(TELEMETRY_TIMEOUT)
     .build()
     .context(RequestConstructionSnafu {
@@ -66,7 +81,7 @@ pub async fn send_telemetry(
 mod tests {
     use super::*;
     use serde_json::json;
-    use wiremock::matchers::{body_json, header_regex, method, path};
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn test_client_info() -> ClientInfo {
@@ -96,8 +111,6 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
-            .and(header_regex("Authorization", r#"^Snowflake Token=".+"$"#))
-            .and(body_json(&payload))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "success": true
             })))
@@ -116,7 +129,34 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "send_telemetry failed: {:?}", result.err());
+
+        // Verify headers and gzip body
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let req = &requests[0];
+
+        // Check all expected headers
+        let has_header = |name: &str, value: &str| {
+            req.headers
+                .get(name)
+                .map(|v| v.to_str().unwrap_or("") == value)
+                .unwrap_or(false)
+        };
+        assert!(has_header("content-encoding", "gzip"));
+        assert!(has_header("accept-encoding", "gzip, deflate"));
+        assert!(has_header("connection", "keep-alive"));
+        assert!(has_header("content-type", "application/json"));
+        assert!(has_header("accept", "application/json"));
+        assert!(req.headers.get("authorization").is_some());
+
+        // Verify the gzip body decompresses to the original payload
+        let body = &req.body;
+        let mut decoder = flate2::read::GzDecoder::new(&body[..]);
+        let mut decompressed = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut decompressed).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&decompressed).unwrap();
+        assert_eq!(parsed, payload);
     }
 
     #[tokio::test]

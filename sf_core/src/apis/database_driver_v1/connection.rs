@@ -113,16 +113,42 @@ impl DatabaseDriverV1 {
                 )
                 .await;
 
-                // Emit session_init telemetry using stored wrapper identity (if set).
+                // Emit session_init telemetry (best-effort, fire-and-forget).
                 if let Some(ref identity) = conn.wrapper_identity {
-                    tracing::info!(
-                        driver_name = %identity.driver_name,
-                        driver_version = %identity.driver_version,
-                        language_runtime = %identity.language_runtime,
-                        language_version = %identity.language_version,
-                        "Telemetry: session_init"
-                    );
-                    // TODO: emit OTel session_init span with wrapper identity + environment attributes
+                    let env_info =
+                        crate::telemetry::environment::EnvironmentInfo::with_wrapper(identity);
+                    let session_id = conn
+                        .tokens
+                        .read()
+                        .await
+                        .as_ref()
+                        .map(|t| t.session_id)
+                        .unwrap_or(0);
+                    let payload =
+                        crate::telemetry::build_session_init_payload(&env_info, session_id);
+                    if let (Some(client), Some(server_url), Some(client_info)) =
+                        (&conn.http_client, &conn.server_url, &conn.client_info)
+                    {
+                        let token = conn
+                            .tokens
+                            .read()
+                            .await
+                            .as_ref()
+                            .map(|t| t.session_token.clone());
+                        if let Some(token) = token
+                            && let Ok(url) = url::Url::parse(server_url)
+                            && let Err(e) = crate::rest::snowflake::telemetry::send_telemetry(
+                                client,
+                                &url,
+                                client_info,
+                                token.reveal(),
+                                &payload,
+                            )
+                            .await
+                        {
+                            tracing::warn!("Failed to send session_init telemetry: {e}");
+                        }
+                    }
                 }
 
                 Ok(())
