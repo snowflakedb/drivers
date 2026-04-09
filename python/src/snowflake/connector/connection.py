@@ -45,7 +45,6 @@ from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
-from ._internal.telemetry import TelemetryClient as InternalTelemetryClient
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor

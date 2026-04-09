@@ -9,8 +9,9 @@ use url::Url;
 
 use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::{
-    CommunicationSnafu, InvalidSnowflakeResponseSnafu, RequestConstructionSnafu, RestError,
-    UrlJoinSnafu, apply_json_content_type, apply_query_headers, read_response_json,
+    CommunicationSnafu, InvalidSnowflakeResponseSnafu, PayloadEncodingSnafu,
+    RequestConstructionSnafu, RestError, UrlJoinSnafu, apply_json_content_type,
+    apply_query_headers, read_response_json,
 };
 
 const TELEMETRY_SEND_PATH: &str = "/telemetry/send";
@@ -43,13 +44,25 @@ pub async fn send_telemetry(
         path: TELEMETRY_SEND_PATH,
     })?;
 
-    // Serializing a serde_json::Value and gzip-compressing into a Vec are infallible.
-    let json_bytes = serde_json::to_vec(payload).expect("JSON Value serialization cannot fail");
+    let json_bytes = serde_json::to_vec(payload).map_err(|e| {
+        PayloadEncodingSnafu {
+            reason: format!("JSON serialization failed: {e}"),
+        }
+        .build()
+    })?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(&json_bytes)
-        .expect("gzip write to Vec cannot fail");
-    let compressed = encoder.finish().expect("gzip finish on Vec cannot fail");
+    encoder.write_all(&json_bytes).map_err(|e| {
+        PayloadEncodingSnafu {
+            reason: format!("gzip compression failed: {e}"),
+        }
+        .build()
+    })?;
+    let compressed = encoder.finish().map_err(|e| {
+        PayloadEncodingSnafu {
+            reason: format!("gzip finalization failed: {e}"),
+        }
+        .build()
+    })?;
 
     let request = apply_json_content_type(apply_query_headers(
         client.post(url),

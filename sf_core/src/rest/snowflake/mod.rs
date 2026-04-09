@@ -1609,6 +1609,12 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to encode telemetry payload: {reason}"))]
+    PayloadEncoding {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
