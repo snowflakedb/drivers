@@ -1,5 +1,5 @@
 use super::types::{
-    CloudCredentials, EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo,
+    CloudCredentials, EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo,
     UploadStatus,
 };
 use crate::config::retry::{BackoffConfig, Jitter, RetryPolicy};
@@ -17,7 +17,7 @@ const GCS_META_MATDESC: &str = "x-goog-meta-matdesc";
 
 /// Uploads a file to GCS, skipping if it already exists and `overwrite` is false.
 pub async fn upload_to_gcs_or_skip(
-    encryption_result: EncryptionResult,
+    prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
@@ -28,19 +28,20 @@ pub async fn upload_to_gcs_or_skip(
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
 
     if !overwrite && check_file_exists_gcs(&client, &url, token).await {
-        tracing::info!("File already exists in GCS: {}", key);
+        tracing::info!("File already exists in GCS: {key}");
         return Ok(UploadStatus::Skipped);
     }
 
-    upload_to_gcs(&client, &url, token, encryption_result, using_presigned_url).await?;
+    upload_to_gcs(&client, &url, token, prepared, using_presigned_url).await?;
     Ok(UploadStatus::Uploaded)
 }
 
-/// Downloads a file from GCS and returns encrypted data with metadata.
+/// Downloads a file from GCS and returns data with optional encryption metadata.
+/// For SSE stages the metadata headers will be absent and `None` is returned.
 pub async fn download_from_gcs(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, EncryptedFileMetadata), GcsDownloadError> {
+) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), GcsDownloadError> {
     let client = create_gcs_client()?;
     let key = format!("{}{filename}", stage_info.key_prefix);
     let (url, token) = resolve_url_and_token(stage_info, &key)?;
@@ -59,46 +60,50 @@ pub async fn download_from_gcs(
     )
     .await?;
 
-    // Extract metadata from response headers
     let headers = response.headers();
-    let digest = get_header(headers, GCS_META_SFC_DIGEST)?;
-    let encryption_data_str = get_header(headers, GCS_META_ENCRYPTIONDATA)?;
-    let mat_desc_str = get_header(headers, GCS_META_MATDESC)?;
+    let digest = try_get_header(headers, GCS_META_SFC_DIGEST);
 
-    // Parse encryption data JSON to extract key and IV
-    let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
-        .context(gcs_download_error::DeserializationSnafu)?;
+    let file_metadata = match (
+        try_get_header(headers, GCS_META_ENCRYPTIONDATA),
+        try_get_header(headers, GCS_META_MATDESC),
+    ) {
+        (Some(encryption_data_str), Some(mat_desc_str)) => {
+            let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
 
-    let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
-        .as_str()
-        .context(gcs_download_error::MissingMetadataSnafu {
-            field: "WrappedContentKey.EncryptedKey",
-        })?
-        .to_string();
+            let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
+                .as_str()
+                .context(gcs_download_error::MissingMetadataSnafu {
+                    field: "WrappedContentKey.EncryptedKey",
+                })?
+                .to_string();
 
-    let iv = enc_data["ContentEncryptionIV"]
-        .as_str()
-        .context(gcs_download_error::MissingMetadataSnafu {
-            field: "ContentEncryptionIV",
-        })?
-        .to_string();
+            let iv = enc_data["ContentEncryptionIV"]
+                .as_str()
+                .context(gcs_download_error::MissingMetadataSnafu {
+                    field: "ContentEncryptionIV",
+                })?
+                .to_string();
 
-    let material_desc: MaterialDescription =
-        serde_json::from_str(&mat_desc_str).context(gcs_download_error::DeserializationSnafu)?;
+            let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
+                .context(gcs_download_error::DeserializationSnafu)?;
 
-    let file_metadata = EncryptedFileMetadata {
-        encrypted_key,
-        iv,
-        material_desc,
-        digest,
+            Some(EncryptedFileMetadata {
+                encrypted_key,
+                iv,
+                material_desc,
+            })
+        }
+        _ => None,
     };
 
-    let encrypted_data = response
+    let data = response
         .bytes()
         .await
         .map_err(|source| GcsRequestError::Http { source })?
         .to_vec();
-    Ok((encrypted_data, file_metadata))
+
+    Ok((data, digest, file_metadata))
 }
 
 /// Check if a file exists in GCS via HEAD request.
@@ -137,50 +142,64 @@ async fn check_file_exists_gcs(client: &reqwest::Client, url: &str, token: Optio
     }
 }
 
-/// Upload encrypted data to GCS with retry logic.
+/// Upload data to GCS with retry logic.
+/// Sets encryption metadata headers only when client-side encryption was used.
 async fn upload_to_gcs(
     client: &reqwest::Client,
     url: &str,
     token: Option<&str>,
-    encryption_result: EncryptionResult,
+    prepared: PreparedUpload,
     using_presigned_url: bool,
 ) -> Result<(), GcsUploadError> {
-    // Build encryption metadata JSON (matching JDBC/Python format)
-    let encryption_data = serde_json::json!({
-        "EncryptionMode": "FullBlob",
-        "WrappedContentKey": {
-            "KeyId": "symmKey1",
-            "EncryptedKey": encryption_result.metadata.encrypted_key,
-            "Algorithm": "AES_CBC_256"
-        },
-        "EncryptionAgent": {
-            "Protocol": "1.0",
-            "EncryptionAlgorithm": "AES_CBC_256"
-        },
-        "ContentEncryptionIV": encryption_result.metadata.iv,
-        "KeyWrappingMetadata": {
-            "EncryptionLibrary": "Rust(OpenSSL)"
-        }
-    });
-    let encryption_data_str =
-        serde_json::to_string(&encryption_data).context(gcs_upload_error::SerializationSnafu)?;
-
-    let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)
+    let encryption_data_str = prepared
+        .encryption_metadata
+        .as_ref()
+        .map(|enc_meta| {
+            let encryption_data = serde_json::json!({
+                "EncryptionMode": "FullBlob",
+                "WrappedContentKey": {
+                    "KeyId": "symmKey1",
+                    "EncryptedKey": enc_meta.encrypted_key,
+                    "Algorithm": "AES_CBC_256"
+                },
+                "EncryptionAgent": {
+                    "Protocol": "1.0",
+                    "EncryptionAlgorithm": "AES_CBC_256"
+                },
+                "ContentEncryptionIV": enc_meta.iv,
+                "KeyWrappingMetadata": {
+                    "EncryptionLibrary": "Rust(OpenSSL)"
+                }
+            });
+            serde_json::to_string(&encryption_data)
+        })
+        .transpose()
         .context(gcs_upload_error::SerializationSnafu)?;
 
-    let data = encryption_result.data;
-    let digest = encryption_result.metadata.digest;
+    let mat_desc_str = prepared
+        .encryption_metadata
+        .as_ref()
+        .map(|enc_meta| serde_json::to_string(&enc_meta.material_desc))
+        .transpose()
+        .context(gcs_upload_error::SerializationSnafu)?;
+
+    let data = prepared.data;
+    let digest = prepared.digest;
 
     gcs_request_with_retry(
         || {
             let mut req = client
                 .put(url)
                 .header(GCS_META_SFC_DIGEST, &digest)
-                .header(GCS_META_ENCRYPTIONDATA, &encryption_data_str)
-                .header(GCS_META_MATDESC, &mat_desc)
                 .header("content-encoding", "")
                 .body(data.clone());
 
+            if let Some(ref enc_str) = encryption_data_str {
+                req = req.header(GCS_META_ENCRYPTIONDATA, enc_str);
+            }
+            if let Some(ref md_str) = mat_desc_str {
+                req = req.header(GCS_META_MATDESC, md_str);
+            }
             if let Some(t) = token {
                 req = req.bearer_auth(t);
             }
@@ -362,17 +381,10 @@ fn percent_encode_path(s: &str) -> String {
     encoded
 }
 
-fn get_header(
-    headers: &reqwest::header::HeaderMap,
-    name: &str,
-) -> Result<String, GcsDownloadError> {
+fn try_get_header(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
-        .context(gcs_download_error::MissingMetadataSnafu {
-            field: name.to_string(),
-        })?
-        .to_str()
-        .context(gcs_download_error::InvalidHeaderValueSnafu)
+        .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
 }
 

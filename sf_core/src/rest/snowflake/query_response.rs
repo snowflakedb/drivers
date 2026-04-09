@@ -280,6 +280,7 @@ pub struct EncryptionMaterial {
 
 impl Data {
     /// Copies the fields necessary for file transfer.
+    /// Encryption material is optional — SSE stages omit it from the response.
     pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
             parameter: "source locations",
@@ -307,27 +308,21 @@ impl Data {
             })?
             .try_into()?;
 
-        let encryption_materials: Vec<_> = self
+        let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
             .encryption_material
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .into();
-
-        if encryption_materials.len() != 1 {
-            InvalidFormatSnafu {
-                message: "Expected exactly one encryption material for upload".to_string(),
+        {
+            Some(materials) => {
+                let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                if converted.len() != 1 {
+                    InvalidFormatSnafu {
+                        message: "Expected exactly one encryption material for upload".to_string(),
+                    }
+                    .fail()?;
+                }
+                Some(converted.into_iter().next().unwrap())
             }
-            .fail()?;
-        }
-
-        let encryption_material = encryption_materials
-            .first()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .clone();
+            None => None,
+        };
 
         let auto_compress = self.auto_compress.context(MissingParameterSnafu {
             parameter: "auto compress",
@@ -341,8 +336,6 @@ impl Data {
             })?
             .clone();
 
-        // TODO: We should support other names for existing compression types that were supported in Python Connector,
-        // like "BR" and "X-BR" for Brotli etc.
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
             "GZIP" => SourceCompressionParam::Gzip,
@@ -370,6 +363,7 @@ impl Data {
         })
     }
 
+    /// Encryption material is optional — SSE stages omit it from the response.
     pub fn to_file_download_data(&self) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
@@ -394,21 +388,25 @@ impl Data {
             })?
             .try_into()?;
 
-        let encryption_materials: Vec<_> = self
-            .encryption_material
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .into();
-
-        if src_locations.len() != encryption_materials.len() {
-            InvalidFormatSnafu {
-                message: "Number of source locations must match number of encryption materials"
-                    .to_string(),
-            }
-            .fail()?;
-        }
+        let encryption_materials: Vec<Option<file_manager::EncryptionMaterial>> =
+            match &self.encryption_material {
+                Some(materials) => {
+                    let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                    if converted.is_empty() {
+                        vec![None; src_locations.len()]
+                    } else if src_locations.len() != converted.len() {
+                        InvalidFormatSnafu {
+                        message:
+                            "Number of source locations must match number of encryption materials"
+                                .to_string(),
+                    }
+                    .fail()?
+                    } else {
+                        converted.into_iter().map(Some).collect()
+                    }
+                }
+                None => vec![None; src_locations.len()],
+            };
 
         let local_location: String = self
             .local_location

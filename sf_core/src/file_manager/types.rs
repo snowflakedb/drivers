@@ -24,7 +24,7 @@ impl fmt::Display for UploadStatus {
 pub struct UploadData {
     pub src_location_pattern: String,
     pub stage_info: StageInfo,
-    pub encryption_material: EncryptionMaterial,
+    pub encryption_material: Option<EncryptionMaterial>,
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
@@ -34,7 +34,7 @@ pub struct SingleUploadData {
     pub file_path: String,
     pub filename: String,
     pub stage_info: StageInfo,
-    pub encryption_material: EncryptionMaterial,
+    pub encryption_material: Option<EncryptionMaterial>,
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
     pub overwrite: bool,
@@ -45,7 +45,7 @@ pub struct DownloadData {
     pub src_locations: Vec<String>,
     pub local_location: String,
     pub stage_info: StageInfo,
-    pub encryption_materials: Vec<EncryptionMaterial>,
+    pub encryption_materials: Vec<Option<EncryptionMaterial>>,
 }
 
 #[derive(Debug)]
@@ -53,7 +53,7 @@ pub struct SingleDownloadData {
     pub src_location: String,
     pub local_location: String,
     pub stage_info: StageInfo,
-    pub encryption_material: EncryptionMaterial,
+    pub encryption_material: Option<EncryptionMaterial>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,20 +149,24 @@ pub struct EncryptionMaterial {
     pub smk_id: String,
 }
 
-// Result of encryption containing encrypted data and metadata
+/// Prepared file data ready for cloud upload.
+/// For client-side encryption: contains encrypted data + encryption metadata.
+/// For server-side encryption (SSE): contains raw data with no encryption metadata.
 #[derive(Debug)]
-pub struct EncryptionResult {
+pub struct PreparedUpload {
     pub data: Vec<u8>,
-    pub metadata: EncryptedFileMetadata,
+    /// SHA-256 digest of the data (always present for integrity verification).
+    pub digest: String,
+    /// Client-side encryption metadata. `None` for SSE stages.
+    pub encryption_metadata: Option<EncryptedFileMetadata>,
 }
 
-// Encrypted file metadata that gets bundled with the encrypted data
+/// Client-side encryption metadata that gets bundled with the uploaded data.
 #[derive(Debug)]
 pub struct EncryptedFileMetadata {
     pub encrypted_key: String, // Base64 encoded
     pub iv: String,            // Base64 encoded
     pub material_desc: MaterialDescription,
-    pub digest: String, // SHA-256 digest of the encrypted data
 }
 
 // Material description structure for JSON serialization
