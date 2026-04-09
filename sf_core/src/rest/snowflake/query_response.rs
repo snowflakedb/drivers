@@ -313,13 +313,14 @@ impl Data {
         {
             Some(materials) => {
                 let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
-                if converted.len() != 1 {
-                    InvalidFormatSnafu {
+                match converted.len() {
+                    0 => None,
+                    1 => converted.into_iter().next(),
+                    _ => InvalidFormatSnafu {
                         message: "Expected exactly one encryption material for upload".to_string(),
                     }
-                    .fail()?;
+                    .fail()?,
                 }
-                Some(converted.into_iter().next().unwrap())
             }
             None => None,
         };

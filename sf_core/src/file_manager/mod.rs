@@ -15,7 +15,7 @@ use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
 use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -214,12 +214,17 @@ pub async fn download_single_file(
         }
     };
 
-    let output_data = match (&data.encryption_material, file_metadata) {
-        (Some(enc_material), Some(enc_metadata)) => {
-            let d = digest.as_deref().unwrap_or("");
+    let output_data = match data.encryption_material.as_ref() {
+        Some(enc_material) => {
+            let enc_metadata = file_metadata.context(MissingDecryptionMetadataSnafu {
+                detail: "encryption metadata headers missing from downloaded file",
+            })?;
+            let d = digest.as_deref().context(MissingDecryptionMetadataSnafu {
+                detail: "digest header missing from downloaded file",
+            })?;
             decrypt_file_data(&raw_data, &enc_metadata, d, enc_material).context(DecryptionSnafu)?
         }
-        _ => raw_data,
+        None => raw_data,
     };
 
     let filename = Path::new(&data.src_location)
@@ -319,5 +324,11 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
         backtrace: snafu::Backtrace,
+    },
+    #[snafu(display("Missing decryption metadata: {detail}"))]
+    MissingDecryptionMetadata {
+        detail: &'static str,
+        #[snafu(implicit)]
+        location: Location,
     },
 }

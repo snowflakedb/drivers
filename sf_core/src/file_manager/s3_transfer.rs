@@ -122,21 +122,28 @@ pub async fn download_from_s3(
 
     let digest = metadata_map.get("sfc-digest").cloned();
 
-    let file_metadata = match (
-        metadata_map.get("x-amz-matdesc"),
-        metadata_map.get("x-amz-key"),
-        metadata_map.get("x-amz-iv"),
-    ) {
-        (Some(mat_desc_str), Some(encrypted_key), Some(iv)) => {
+    let mat_desc = metadata_map.get("x-amz-matdesc");
+    let encrypted_key = metadata_map.get("x-amz-key");
+    let iv = metadata_map.get("x-amz-iv");
+
+    let file_metadata = match (mat_desc, encrypted_key, iv) {
+        (Some(mat_desc_str), Some(key), Some(iv_val)) => {
             let material_desc: MaterialDescription = serde_json::from_str(mat_desc_str)
                 .context(download_file_error::DeserializationSnafu)?;
             Some(EncryptedFileMetadata {
-                encrypted_key: encrypted_key.to_owned(),
-                iv: iv.to_owned(),
+                encrypted_key: key.to_owned(),
+                iv: iv_val.to_owned(),
                 material_desc,
             })
         }
-        _ => None,
+        (None, None, None) => None,
+        _ => {
+            return download_file_error::MissingFileMetadataSnafu {
+                field: "partial encryption headers (x-amz-matdesc, x-amz-key, x-amz-iv)"
+                    .to_string(),
+            }
+            .fail();
+        }
     };
 
     let data = response

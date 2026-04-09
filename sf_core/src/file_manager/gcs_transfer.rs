@@ -63,11 +63,8 @@ pub async fn download_from_gcs(
     let headers = response.headers();
     let digest = try_get_header(headers, GCS_META_SFC_DIGEST);
 
-    let file_metadata = match (
-        try_get_header(headers, GCS_META_ENCRYPTIONDATA),
-        try_get_header(headers, GCS_META_MATDESC),
-    ) {
-        (Some(encryption_data_str), Some(mat_desc_str)) => {
+    let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA) {
+        Some(encryption_data_str) => {
             let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
                 .context(gcs_download_error::DeserializationSnafu)?;
 
@@ -85,6 +82,11 @@ pub async fn download_from_gcs(
                 })?
                 .to_string();
 
+            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC).context(
+                gcs_download_error::MissingMetadataSnafu {
+                    field: GCS_META_MATDESC,
+                },
+            )?;
             let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str)
                 .context(gcs_download_error::DeserializationSnafu)?;
 
@@ -94,7 +96,7 @@ pub async fn download_from_gcs(
                 material_desc,
             })
         }
-        _ => None,
+        None => None,
     };
 
     let data = response
