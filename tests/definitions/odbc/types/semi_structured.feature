@@ -21,10 +21,10 @@ Feature: ODBC-specific semi-structured type (VARIANT/OBJECT/ARRAY) handling
   # =========================================================================== #
 
   @odbc_e2e
-  Scenario: should report SQL_DESC_TYPE_NAME as VARCHAR for semi-structured columns
+  Scenario: should report SQL_DESC_TYPE_NAME for semi-structured columns
     Given Snowflake client is logged in
     When Query returning VARIANT, ARRAY, and OBJECT columns is executed
-    Then SQL_DESC_TYPE_NAME should be VARCHAR for all three columns
+    Then SQL_DESC_TYPE_NAME should report VARIANT, ARRAY, and STRUCT respectively
 
   # =========================================================================== #
   #                   CONVERSION TO SQL_C_CHAR - TRUNCATION                     #

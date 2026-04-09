@@ -275,6 +275,8 @@ pub enum DescField {
     OctetLength = 1013,
     /// `SQL_DESC_PARAMETER_TYPE` (33) — parameter direction (IPD only).
     ParameterType = 33,
+    /// `SQL_DESC_TYPE_NAME` (14) — data-source-dependent type name.
+    TypeName = 14,
     /// `SQL_DESC_NULLABLE` (1008) — whether the parameter is nullable (IPD only).
     Nullable = 1008,
 }
@@ -293,6 +295,7 @@ impl TryFrom<i16> for DescField {
             34 => Ok(DescField::RowsProcessedPtr),
             1001 => Ok(DescField::Count),
             1002 => Ok(DescField::Type),
+            14 => Ok(DescField::TypeName),
             1004 => Ok(DescField::OctetLengthPtr),
             1005 => Ok(DescField::Precision),
             1006 => Ok(DescField::Scale),

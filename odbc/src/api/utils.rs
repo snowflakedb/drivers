@@ -1,4 +1,4 @@
-use crate::api::encoding::{OdbcEncoding, write_string_chars};
+use crate::api::encoding::{OdbcEncoding, write_string_bytes, write_string_chars};
 use crate::api::error::{
     ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
     StatementNotExecutedSnafu,
@@ -64,14 +64,16 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
 }
 
 /// Get a column attribute (SQLColAttribute)
-pub fn col_attribute(
+#[allow(clippy::too_many_arguments)]
+pub fn col_attribute<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     field_identifier: sql::USmallInt,
-    _character_attribute_ptr: sql::Pointer,
-    _buffer_length: sql::SmallInt,
-    _string_length_ptr: *mut sql::SmallInt,
+    character_attribute_ptr: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
     numeric_attribute_ptr: *mut sql::Len,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!(
         "col_attribute: column_number={}, field_identifier={}",
@@ -114,6 +116,44 @@ pub fn col_attribute(
                 }
             }
             Ok(())
+        }
+        DescField::TypeName => {
+            let logical_type = field
+                .metadata()
+                .get("logicalType")
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let type_name = match logical_type {
+                "OBJECT" => "STRUCT",
+                "ARRAY" => "ARRAY",
+                "VARIANT" => "VARIANT",
+                _ => "",
+            };
+            match logical_type {
+                "OBJECT" | "ARRAY" | "VARIANT" => {
+                    write_string_bytes::<E>(
+                        type_name,
+                        character_attribute_ptr,
+                        buffer_length,
+                        string_length_ptr,
+                        Some(warnings),
+                    );
+                    Ok(())
+                }
+                _ => {
+                    tracing::warn!(
+                        "col_attribute: SQL_DESC_TYPE_NAME not yet implemented for logicalType={logical_type}"
+                    );
+                    write_string_bytes::<E>(
+                        "",
+                        character_attribute_ptr,
+                        buffer_length,
+                        string_length_ptr,
+                        None,
+                    );
+                    Ok(())
+                }
+            }
         }
         _ => {
             tracing::warn!(

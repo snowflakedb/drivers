@@ -550,17 +550,24 @@ pub unsafe extern "C" fn SQLColAttribute(
     numeric_attribute_ptr: *mut sql::Len,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::utils::col_attribute(
+    let mut warnings = vec![];
+    let result = api::utils::col_attribute::<Narrow>(
         statement_handle,
         column_number,
         field_identifier,
-        character_attribute_ptr,
+        character_attribute_ptr as *mut sql::Char,
         buffer_length,
         string_length_ptr,
         numeric_attribute_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -576,17 +583,24 @@ pub unsafe extern "C" fn SQLColAttributeW(
     numeric_attribute_ptr: *mut sql::Len,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::utils::col_attribute(
+    let mut warnings = vec![];
+    let result = api::utils::col_attribute::<Wide>(
         statement_handle,
         column_number,
         field_identifier,
-        character_attribute_ptr,
+        character_attribute_ptr as *mut sql::WChar,
         buffer_length,
         string_length_ptr,
         numeric_attribute_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
     );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety

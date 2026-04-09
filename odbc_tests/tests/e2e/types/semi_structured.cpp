@@ -574,7 +574,7 @@ TEST_CASE("should truncate variant data as SQL_C_WCHAR when buffer is too short"
 // SQLColAttribute - SQL_DESC_TYPE_NAME (ODBC-specific)
 // ============================================================================
 
-TEST_CASE("should report SQL_DESC_TYPE_NAME as VARCHAR for semi-structured columns", "[semi_structured][metadata]") {
+TEST_CASE("should report SQL_DESC_TYPE_NAME for semi-structured columns", "[semi_structured][metadata]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -583,16 +583,16 @@ TEST_CASE("should report SQL_DESC_TYPE_NAME as VARCHAR for semi-structured colum
       "SELECT PARSE_JSON('{\"a\":1}'), ARRAY_CONSTRUCT(1,2,3), "
       "OBJECT_CONSTRUCT('key','val')");
 
-  // Then SQL_DESC_TYPE_NAME should be VARCHAR for all three columns
-  const char* col_labels[] = {"VARIANT", "ARRAY", "OBJECT"};
+  // Then SQL_DESC_TYPE_NAME should report VARIANT, ARRAY, and STRUCT respectively
+  const char* expected_type_names[] = {"VARIANT", "ARRAY", "STRUCT"};
   for (SQLUSMALLINT col = 1; col <= 3; ++col) {
-    INFO("Column " << col << " (" << col_labels[col - 1] << ")");
+    INFO("Column " << col << " (" << expected_type_names[col - 1] << ")");
     SQLCHAR type_name[128] = {};
     SQLSMALLINT name_len = 0;
     SQLRETURN ret =
         SQLColAttribute(stmt.getHandle(), col, SQL_DESC_TYPE_NAME, type_name, sizeof(type_name), &name_len, nullptr);
     REQUIRE_ODBC(ret, stmt);
-    CHECK(std::string(reinterpret_cast<char*>(type_name), name_len) == "VARCHAR");
+    CHECK(std::string(reinterpret_cast<char*>(type_name), name_len) == expected_type_names[col - 1]);
   }
 }
 
