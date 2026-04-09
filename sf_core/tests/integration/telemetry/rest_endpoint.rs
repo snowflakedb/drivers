@@ -1,10 +1,12 @@
+use std::io::Read;
+
 use serde_json::json;
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::telemetry::send_telemetry;
 use sf_core::tls::config::TlsConfig;
 use url::Url;
-use wiremock::matchers::{body_json, header, header_regex, method, path};
+use wiremock::matchers::{header, header_regex, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn test_client_info() -> ClientInfo {
@@ -17,6 +19,16 @@ fn test_client_info() -> ClientInfo {
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::default(),
     }
+}
+
+/// Decompress a gzip-encoded body and parse as JSON.
+fn decompress_gzip_json(body: &[u8]) -> serde_json::Value {
+    let mut decoder = flate2::read::GzDecoder::new(body);
+    let mut decompressed = String::new();
+    decoder
+        .read_to_string(&mut decompressed)
+        .expect("Failed to decompress gzip body");
+    serde_json::from_str(&decompressed).expect("Failed to parse decompressed JSON")
 }
 
 #[tokio::test]
@@ -35,7 +47,7 @@ async fn telemetry_post_includes_auth_and_content_type_headers() {
         .and(header_regex("Authorization", r#"^Snowflake Token=".+"$"#))
         .and(header("Content-Type", "application/json"))
         .and(header("Accept", "application/json"))
-        .and(body_json(&payload))
+        .and(header("Content-Encoding", "gzip"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
         .expect(1)
         .mount(&server)
@@ -53,6 +65,12 @@ async fn telemetry_post_includes_auth_and_content_type_headers() {
     .await;
 
     assert!(result.is_ok());
+
+    // Verify the gzip body decompresses to the original payload
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let parsed = decompress_gzip_json(&requests[0].body);
+    assert_eq!(parsed, payload);
 }
 
 #[tokio::test]
@@ -74,7 +92,6 @@ async fn telemetry_post_sends_multiple_log_entries() {
 
     Mock::given(method("POST"))
         .and(path("/telemetry/send"))
-        .and(body_json(&payload))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"success": true})))
         .expect(1)
         .mount(&server)
@@ -85,6 +102,12 @@ async fn telemetry_post_sends_multiple_log_entries() {
     let result = send_telemetry(&client, &server_url, &test_client_info(), "token", &payload).await;
 
     assert!(result.is_ok());
+
+    // Verify the gzip body decompresses to the original payload
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let parsed = decompress_gzip_json(&requests[0].body);
+    assert_eq!(parsed, payload);
 }
 
 #[tokio::test]

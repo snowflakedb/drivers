@@ -264,8 +264,8 @@ impl DatabaseDriverV1 {
                 )
                 .await;
 
-                // Emit session_init telemetry (best-effort, fire-and-forget).
-                if let Some(ref identity) = conn.wrapper_identity {
+                // Clone data needed for telemetry, then drop the lock before the network call.
+                let telemetry_context = if let Some(ref identity) = conn.wrapper_identity {
                     let env_info =
                         crate::telemetry::environment::EnvironmentInfo::with_wrapper(identity);
                     let session_id = conn
@@ -277,29 +277,39 @@ impl DatabaseDriverV1 {
                         .unwrap_or(0);
                     let payload =
                         crate::telemetry::build_session_init_payload(&env_info, session_id);
-                    if let (Some(client), Some(server_url), Some(client_info)) =
-                        (&conn.http_client, &conn.server_url, &conn.client_info)
-                    {
-                        let token = conn
-                            .tokens
-                            .read()
-                            .await
-                            .as_ref()
-                            .map(|t| t.session_token.clone());
-                        if let Some(token) = token
-                            && let Ok(url) = url::Url::parse(server_url)
-                            && let Err(e) = crate::rest::snowflake::telemetry::send_telemetry(
-                                client,
-                                &url,
-                                client_info,
-                                token.reveal(),
-                                &payload,
-                            )
-                            .await
-                        {
-                            tracing::warn!("Failed to send session_init telemetry: {e}");
+                    match (&conn.http_client, &conn.server_url, &conn.client_info) {
+                        (Some(client), Some(server_url), Some(client_info)) => {
+                            let token = conn
+                                .tokens
+                                .read()
+                                .await
+                                .as_ref()
+                                .map(|t| t.session_token.clone());
+                            token
+                                .zip(url::Url::parse(server_url).ok())
+                                .map(|(token, url)| {
+                                    (client.clone(), url, client_info.clone(), token, payload)
+                                })
                         }
+                        _ => None,
                     }
+                } else {
+                    None
+                };
+                drop(conn);
+
+                // Emit session_init telemetry (best-effort, fire-and-forget) without holding the lock.
+                if let Some((client, url, client_info, token, payload)) = telemetry_context
+                    && let Err(e) = crate::rest::snowflake::telemetry::send_telemetry(
+                        &client,
+                        &url,
+                        &client_info,
+                        token.reveal(),
+                        &payload,
+                    )
+                    .await
+                {
+                    tracing::warn!("Failed to send session_init telemetry: {e}");
                 }
 
                 Ok(())

@@ -16,46 +16,21 @@ pub fn build_session_init_payload(env: &EnvironmentInfo, session_id: i64) -> ser
         .unwrap_or_default()
         .as_millis();
 
-    let mut message = serde_json::Map::new();
-    message.insert(
-        "type".to_string(),
-        serde_json::Value::String("session_init".to_string()),
-    );
-    message.insert(
-        "driver_name".to_string(),
-        serde_json::Value::String(env.driver_name.clone()),
-    );
-    message.insert(
-        "driver_version".to_string(),
-        serde_json::Value::String(env.driver_version.clone()),
-    );
-    message.insert(
-        "language_runtime".to_string(),
-        serde_json::Value::String(env.language_runtime.clone()),
-    );
-    message.insert(
-        "language_version".to_string(),
-        serde_json::Value::String(env.language_version.clone()),
-    );
+    let mut message = serde_json::json!({
+        "type": "session_init",
+        "driver_name": env.driver_name,
+        "driver_version": env.driver_version,
+        "language_runtime": env.language_runtime,
+        "language_version": env.language_version,
+        "os_name": env.os_name,
+        "os_version": env.os_version,
+        "os_architecture": env.os_architecture,
+        "session_id": session_id,
+    });
+
     if let Some(ref compiler) = env.language_compiler {
-        message.insert(
-            "language_compiler".to_string(),
-            serde_json::Value::String(compiler.clone()),
-        );
+        message["language_compiler"] = serde_json::Value::String(compiler.clone());
     }
-    message.insert(
-        "os_name".to_string(),
-        serde_json::Value::String(env.os_name.clone()),
-    );
-    message.insert(
-        "os_version".to_string(),
-        serde_json::Value::String(env.os_version.clone()),
-    );
-    message.insert(
-        "os_architecture".to_string(),
-        serde_json::Value::String(env.os_architecture.clone()),
-    );
-    message.insert("session_id".to_string(), serde_json::json!(session_id));
 
     serde_json::json!({
         "logs": [{

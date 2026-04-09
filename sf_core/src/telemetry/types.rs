@@ -14,32 +14,6 @@ impl ErrorOrigin {
     }
 }
 
-/// Data provided by wrappers for session_init.
-/// Used by the wrapper-identity telemetry layer (see PR #795).
-#[derive(Debug, Clone)]
-pub struct SessionInitData {
-    pub driver_name: String,
-    pub driver_version: String,
-    pub language_runtime: String,
-    pub language_version: String,
-    pub language_compiler: Option<String>,
-    pub svn_revision: Option<String>,
-    pub application: Option<String>,
-    pub application_path: Option<String>,
-    pub tracing_level: Option<i32>,
-    pub login_timeout: Option<i32>,
-    pub network_timeout: Option<i32>,
-    pub socket_timeout: Option<i32>,
-}
-
-/// Data for driver_exception events reported by wrappers.
-/// Used by the wrapper-identity telemetry layer (see PR #795).
-#[derive(Debug, Clone)]
-pub struct WrapperErrorData {
-    pub exception_type: String,
-    pub error_source: ErrorOrigin,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

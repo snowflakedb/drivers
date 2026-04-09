@@ -51,7 +51,7 @@ fn span_to_log_entry(span: &SpanData) -> Value {
 }
 
 macro_rules! collect_sum_data_points {
-    ($logs:expr, $metric_name:expr, $sum:expr, $ty:ty) => {{
+    ($logs:expr, $metric_name:expr, $sum:expr) => {{
         let timestamp = system_time_to_epoch_millis($sum.time());
         for dp in $sum.data_points() {
             let mut message = serde_json::Map::new();
@@ -77,13 +77,13 @@ pub fn metrics_to_snowflake_payload(metrics: &ResourceMetrics) -> Value {
             let metric_name = metric.name();
             match metric.data() {
                 AggregatedMetrics::U64(MetricData::Sum(sum)) => {
-                    collect_sum_data_points!(logs, metric_name, sum, u64);
+                    collect_sum_data_points!(logs, metric_name, sum);
                 }
                 AggregatedMetrics::I64(MetricData::Sum(sum)) => {
-                    collect_sum_data_points!(logs, metric_name, sum, i64);
+                    collect_sum_data_points!(logs, metric_name, sum);
                 }
                 AggregatedMetrics::F64(MetricData::Sum(sum)) => {
-                    collect_sum_data_points!(logs, metric_name, sum, f64);
+                    collect_sum_data_points!(logs, metric_name, sum);
                 }
                 _ => {
                     tracing::debug!("Skipping non-Sum metric type for telemetry: {metric_name}");
