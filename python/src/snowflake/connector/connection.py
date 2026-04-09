@@ -211,8 +211,6 @@ class Connection:
                 language_compiler=platform.python_compiler(),
             )
         )
-        # TODO: Wire up InternalTelemetryClient for api_usage/wrapper_error
-        # once the sf_core RPC handlers export via OTel (currently stubs).
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
