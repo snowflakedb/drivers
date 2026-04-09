@@ -487,7 +487,7 @@ TEST_CASE("should handle JSON with unicode content", "[semi_structured]") {
   auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"emoji\":\"\\u2744\",\"cjk\":\"\\u96EA\\u82B1\"}')");
 
   // Then Result should preserve the unicode characters
-  auto json = parse_json_text(get_data<SQL_C_CHAR>(stmt, 1));
+  auto json = parse_json_text(check_wchar_success(stmt, 1));
   REQUIRE(json.is<picojson::object>());
   const auto& obj = json.get<picojson::object>();
 
@@ -508,7 +508,7 @@ TEST_CASE("should handle JSON with unicode in keys", "[semi_structured]") {
   auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"\\u96EA\":\"snow\",\"\\u82B1\":\"flower\"}')");
 
   // Then Result should preserve unicode keys and their associated values
-  auto json = parse_json_text(get_data<SQL_C_CHAR>(stmt, 1));
+  auto json = parse_json_text(check_wchar_success(stmt, 1));
   REQUIRE(json.is<picojson::object>());
   const auto& obj = json.get<picojson::object>();
 
