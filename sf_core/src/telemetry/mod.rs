@@ -18,18 +18,18 @@ pub fn build_session_init_payload(env: &EnvironmentInfo, session_id: i64) -> ser
 
     let mut message = serde_json::json!({
         "type": "session_init",
-        "driver_name": env.driver_name,
-        "driver_version": env.driver_version,
-        "language_runtime": env.language_runtime,
-        "language_version": env.language_version,
-        "os_name": env.os_name,
-        "os_version": env.os_version,
-        "os_architecture": env.os_architecture,
-        "session_id": session_id,
+        "service.name": env.driver_name,
+        "service.version": env.driver_version,
+        "process.runtime.name": env.language_runtime,
+        "process.runtime.version": env.language_version,
+        "os.type": env.os_name,
+        "os.version": env.os_version,
+        "host.arch": env.os_architecture,
+        "snowflake.session.id": session_id,
     });
 
     if let Some(ref compiler) = env.language_compiler {
-        message["language_compiler"] = serde_json::Value::String(compiler.clone());
+        message["process.runtime.compiler"] = serde_json::Value::String(compiler.clone());
     }
 
     serde_json::json!({

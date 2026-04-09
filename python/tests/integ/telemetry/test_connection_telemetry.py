@@ -64,11 +64,15 @@ def test_session_init_telemetry_sent_on_connection_open(int_test_connection_fact
         assert headers["Accept"] == "application/json"
         assert headers["User-Agent"] is not None
 
-        # Validate top-level payload structure (body is gzip-compressed)
+        # Validate top-level payload structure.
+        # Wiremock may transparently decompress gzip, so try both.
         raw_body = request["body"]
         if isinstance(raw_body, str):
             raw_body = raw_body.encode("latin-1")
-        body = json.loads(gzip.decompress(raw_body))
+        try:
+            body = json.loads(gzip.decompress(raw_body))
+        except gzip.BadGzipFile:
+            body = json.loads(raw_body)
         assert "logs" in body, "Telemetry payload must contain 'logs' array"
         assert isinstance(body["logs"], list)
         assert len(body["logs"]) >= 1, "Expected at least one log entry"

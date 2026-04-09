@@ -12,7 +12,7 @@ pkgs.mkShell {
 
   buildInputs = [
     pkgs.openssl
-    pkgs.unixODBC
+    pkgs.unixodbc
     pkgs.zlib
   ];
 
