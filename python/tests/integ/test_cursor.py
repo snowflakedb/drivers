@@ -7,7 +7,8 @@ from decimal import Decimal
 import pytest
 
 from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
-from snowflake.connector.errors import InterfaceError, NotSupportedError, ProgrammingError
+from snowflake.connector.errors import InterfaceError, ProgrammingError
+from tests.conftest import with_paramstyle
 from tests.e2e.types.utils import assert_sequential_values
 
 
@@ -1128,17 +1129,105 @@ class TestCursorMethods:
         with pytest.raises(InterfaceError):
             cursor.callproc("any_proc")
 
+    @pytest.mark.skip_reference(reason="Reference driver does not validate args type")
+    def test_callproc_rejects_string_args(self, cursor):
+        """Test that callproc rejects a string as args (would be treated as sequence of chars)."""
+        with pytest.raises(TypeError, match="must be a sequence"):
+            cursor.callproc("any_proc", "abc")
+
+    @pytest.mark.skip_reference(reason="Reference driver does not validate args type")
+    def test_callproc_rejects_non_sequence_args(self, cursor):
+        """Test that callproc rejects non-sequence types like int."""
+        with pytest.raises(TypeError, match="must be a sequence"):
+            cursor.callproc("any_proc", 42)
+
+    @with_paramstyle("qmark")
+    def test_callproc_qmark_paramstyle(self, cursor):
+        """Test callproc with qmark paramstyle uses ? placeholders."""
+        proc_name = "test_callproc_qmark"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
+
+    @with_paramstyle("numeric")
+    def test_callproc_numeric_paramstyle(self, cursor):
+        """Test callproc with numeric paramstyle uses :1, :2 placeholders."""
+        proc_name = "test_callproc_numeric"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
+
+    @with_paramstyle("pyformat")
+    def test_callproc_pyformat_paramstyle(self, cursor):
+        """Test callproc with pyformat paramstyle uses %s placeholders."""
+        proc_name = "test_callproc_pyformat"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
+
+    @with_paramstyle("format")
+    def test_callproc_format_paramstyle(self, cursor):
+        """Test callproc with format paramstyle uses %s placeholders."""
+        proc_name = "test_callproc_format"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
+
     def test_executemany_is_callable(self, cursor):
         """Test that executemany is callable (basic smoke test)."""
         # Just verify it's callable and accepts empty sequence without error
         cursor.executemany("INSERT INTO test VALUES (?)", [])
 
     @pytest.mark.skip_reference(
-        reason="Reference driver returns None from nextset instead of raising NotSupportedError"
+        reason="Reference driver returns None from nextset instead of raising NotImplementedError"
     )
     def test_nextset_not_implemented(self, cursor):
-        """Test that nextset raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
+        """Test that nextset raises NotImplementedError."""
+        with pytest.raises(NotImplementedError) as excinfo:
             cursor.nextset()
         assert "nextset is not implemented" in str(excinfo.value)
 

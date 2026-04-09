@@ -62,7 +62,7 @@ Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
 F = TypeVar("F", bound=Callable[..., Any])
-T = TypeVar("T")
+T = TypeVar("T", bound=Sequence[Any])
 
 
 class FetchMode(enum.Enum):
@@ -293,8 +293,18 @@ class SnowflakeCursorBase(abc.ABC):
         """
         if args is None:
             args = ()
-        marker = "%s" if self._connection.paramstyle.is_client_side() else "?"
-        command = f"CALL {procname}({', '.join([marker for _ in range(len(args))])})"
+        if isinstance(args, (str, bytes)):
+            raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
+        if not isinstance(args, Sequence):
+            raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
+        paramstyle = self._connection.paramstyle
+        if paramstyle.is_client_side():
+            placeholders = ", ".join("%s" for _ in range(len(args)))
+        elif paramstyle == ParamStyle.NUMERIC:
+            placeholders = ", ".join(f":{i}" for i in range(1, len(args) + 1))
+        else:
+            placeholders = ", ".join("?" for _ in range(len(args)))
+        command = f"CALL {procname}({placeholders})"
         self.execute(command, args)
         return args
 
