@@ -4,6 +4,8 @@ Type code mappings for Snowflake data types to PEP 249 DB API 2.0.
 Maps Snowflake type names to integer type codes for cursor.description.
 """
 
+from ._internal.decorators import backward_compatibility
+
 # Type code constants for PEP 249 compliance
 # These match the indices from snowflake-connector-python for compatibility
 FIXED = 0
@@ -105,6 +107,7 @@ def get_type_code(snowflake_type: str) -> int:
 # Reverse mapping: type code → canonical Snowflake type name.
 # Re-exported by snowflake.connector.constants for backward compatibility with
 # code written against the old snowflake-connector-python driver (e.g. dbt-snowflake).
+@backward_compatibility
 FIELD_ID_TO_NAME: dict[int, str] = {
     FIXED: "FIXED",
     REAL: "REAL",
