@@ -280,16 +280,19 @@ class SnowflakeCursorBase(abc.ABC):
 
     @pep249
     @_requires_open
-    def callproc(self, procname: str, args: Any = tuple()) -> Any:
+    def callproc(self, procname: str, args: Any = None) -> Any:
         """Call a stored procedure.
 
         Args:
             procname: The stored procedure to be called.
             args: Parameters to be passed into the stored procedure.
+                  ``None`` is treated as no arguments.
 
         Returns:
             The input parameters.
         """
+        if args is None:
+            args = ()
         marker = "%s" if self._connection.paramstyle.is_client_side() else "?"
         command = f"CALL {procname}({', '.join([marker for _ in range(len(args))])})"
         self.execute(command, args)

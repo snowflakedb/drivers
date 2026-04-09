@@ -1100,6 +1100,25 @@ class TestCursorMethods:
         assert ret == ()
         assert cursor.fetchall() == [(True,)]
 
+    @pytest.mark.skip_reference(reason="Reference driver raises TypeError when args=None")
+    def test_callproc_none_args(self, cursor):
+        """Test callproc treats None args the same as no arguments."""
+        proc_name = "test_callproc_none_args"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}()
+            RETURNS BOOLEAN
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN TRUE;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, None)
+        assert ret == ()
+        assert cursor.fetchall() == [(True,)]
+
     @pytest.mark.skip_reference(
         reason="Reference driver raises AttributeError instead of InterfaceError on closed cursor"
     )
