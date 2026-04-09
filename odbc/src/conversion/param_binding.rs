@@ -1380,6 +1380,54 @@ mod tests {
     }
 
     #[test]
+    fn convert_float_nan_as_integer_fails() {
+        let val: f32 = f32::NAN;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::INTEGER,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_double_infinity_as_integer_fails() {
+        let val: f64 = f64::INFINITY;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::INTEGER,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_double_neg_infinity_as_integer_fails() {
+        let val: f64 = f64::NEG_INFINITY;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::INTEGER,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
     fn convert_double_as_integer() -> TestResult {
         let val: f64 = -123.0;
         let binding = make_binding(
@@ -1620,6 +1668,38 @@ mod tests {
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
         assert_eq!(v, Value::String("true".to_string()));
         Ok(())
+    }
+
+    #[test]
+    fn convert_float_nan_as_boolean_fails() {
+        let val: f32 = f32::NAN;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_double_infinity_as_boolean_fails() {
+        let val: f64 = f64::INFINITY;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
     }
 
     #[test]

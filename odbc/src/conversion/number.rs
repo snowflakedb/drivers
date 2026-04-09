@@ -374,11 +374,37 @@ impl ReadODBC for SnowflakeNumber {
             CDataType::UTinyInt => read_unaligned::<u8>(binding) as i128,
             CDataType::Float => {
                 let v = read_unaligned::<f32>(binding) as f64;
-                v.trunc() as i128
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("non-finite f32 value {v} cannot be converted to integer"),
+                    }
+                    .fail();
+                }
+                let truncated = v.trunc();
+                if truncated < (i128::MIN as f64) || truncated > (i128::MAX as f64) {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("f32 value {v} out of i128 range"),
+                    }
+                    .fail();
+                }
+                truncated as i128
             }
             CDataType::Double => {
                 let v = read_unaligned::<f64>(binding);
-                v.trunc() as i128
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("non-finite f64 value {v} cannot be converted to integer"),
+                    }
+                    .fail();
+                }
+                let truncated = v.trunc();
+                if truncated < (i128::MIN as f64) || truncated > (i128::MAX as f64) {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("f64 value {v} out of i128 range"),
+                    }
+                    .fail();
+                }
+                truncated as i128
             }
             CDataType::Bit => read_unaligned::<u8>(binding) as i128,
             CDataType::Numeric => {

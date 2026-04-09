@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::UnsupportedCDataTypeSnafu;
+use crate::conversion::error::{JsonBindingError, NumericMagnitudeOverflowSnafu};
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::numeric_helpers::{
     reject_multi_field_interval, write_interval_second, write_single_field_interval,
@@ -170,8 +170,26 @@ impl ReadODBC for SnowflakeBoolean {
             CDataType::ULong => read_unaligned::<u32>(binding) != 0,
             CDataType::SBigInt => read_unaligned::<i64>(binding) != 0,
             CDataType::UBigInt => read_unaligned::<u64>(binding) != 0,
-            CDataType::Float => read_unaligned::<f32>(binding) != 0.0,
-            CDataType::Double => read_unaligned::<f64>(binding) != 0.0,
+            CDataType::Float => {
+                let v = read_unaligned::<f32>(binding);
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("non-finite f32 value {v} cannot be converted to boolean"),
+                    }
+                    .fail();
+                }
+                v != 0.0
+            }
+            CDataType::Double => {
+                let v = read_unaligned::<f64>(binding);
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("non-finite f64 value {v} cannot be converted to boolean"),
+                    }
+                    .fail();
+                }
+                v != 0.0
+            }
             CDataType::Numeric => {
                 let (mantissa, _scale) = read_numeric_struct(binding)?;
                 mantissa != 0

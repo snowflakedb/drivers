@@ -504,7 +504,12 @@ impl OdbcError {
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::JsonBinding { .. } => SqlState::GeneralError,
+            OdbcError::JsonBinding { source, .. } => match source {
+                JsonBindingError::NumericMagnitudeOverflow { .. } => {
+                    SqlState::NumericValueOutOfRange
+                }
+                _ => SqlState::GeneralError,
+            },
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
                 CoreProtobufError::Application {
@@ -685,5 +690,37 @@ impl ErrorTrace for CoreProtobufError {
                 }]
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conversion::error::{NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu};
+
+    #[test]
+    fn numeric_magnitude_overflow_maps_to_22003() {
+        let json_err = NumericMagnitudeOverflowSnafu {
+            reason: "test overflow".to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn other_json_binding_errors_map_to_hy000() {
+        let json_err = UnsupportedCDataTypeSnafu {
+            c_type: crate::api::CDataType::Char,
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
     }
 }
