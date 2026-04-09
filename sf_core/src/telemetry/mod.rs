@@ -8,34 +8,54 @@ pub mod serialization;
 pub mod snowflake_exporter;
 
 use environment::EnvironmentInfo;
+use opentelemetry::InstrumentationScope;
+use opentelemetry::KeyValue;
+use opentelemetry::trace::{
+    SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
+};
+use opentelemetry_sdk::trace::SpanData;
 
-/// Build a `session_init` telemetry payload ready to POST to `/telemetry/send`.
-pub fn build_session_init_payload(env: &EnvironmentInfo, session_id: i64) -> serde_json::Value {
-    let now_millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+/// Build a `session_init` OTel span carrying environment and session metadata.
+///
+/// The span is serialized by [`serialization::spans_to_snowflake_payload`] and
+/// exported via [`snowflake_exporter::SnowflakeInBandExporter`] to the
+/// `/telemetry/send` endpoint.
+pub fn build_session_init_span(env: &EnvironmentInfo, session_id: i64) -> SpanData {
+    let now = std::time::SystemTime::now();
 
-    let mut message = serde_json::json!({
-        "type": "session_init",
-        "service.name": env.driver_name,
-        "service.version": env.driver_version,
-        "process.runtime.name": env.language_runtime,
-        "process.runtime.version": env.language_version,
-        "os.type": env.os_name,
-        "os.version": env.os_version,
-        "host.arch": env.os_architecture,
-        "snowflake.session.id": session_id,
-    });
+    let mut attributes = vec![
+        KeyValue::new("service.name", env.driver_name.clone()),
+        KeyValue::new("service.version", env.driver_version.clone()),
+        KeyValue::new("process.runtime.name", env.language_runtime.clone()),
+        KeyValue::new("process.runtime.version", env.language_version.clone()),
+        KeyValue::new("os.type", env.os_name.clone()),
+        KeyValue::new("os.version", env.os_version.clone()),
+        KeyValue::new("host.arch", env.os_architecture.clone()),
+        KeyValue::new("snowflake.session.id", session_id),
+    ];
 
     if let Some(ref compiler) = env.language_compiler {
-        message["process.runtime.compiler"] = serde_json::Value::String(compiler.clone());
+        attributes.push(KeyValue::new("process.runtime.compiler", compiler.clone()));
     }
 
-    serde_json::json!({
-        "logs": [{
-            "message": message,
-            "timestamp": now_millis.to_string()
-        }]
-    })
+    SpanData {
+        span_context: SpanContext::new(
+            TraceId::INVALID,
+            SpanId::INVALID,
+            TraceFlags::default(),
+            false,
+            TraceState::default(),
+        ),
+        parent_span_id: SpanId::INVALID,
+        span_kind: SpanKind::Internal,
+        name: "session_init".into(),
+        start_time: now,
+        end_time: now,
+        attributes,
+        dropped_attributes_count: 0,
+        events: Default::default(),
+        links: Default::default(),
+        status: Status::Ok,
+        instrumentation_scope: InstrumentationScope::builder("snowflake.telemetry").build(),
+    }
 }

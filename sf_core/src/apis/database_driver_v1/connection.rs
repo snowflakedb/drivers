@@ -264,53 +264,10 @@ impl DatabaseDriverV1 {
                 )
                 .await;
 
-                // Clone data needed for telemetry, then drop the lock before the network call.
-                let telemetry_context = if let Some(ref identity) = conn.wrapper_identity {
-                    let env_info =
-                        crate::telemetry::environment::EnvironmentInfo::with_wrapper(identity);
-                    let session_id = conn
-                        .tokens
-                        .read()
-                        .await
-                        .as_ref()
-                        .map(|t| t.session_id)
-                        .unwrap_or(0);
-                    let payload =
-                        crate::telemetry::build_session_init_payload(&env_info, session_id);
-                    match (&conn.http_client, &conn.server_url, &conn.client_info) {
-                        (Some(client), Some(server_url), Some(client_info)) => {
-                            let token = conn
-                                .tokens
-                                .read()
-                                .await
-                                .as_ref()
-                                .map(|t| t.session_token.clone());
-                            token
-                                .zip(url::Url::parse(server_url).ok())
-                                .map(|(token, url)| {
-                                    (client.clone(), url, client_info.clone(), token, payload)
-                                })
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
                 drop(conn);
 
-                // Emit session_init telemetry (best-effort, fire-and-forget) without holding the lock.
-                if let Some((client, url, client_info, token, payload)) = telemetry_context
-                    && let Err(e) = crate::rest::snowflake::telemetry::send_telemetry(
-                        &client,
-                        &url,
-                        &client_info,
-                        token.reveal(),
-                        &payload,
-                    )
-                    .await
-                {
-                    tracing::warn!("Failed to send session_init telemetry: {e}");
-                }
+                // Best-effort session_init telemetry — errors are logged, never propagated.
+                Self::send_session_init_telemetry(&conn_ptr).await;
 
                 Ok(())
             }
@@ -319,6 +276,47 @@ impl DatabaseDriverV1 {
             }
             .fail(),
         }
+    }
+
+    /// Send session_init telemetry for the given connection (best-effort, fire-and-forget).
+    ///
+    /// Acquires the connection lock to read identity and session metadata, then
+    /// releases the lock before the network call. The event is sent through the
+    /// OTel exporter pipeline — the same path used for all other telemetry.
+    async fn send_session_init_telemetry(conn_ptr: &Arc<Mutex<Connection>>) {
+        use crate::telemetry::snowflake_exporter::{ExporterSession, SnowflakeInBandExporter};
+        use opentelemetry_sdk::trace::SpanExporter;
+
+        let (span, session) = {
+            let conn = conn_ptr.lock().await;
+            let Some(ref identity) = conn.wrapper_identity else {
+                return;
+            };
+            let env_info = crate::telemetry::environment::EnvironmentInfo::with_wrapper(identity);
+            let session_id = conn
+                .tokens
+                .read()
+                .await
+                .as_ref()
+                .map(|t| t.session_id)
+                .unwrap_or(0);
+            let span = crate::telemetry::build_session_init_span(&env_info, session_id);
+            let Ok(query_parameters) = conn.query_transport_parameters() else {
+                return;
+            };
+            let Some(http_client) = conn.http_client.clone() else {
+                return;
+            };
+            let session = Arc::new(ExporterSession {
+                client: http_client,
+                query_parameters,
+                session_token: conn.tokens.clone(),
+            });
+            (span, session)
+        };
+
+        let exporter = SnowflakeInBandExporter::new(session);
+        let _ = exporter.export(vec![span]).await;
     }
 
     pub async fn connection_set_option(

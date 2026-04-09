@@ -1,23 +1,25 @@
 use std::io::Read;
 
 use serde_json::json;
-use sf_core::config::rest_parameters::ClientInfo;
+use sf_core::config::rest_parameters::{ClientInfo, QueryParameters};
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::telemetry::send_telemetry;
 use sf_core::tls::config::TlsConfig;
-use url::Url;
 use wiremock::matchers::{header, header_regex, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn test_client_info() -> ClientInfo {
-    ClientInfo {
-        application: "TestApp".to_string(),
-        version: "1.0.0".to_string(),
-        os: "Linux".to_string(),
-        os_version: "5.15".to_string(),
-        ocsp_mode: None,
-        crl_config: CrlConfig::default(),
-        tls_config: TlsConfig::default(),
+fn test_query_parameters(server_url: &str) -> QueryParameters {
+    QueryParameters {
+        server_url: server_url.to_string(),
+        client_info: ClientInfo {
+            application: "TestApp".to_string(),
+            version: "1.0.0".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.15".to_string(),
+            ocsp_mode: None,
+            crl_config: CrlConfig::default(),
+            tls_config: TlsConfig::default(),
+        },
     }
 }
 
@@ -54,15 +56,8 @@ async fn telemetry_post_includes_auth_and_content_type_headers() {
         .await;
 
     let client = reqwest::Client::new();
-    let server_url = Url::parse(&server.uri()).unwrap();
-    let result = send_telemetry(
-        &client,
-        &server_url,
-        &test_client_info(),
-        "my_session_token",
-        &payload,
-    )
-    .await;
+    let query_params = test_query_parameters(&server.uri());
+    let result = send_telemetry(&client, &query_params, "my_session_token", &payload).await;
 
     assert!(result.is_ok());
 
@@ -98,8 +93,8 @@ async fn telemetry_post_sends_multiple_log_entries() {
         .await;
 
     let client = reqwest::Client::new();
-    let server_url = Url::parse(&server.uri()).unwrap();
-    let result = send_telemetry(&client, &server_url, &test_client_info(), "token", &payload).await;
+    let query_params = test_query_parameters(&server.uri());
+    let result = send_telemetry(&client, &query_params, "token", &payload).await;
 
     assert!(result.is_ok());
 
@@ -121,11 +116,10 @@ async fn telemetry_post_handles_401_as_error() {
         .await;
 
     let client = reqwest::Client::new();
-    let server_url = Url::parse(&server.uri()).unwrap();
+    let query_params = test_query_parameters(&server.uri());
     let result = send_telemetry(
         &client,
-        &server_url,
-        &test_client_info(),
+        &query_params,
         "expired_token",
         &json!({"logs": []}),
     )
@@ -138,15 +132,8 @@ async fn telemetry_post_handles_401_as_error() {
 async fn telemetry_post_handles_connection_refused() {
     let client = reqwest::Client::new();
     // Port 1 is almost certainly not listening
-    let server_url = Url::parse("http://127.0.0.1:1").unwrap();
-    let result = send_telemetry(
-        &client,
-        &server_url,
-        &test_client_info(),
-        "token",
-        &json!({"logs": []}),
-    )
-    .await;
+    let query_params = test_query_parameters("http://127.0.0.1:1");
+    let result = send_telemetry(&client, &query_params, "token", &json!({"logs": []})).await;
 
     assert!(result.is_err());
 }

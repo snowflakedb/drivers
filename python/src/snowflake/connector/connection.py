@@ -211,6 +211,7 @@ class Connection:
                 language_compiler=platform.python_compiler(),
             )
         )
+        # TODO: Connect this with the _telemetry property/method for public API access.
         self._telemetry_client = InternalTelemetryClient(self.db_api, self.conn_handle)
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}

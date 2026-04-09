@@ -9,39 +9,40 @@ use opentelemetry_sdk::metrics::Temporality;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use serde_json::json;
-use sf_core::config::rest_parameters::ClientInfo;
+use sf_core::config::rest_parameters::{ClientInfo, QueryParameters};
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
 use sf_core::telemetry::snowflake_exporter::{ExporterSession, SnowflakeInBandExporter};
 use sf_core::tls::config::TlsConfig;
 use tokio::sync::RwLock as AsyncRwLock;
-use url::Url;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn test_client_info() -> ClientInfo {
-    ClientInfo {
-        application: "TestApp".to_string(),
-        version: "1.0.0".to_string(),
-        os: "Linux".to_string(),
-        os_version: "5.15".to_string(),
-        ocsp_mode: None,
-        crl_config: CrlConfig::default(),
-        tls_config: TlsConfig::default(),
+fn test_query_parameters(server_url: &str) -> QueryParameters {
+    QueryParameters {
+        server_url: server_url.to_string(),
+        client_info: ClientInfo {
+            application: "TestApp".to_string(),
+            version: "1.0.0".to_string(),
+            os: "Linux".to_string(),
+            os_version: "5.15".to_string(),
+            ocsp_mode: None,
+            crl_config: CrlConfig::default(),
+            tls_config: TlsConfig::default(),
+        },
     }
 }
 
-fn make_session(server_url: Url, token: Option<SessionTokens>) -> Arc<ExporterSession> {
+fn make_session(server_url: &str, token: Option<SessionTokens>) -> Arc<ExporterSession> {
     Arc::new(ExporterSession {
         client: reqwest::Client::new(),
-        server_url,
-        client_info: test_client_info(),
+        query_parameters: test_query_parameters(server_url),
         session_token: Arc::new(AsyncRwLock::new(token)),
     })
 }
 
-fn make_active_session(server_url: Url) -> Arc<ExporterSession> {
+fn make_active_session(server_url: &str) -> Arc<ExporterSession> {
     let tokens = SessionTokens {
         session_token: SensitiveString::from("test_token"),
         master_token: SensitiveString::from("master_token"),
@@ -82,7 +83,7 @@ fn make_span(name: &'static str, attributes: Vec<KeyValue>) -> SpanData {
 #[tokio::test]
 async fn span_exporter_sends_span_attributes_in_snowflake_format() {
     let server = MockServer::start().await;
-    let session = make_active_session(Url::parse(&server.uri()).unwrap());
+    let session = make_active_session(&server.uri());
 
     Mock::given(method("POST"))
         .and(path("/telemetry/send"))
@@ -107,7 +108,7 @@ async fn span_exporter_sends_span_attributes_in_snowflake_format() {
 #[tokio::test]
 async fn span_exporter_sends_multiple_spans_in_single_batch() {
     let server = MockServer::start().await;
-    let session = make_active_session(Url::parse(&server.uri()).unwrap());
+    let session = make_active_session(&server.uri());
 
     Mock::given(method("POST"))
         .and(path("/telemetry/send"))
@@ -147,8 +148,7 @@ async fn span_exporter_handles_token_revoked_between_calls() {
 
     let session = Arc::new(ExporterSession {
         client: reqwest::Client::new(),
-        server_url: Url::parse(&server.uri()).unwrap(),
-        client_info: test_client_info(),
+        query_parameters: test_query_parameters(&server.uri()),
         session_token: token_store.clone(),
     });
 
@@ -185,8 +185,7 @@ async fn span_exporter_uses_refreshed_token() {
 
     let session = Arc::new(ExporterSession {
         client: reqwest::Client::new(),
-        server_url: Url::parse(&server.uri()).unwrap(),
-        client_info: test_client_info(),
+        query_parameters: test_query_parameters(&server.uri()),
         session_token: token_store.clone(),
     });
 
@@ -215,7 +214,7 @@ async fn span_exporter_uses_refreshed_token() {
 #[tokio::test]
 async fn span_exporter_swallows_all_server_errors() {
     let server = MockServer::start().await;
-    let session = make_active_session(Url::parse(&server.uri()).unwrap());
+    let session = make_active_session(&server.uri());
 
     Mock::given(method("POST"))
         .and(path("/telemetry/send"))
@@ -230,7 +229,7 @@ async fn span_exporter_swallows_all_server_errors() {
 
 #[tokio::test]
 async fn span_exporter_swallows_connection_errors() {
-    let session = make_active_session(Url::parse("http://127.0.0.1:1").unwrap());
+    let session = make_active_session("http://127.0.0.1:1");
 
     let exporter = SnowflakeInBandExporter::new(session);
     let result = SpanExporter::export(&exporter, vec![make_span("test", vec![])]).await;
@@ -243,7 +242,7 @@ async fn span_exporter_swallows_connection_errors() {
 #[tokio::test]
 async fn span_exporter_shutdown_is_clean() {
     let server = MockServer::start().await;
-    let session = make_active_session(Url::parse(&server.uri()).unwrap());
+    let session = make_active_session(&server.uri());
 
     let mut exporter = SnowflakeInBandExporter::new(session);
     let result = SpanExporter::shutdown(&mut exporter);
@@ -257,7 +256,7 @@ async fn span_exporter_shutdown_is_clean() {
 #[tokio::test]
 async fn metric_exporter_empty_metrics_skips_post() {
     let server = MockServer::start().await;
-    let session = make_active_session(Url::parse(&server.uri()).unwrap());
+    let session = make_active_session(&server.uri());
 
     Mock::given(method("POST"))
         .and(path("/telemetry/send"))
@@ -275,7 +274,7 @@ async fn metric_exporter_empty_metrics_skips_post() {
 #[tokio::test]
 async fn metric_exporter_no_token_drops_silently() {
     let server = MockServer::start().await;
-    let session = make_session(Url::parse(&server.uri()).unwrap(), None);
+    let session = make_session(&server.uri(), None);
 
     Mock::given(method("POST"))
         .and(path("/telemetry/send"))
@@ -293,21 +292,21 @@ async fn metric_exporter_no_token_drops_silently() {
 
 #[test]
 fn metric_exporter_temporality_is_delta() {
-    let session = make_session(Url::parse("http://localhost:1").unwrap(), None);
+    let session = make_session("http://localhost:1", None);
     let exporter = SnowflakeInBandExporter::new(session);
     assert_eq!(exporter.temporality(), Temporality::Delta);
 }
 
 #[test]
 fn metric_exporter_force_flush_is_ok() {
-    let session = make_session(Url::parse("http://localhost:1").unwrap(), None);
+    let session = make_session("http://localhost:1", None);
     let exporter = SnowflakeInBandExporter::new(session);
     assert!(exporter.force_flush().is_ok());
 }
 
 #[test]
 fn metric_exporter_shutdown_is_ok() {
-    let session = make_session(Url::parse("http://localhost:1").unwrap(), None);
+    let session = make_session("http://localhost:1", None);
     let exporter = SnowflakeInBandExporter::new(session);
     assert!(PushMetricExporter::shutdown(&exporter).is_ok());
 }

@@ -7,7 +7,7 @@ use reqwest::header;
 use snafu::ResultExt;
 use url::Url;
 
-use crate::config::rest_parameters::ClientInfo;
+use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::{
     CommunicationSnafu, InvalidSnowflakeResponseSnafu, RequestConstructionSnafu, RestError,
     UrlJoinSnafu, apply_json_content_type, apply_query_headers, read_response_json,
@@ -29,14 +29,16 @@ struct TelemetryResponse {
 /// `{"logs": [{"message": {...}, "timestamp": "..."}]}`
 ///
 /// Telemetry is best-effort: callers should handle errors gracefully.
-#[tracing::instrument(skip(client, client_info, session_token, payload))]
+#[tracing::instrument(skip(client, query_parameters, session_token, payload))]
 pub async fn send_telemetry(
     client: &reqwest::Client,
-    server_url: &Url,
-    client_info: &ClientInfo,
+    query_parameters: &QueryParameters,
     session_token: &str,
     payload: &serde_json::Value,
 ) -> Result<(), RestError> {
+    let server_url = Url::parse(&query_parameters.server_url).context(UrlJoinSnafu {
+        path: TELEMETRY_SEND_PATH,
+    })?;
     let url = server_url.join(TELEMETRY_SEND_PATH).context(UrlJoinSnafu {
         path: TELEMETRY_SEND_PATH,
     })?;
@@ -51,7 +53,7 @@ pub async fn send_telemetry(
 
     let request = apply_json_content_type(apply_query_headers(
         client.post(url),
-        client_info,
+        &query_parameters.client_info,
         session_token,
     ))
     .header(header::CONTENT_ENCODING, "gzip")
@@ -90,17 +92,21 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn test_client_info() -> ClientInfo {
+    fn test_query_parameters(server_url: &str) -> QueryParameters {
+        use crate::config::rest_parameters::ClientInfo;
         use crate::crl::config::CrlConfig;
         use crate::tls::config::TlsConfig;
-        ClientInfo {
-            application: "TestApp".to_string(),
-            version: "1.0.0".to_string(),
-            os: "Linux".to_string(),
-            os_version: "5.15".to_string(),
-            ocsp_mode: None,
-            crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::default(),
+        QueryParameters {
+            server_url: server_url.to_string(),
+            client_info: ClientInfo {
+                application: "TestApp".to_string(),
+                version: "1.0.0".to_string(),
+                os: "Linux".to_string(),
+                os_version: "5.15".to_string(),
+                ocsp_mode: None,
+                crl_config: CrlConfig::default(),
+                tls_config: TlsConfig::default(),
+            },
         }
     }
 
@@ -125,15 +131,8 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let server_url = Url::parse(&server.uri()).unwrap();
-        let result = send_telemetry(
-            &client,
-            &server_url,
-            &test_client_info(),
-            "test_session_token",
-            &payload,
-        )
-        .await;
+        let query_params = test_query_parameters(&server.uri());
+        let result = send_telemetry(&client, &query_params, "test_session_token", &payload).await;
 
         assert!(result.is_ok(), "send_telemetry failed: {:?}", result.err());
 
@@ -176,11 +175,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let server_url = Url::parse(&server.uri()).unwrap();
+        let query_params = test_query_parameters(&server.uri());
         let result = send_telemetry(
             &client,
-            &server_url,
-            &test_client_info(),
+            &query_params,
             "test_session_token",
             &json!({"logs": []}),
         )
@@ -200,11 +198,10 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let server_url = Url::parse(&server.uri()).unwrap();
+        let query_params = test_query_parameters(&server.uri());
         let result = send_telemetry(
             &client,
-            &server_url,
-            &test_client_info(),
+            &query_params,
             "test_session_token",
             &json!({"logs": []}),
         )

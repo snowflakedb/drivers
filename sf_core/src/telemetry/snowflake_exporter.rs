@@ -7,9 +7,8 @@ use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use tokio::sync::RwLock as AsyncRwLock;
-use url::Url;
 
-use crate::config::rest_parameters::ClientInfo;
+use crate::config::rest_parameters::QueryParameters;
 use crate::rest::snowflake::SessionTokens;
 use crate::rest::snowflake::telemetry as rest;
 
@@ -18,15 +17,14 @@ use super::serialization;
 /// Shared session context that the exporter uses to POST telemetry.
 pub struct ExporterSession {
     pub client: reqwest::Client,
-    pub server_url: Url,
-    pub client_info: ClientInfo,
+    pub query_parameters: QueryParameters,
     pub session_token: Arc<AsyncRwLock<Option<SessionTokens>>>,
 }
 
 impl std::fmt::Debug for ExporterSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExporterSession")
-            .field("server_url", &self.server_url)
+            .field("server_url", &self.query_parameters.server_url)
             .finish_non_exhaustive()
     }
 }
@@ -61,8 +59,7 @@ async fn send_with_token(session: &ExporterSession, payload: &serde_json::Value)
 
     if let Err(e) = rest::send_telemetry(
         &session.client,
-        &session.server_url,
-        &session.client_info,
+        &session.query_parameters,
         token.reveal(),
         payload,
     )
@@ -145,10 +142,25 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn make_exporter_session(server_url: Url) -> Arc<ExporterSession> {
+    fn test_query_parameters(server_url: &str) -> QueryParameters {
+        use crate::config::rest_parameters::ClientInfo;
         use crate::crl::config::CrlConfig;
         use crate::tls::config::TlsConfig;
+        QueryParameters {
+            server_url: server_url.to_string(),
+            client_info: ClientInfo {
+                application: "TestApp".to_string(),
+                version: "1.0.0".to_string(),
+                os: "Linux".to_string(),
+                os_version: "5.15".to_string(),
+                ocsp_mode: None,
+                crl_config: CrlConfig::default(),
+                tls_config: TlsConfig::default(),
+            },
+        }
+    }
 
+    fn make_exporter_session(server_url: &str) -> Arc<ExporterSession> {
         use crate::sensitive::SensitiveString;
 
         let tokens = SessionTokens {
@@ -161,16 +173,7 @@ mod tests {
 
         Arc::new(ExporterSession {
             client: reqwest::Client::new(),
-            server_url,
-            client_info: ClientInfo {
-                application: "TestApp".to_string(),
-                version: "1.0.0".to_string(),
-                os: "Linux".to_string(),
-                os_version: "5.15".to_string(),
-                ocsp_mode: None,
-                crl_config: CrlConfig::default(),
-                tls_config: TlsConfig::default(),
-            },
+            query_parameters: test_query_parameters(server_url),
             session_token: Arc::new(AsyncRwLock::new(Some(tokens))),
         })
     }
@@ -201,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn span_exporter_posts_to_telemetry_endpoint() {
         let server = MockServer::start().await;
-        let session = make_exporter_session(Url::parse(&server.uri()).unwrap());
+        let session = make_exporter_session(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -218,7 +221,7 @@ mod tests {
     #[tokio::test]
     async fn span_exporter_empty_batch_skips_post() {
         let server = MockServer::start().await;
-        let session = make_exporter_session(Url::parse(&server.uri()).unwrap());
+        let session = make_exporter_session(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -235,20 +238,7 @@ mod tests {
     #[tokio::test]
     async fn span_exporter_no_session_token_drops_silently() {
         let server = MockServer::start().await;
-        let session = Arc::new(ExporterSession {
-            client: reqwest::Client::new(),
-            server_url: Url::parse(&server.uri()).unwrap(),
-            client_info: ClientInfo {
-                application: "TestApp".to_string(),
-                version: "1.0.0".to_string(),
-                os: "Linux".to_string(),
-                os_version: "5.15".to_string(),
-                ocsp_mode: None,
-                crl_config: crate::crl::config::CrlConfig::default(),
-                tls_config: crate::tls::config::TlsConfig::default(),
-            },
-            session_token: Arc::new(AsyncRwLock::new(None)),
-        });
+        let session = make_exporter_session_no_token(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -265,7 +255,7 @@ mod tests {
     #[tokio::test]
     async fn span_exporter_server_error_returns_ok() {
         let server = MockServer::start().await;
-        let session = make_exporter_session(Url::parse(&server.uri()).unwrap());
+        let session = make_exporter_session(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -317,21 +307,10 @@ mod tests {
         }
     }
 
-    fn make_exporter_session_no_token(server_url: Url) -> Arc<ExporterSession> {
-        use crate::crl::config::CrlConfig;
-        use crate::tls::config::TlsConfig;
+    fn make_exporter_session_no_token(server_url: &str) -> Arc<ExporterSession> {
         Arc::new(ExporterSession {
             client: reqwest::Client::new(),
-            server_url,
-            client_info: ClientInfo {
-                application: "TestApp".to_string(),
-                version: "1.0.0".to_string(),
-                os: "Linux".to_string(),
-                os_version: "5.15".to_string(),
-                ocsp_mode: None,
-                crl_config: CrlConfig::default(),
-                tls_config: TlsConfig::default(),
-            },
+            query_parameters: test_query_parameters(server_url),
             session_token: Arc::new(AsyncRwLock::new(None)),
         })
     }
@@ -360,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn metric_exporter_posts_to_telemetry_endpoint() {
         let server = MockServer::start().await;
-        let session = make_exporter_session(Url::parse(&server.uri()).unwrap());
+        let session = make_exporter_session(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -381,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn metric_exporter_empty_metrics_skips_post() {
         let server = MockServer::start().await;
-        let session = make_exporter_session(Url::parse(&server.uri()).unwrap());
+        let session = make_exporter_session(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -399,7 +378,7 @@ mod tests {
     #[tokio::test]
     async fn metric_exporter_no_token_drops_silently() {
         let server = MockServer::start().await;
-        let session = make_exporter_session_no_token(Url::parse(&server.uri()).unwrap());
+        let session = make_exporter_session_no_token(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -417,7 +396,7 @@ mod tests {
     #[tokio::test]
     async fn metric_exporter_server_error_returns_ok() {
         let server = MockServer::start().await;
-        let session = make_exporter_session(Url::parse(&server.uri()).unwrap());
+        let session = make_exporter_session(&server.uri());
 
         Mock::given(method("POST"))
             .and(path("/telemetry/send"))
@@ -433,7 +412,7 @@ mod tests {
 
     #[test]
     fn metric_exporter_temporality_is_delta() {
-        let session = make_exporter_session(Url::parse("http://localhost:1").unwrap());
+        let session = make_exporter_session("http://localhost:1");
         let exporter = SnowflakeInBandExporter::new(session);
         assert_eq!(exporter.temporality(), Temporality::Delta);
     }

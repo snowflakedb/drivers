@@ -690,16 +690,13 @@ message TelemetrySendApiUsageRequest {
   string api_method = 2;
 }
 
-message TelemetrySendApiUsageResponse {
-}
-
 message TelemetrySendWrapperErrorRequest {
   ConnectionHandle conn_handle = 1;
   string exception_type = 2;
   string error_source = 3;
 }
 
-message TelemetrySendWrapperErrorResponse {
+message TelemetrySendResponse {
 }
 
 // Database Driver service definition
@@ -761,6 +758,6 @@ service DatabaseDriver {
   rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
 
   // Telemetry operations
-  rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendApiUsageResponse);
-  rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendWrapperErrorResponse);
+  rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendResponse);
+  rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendResponse);
 }

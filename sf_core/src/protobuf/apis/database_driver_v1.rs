@@ -1500,7 +1500,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn telemetry_send_api_usage(
         &self,
         input: TelemetrySendApiUsageRequest,
-    ) -> Result<TelemetrySendApiUsageResponse, DriverException> {
+    ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
@@ -1520,7 +1520,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         );
 
         // TODO: increment OTel counter snowflake.driver.api.call with api_method + identity attributes
-        Ok(TelemetrySendApiUsageResponse {})
+        Ok(TelemetrySendResponse {})
     }
 
     #[instrument(
@@ -1530,7 +1530,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
     async fn telemetry_send_wrapper_error(
         &self,
         input: TelemetrySendWrapperErrorRequest,
-    ) -> Result<TelemetrySendWrapperErrorResponse, DriverException> {
+    ) -> Result<TelemetrySendResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
@@ -1551,7 +1551,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
         );
 
         // TODO: create OTel span with exception event + identity attributes
-        Ok(TelemetrySendWrapperErrorResponse {})
+        Ok(TelemetrySendResponse {})
     }
 }
 
