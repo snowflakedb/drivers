@@ -522,6 +522,23 @@ impl DatabaseDriverV1 {
             .fail(),
         }
     }
+
+    /// Read the stored wrapper identity for a connection, if set during `ConnectionInit`.
+    pub async fn get_wrapper_identity(
+        &self,
+        conn_handle: Handle,
+    ) -> Result<Option<WrapperIdentity>, ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                Ok(conn.wrapper_identity.clone())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Invalid connection handle".to_string(),
+            }
+            .fail(),
+        }
+    }
 }
 
 /// Wrapper identity set once via `ConnectionInit` and attached to all subsequent telemetry events.

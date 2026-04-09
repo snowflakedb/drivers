@@ -1,4 +1,4 @@
-"""Unit tests for Connection telemetry integration."""
+"""Unit tests for _internal.telemetry module and Connection telemetry integration."""
 
 import platform
 
@@ -15,6 +15,60 @@ from tests.compatibility import is_new_driver
 
 
 pytestmark = pytest.mark.skipif(not is_new_driver(), reason="Requires universal driver")
+
+
+@pytest.fixture
+def mock_db_api():
+    return MagicMock()
+
+
+@pytest.fixture
+def conn_handle():
+    return ConnectionHandle(id=42)
+
+
+@pytest.fixture
+def telemetry_client(mock_db_api, conn_handle):
+    from snowflake.connector._internal.telemetry import TelemetryClient
+
+    return TelemetryClient(mock_db_api, conn_handle)
+
+
+class TestTelemetryClientSendApiUsage:
+    """Tests for TelemetryClient.send_api_usage."""
+
+    def test_calls_rpc_with_correct_args(self, telemetry_client, mock_db_api, conn_handle):
+        telemetry_client.send_api_usage("cursor.execute")
+
+        mock_db_api.telemetry_send_api_usage.assert_called_once()
+        req = mock_db_api.telemetry_send_api_usage.call_args[0][0]
+        assert req.conn_handle == conn_handle
+        assert req.api_method == "cursor.execute"
+
+    def test_swallows_exceptions(self, telemetry_client, mock_db_api):
+        mock_db_api.telemetry_send_api_usage.side_effect = RuntimeError("rpc failed")
+
+        # Should not raise
+        telemetry_client.send_api_usage("cursor.execute")
+
+
+class TestTelemetryClientSendWrapperError:
+    """Tests for TelemetryClient.send_wrapper_error."""
+
+    def test_calls_rpc_with_correct_args(self, telemetry_client, mock_db_api, conn_handle):
+        telemetry_client.send_wrapper_error("ProgrammingError", "cursor.execute")
+
+        mock_db_api.telemetry_send_wrapper_error.assert_called_once()
+        req = mock_db_api.telemetry_send_wrapper_error.call_args[0][0]
+        assert req.conn_handle == conn_handle
+        assert req.exception_type == "ProgrammingError"
+        assert req.error_source == "cursor.execute"
+
+    def test_swallows_exceptions(self, telemetry_client, mock_db_api):
+        mock_db_api.telemetry_send_wrapper_error.side_effect = RuntimeError("rpc failed")
+
+        # Should not raise
+        telemetry_client.send_wrapper_error("Error", "source")
 
 
 class TestConnectionInitIdentity:
