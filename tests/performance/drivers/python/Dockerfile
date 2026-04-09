@@ -28,11 +28,11 @@ COPY tests/performance/drivers/python/app/ /workdir/
 ENV PYTHONUNBUFFERED=1
 
 # ============================================================================
-# Universal driver: builds Rust core + Cython extensions
+# Universal driver: Cython extensions + pre-built Rust core
 # ============================================================================
 FROM base AS universal
 
-# Install Rust toolchain
+# Install Rust toolchain (needed for proto_generator during pip install)
 COPY rust-toolchain.toml ./rust-toolchain.toml
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 ENV PATH="/root/.cargo/bin:${PATH}"
@@ -68,9 +68,13 @@ RUN cd python && \
     ln -s ../error_trace error_trace && \
     ln -s ../error_trace_derive error_trace_derive
 
-RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /etc/rust_version
+# Use pre-built libsf_core.so from sf-core-builder.
+COPY tests/performance/.tmp/libsf_core.so /workdir/python/src/snowflake/connector/_core/libsf_core.so
+COPY tests/performance/.tmp/rust_version /etc/rust_version
 
-# Install the driver — builds Rust core and Cython extensions via hatch_build.py
+# Install the driver — builds Cython extensions via hatch_build.py.
+# SKIP_CORE_BUILD tells hatch to skip cargo build of sf_core (we use the pre-built one above).
+ENV SKIP_CORE_BUILD=1
 RUN pip install --no-cache-dir /workdir/python/
 
 ENV DRIVER_TYPE=universal
