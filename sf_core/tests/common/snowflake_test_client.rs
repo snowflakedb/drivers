@@ -1,4 +1,3 @@
-use proto_utils::ProtoError;
 use sf_core::config::logout::ErrorStrategy;
 use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClient, DatabaseDriverClientBlockingExt, database_driver_client,

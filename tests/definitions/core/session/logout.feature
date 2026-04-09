@@ -315,7 +315,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     When Logout is executed
     Then Exactly <max_attempts> attempts are made
     And No further retries after max reached
-    And WARN log is emitted
+    And Error log is emitted
     And Close throws error
 
     Examples:
