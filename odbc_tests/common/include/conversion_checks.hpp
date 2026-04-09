@@ -233,4 +233,34 @@ inline void check_numeric_val_zero_from(const SQL_NUMERIC_STRUCT& numeric, int s
   }
 }
 
+inline void check_incompatible_bindparam(const HandleWrapper& stmt_handle, SQLSMALLINT c_type, SQLSMALLINT sql_type,
+                                         void* value, SQLLEN buffer_len, SQLLEN* ind) {
+  SQLRETURN ret =
+      SQLBindParameter(stmt_handle.getHandle(), 1, SQL_PARAM_INPUT, c_type, sql_type, 0, 0, value, buffer_len, ind);
+  if (ret == SQL_ERROR) {
+    auto records = get_diag_rec(stmt_handle);
+    INFO("c_type=" << c_type << " sql_type=" << sql_type << " rejected at SQLBindParameter");
+    REQUIRE(!records.empty());
+    return;
+  }
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLExecute(stmt_handle.getHandle());
+  auto records = get_diag_rec(stmt_handle);
+  std::string sqlstate = records.empty() ? "(no diag)" : records[0].sqlState;
+  INFO("c_type=" << c_type << " sql_type=" << sql_type << " ret=" << ret << " sqlstate=" << sqlstate);
+  REQUIRE(ret == SQL_ERROR);
+  REQUIRE(!records.empty());
+}
+
+inline void set_numeric_magnitude(SQL_NUMERIC_STRUCT& ns, uint64_t magnitude) {
+  std::memset(ns.val, 0, sizeof(ns.val));
+  std::memcpy(ns.val, &magnitude, sizeof(magnitude));
+}
+
+inline void set_numeric_magnitude_128(SQL_NUMERIC_STRUCT& ns, uint64_t low, uint64_t high) {
+  std::memset(ns.val, 0, sizeof(ns.val));
+  std::memcpy(ns.val, &low, sizeof(low));
+  std::memcpy(ns.val + sizeof(low), &high, sizeof(high));
+}
+
 #endif  // CONVERSION_CHECKS_HPP

@@ -77,6 +77,11 @@ impl ParamConverter for DecimalParamConverter {
             CDataType::UTinyInt => read_unaligned::<u8>(binding).to_string(),
             CDataType::Double => read_unaligned::<f64>(binding).to_string(),
             CDataType::Float => read_unaligned::<f32>(binding).to_string(),
+            CDataType::Bit => read_unaligned::<u8>(binding).to_string(),
+            CDataType::Numeric => {
+                let (value, scale) = read_numeric_struct(binding);
+                format_numeric_value(value, scale)
+            }
             _ => {
                 return Err(UnsupportedParameterTypeSnafu {
                     sql_type: sql::SqlDataType::DECIMAL,
@@ -243,6 +248,48 @@ fn is_null_indicator(binding: &ParameterBinding) -> bool {
 /// Read a fixed-size value using `read_unaligned` for ODBC pointer safety.
 pub(crate) fn read_unaligned<T: Copy>(binding: &ParameterBinding) -> T {
     unsafe { std::ptr::read_unaligned(binding.parameter_value_ptr as *const T) }
+}
+
+/// Read and decode an `SQL_NUMERIC_STRUCT` from the parameter buffer.
+///
+/// Returns `(signed_value, scale)` where `signed_value` is the integer
+/// mantissa with sign applied, and `scale` is the number of decimal digits
+/// after the point. The caller divides by `10^scale` to recover the true
+/// numeric value.
+pub(crate) fn read_numeric_struct(binding: &ParameterBinding) -> (i128, i8) {
+    let ns = read_unaligned::<sql::Numeric>(binding);
+    let magnitude = u128::from_le_bytes(ns.val);
+    let signed = if ns.sign == 0 {
+        -(magnitude as i128)
+    } else {
+        magnitude as i128
+    };
+    (signed, ns.scale)
+}
+
+/// Format a scaled integer value into its decimal string representation.
+/// For example, `(12345, 2)` becomes `"123.45"`.
+pub(crate) fn format_numeric_value(value: i128, scale: i8) -> String {
+    if scale <= 0 {
+        if scale == 0 {
+            return value.to_string();
+        }
+        let multiplier = 10i128.pow((-scale) as u32);
+        return (value * multiplier).to_string();
+    }
+    let scale = scale as u32;
+    let is_negative = value < 0;
+    let abs = value.unsigned_abs();
+    let mut s = abs.to_string();
+    while s.len() <= scale as usize {
+        s.insert(0, '0');
+    }
+    let decimal_pos = s.len() - scale as usize;
+    s.insert(decimal_pos, '.');
+    if is_negative {
+        s.insert(0, '-');
+    }
+    s
 }
 
 /// Determine the actual byte length of buffer data, using the length/indicator
@@ -1085,7 +1132,6 @@ mod tests {
 
     #[test]
     fn convert_numeric_negative_scale_as_varchar() -> TestResult {
-        // scale = -2 means value = 123 * 10^2 = 12300
         let n = sql::Numeric {
             precision: 10,
             scale: -2,
@@ -1107,7 +1153,6 @@ mod tests {
 
     #[test]
     fn convert_numeric_negative_scale_negative_value_as_varchar() -> TestResult {
-        // scale = -3, sign = 0 (negative), val = 5 → -5000
         let n = sql::Numeric {
             precision: 10,
             scale: -3,
@@ -1141,6 +1186,420 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Text);
         assert_eq!(v, Value::String("deadbeef".to_string()));
+        Ok(())
+    }
+
+    // -- format_numeric_value tests -------------------------------------------
+
+    #[test]
+    fn format_numeric_value_no_scale() {
+        assert_eq!(format_numeric_value(42, 0), "42");
+        assert_eq!(format_numeric_value(-42, 0), "-42");
+        assert_eq!(format_numeric_value(0, 0), "0");
+    }
+
+    #[test]
+    fn format_numeric_value_positive_scale() {
+        assert_eq!(format_numeric_value(12345, 2), "123.45");
+        assert_eq!(format_numeric_value(-12345, 2), "-123.45");
+        assert_eq!(format_numeric_value(5, 3), "0.005");
+    }
+
+    #[test]
+    fn format_numeric_value_negative_scale() {
+        assert_eq!(format_numeric_value(42, -2), "4200");
+    }
+
+    // -- read_numeric_struct tests --------------------------------------------
+
+    #[test]
+    fn read_numeric_struct_positive() {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 0,
+            sign: 1,
+            val: 42u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (value, scale) = read_numeric_struct(&binding);
+        assert_eq!(value, 42);
+        assert_eq!(scale, 0);
+    }
+
+    #[test]
+    fn read_numeric_struct_negative() {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 0,
+            sign: 0,
+            val: 99u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (value, scale) = read_numeric_struct(&binding);
+        assert_eq!(value, -99);
+        assert_eq!(scale, 0);
+    }
+
+    #[test]
+    fn read_numeric_struct_with_scale() {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 3,
+            val: 12345u128.to_le_bytes(),
+            sign: 1,
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::DECIMAL,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (value, scale) = read_numeric_struct(&binding);
+        assert_eq!(value, 12345);
+        assert_eq!(scale, 3);
+    }
+
+    // -- cross-type numeric conversion tests ----------------------------------
+
+    #[test]
+    fn convert_float_as_integer() -> TestResult {
+        let val: f32 = 42.0;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::INTEGER,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_double_as_integer() -> TestResult {
+        let val: f64 = -123.0;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::INTEGER,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("-123".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_double_truncates_fraction_for_integer() -> TestResult {
+        let val: f64 = 42.99;
+        let binding = make_binding(
+            CDataType::Double,
+            sql::SqlDataType::INTEGER,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_bit_as_integer() -> TestResult {
+        let val: u8 = 1;
+        let binding = make_binding(
+            CDataType::Bit,
+            sql::SqlDataType::INTEGER,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("1".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_as_integer() -> TestResult {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 0,
+            sign: 1,
+            val: 999u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("999".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_with_scale_as_integer() -> TestResult {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 2,
+            sign: 1,
+            val: 4299u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_slong_as_real() -> TestResult {
+        let val: i32 = 42;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::DOUBLE,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_sbigint_as_real() -> TestResult {
+        let val: i64 = 1_000_000;
+        let binding = make_binding(
+            CDataType::SBigInt,
+            sql::SqlDataType::DOUBLE,
+            &val as *const i64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, Value::String("1000000".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_bit_as_real() -> TestResult {
+        let val: u8 = 1;
+        let binding = make_binding(
+            CDataType::Bit,
+            sql::SqlDataType::DOUBLE,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, Value::String("1".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_as_real() -> TestResult {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 2,
+            sign: 1,
+            val: 314u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::DOUBLE,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, Value::String("3.14".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_slong_as_boolean() -> TestResult {
+        let val: i32 = 1;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_slong_zero_as_boolean() -> TestResult {
+        let val: i32 = 0;
+        let binding = make_binding(
+            CDataType::SLong,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const i32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_float_as_boolean() -> TestResult {
+        let val: f32 = 1.0;
+        let binding = make_binding(
+            CDataType::Float,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const f32 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_as_boolean() -> TestResult {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 0,
+            sign: 1,
+            val: 1u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::EXT_BIT,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_bit_as_decimal() -> TestResult {
+        let val: u8 = 1;
+        let binding = make_binding(
+            CDataType::Bit,
+            sql::SqlDataType::DECIMAL,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("1".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_as_decimal() -> TestResult {
+        let ns = sql::Numeric {
+            precision: 10,
+            scale: 3,
+            sign: 1,
+            val: 12345678u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::DECIMAL,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("12345.678".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_bit_zero_as_varchar() -> TestResult {
+        let val: u8 = 0;
+        let binding = make_binding(
+            CDataType::Bit,
+            sql::SqlDataType::VARCHAR,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Text);
+        assert_eq!(v, Value::String("0".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_as_boolean_true() -> TestResult {
+        let val = b"1\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_char_as_boolean_false() -> TestResult {
+        let val = b"0\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
         Ok(())
     }
 }

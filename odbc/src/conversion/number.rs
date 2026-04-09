@@ -12,7 +12,9 @@ use crate::conversion::numeric_helpers::{
     check_integer_range, fractional_warning, reject_multi_field_interval, whole_digits_len,
     write_interval_second, write_numeric_as_binary, write_single_field_interval,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
@@ -368,6 +370,32 @@ impl ReadODBC for SnowflakeNumber {
             CDataType::UBigInt => read_unaligned::<u64>(binding) as i128,
             CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) as i128,
             CDataType::UTinyInt => read_unaligned::<u8>(binding) as i128,
+            CDataType::Float => {
+                let v = read_unaligned::<f32>(binding) as f64;
+                v.trunc() as i128
+            }
+            CDataType::Double => {
+                let v = read_unaligned::<f64>(binding);
+                v.trunc() as i128
+            }
+            CDataType::Bit => read_unaligned::<u8>(binding) as i128,
+            CDataType::Numeric => {
+                let (mantissa, scale) = read_numeric_struct(binding);
+                if scale > 0 {
+                    let divisor = 10i128.pow(scale as u32);
+                    mantissa / divisor
+                } else if scale < 0 {
+                    let multiplier = 10i128.pow((-scale) as u32);
+                    mantissa.checked_mul(multiplier).ok_or_else(|| {
+                        UnsupportedCDataTypeSnafu {
+                            c_type: binding.value_type,
+                        }
+                        .build()
+                    })?
+                } else {
+                    mantissa
+                }
+            }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
                 s.trim().parse::<i128>().map_err(|_| {
