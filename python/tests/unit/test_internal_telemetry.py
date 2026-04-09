@@ -71,8 +71,8 @@ class TestTelemetryClientSendWrapperError:
         telemetry_client.send_wrapper_error("Error", "source")
 
 
-class TestConnectionTelemetryInit:
-    """Tests for telemetry_init call in Connection constructor."""
+class TestConnectionInitIdentity:
+    """Tests that wrapper identity fields are passed in connection_init."""
 
     @pytest.fixture
     def full_mock_db_api(self):
@@ -82,37 +82,16 @@ class TestConnectionTelemetryInit:
         db_api.connection_get_parameter.return_value = MagicMock(value="")
         return db_api
 
-    def test_telemetry_init_called_with_correct_identity(self, full_mock_db_api):
+    def test_connection_init_includes_identity_fields(self, full_mock_db_api):
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=full_mock_db_api):
             Connection(user="test_user", account="test_account")
 
-        full_mock_db_api.telemetry_init.assert_called_once()
-        req = full_mock_db_api.telemetry_init.call_args[0][0]
+        full_mock_db_api.connection_init.assert_called_once()
+        req = full_mock_db_api.connection_init.call_args[0][0]
         assert req.driver_name == "snowflake-connector-python"
         assert req.driver_version == __version__
         assert req.language_runtime == platform.python_implementation()
         assert req.language_version == platform.python_version()
         assert req.language_compiler == platform.python_compiler()
-
-    def test_telemetry_init_called_before_connection_init(self, full_mock_db_api):
-        from snowflake.connector.connection import Connection
-
-        call_order = []
-        full_mock_db_api.telemetry_init.side_effect = lambda *a, **kw: call_order.append("telemetry_init")
-        full_mock_db_api.connection_init.side_effect = lambda *a, **kw: call_order.append("connection_init")
-
-        with patch("snowflake.connector.connection.database_driver_client", return_value=full_mock_db_api):
-            Connection(user="test_user", account="test_account")
-
-        assert call_order.index("telemetry_init") < call_order.index("connection_init")
-
-    def test_telemetry_init_uses_correct_conn_handle(self, full_mock_db_api):
-        from snowflake.connector.connection import Connection
-
-        with patch("snowflake.connector.connection.database_driver_client", return_value=full_mock_db_api):
-            conn = Connection(user="test_user", account="test_account")
-
-        req = full_mock_db_api.telemetry_init.call_args[0][0]
-        assert req.conn_handle == conn.conn_handle

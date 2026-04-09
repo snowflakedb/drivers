@@ -470,7 +470,7 @@ impl DatabaseDriverV1 {
         }
     }
 
-    /// Store wrapper identity on a connection. Called once from `TelemetryInit`.
+    /// Store wrapper identity on a connection. Called once from `ConnectionInit`.
     pub async fn set_wrapper_identity(
         &self,
         conn_handle: Handle,
@@ -481,7 +481,7 @@ impl DatabaseDriverV1 {
                 let mut conn = conn_ptr.lock().await;
                 if conn.wrapper_identity.is_some() {
                     tracing::warn!(
-                        "TelemetryInit called more than once on the same connection; overwriting previous wrapper identity"
+                        "Wrapper identity set more than once on the same connection; overwriting previous identity"
                     );
                 }
                 conn.wrapper_identity = Some(identity);
@@ -494,7 +494,7 @@ impl DatabaseDriverV1 {
         }
     }
 
-    /// Read the stored wrapper identity for a connection, if `TelemetryInit` was called.
+    /// Read the stored wrapper identity for a connection, if set during `ConnectionInit`.
     pub async fn get_wrapper_identity(
         &self,
         conn_handle: Handle,
@@ -512,7 +512,7 @@ impl DatabaseDriverV1 {
     }
 }
 
-/// Wrapper identity set once via `TelemetryInit` and attached to all subsequent telemetry events.
+/// Wrapper identity set once via `ConnectionInit` and attached to all subsequent telemetry events.
 #[derive(Debug, Clone, Default)]
 pub struct WrapperIdentity {
     pub driver_name: String,
@@ -549,7 +549,7 @@ pub struct Connection {
     /// Server-echoed final names from login and query responses (e.g. after USE DATABASE).
     /// Stored separately from session_parameters to keep concerns distinct.
     pub final_session_names: RwLock<FinalSessionNames>,
-    /// Wrapper identity for telemetry, set once via TelemetryInit.
+    /// Wrapper identity for telemetry, set once via ConnectionInit.
     pub wrapper_identity: Option<WrapperIdentity>,
 }
 

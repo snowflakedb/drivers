@@ -153,6 +153,7 @@ class Connection:
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
+
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
         if autocommit is not None:
@@ -199,7 +200,17 @@ class Connection:
                 ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
 
-        self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self.db_api.connection_init(
+            ConnectionInitRequest(
+                conn_handle=self.conn_handle,
+                db_handle=self.db_handle,
+                driver_name="snowflake-connector-python",
+                driver_version=__version__,
+                language_runtime=platform.python_implementation(),
+                language_version=platform.python_version(),
+                language_compiler=platform.python_compiler(),
+            )
+        )
         self._telemetry_client = InternalTelemetryClient(self.db_api, self.conn_handle)
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}

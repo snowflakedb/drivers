@@ -873,8 +873,34 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: ConnectionInitRequest,
     ) -> Result<ConnectionInitResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-
         let db_handle = required(input.db_handle, "Database handle is required")?;
+
+        // If wrapper identity fields are provided, store them before connection_init
+        // so the session_init telemetry event carries the identity.
+        if let Some(ref driver_name) = input.driver_name
+            && !driver_name.is_empty()
+        {
+            let identity = crate::apis::database_driver_v1::connection::WrapperIdentity {
+                driver_name: driver_name.clone(),
+                driver_version: input.driver_version.clone().unwrap_or_default(),
+                language_runtime: input.language_runtime.clone().unwrap_or_default(),
+                language_version: input.language_version.clone().unwrap_or_default(),
+                language_compiler: input.language_compiler.clone(),
+            };
+
+            tracing::debug!(
+                driver_name = %identity.driver_name,
+                driver_version = %identity.driver_version,
+                language_runtime = %identity.language_runtime,
+                language_version = %identity.language_version,
+                "Wrapper identity stored via connection_init"
+            );
+
+            self.driver
+                .set_wrapper_identity(Handle::from(conn_handle), identity)
+                .await
+                .to_protobuf()?;
+        }
 
         self.driver
             .connection_init(conn_handle.into(), db_handle.into())
@@ -1469,70 +1495,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     // -- Telemetry operations --
-
-    #[instrument(name = "DatabaseDriverV1::telemetry_init", skip(self, input))]
-    async fn telemetry_init(
-        &self,
-        input: TelemetryInitRequest,
-    ) -> Result<TelemetryInitResponse, DriverException> {
-        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
-        let handle = Handle::from(conn_handle);
-
-        // Validate that required identity fields are non-empty.
-        if input.driver_name.is_empty() {
-            return Err(DriverException {
-                message: "driver_name must not be empty".to_string(),
-                status_code: StatusCode::InvalidArgument as i32,
-                ..Default::default()
-            });
-        }
-        if input.driver_version.is_empty() {
-            return Err(DriverException {
-                message: "driver_version must not be empty".to_string(),
-                status_code: StatusCode::InvalidArgument as i32,
-                ..Default::default()
-            });
-        }
-        if input.language_runtime.is_empty() {
-            return Err(DriverException {
-                message: "language_runtime must not be empty".to_string(),
-                status_code: StatusCode::InvalidArgument as i32,
-                ..Default::default()
-            });
-        }
-        if input.language_version.is_empty() {
-            return Err(DriverException {
-                message: "language_version must not be empty".to_string(),
-                status_code: StatusCode::InvalidArgument as i32,
-                ..Default::default()
-            });
-        }
-
-        let identity = crate::apis::database_driver_v1::connection::WrapperIdentity {
-            driver_name: input.driver_name.clone(),
-            driver_version: input.driver_version.clone(),
-            language_runtime: input.language_runtime.clone(),
-            language_version: input.language_version.clone(),
-            language_compiler: input.language_compiler,
-        };
-
-        // Store wrapper identity on the connection. The session_init telemetry
-        // event is emitted by connection_init, not here.
-        self.driver
-            .set_wrapper_identity(handle, identity.clone())
-            .await
-            .to_protobuf()?;
-
-        tracing::debug!(
-            driver_name = %identity.driver_name,
-            driver_version = %identity.driver_version,
-            language_runtime = %identity.language_runtime,
-            language_version = %identity.language_version,
-            "Telemetry: wrapper identity stored"
-        );
-
-        Ok(TelemetryInitResponse {})
-    }
 
     #[instrument(name = "DatabaseDriverV1::telemetry_send_api_usage", skip(self, input))]
     async fn telemetry_send_api_usage(

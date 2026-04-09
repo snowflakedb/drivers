@@ -255,6 +255,12 @@ message ConnectionNewResponse {
 message ConnectionInitRequest {
   ConnectionHandle conn_handle = 1;
   DatabaseHandle db_handle = 2;
+  // Wrapper identity fields — used to emit session_init telemetry during connection init.
+  optional string driver_name = 3;
+  optional string driver_version = 4;
+  optional string language_runtime = 5;
+  optional string language_version = 6;
+  optional string language_compiler = 7;
 }
 
 message ConnectionInitResponse {
@@ -678,21 +684,6 @@ message ConfigGetPathsResponse {
 // TELEMETRY - In-band telemetry messages sent from wrappers via core
 // =============================================================================
 
-// Register wrapper identity (driver name, version, language info) with sf_core
-// so that subsequent telemetry events carry it automatically.
-// Call once BEFORE connection_init. The session_init telemetry event is emitted
-// by sf_core during connection_init using the stored identity.
-message TelemetryInitRequest {
-  ConnectionHandle conn_handle = 1;
-  string driver_name = 2;
-  string driver_version = 3;
-  string language_runtime = 4;
-  string language_version = 5;
-  optional string language_compiler = 6;
-}
-
-message TelemetryInitResponse {
-}
 
 message TelemetrySendApiUsageRequest {
   ConnectionHandle conn_handle = 1;
@@ -770,7 +761,6 @@ service DatabaseDriver {
   rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
 
   // Telemetry operations
-  rpc TelemetryInit(TelemetryInitRequest) returns (TelemetryInitResponse);
   rpc TelemetrySendApiUsage(TelemetrySendApiUsageRequest) returns (TelemetrySendApiUsageResponse);
   rpc TelemetrySendWrapperError(TelemetrySendWrapperErrorRequest) returns (TelemetrySendWrapperErrorResponse);
 }

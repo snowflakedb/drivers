@@ -96,6 +96,7 @@ pub fn create_connection(
         .connection_init_blocking(ConnectionInitRequest {
             conn_handle: Some(conn_handle),
             db_handle: Some(db_handle),
+            ..Default::default()
         })
         .map_err(|e| format!("Connection initialization failed: {:?}", e))?;
 

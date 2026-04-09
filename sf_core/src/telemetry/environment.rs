@@ -15,7 +15,7 @@ pub struct EnvironmentInfo {
 }
 
 impl EnvironmentInfo {
-    /// Detect OS-level fields and merge wrapper identity (from `TelemetryInit`).
+    /// Detect OS-level fields and merge wrapper identity (from `ConnectionInit`).
     pub fn with_wrapper(identity: &WrapperIdentity) -> Self {
         Self {
             os_name: std::env::consts::OS.to_string(),

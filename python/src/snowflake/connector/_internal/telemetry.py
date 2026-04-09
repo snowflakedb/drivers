@@ -28,9 +28,8 @@ logger = logging.getLogger(__name__)
 class TelemetryClient:
     """Sends telemetry events to sf_core via protobuf RPC.
 
-    Wrapper identity is registered by the Connection constructor via
-    ``db_api.telemetry_init`` before connection_init. This client only sends
-    runtime events — sf_core attaches the stored identity automatically.
+    Wrapper identity is passed as part of ``connection_init``. This client only
+    sends runtime events — sf_core attaches the stored identity automatically.
     """
 
     def __init__(self, db_api: DatabaseDriverClient, conn_handle: ConnectionHandle) -> None:
