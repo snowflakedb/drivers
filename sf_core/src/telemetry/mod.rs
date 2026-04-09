@@ -14,6 +14,7 @@ use opentelemetry::trace::{
     SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
 };
 use opentelemetry_sdk::trace::SpanData;
+use rand::Rng;
 
 /// Build a `session_init` OTel span carrying environment and session metadata.
 ///
@@ -22,6 +23,7 @@ use opentelemetry_sdk::trace::SpanData;
 /// `/telemetry/send` endpoint.
 pub fn build_session_init_span(env: &EnvironmentInfo, session_id: i64) -> SpanData {
     let now = std::time::SystemTime::now();
+    let mut rng = rand::rng();
 
     let mut attributes = vec![
         KeyValue::new("service.name", env.driver_name.clone()),
@@ -40,8 +42,8 @@ pub fn build_session_init_span(env: &EnvironmentInfo, session_id: i64) -> SpanDa
 
     SpanData {
         span_context: SpanContext::new(
-            TraceId::INVALID,
-            SpanId::INVALID,
+            TraceId::from_bytes(rng.random()),
+            SpanId::from_bytes(rng.random()),
             TraceFlags::default(),
             false,
             TraceState::default(),

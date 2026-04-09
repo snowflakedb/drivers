@@ -30,6 +30,11 @@ class TelemetryClient:
 
     Wrapper identity is passed as part of ``connection_init``. This client only
     sends runtime events — sf_core attaches the stored identity automatically.
+
+    .. note:: The sf_core RPC handlers for ``send_api_usage`` and
+       ``send_wrapper_error`` are stubs — events are logged but not yet
+       exported to the telemetry endpoint. Only ``session_init`` telemetry
+       is fully wired end-to-end.
     """
 
     def __init__(self, db_api: DatabaseDriverClient, conn_handle: ConnectionHandle) -> None:

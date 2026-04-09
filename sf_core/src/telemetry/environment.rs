@@ -66,6 +66,26 @@ fn detect_os_version() -> String {
             }
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        // `cmd /C ver` outputs e.g. "Microsoft Windows [Version 10.0.22631.5039]"
+        if let Ok(output) = std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .output()
+        {
+            if output.status.success() {
+                let ver = String::from_utf8_lossy(&output.stdout);
+                if let Some(start) = ver.find('[') {
+                    if let Some(end) = ver.find(']') {
+                        return ver[start + 1..end]
+                            .strip_prefix("Version ")
+                            .unwrap_or(&ver[start + 1..end])
+                            .to_string();
+                    }
+                }
+            }
+        }
+    }
     "unknown".to_string()
 }
 

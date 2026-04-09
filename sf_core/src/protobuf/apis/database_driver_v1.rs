@@ -1519,7 +1519,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
             "Telemetry: api_usage"
         );
 
-        // TODO: increment OTel counter snowflake.driver.api.call with api_method + identity attributes
+        // STUB: OTel counter creation not yet implemented.
+        // When implemented, increment an OTel counter `snowflake.driver.api.call`
+        // with api_method + identity attributes, and export via SnowflakeInBandExporter.
         Ok(TelemetrySendResponse {})
     }
 
@@ -1550,7 +1552,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
             "Telemetry: wrapper_error"
         );
 
-        // TODO: create OTel span with exception event + identity attributes
+        // STUB: OTel span creation not yet implemented.
+        // When implemented, create an OTel span with an exception event carrying
+        // exception_type, error_source, and identity attributes.
         Ok(TelemetrySendResponse {})
     }
 }

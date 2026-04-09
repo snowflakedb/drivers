@@ -264,10 +264,24 @@ impl DatabaseDriverV1 {
                 )
                 .await;
 
+                // Check telemetry opt-out before dropping the lock.
+                let telemetry_enabled = conn
+                    .session_parameters
+                    .read()
+                    .await
+                    .get("CLIENT_TELEMETRY_ENABLED")
+                    .map(|v| v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(true);
                 drop(conn);
 
-                // Best-effort session_init telemetry — errors are logged, never propagated.
-                Self::send_session_init_telemetry(&conn_ptr).await;
+                // Best-effort session_init telemetry — spawned as a background task
+                // so connection open never blocks on telemetry latency.
+                if telemetry_enabled {
+                    let conn_ptr_clone = conn_ptr.clone();
+                    tokio::spawn(async move {
+                        Self::send_session_init_telemetry(&conn_ptr_clone).await;
+                    });
+                }
 
                 Ok(())
             }
@@ -280,40 +294,46 @@ impl DatabaseDriverV1 {
 
     /// Send session_init telemetry for the given connection (best-effort, fire-and-forget).
     ///
-    /// Acquires the connection lock to read identity and session metadata, then
-    /// releases the lock before the network call. The event is sent through the
-    /// OTel exporter pipeline — the same path used for all other telemetry.
+    /// Acquires the connection Mutex briefly to extract identity, tokens Arc,
+    /// and transport parameters, then drops the Mutex before reading the tokens
+    /// RwLock or making any network call. This avoids holding the Mutex across
+    /// an RwLock await (which could deadlock if a concurrent token refresh holds
+    /// the write lock).
     async fn send_session_init_telemetry(conn_ptr: &Arc<Mutex<Connection>>) {
         use crate::telemetry::snowflake_exporter::{ExporterSession, SnowflakeInBandExporter};
         use opentelemetry_sdk::trace::SpanExporter;
 
-        let (span, session) = {
+        // Step 1: Hold the connection Mutex only to clone what we need.
+        let (env_info, tokens_arc, query_parameters, http_client) = {
             let conn = conn_ptr.lock().await;
             let Some(ref identity) = conn.wrapper_identity else {
                 return;
             };
             let env_info = crate::telemetry::environment::EnvironmentInfo::with_wrapper(identity);
-            let session_id = conn
-                .tokens
-                .read()
-                .await
-                .as_ref()
-                .map(|t| t.session_id)
-                .unwrap_or(0);
-            let span = crate::telemetry::build_session_init_span(&env_info, session_id);
             let Ok(query_parameters) = conn.query_transport_parameters() else {
                 return;
             };
             let Some(http_client) = conn.http_client.clone() else {
                 return;
             };
-            let session = Arc::new(ExporterSession {
-                client: http_client,
-                query_parameters,
-                session_token: conn.tokens.clone(),
-            });
-            (span, session)
+            (env_info, conn.tokens.clone(), query_parameters, http_client)
         };
+        // Mutex is now dropped.
+
+        // Step 2: Read session_id from the tokens RwLock without holding the Mutex.
+        let session_id = tokens_arc
+            .read()
+            .await
+            .as_ref()
+            .map(|t| t.session_id)
+            .unwrap_or(0);
+
+        let span = crate::telemetry::build_session_init_span(&env_info, session_id);
+        let session = Arc::new(ExporterSession {
+            client: http_client,
+            query_parameters,
+            session_token: tokens_arc,
+        });
 
         let exporter = SnowflakeInBandExporter::new(session);
         let _ = exporter.export(vec![span]).await;
