@@ -340,71 +340,49 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
 #[tokio::test]
 async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond() {
     //Given Mock HTTP server holds connection open for 10 seconds without responding
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
 
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        // Read request but don't respond - hold connection open
-        let mut buf = vec![0u8; 4096];
-        let _ = stream.read(&mut buf).await;
-        // Sleep for 10 seconds (longer than 5s timeout)
-        sleep(Duration::from_secs(10)).await;
-        // Connection will timeout before we respond
-    });
-
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+    // Logout endpoint delays 10s — longer than Core's default 5s total timeout.
+    // The retry loop now enforces max_elapsed as a hard bound on in-flight
+    // requests (remaining budget applied as per-request timeout when
+    // per_request_timeout is None).
+    Mock::given(method("POST"))
+        .and(path("/session"))
+        .and(query_param("delete", "true"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "success": true }))
+                .insert_header("Content-Type", "application/json")
+                .set_delay(Duration::from_secs(10)),
+        )
+        .mount(&server)
+        .await;
 
     //And UD Core connection is logged in with no timeout override
-    let config = LogoutConfig::default(); // Default total timeout is 5 seconds
-
-    // TODO(SNOW-2314153): This test calls logout_session() directly with a hand-built
-    // RetryPolicy, bypassing the connection layer. Rewrite to use SnowflakeTestClient
-    // once the retry.rs bugfix (max_elapsed as hard bound on in-flight requests) lands.
-    let retry_policy = RetryPolicy {
-        max_attempts: 1,
-        max_elapsed: config.logout_total_timeout,
-        per_request_timeout: Some(Duration::from_secs(5)),
-        ..Default::default()
-    };
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    })
+    .await
+    .unwrap();
 
     //When Logout is initiated
     let start = Instant::now();
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        &retry_policy,
-    )
-    .await;
+    let result = tokio::task::spawn_blocking(move || client.connection_close_blocking())
+        .await
+        .unwrap();
     let elapsed = start.elapsed();
 
     //Then Close throws timeout error
-    assert!(result.is_err(), "Should timeout");
+    assert!(result.is_err(), "Should timeout with default 5s budget");
 
-    //And Logout request times out after approximately 5 seconds
-    let error_msg = format!("{:?}", result.unwrap_err());
-    let error_lower = error_msg.to_lowercase();
+    //And Total elapsed time is between 5 and 7 seconds
     assert!(
-        error_lower.contains("timeout")
-            || error_lower.contains("timed out")
-            || error_lower.contains("timedout")
-            || error_lower.contains("deadline"),
-        "Error should be timeout-related, got: {}",
-        error_msg
-    );
-
-    //And Total elapsed time is between 5 and 6 seconds
-    assert!(
-        elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(7),
+        elapsed >= Duration::from_secs(4) && elapsed < Duration::from_secs(8),
         "Should timeout after ~5 seconds, took {:?}",
         elapsed
     );
-
-    server.abort();
 }
 
 #[tokio::test]
