@@ -18,18 +18,15 @@ if ! command -v unzip >/dev/null 2>&1; then
 fi
 
 # Clone revocation-validation framework
-REVOCATION_DIR="/tmp/revocation-validation"
 REVOCATION_BRANCH="${REVOCATION_BRANCH:-main}"
-
-rm -rf "$REVOCATION_DIR"
+REVOCATION_REPO="https://github.com/snowflake-eng/revocation-validation.git"
+REVOCATION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/revocation-validation.XXXXXX")"
+trap 'rm -rf "$REVOCATION_DIR"' EXIT
 if [ -n "$GITHUB_USER" ] && [ -n "$GITHUB_TOKEN" ]; then
-    git clone --depth 1 --branch "$REVOCATION_BRANCH" \
-        "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/snowflake-eng/revocation-validation.git" \
-        "$REVOCATION_DIR"
+    git -c "http.${REVOCATION_REPO%.git}.extraheader=AUTHORIZATION: basic $(printf '%s:%s' "$GITHUB_USER" "$GITHUB_TOKEN" | base64)" \
+        clone --depth 1 --branch "$REVOCATION_BRANCH" "$REVOCATION_REPO" "$REVOCATION_DIR"
 else
-    git clone --depth 1 --branch "$REVOCATION_BRANCH" \
-        "https://github.com/snowflake-eng/revocation-validation.git" \
-        "$REVOCATION_DIR"
+    git clone --depth 1 --branch "$REVOCATION_BRANCH" "$REVOCATION_REPO" "$REVOCATION_DIR"
 fi
 
 cd "$REVOCATION_DIR"
