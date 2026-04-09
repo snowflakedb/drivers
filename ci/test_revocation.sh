@@ -11,6 +11,12 @@ WORKSPACE=${WORKSPACE:-${DRIVER_ROOT}}
 
 echo "[Info] Starting revocation validation tests"
 
+# Ensure unzip is available (needed by protoc installer during cargo build)
+if ! command -v unzip >/dev/null 2>&1; then
+    echo "[Info] Installing unzip..."
+    yum install -y unzip || apt-get install -y unzip || true
+fi
+
 # Clone revocation-validation framework
 REVOCATION_DIR="/tmp/revocation-validation"
 REVOCATION_BRANCH="${REVOCATION_BRANCH:-main}"
