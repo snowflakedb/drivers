@@ -44,6 +44,6 @@ class TestUserPasswordAuthentication:
         params["password"] = "definitely_not_a_valid_password_12345"
 
         # When Trying to Connect
-        # Then There is error returned
         with pytest.raises(DatabaseError):
+            # Then There is error returned
             connection_factory(**params)
