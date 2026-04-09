@@ -15,7 +15,7 @@ import functools
 import logging
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
 
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -62,6 +62,7 @@ Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
 F = TypeVar("F", bound=Callable[..., Any])
+T = TypeVar("T")
 
 
 class FetchMode(enum.Enum):
@@ -271,22 +272,28 @@ class SnowflakeCursorBase(abc.ABC):
         """The SQLSTATE code of the last executed operation."""
         return self._query_result.sqlstate
 
+    @overload
+    def callproc(self, procname: str) -> tuple: ...
+
+    @overload
+    def callproc(self, procname: str, args: T) -> T: ...
+
     @pep249
-    def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> Sequence[Any]:
-        """
-        Call a stored database procedure with the given name.
+    @_requires_open
+    def callproc(self, procname: str, args: Any = tuple()) -> Any:
+        """Call a stored procedure.
 
         Args:
-            procname (str): Name of the procedure to call
-            parameters (sequence): Input parameters for the procedure
+            procname: The stored procedure to be called.
+            args: Parameters to be passed into the stored procedure.
 
         Returns:
-            sequence: The result of the procedure call
-
-        Raises:
-            NotSupportedError: If not implemented
+            The input parameters.
         """
-        raise NotSupportedError("callproc is not implemented")
+        marker = "%s" if self._connection.paramstyle.is_client_side() else "?"
+        command = f"CALL {procname}({', '.join([marker for _ in range(len(args))])})"
+        self.execute(command, args)
+        return args
 
     @property
     def is_file_transfer(self) -> bool:
@@ -672,9 +679,9 @@ class SnowflakeCursorBase(abc.ABC):
             bool: True if next set is available, False/None otherwise
 
         Raises:
-            NotSupportedError: If not implemented
+            NotImplementedError: If not implemented
         """
-        raise NotSupportedError("nextset is not implemented")
+        raise NotImplementedError("nextset is not implemented")
 
     @pep249
     def setinputsizes(self, sizes: Sequence[Any]) -> None:

@@ -42,7 +42,7 @@ from ._internal.extras import numpy as np
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
-from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
+from .errors import Error, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
@@ -261,28 +261,6 @@ class Connection:
                         logger.warning("Rollback failed during exception handling", exc_info=True)
         finally:
             self.close()
-
-    # Optional methods that some databases might support
-    def cancel(self) -> None:
-        """
-        Cancel a long-running operation on the connection.
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("cancel is not implemented")
-
-    def ping(self) -> bool:
-        """
-        Check if the connection to the server is still alive.
-
-        Returns:
-            bool: True if connection is alive, False otherwise
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("ping is not implemented")
 
     @property
     def _autocommit(self) -> bool:

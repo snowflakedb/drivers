@@ -1063,14 +1063,51 @@ class TestCursorMethods:
         cursor.close()
         assert cursor.is_closed()
 
+    def test_callproc(self, cursor):
+        """Test that callproc calls a stored procedure and returns the input parameters."""
+        proc_name = "test_callproc_echo"
+        message = "hello_from_callproc"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(msg VARCHAR)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN msg;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, (message,))
+        assert ret == (message,)
+        assert cursor.fetchall() == [(message,)]
+
+    def test_callproc_no_args(self, cursor):
+        """Test callproc with a procedure that takes no arguments."""
+        proc_name = "test_callproc_no_args"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}()
+            RETURNS BOOLEAN
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN TRUE;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name)
+        assert ret == ()
+        assert cursor.fetchall() == [(True,)]
+
     @pytest.mark.skip_reference(
-        reason="Reference driver forwards callproc to server instead of raising NotSupportedError"
+        reason="Reference driver raises AttributeError instead of InterfaceError on closed cursor"
     )
-    def test_callproc_not_implemented(self, cursor):
-        """Test that callproc raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.callproc("test_proc", [1, 2, 3])
-        assert "callproc is not implemented" in str(excinfo.value)
+    def test_callproc_on_closed_cursor_raises(self, cursor):
+        """Test that callproc raises InterfaceError on a closed cursor."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor.callproc("any_proc")
 
     def test_executemany_is_callable(self, cursor):
         """Test that executemany is callable (basic smoke test)."""
