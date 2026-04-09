@@ -11,6 +11,7 @@ add_odbc_test(e2e_put_get_put_get_auto_compress put_get/put_get_auto_compress.cp
 add_odbc_test(e2e_put_get_put_get_basic_operations put_get/put_get_basic_operations.cpp)
 add_odbc_test(e2e_put_get_put_get_overwrite put_get/put_get_overwrite.cpp)
 add_odbc_test(e2e_put_get_put_get_source_compression put_get/put_get_source_compression.cpp)
+add_odbc_test(e2e_put_get_put_get_sse_stage put_get/put_get_sse_stage.cpp)
 add_odbc_test(e2e_put_get_put_get_wildcards put_get/put_get_wildcards.cpp)
 
 # query
