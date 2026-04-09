@@ -440,7 +440,7 @@ impl ReadODBC for SnowflakeVarchar {
                 format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second)
             }
             CDataType::Numeric => {
-                let (mantissa, scale) = read_numeric_struct(binding);
+                let (mantissa, scale) = read_numeric_struct(binding)?;
                 format_numeric_value(mantissa, scale)
             }
             CDataType::Binary => {

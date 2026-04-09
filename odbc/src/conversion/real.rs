@@ -366,7 +366,7 @@ impl ReadODBC for SnowflakeReal {
             CDataType::UTinyInt => read_unaligned::<u8>(binding) as f64,
             CDataType::Bit => read_unaligned::<u8>(binding) as f64,
             CDataType::Numeric => {
-                let (mantissa, scale) = read_numeric_struct(binding);
+                let (mantissa, scale) = read_numeric_struct(binding)?;
                 let s = format_numeric_value(mantissa, scale);
                 s.parse::<f64>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {

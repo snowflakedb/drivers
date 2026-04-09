@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{
+    JsonBindingError, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
@@ -380,15 +382,32 @@ impl ReadODBC for SnowflakeNumber {
             }
             CDataType::Bit => read_unaligned::<u8>(binding) as i128,
             CDataType::Numeric => {
-                let (mantissa, scale) = read_numeric_struct(binding);
+                let (mantissa, scale) = read_numeric_struct(binding)?;
                 if scale > 0 {
-                    let divisor = 10i128.pow(scale as u32);
+                    let divisor = 10i128.checked_pow(scale as u32).ok_or_else(|| {
+                        NumericMagnitudeOverflowSnafu {
+                            reason: format!("10^{scale} overflows i128 (positive scale too large)"),
+                        }
+                        .build()
+                    })?;
                     mantissa / divisor
                 } else if scale < 0 {
-                    let multiplier = 10i128.pow((-scale) as u32);
+                    let abs_scale = if scale == i8::MIN {
+                        (i8::MAX as u32) + 1
+                    } else {
+                        (-scale) as u32
+                    };
+                    let multiplier = 10i128.checked_pow(abs_scale).ok_or_else(|| {
+                        NumericMagnitudeOverflowSnafu {
+                            reason: format!(
+                                "10^{abs_scale} overflows i128 (negative scale too large)"
+                            ),
+                        }
+                        .build()
+                    })?;
                     mantissa.checked_mul(multiplier).ok_or_else(|| {
-                        UnsupportedCDataTypeSnafu {
-                            c_type: binding.value_type,
+                        NumericMagnitudeOverflowSnafu {
+                            reason: format!("mantissa * 10^{abs_scale} overflows i128"),
                         }
                         .build()
                     })?

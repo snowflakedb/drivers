@@ -15,7 +15,8 @@ use super::boolean::SnowflakeBoolean;
 use super::date::SnowflakeDate;
 use super::error::{
     InvalidParameterIndicesSnafu, InvalidUtf8Snafu, JsonBindingError, NullPointerSnafu,
-    SerializationSnafu, UnsupportedParameterTypeSnafu, WCharConversionSnafu,
+    NumericMagnitudeOverflowSnafu, SerializationSnafu, UnsupportedParameterTypeSnafu,
+    WCharConversionSnafu,
 };
 use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
@@ -79,7 +80,7 @@ impl ParamConverter for DecimalParamConverter {
             CDataType::Float => read_unaligned::<f32>(binding).to_string(),
             CDataType::Bit => read_unaligned::<u8>(binding).to_string(),
             CDataType::Numeric => {
-                let (value, scale) = read_numeric_struct(binding);
+                let (value, scale) = read_numeric_struct(binding)?;
                 format_numeric_value(value, scale)
             }
             _ => {
@@ -256,35 +257,70 @@ pub(crate) fn read_unaligned<T: Copy>(binding: &ParameterBinding) -> T {
 /// mantissa with sign applied, and `scale` is the number of decimal digits
 /// after the point. The caller divides by `10^scale` to recover the true
 /// numeric value.
-pub(crate) fn read_numeric_struct(binding: &ParameterBinding) -> (i128, i8) {
+///
+/// Returns an error if the magnitude exceeds the representable `i128` range.
+pub(crate) fn read_numeric_struct(
+    binding: &ParameterBinding,
+) -> Result<(i128, i8), JsonBindingError> {
     let ns = read_unaligned::<sql::Numeric>(binding);
     let magnitude = u128::from_le_bytes(ns.val);
+    let negative_min_magnitude = (i128::MAX as u128) + 1;
     let signed = if ns.sign == 0 {
-        -(magnitude as i128)
-    } else {
+        if magnitude == negative_min_magnitude {
+            i128::MIN
+        } else if magnitude <= i128::MAX as u128 {
+            -(magnitude as i128)
+        } else {
+            return NumericMagnitudeOverflowSnafu {
+                reason: format!(
+                    "SQL_NUMERIC_STRUCT magnitude {magnitude} exceeds i128 negative range"
+                ),
+            }
+            .fail();
+        }
+    } else if magnitude <= i128::MAX as u128 {
         magnitude as i128
+    } else {
+        return NumericMagnitudeOverflowSnafu {
+            reason: format!("SQL_NUMERIC_STRUCT magnitude {magnitude} exceeds i128 positive range"),
+        }
+        .fail();
     };
-    (signed, ns.scale)
+    Ok((signed, ns.scale))
 }
 
 /// Format a scaled integer value into its decimal string representation.
 /// For example, `(12345, 2)` becomes `"123.45"`.
+///
+/// Uses string manipulation rather than arithmetic scaling to avoid
+/// overflow when `value` is large or `scale` is very negative.
 pub(crate) fn format_numeric_value(value: i128, scale: i8) -> String {
-    if scale <= 0 {
-        if scale == 0 {
-            return value.to_string();
-        }
-        let multiplier = 10i128.pow((-scale) as u32);
-        return (value * multiplier).to_string();
+    if scale == 0 {
+        return value.to_string();
     }
-    let scale = scale as u32;
+
     let is_negative = value < 0;
     let abs = value.unsigned_abs();
     let mut s = abs.to_string();
-    while s.len() <= scale as usize {
+
+    if scale < 0 {
+        let trailing_zeros = if scale == i8::MIN {
+            (i8::MAX as usize) + 1
+        } else {
+            (-scale) as usize
+        };
+        s.extend(std::iter::repeat_n('0', trailing_zeros));
+        if is_negative {
+            s.insert(0, '-');
+        }
+        return s;
+    }
+
+    let scale = scale as usize;
+    while s.len() <= scale {
         s.insert(0, '0');
     }
-    let decimal_pos = s.len() - scale as usize;
+    let decimal_pos = s.len() - scale;
     s.insert(decimal_pos, '.');
     if is_negative {
         s.insert(0, '-');
@@ -1208,6 +1244,21 @@ mod tests {
     #[test]
     fn format_numeric_value_negative_scale() {
         assert_eq!(format_numeric_value(42, -2), "4200");
+        assert_eq!(format_numeric_value(-5, -3), "-5000");
+    }
+
+    #[test]
+    fn format_numeric_value_negative_scale_large_value() {
+        let large = i128::MAX / 2;
+        let result = format_numeric_value(large, -1);
+        assert_eq!(result, format!("{}0", large));
+    }
+
+    #[test]
+    fn format_numeric_value_negative_scale_i8_min() {
+        let result = format_numeric_value(1, i8::MIN);
+        assert!(result.starts_with('1'));
+        assert_eq!(result.len(), 129); // "1" + 128 zeros
     }
 
     // -- read_numeric_struct tests --------------------------------------------
@@ -1227,7 +1278,7 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        let (value, scale) = read_numeric_struct(&binding);
+        let (value, scale) = read_numeric_struct(&binding).unwrap();
         assert_eq!(value, 42);
         assert_eq!(scale, 0);
     }
@@ -1247,7 +1298,7 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        let (value, scale) = read_numeric_struct(&binding);
+        let (value, scale) = read_numeric_struct(&binding).unwrap();
         assert_eq!(value, -99);
         assert_eq!(scale, 0);
     }
@@ -1267,9 +1318,47 @@ mod tests {
             0,
             std::ptr::null_mut(),
         );
-        let (value, scale) = read_numeric_struct(&binding);
+        let (value, scale) = read_numeric_struct(&binding).unwrap();
         assert_eq!(value, 12345);
         assert_eq!(scale, 3);
+    }
+
+    #[test]
+    fn read_numeric_struct_overflow_positive() {
+        let ns = sql::Numeric {
+            precision: 38,
+            scale: 0,
+            sign: 1,
+            val: u128::MAX.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(read_numeric_struct(&binding).is_err());
+    }
+
+    #[test]
+    fn read_numeric_struct_negative_min() {
+        let magnitude = (i128::MAX as u128) + 1;
+        let ns = sql::Numeric {
+            precision: 38,
+            scale: 0,
+            sign: 0,
+            val: magnitude.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (value, _) = read_numeric_struct(&binding).unwrap();
+        assert_eq!(value, i128::MIN);
     }
 
     // -- cross-type numeric conversion tests ----------------------------------
@@ -1378,6 +1467,42 @@ mod tests {
         assert_eq!(ty, SnowflakeLogicalType::Fixed);
         assert_eq!(v, Value::String("42".to_string()));
         Ok(())
+    }
+
+    #[test]
+    fn convert_numeric_extreme_negative_scale_as_integer_fails() {
+        let ns = sql::Numeric {
+            precision: 38,
+            scale: i8::MIN,
+            sign: 1,
+            val: 1u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(convert_binding(&binding).is_err());
+    }
+
+    #[test]
+    fn convert_numeric_large_positive_scale_as_integer_fails() {
+        let ns = sql::Numeric {
+            precision: 38,
+            scale: 100,
+            sign: 1,
+            val: 42u128.to_le_bytes(),
+        };
+        let binding = make_binding(
+            CDataType::Numeric,
+            sql::SqlDataType::INTEGER,
+            &ns as *const sql::Numeric as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        assert!(convert_binding(&binding).is_err());
     }
 
     #[test]

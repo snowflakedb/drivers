@@ -206,6 +206,13 @@ pub enum JsonBindingError {
         location: Location,
     },
 
+    #[snafu(display("SQL_NUMERIC_STRUCT magnitude overflow: {reason}"))]
+    NumericMagnitudeOverflow {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to serialize bindings to JSON: {source}"))]
     Serialization {
         source: serde_json::Error,

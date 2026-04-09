@@ -173,7 +173,7 @@ impl ReadODBC for SnowflakeBoolean {
             CDataType::Float => read_unaligned::<f32>(binding) != 0.0,
             CDataType::Double => read_unaligned::<f64>(binding) != 0.0,
             CDataType::Numeric => {
-                let (mantissa, _scale) = read_numeric_struct(binding);
+                let (mantissa, _scale) = read_numeric_struct(binding)?;
                 mantissa != 0
             }
             CDataType::Char => {
