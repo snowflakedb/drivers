@@ -287,7 +287,7 @@ pipeline {
                     }
                   }
                   stage('setup rust (docker)') {
-                    steps {
+                    steps 
                       setupRust(PLATFORM)
                     }
                   }
@@ -410,6 +410,43 @@ pipeline {
                   ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
                 '''
               }
+            }
+          }
+        }
+        stage('Revocation Validation') {
+          agent { label 'build-node-extra-large' }
+          environment {
+            E2E_DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
+          }
+          steps {
+            script {
+              e2eDockerSetup(E2E_DOCKER_IMAGE)
+              docker.image(E2E_DOCKER_IMAGE).inside('-u root') {
+                withCredentials([
+                  usernamePassword(credentialsId: 'jenkins-snowflakedb-github-app',
+                    usernameVariable: 'GITHUB_USER',
+                    passwordVariable: 'GITHUB_TOKEN')
+                ]) {
+                  sh '''\
+                    |#!/bin/bash -e
+                    |chmod +x $WORKSPACE/ci/test_revocation.sh
+                    |$WORKSPACE/ci/test_revocation.sh
+                  '''.stripMargin()
+                }
+              }
+            }
+          }
+          post {
+            always {
+              archiveArtifacts artifacts: 'revocation-results.json,revocation-report.html', allowEmptyArchive: true
+              publishHTML(target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: '.',
+                reportFiles: 'revocation-report.html',
+                reportName: 'Revocation Validation Report'
+              ])
             }
           }
         }
