@@ -4,8 +4,10 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include <chrono>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,6 +16,7 @@
 #include "ODBCConfig.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
+#include "odbc_matchers.hpp"
 
 // ============================================================================
 // Base Fixtures (Parameterized via Constructor)
@@ -108,11 +111,29 @@ class StmtFixture : public DbcFixture {
  public:
   explicit StmtFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) : DbcFixture(std::move(dsn_config)) {
     const std::string dsn = dsn_name();
-    SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
-    REQUIRE(ret == SQL_SUCCESS);
+
+    constexpr int max_retries = 3;
+    SQLRETURN ret = SQL_ERROR;
+    std::string last_error;
+
+    for (int attempt = 1; attempt <= max_retries; ++attempt) {
+      ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+      if (SQL_SUCCEEDED(ret)) break;
+
+      last_error = Catch::StringMaker<OdbcResult>::convert(OdbcResult(ret, SQL_HANDLE_DBC, dbc_handle()));
+
+      if (attempt < max_retries) {
+        WARN("SQLConnect attempt " << attempt << "/" << max_retries << " failed: " << last_error << " — retrying");
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+      }
+    }
+
+    if (!SQL_SUCCEEDED(ret)) {
+      FAIL("SQLConnect failed after " << max_retries << " attempts: " << last_error);
+    }
 
     ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-    REQUIRE(ret == SQL_SUCCESS);
+    REQUIRE(SQL_SUCCEEDED(ret));
   }
 
   ~StmtFixture() {
