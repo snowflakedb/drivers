@@ -62,6 +62,45 @@ Feature: Semi-structured type (VARIANT/OBJECT/ARRAY) handling
     Then Result should contain [NULL, {"a":1}, NULL]
 
   # =========================================================================== #
+  #                         Empty JSON containers                               #
+  # =========================================================================== #
+
+  @odbc_e2e
+  Scenario: should handle empty JSON containers
+    Given Snowflake client is logged in
+    When Query "SELECT PARSE_JSON('{}'), ARRAY_CONSTRUCT(), OBJECT_CONSTRUCT()" is executed
+    Then Each column should return a valid empty container
+
+  @odbc_e2e
+  Scenario: should handle empty JSON array literal
+    Given Snowflake client is logged in
+    When Query "SELECT PARSE_JSON('[]')" is executed
+    Then Result should be an empty JSON array
+
+  @odbc_e2e
+  Scenario: should round-trip empty JSON containers through a table
+    Given Snowflake client is logged in
+    And Table with VARIANT, OBJECT, and ARRAY columns exists with empty containers
+    When Query "SELECT * FROM <table>" is executed
+    Then All columns should return valid empty containers
+
+  # =========================================================================== #
+  #                       JSON with unicode content                             #
+  # =========================================================================== #
+
+  @odbc_e2e
+  Scenario: should handle JSON with unicode content
+    Given Snowflake client is logged in
+    When Query returning JSON with unicode characters is executed
+    Then Result should preserve the unicode characters
+
+  @odbc_e2e
+  Scenario: should handle JSON with unicode in keys
+    Given Snowflake client is logged in
+    When Query returning JSON with unicode characters in keys is executed
+    Then Result should preserve unicode keys and their associated values
+
+  # =========================================================================== #
   #                       Multiple chunks downloading                           #
   # =========================================================================== #
 

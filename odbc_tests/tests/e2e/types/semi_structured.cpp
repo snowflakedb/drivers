@@ -22,6 +22,7 @@
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -399,7 +400,7 @@ TEST_CASE("should retrieve variant data as SQL_C_BINARY", "[semi_structured][con
   SQLCHAR buffer[256] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator > 0);
 
   check_json_equals(std::string(reinterpret_cast<char*>(buffer), static_cast<size_t>(indicator)), R"({"b":2})");
@@ -416,8 +417,183 @@ TEST_CASE("should return SQL_NULL_DATA for NULL variant as SQL_C_BINARY", "[semi
   SQLCHAR buffer[64] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
-  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE_ODBC(ret, stmt);
   CHECK(indicator == SQL_NULL_DATA);
+}
+
+// ============================================================================
+// EMPTY JSON CONTAINERS (shared)
+// ============================================================================
+
+TEST_CASE("should handle empty JSON containers", "[semi_structured]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT PARSE_JSON('{}'), ARRAY_CONSTRUCT(), OBJECT_CONSTRUCT()" is executed
+  auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{}'), ARRAY_CONSTRUCT(), OBJECT_CONSTRUCT()");
+
+  // Then Each column should return a valid empty container
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"({})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 2), R"([])");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"({})");
+}
+
+TEST_CASE("should handle empty JSON array literal", "[semi_structured]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query "SELECT PARSE_JSON('[]')" is executed
+  auto stmt = conn.execute_fetch("SELECT PARSE_JSON('[]')");
+
+  // Then Result should be an empty JSON array
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"([])");
+}
+
+TEST_CASE("should round-trip empty JSON containers through a table", "[semi_structured]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with VARIANT, OBJECT, and ARRAY columns exists with empty containers
+  conn.execute(
+      "CREATE OR REPLACE TABLE semi_struct_empty "
+      "(v VARIANT, o OBJECT, a ARRAY)");
+  conn.execute(
+      "INSERT INTO semi_struct_empty "
+      "SELECT PARSE_JSON('{}'), OBJECT_CONSTRUCT(), ARRAY_CONSTRUCT()");
+
+  // When Query "SELECT * FROM <table>" is executed
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT * FROM semi_struct_empty"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then All columns should return valid empty containers
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"({})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 2), R"({})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"([])");
+}
+
+// ============================================================================
+// JSON WITH UNICODE CONTENT (shared)
+// ============================================================================
+
+TEST_CASE("should handle JSON with unicode content", "[semi_structured]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query returning JSON with unicode characters is executed
+  auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"emoji\":\"\\u2744\",\"cjk\":\"\\u96EA\\u82B1\"}')");
+
+  // Then Result should preserve the unicode characters
+  auto json = parse_json_text(get_data<SQL_C_CHAR>(stmt, 1));
+  REQUIRE(json.is<picojson::object>());
+  const auto& obj = json.get<picojson::object>();
+
+  auto emoji_it = obj.find("emoji");
+  REQUIRE(emoji_it != obj.end());
+  CHECK(emoji_it->second.get<std::string>() == "\xe2\x9d\x84");
+
+  auto cjk_it = obj.find("cjk");
+  REQUIRE(cjk_it != obj.end());
+  CHECK(cjk_it->second.get<std::string>() == "\xe9\x9b\xaa\xe8\x8a\xb1");
+}
+
+TEST_CASE("should handle JSON with unicode in keys", "[semi_structured]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query returning JSON with unicode characters in keys is executed
+  auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"\\u96EA\":\"snow\",\"\\u82B1\":\"flower\"}')");
+
+  // Then Result should preserve unicode keys and their associated values
+  auto json = parse_json_text(get_data<SQL_C_CHAR>(stmt, 1));
+  REQUIRE(json.is<picojson::object>());
+  const auto& obj = json.get<picojson::object>();
+
+  auto snow_it = obj.find("\xe9\x9b\xaa");
+  REQUIRE(snow_it != obj.end());
+  CHECK(snow_it->second.get<std::string>() == "snow");
+
+  auto flower_it = obj.find("\xe8\x8a\xb1");
+  REQUIRE(flower_it != obj.end());
+  CHECK(flower_it->second.get<std::string>() == "flower");
+}
+
+TEST_CASE("should handle JSON with unicode via SQL_C_WCHAR", "[semi_structured][conversion][wchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query returning JSON with unicode characters is executed
+  auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"emoji\":\"\\u2744\",\"cjk\":\"\\u96EA\\u82B1\"}')");
+
+  // Then Data should be retrievable as wide character string with unicode preserved
+  auto wstr = check_wchar_success(stmt, 1);
+  auto json = parse_json_text(wstr);
+  REQUIRE(json.is<picojson::object>());
+  const auto& obj = json.get<picojson::object>();
+  auto emoji_it = obj.find("emoji");
+  REQUIRE(emoji_it != obj.end());
+  CHECK(emoji_it->second.get<std::string>() == "\xe2\x9d\x84");
+}
+
+// ============================================================================
+// CONVERSION TO SQL_C_WCHAR - TRUNCATION (ODBC-specific)
+// ============================================================================
+
+TEST_CASE("should truncate variant data as SQL_C_WCHAR when buffer is too short",
+          "[semi_structured][conversion][wchar][01004]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query returning a VARIANT value is executed
+  auto stmt = conn.execute_fetch("SELECT PARSE_JSON('{\"long_key\":\"long_value_string\"}')");
+
+  // And Attempt to get data with a wide-char buffer smaller than the JSON string
+  char16_t buffer[6] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+
+  // Then The function should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  auto records = get_diag_rec(stmt);
+  CHECK(!records.empty());
+  CHECK(records[0].sqlState == "01004");
+
+  // And The buffer should contain a null-terminated truncated wide string
+  CHECK(buffer[sizeof(buffer) / sizeof(char16_t) - 1] == u'\0');
+
+  // And The indicator should report SQL_NO_TOTAL or the full untruncated byte length
+  const bool indicator_reports_compatible_length =
+      (indicator == SQL_NO_TOTAL) || (indicator > static_cast<SQLLEN>(sizeof(buffer)));
+  CHECK(indicator_reports_compatible_length);
+}
+
+// ============================================================================
+// SQLColAttribute - SQL_DESC_TYPE_NAME (ODBC-specific)
+// ============================================================================
+
+TEST_CASE("should report SQL_DESC_TYPE_NAME as VARCHAR for semi-structured columns", "[semi_structured][metadata]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Query returning VARIANT, ARRAY, and OBJECT columns is executed
+  auto stmt = conn.execute_fetch(
+      "SELECT PARSE_JSON('{\"a\":1}'), ARRAY_CONSTRUCT(1,2,3), "
+      "OBJECT_CONSTRUCT('key','val')");
+
+  // Then SQL_DESC_TYPE_NAME should be VARCHAR for all three columns
+  const char* col_labels[] = {"VARIANT", "ARRAY", "OBJECT"};
+  for (SQLUSMALLINT col = 1; col <= 3; ++col) {
+    INFO("Column " << col << " (" << col_labels[col - 1] << ")");
+    SQLCHAR type_name[128] = {};
+    SQLSMALLINT name_len = 0;
+    SQLRETURN ret =
+        SQLColAttribute(stmt.getHandle(), col, SQL_DESC_TYPE_NAME, type_name, sizeof(type_name), &name_len, nullptr);
+    REQUIRE_ODBC(ret, stmt);
+    CHECK(std::string(reinterpret_cast<char*>(type_name), name_len) == "VARCHAR");
+  }
 }
 
 static picojson::value parse_json_text(const std::string& json_text) {
@@ -427,9 +603,28 @@ static picojson::value parse_json_text(const std::string& json_text) {
   return json;
 }
 
+// picojson only accepts std::string (UTF-8). ODBC SQL_C_WCHAR returns UTF-16
+// (char16_t on Linux/macOS), so we need manual conversion before parsing.
+static std::string utf16_to_utf8(const std::u16string& src) {
+  std::string utf8;
+  utf8.reserve(src.size() * 3);
+  for (char16_t c : src) {
+    if (c < 0x80) {
+      utf8.push_back(static_cast<char>(c));
+    } else if (c < 0x800) {
+      utf8.push_back(static_cast<char>(0xC0 | (c >> 6)));
+      utf8.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+    } else {
+      utf8.push_back(static_cast<char>(0xE0 | (c >> 12)));
+      utf8.push_back(static_cast<char>(0x80 | ((c >> 6) & 0x3F)));
+      utf8.push_back(static_cast<char>(0x80 | (c & 0x3F)));
+    }
+  }
+  return utf8;
+}
+
 static picojson::value parse_json_text(const std::u16string& json_text) {
-  // These tests only serialize ASCII JSON literals, so narrowing is sufficient.
-  return parse_json_text(std::string(json_text.begin(), json_text.end()));
+  return parse_json_text(utf16_to_utf8(json_text));
 }
 
 static void check_json_equals(const std::string& actual_json_text, const std::string& expected_json_text) {
@@ -441,5 +636,5 @@ static void check_json_equals(const std::string& actual_json_text, const std::st
 }
 
 static void check_json_equals(const std::u16string& actual_json_text, const std::string& expected_json_text) {
-  check_json_equals(std::string(actual_json_text.begin(), actual_json_text.end()), expected_json_text);
+  check_json_equals(utf16_to_utf8(actual_json_text), expected_json_text);
 }
