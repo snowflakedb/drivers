@@ -6,20 +6,18 @@ from ...config import get_test_parameters
 from .auth_helpers import verify_simple_query_execution
 
 
-# Some test accounts (notably GCP) enforce MFA at the account level, which
-# causes plain username+password login to fail with:
-#   "Multi-factor authentication is required for this account."
-# This is a server-side policy, not a driver bug.  We detect this at runtime
-# and skip the happy-path tests so they don't produce false failures.
 MFA_ENFORCED_MESSAGE = "multi-factor authentication is required"
 
 
 def get_password_auth_params():
     """Build connection params for plain password auth, overriding the default JWT."""
     test_params = get_test_parameters()
+    password = test_params.get("SNOWFLAKE_TEST_PASSWORD")
+    if not password:
+        pytest.skip("SNOWFLAKE_TEST_PASSWORD not configured (JWT-only environment)")
     return {
         "authenticator": "snowflake",
-        "password": test_params.get("SNOWFLAKE_TEST_PASSWORD"),
+        "password": password,
     }
 
 
@@ -31,7 +29,7 @@ class TestUserPasswordAuthentication:
         # When Trying to Connect
         try:
             connection = connection_factory(**params)
-        except Exception as e:
+        except DatabaseError as e:
             if MFA_ENFORCED_MESSAGE in str(e).lower():
                 pytest.skip("Account has MFA enforcement enabled — plain password auth is not possible")
             raise
@@ -46,10 +44,6 @@ class TestUserPasswordAuthentication:
         params["password"] = "definitely_not_a_valid_password_12345"
 
         # When Trying to Connect
-        with pytest.raises(Exception) as exception:
-            connection_factory(**params)
-
         # Then There is error returned
-        assert isinstance(exception.value, DatabaseError), (
-            f"Expected DatabaseError, got: {type(exception.value).__name__}: {exception.value}"
-        )
+        with pytest.raises(DatabaseError):
+            connection_factory(**params)
