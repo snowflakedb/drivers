@@ -721,7 +721,7 @@ mod tests {
     #[test]
     fn server_numeric_out_of_range_maps_to_22003() {
         let odbc_err = OdbcError::CoreError {
-            source: CoreProtobufError::Application {
+            source: Box::new(CoreProtobufError::Application {
                 error: Box::new(ErrorType::GenericError(
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
@@ -731,8 +731,9 @@ mod tests {
                     .to_string(),
                 status_code: 0,
                 error_trace: vec![],
+                sql_state: None,
                 location: snafu::Location::new("test", 0, 0),
-            },
+            }),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
@@ -741,15 +742,16 @@ mod tests {
     #[test]
     fn server_generic_error_maps_to_hy000() {
         let odbc_err = OdbcError::CoreError {
-            source: CoreProtobufError::Application {
+            source: Box::new(CoreProtobufError::Application {
                 error: Box::new(ErrorType::GenericError(
                     sf_core::protobuf::generated::database_driver_v1::GenericError {},
                 )),
                 message: "Some other server error".to_string(),
                 status_code: 0,
                 error_trace: vec![],
+                sql_state: None,
                 location: snafu::Location::new("test", 0, 0),
-            },
+            }),
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
