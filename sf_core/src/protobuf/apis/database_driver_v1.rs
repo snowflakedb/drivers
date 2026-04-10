@@ -922,7 +922,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
         self.driver
-            .connection_release(conn_handle.into())
+            .flush_telemetry_on_release(conn_handle.into())
+            .await
             .to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
     }
@@ -1509,24 +1510,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        let identity = self
-            .driver
-            .get_wrapper_identity(handle)
-            .await
-            .to_protobuf()?;
-        if identity.is_none() {
-            tracing::warn!(api_method = %input.api_method, "Telemetry: api_usage called before TelemetryInit; event will lack wrapper identity");
-        }
+        tracing::debug!(api_method = %input.api_method, "Telemetry: api_usage");
 
-        tracing::debug!(
-            api_method = %input.api_method,
-            driver_name = identity.as_ref().map_or("", |i| &i.driver_name),
-            "Telemetry: api_usage"
-        );
+        self.driver
+            .record_api_usage(handle, &input.api_method)
+            .await;
 
-        // STUB: OTel counter creation not yet implemented.
-        // When implemented, increment an OTel counter `snowflake.driver.api.call`
-        // with api_method + identity attributes, and export via SnowflakeInBandExporter.
         Ok(TelemetrySendResponse {})
     }
 
@@ -1541,25 +1530,16 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
         let handle = Handle::from(conn_handle);
 
-        let identity = self
-            .driver
-            .get_wrapper_identity(handle)
-            .await
-            .to_protobuf()?;
-        if identity.is_none() {
-            tracing::warn!(exception_type = %input.exception_type, "Telemetry: wrapper_error called before TelemetryInit; event will lack wrapper identity");
-        }
-
         tracing::debug!(
             exception_type = %input.exception_type,
             error_source = %input.error_source,
-            driver_name = identity.as_ref().map_or("", |i| &i.driver_name),
             "Telemetry: wrapper_error"
         );
 
-        // STUB: OTel span creation not yet implemented.
-        // When implemented, create an OTel span with an exception event carrying
-        // exception_type, error_source, and identity attributes.
+        self.driver
+            .record_wrapper_error(handle, &input.exception_type, &input.error_source)
+            .await;
+
         Ok(TelemetrySendResponse {})
     }
 }

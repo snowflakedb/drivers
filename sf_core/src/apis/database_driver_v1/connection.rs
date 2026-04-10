@@ -280,16 +280,80 @@ impl DatabaseDriverV1 {
                     .get(param_names::CLIENT_TELEMETRY_ENABLED.as_str())
                     .map(|v| v.eq_ignore_ascii_case("true"))
                     .unwrap_or(true);
-                drop(conn);
 
-                // Best-effort session_init telemetry — spawned as a background task
-                // so connection open never blocks on telemetry latency.
-                if telemetry_enabled {
-                    let conn_ptr_clone = conn_ptr.clone();
-                    tokio::spawn(async move {
-                        Self::send_session_init_telemetry(&conn_ptr_clone).await;
+                // Initialize per-connection OTel provider and start a long-lived
+                // connection span. api_usage and wrapper_error become events on
+                // this span; the span is ended on connection release.
+                if telemetry_enabled
+                    && let Ok(qp) = conn.query_transport_parameters()
+                    && let Some(ref client) = conn.http_client
+                {
+                    use crate::telemetry::snowflake_exporter::{
+                        ExporterSession, SnowflakeInBandExporter,
+                    };
+                    use opentelemetry::trace::{Tracer, TracerProvider};
+
+                    let session = Arc::new(ExporterSession {
+                        client: client.clone(),
+                        query_parameters: qp,
+                        session_token: conn.tokens.clone(),
                     });
+                    let exporter = SnowflakeInBandExporter::new(session);
+
+                    let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                        .with_batch_exporter(exporter)
+                        .build();
+
+                    let session_id = conn
+                        .tokens
+                        .read()
+                        .await
+                        .as_ref()
+                        .map(|t| t.session_id)
+                        .unwrap_or(0);
+
+                    let env_info = conn
+                        .wrapper_identity
+                        .as_ref()
+                        .map(crate::telemetry::environment::EnvironmentInfo::with_wrapper)
+                        .unwrap_or_else(crate::telemetry::environment::EnvironmentInfo::detect);
+
+                    let mut attributes = vec![
+                        opentelemetry::KeyValue::new("service.name", env_info.driver_name.clone()),
+                        opentelemetry::KeyValue::new(
+                            "service.version",
+                            env_info.driver_version.clone(),
+                        ),
+                        opentelemetry::KeyValue::new(
+                            "process.runtime.name",
+                            env_info.language_runtime.clone(),
+                        ),
+                        opentelemetry::KeyValue::new(
+                            "process.runtime.version",
+                            env_info.language_version.clone(),
+                        ),
+                        opentelemetry::KeyValue::new("os.type", env_info.os_name.clone()),
+                        opentelemetry::KeyValue::new("os.version", env_info.os_version.clone()),
+                        opentelemetry::KeyValue::new("host.arch", env_info.os_architecture.clone()),
+                        opentelemetry::KeyValue::new("snowflake.session.id", session_id),
+                    ];
+                    if let Some(ref compiler) = env_info.language_compiler {
+                        attributes.push(opentelemetry::KeyValue::new(
+                            "process.runtime.compiler",
+                            compiler.clone(),
+                        ));
+                    }
+
+                    let tracer = tracer_provider.tracer("snowflake.telemetry");
+                    let span = tracer
+                        .span_builder("connection")
+                        .with_attributes(attributes)
+                        .start(&tracer);
+                    conn.telemetry_span = Some(span);
+                    conn.telemetry_tracer_provider = Some(tracer_provider);
                 }
+
+                drop(conn);
 
                 Ok(())
             }
@@ -300,54 +364,83 @@ impl DatabaseDriverV1 {
         }
     }
 
-    /// Send session_init telemetry for the given connection (best-effort, fire-and-forget).
-    ///
-    /// Acquires the connection Mutex briefly to extract identity, tokens Arc,
-    /// and transport parameters, then drops the Mutex before reading the tokens
-    /// RwLock or making any network call. This avoids holding the Mutex across
-    /// an RwLock await (which could deadlock if a concurrent token refresh holds
-    /// the write lock).
-    async fn send_session_init_telemetry(conn_ptr: &Arc<Mutex<Connection>>) {
-        use crate::telemetry::snowflake_exporter::{ExporterSession, SnowflakeInBandExporter};
-        use opentelemetry_sdk::trace::SpanExporter;
-
-        // Step 1: Hold the connection Mutex only to clone what we need.
-        let (env_info, tokens_arc, query_parameters, http_client) = {
-            let conn = conn_ptr.lock().await;
-            let Some(ref identity) = conn.wrapper_identity else {
-                return;
-            };
-            let env_info = crate::telemetry::environment::EnvironmentInfo::with_wrapper(identity);
-            let Ok(query_parameters) = conn.query_transport_parameters() else {
-                return;
-            };
-            let Some(http_client) = conn.http_client.clone() else {
-                return;
-            };
-            (env_info, conn.tokens.clone(), query_parameters, http_client)
+    /// Record a wrapper error as an event on the connection's long-lived span.
+    pub async fn record_wrapper_error(
+        &self,
+        handle: Handle,
+        exception_type: &str,
+        error_source: &str,
+    ) {
+        let conn_ptr = match self.connections.get_obj(handle) {
+            Some(c) => c,
+            None => return,
         };
-        // Mutex is now dropped.
+        let mut conn = conn_ptr.lock().await;
+        let Some(ref mut span) = conn.telemetry_span else {
+            return;
+        };
 
-        // Step 2: Read session_id from the tokens RwLock without holding the Mutex.
-        // After a successful login, tokens are always present. The unwrap_or(0)
-        // is a defensive fallback — session_id 0 acts as a "no session" sentinel
-        // in the telemetry payload and is harmless if it somehow occurs.
-        let session_id = tokens_arc
-            .read()
-            .await
-            .as_ref()
-            .map(|t| t.session_id)
-            .unwrap_or(0);
+        use opentelemetry::trace::Span;
 
-        let span = crate::telemetry::build_session_init_span(&env_info, session_id);
-        let session = Arc::new(ExporterSession {
-            client: http_client,
-            query_parameters,
-            session_token: tokens_arc,
+        span.add_event(
+            "exception",
+            vec![
+                opentelemetry::KeyValue::new("exception.type", exception_type.to_string()),
+                opentelemetry::KeyValue::new("exception.source", error_source.to_string()),
+            ],
+        );
+        span.set_status(opentelemetry::trace::Status::Error {
+            description: std::borrow::Cow::Owned(exception_type.to_string()),
         });
+    }
 
-        let exporter = SnowflakeInBandExporter::new(session);
-        let _ = exporter.export(vec![span]).await;
+    /// Record an API usage event on the connection's long-lived span.
+    pub async fn record_api_usage(&self, handle: Handle, api_method: &str) {
+        let conn_ptr = match self.connections.get_obj(handle) {
+            Some(c) => c,
+            None => return,
+        };
+        let mut conn = conn_ptr.lock().await;
+        let Some(ref mut span) = conn.telemetry_span else {
+            return;
+        };
+
+        use opentelemetry::trace::Span;
+
+        span.add_event(
+            "api_call",
+            vec![opentelemetry::KeyValue::new(
+                "api_method",
+                api_method.to_string(),
+            )],
+        );
+    }
+
+    /// End the connection span and shutdown the OTel provider (flushing
+    /// pending telemetry), then release the connection handle.
+    pub async fn flush_telemetry_on_release(&self, conn_handle: Handle) -> Result<(), ApiError> {
+        if let Some(conn_ptr) = self.connections.get_obj(conn_handle) {
+            let (span, tracer_provider) = {
+                let mut conn = conn_ptr.lock().await;
+                (
+                    conn.telemetry_span.take(),
+                    conn.telemetry_tracer_provider.take(),
+                )
+            };
+            // End the connection span so the BatchSpanProcessor can export it.
+            if let Some(mut s) = span {
+                use opentelemetry::trace::Span;
+                s.end();
+            }
+            // Shutdown flushes all pending spans. Best-effort.
+            if let Some(tp) = tracer_provider
+                && let Err(e) = tp.shutdown()
+            {
+                tracing::debug!("Telemetry tracer provider shutdown error: {e}");
+            }
+        }
+
+        self.connection_release(conn_handle)
     }
 
     pub async fn connection_set_option(
@@ -580,6 +673,11 @@ pub struct Connection {
     pub final_session_names: RwLock<FinalSessionNames>,
     /// Wrapper identity for telemetry, set once via ConnectionInit.
     pub wrapper_identity: Option<WrapperIdentity>,
+    /// Per-connection OTel tracer provider for batched span export.
+    pub(crate) telemetry_tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+    /// Long-lived connection span. Events (api_usage, wrapper_error) are added
+    /// to this span during the connection's lifetime; the span is ended on release.
+    pub(crate) telemetry_span: Option<opentelemetry_sdk::trace::Span>,
 }
 
 impl Default for Connection {
@@ -605,6 +703,8 @@ impl Connection {
             init_session_parameters: None,
             final_session_names: RwLock::new(FinalSessionNames::default()),
             wrapper_identity: None,
+            telemetry_tracer_provider: None,
+            telemetry_span: None,
         }
     }
 
