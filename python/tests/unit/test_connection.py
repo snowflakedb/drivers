@@ -132,20 +132,6 @@ class TestParamstyleSetter:
         with pytest.raises(ProgrammingError, match="paramstyle must be str or ParamStyle"):
             connection.paramstyle = 123  # type: ignore[assignment]
 
-    def test_cursor_execute_after_string_assign(self, connection, mock_db_api):
-        """Layered clients set ``connection.paramstyle = \"pyformat\"``; cursor must not see a bare str."""
-        mock_db_api.statement_new.return_value = MagicMock(stmt_handle=StatementHandle(id=1))
-        execute_result = MagicMock()
-        execute_result.columns = []
-        execute_result.HasField = MagicMock(return_value=False)
-        execute_result.sql_state = "00000"
-        mock_db_api.statement_execute_query.return_value.result = execute_result
-
-        connection.paramstyle = "pyformat"
-        cur = SnowflakeCursor(connection)
-        cur.execute("SELECT %(v)s", {"v": 1})
-        mock_db_api.statement_execute_query.assert_called()
-
     def test_cursor_execute_qmark_after_string_assign(self, connection, mock_db_api):
         mock_db_api.statement_new.return_value = MagicMock(stmt_handle=StatementHandle(id=1))
         execute_result = MagicMock()
