@@ -24,42 +24,28 @@ def _create_sse_stage(cursor, prefix: str) -> str:
     return stage_name
 
 
-def test_should_put_file_to_sse_stage(connection):
+def test_should_put_and_get_file_on_sse_stage(connection):
     with connection.cursor() as cursor:
         # Given Stage with server-side encryption (SNOWFLAKE_SSE)
-        stage_name = _create_sse_stage(cursor, "TEST_SSE_PUT")
+        stage_name = _create_sse_stage(cursor, "TEST_SSE_PUT_GET")
 
-        with tempfile.TemporaryDirectory() as td:
-            test_file = create_test_file(Path(td), "sse_test.txt", "hello sse\n")
+        with tempfile.TemporaryDirectory() as upload_dir:
+            test_file = create_test_file(Path(upload_dir), "sse_test.txt", "hello sse\n")
             file_uri = as_file_uri(test_file)
 
             # When File is uploaded using PUT command
             cursor.execute(f"PUT 'file://{file_uri}' @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
-            result = cursor.fetchone()
+            put_result = cursor.fetchone()
 
             # Then File should be uploaded successfully
-            assert result is not None
-            assert result[6] == "UPLOADED"
-
-
-def test_should_get_file_from_sse_stage(connection):
-    with connection.cursor() as cursor:
-        # Given File is uploaded to stage with server-side encryption (SNOWFLAKE_SSE)
-        stage_name = _create_sse_stage(cursor, "TEST_SSE_GET")
-
-        with tempfile.TemporaryDirectory() as upload_dir:
-            test_file = create_test_file(Path(upload_dir), "sse_get.txt", "get sse\n")
-            file_uri = as_file_uri(test_file)
-
-            cursor.execute(f"PUT 'file://{file_uri}' @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
-            upload_result = cursor.fetchone()
-            assert upload_result[6] == "UPLOADED"
+            assert put_result is not None
+            assert put_result[6] == "UPLOADED"
 
         with tempfile.TemporaryDirectory() as download_dir:
             download_uri = as_file_uri(Path(download_dir))
 
             # When File is downloaded using GET command
-            cursor.execute(f"GET @{stage_name}/sse_get.txt 'file://{download_uri}/'")
+            cursor.execute(f"GET @{stage_name}/sse_test.txt 'file://{download_uri}/'")
             get_result = cursor.fetchone()
 
             # Then File should be downloaded
@@ -67,12 +53,12 @@ def test_should_get_file_from_sse_stage(connection):
             assert get_result[2] == "DOWNLOADED"
 
             # And Have correct content
-            downloaded = Path(download_dir) / "sse_get.txt"
+            downloaded = Path(download_dir) / "sse_test.txt"
             assert downloaded.exists()
-            assert downloaded.read_text().strip() == "get sse"
+            assert downloaded.read_text().strip() == "hello sse"
 
 
-def test_should_put_file_to_sse_stage_with_directory_enabled(connection):
+def test_should_put_and_get_file_on_sse_stage_with_directory_enabled(connection):
     with connection.cursor() as cursor:
         # Given Stage with server-side encryption and DIRECTORY enabled
         stage_name = f"TEST_SSE_DIR_{uuid.uuid4().hex}".upper()
@@ -82,14 +68,30 @@ def test_should_put_file_to_sse_stage_with_directory_enabled(connection):
             f"DIRECTORY = (ENABLE = TRUE)"
         )
 
-        with tempfile.TemporaryDirectory() as td:
-            test_file = create_test_file(Path(td), "test.txt", "Initial contents\n")
+        with tempfile.TemporaryDirectory() as upload_dir:
+            test_file = create_test_file(Path(upload_dir), "test.txt", "Initial contents\n")
             file_uri = as_file_uri(test_file)
 
             # When File is uploaded using PUT command
             cursor.execute(f"PUT 'file://{file_uri}' @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE")
-            result = cursor.fetchone()
+            put_result = cursor.fetchone()
 
             # Then File should be uploaded successfully
-            assert result is not None
-            assert result[6] == "UPLOADED"
+            assert put_result is not None
+            assert put_result[6] == "UPLOADED"
+
+        with tempfile.TemporaryDirectory() as download_dir:
+            download_uri = as_file_uri(Path(download_dir))
+
+            # When File is downloaded using GET command
+            cursor.execute(f"GET @{stage_name}/test.txt 'file://{download_uri}/'")
+            get_result = cursor.fetchone()
+
+            # Then File should be downloaded
+            assert get_result is not None
+            assert get_result[2] == "DOWNLOADED"
+
+            # And Have correct content
+            downloaded = Path(download_dir) / "test.txt"
+            assert downloaded.exists()
+            assert downloaded.read_text().strip() == "Initial contents"

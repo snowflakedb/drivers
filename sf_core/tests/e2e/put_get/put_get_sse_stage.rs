@@ -14,14 +14,14 @@ fn create_sse_stage(client: &SnowflakeTestClient, stage_name: &str) {
 }
 
 #[test]
-fn should_put_file_to_sse_stage() {
+fn should_put_and_get_file_on_sse_stage() {
     // Given Stage with server-side encryption (SNOWFLAKE_SSE)
     let client = SnowflakeTestClient::connect_with_default_auth();
-    let stage_name = random_stage_name("TEST_SSE_PUT");
+    let stage_name = random_stage_name("TEST_SSE_PUT_GET");
     create_sse_stage(&client, &stage_name);
 
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file = create_test_file(temp_dir.path(), "sse_test.txt", "hello sse\n");
+    let upload_dir = tempfile::TempDir::new().unwrap();
+    let test_file = create_test_file(upload_dir.path(), "sse_test.txt", "hello sse\n");
 
     // When File is uploaded using PUT command
     let put_sql = format!(
@@ -34,31 +34,11 @@ fn should_put_file_to_sse_stage() {
     let mut helper = crate::common::arrow_result_helper::ArrowResultHelper::from_result(result);
     let put: PutResult = helper.fetch_one().expect("Failed to fetch PUT result");
     assert_eq!(put.status, "UPLOADED");
-}
-
-#[test]
-fn should_get_file_from_sse_stage() {
-    // Given File is uploaded to stage with server-side encryption (SNOWFLAKE_SSE)
-    let client = SnowflakeTestClient::connect_with_default_auth();
-    let stage_name = random_stage_name("TEST_SSE_GET");
-    create_sse_stage(&client, &stage_name);
-
-    let upload_dir = tempfile::TempDir::new().unwrap();
-    let test_file = create_test_file(upload_dir.path(), "sse_get.txt", "get sse\n");
-
-    let put_sql = format!(
-        "PUT 'file://{}' @{stage_name} AUTO_COMPRESS=FALSE OVERWRITE=TRUE",
-        path_to_sql_uri(&test_file)
-    );
-    let put_result = client.execute_query(&put_sql);
-    let mut helper = crate::common::arrow_result_helper::ArrowResultHelper::from_result(put_result);
-    let put: PutResult = helper.fetch_one().unwrap();
-    assert_eq!(put.status, "UPLOADED");
 
     // When File is downloaded using GET command
     let download_dir = tempfile::TempDir::new().unwrap();
     let get_sql = format!(
-        "GET @{stage_name}/sse_get.txt 'file://{}/'",
+        "GET @{stage_name}/sse_test.txt 'file://{}/'",
         path_to_sql_uri(download_dir.path())
     );
     let get_result = client.execute_query(&get_sql);
@@ -69,14 +49,14 @@ fn should_get_file_from_sse_stage() {
     assert_eq!(get.status, "DOWNLOADED");
 
     // And Have correct content
-    let downloaded = download_dir.path().join("sse_get.txt");
+    let downloaded = download_dir.path().join("sse_test.txt");
     assert!(downloaded.exists(), "Downloaded file should exist");
     let content = std::fs::read_to_string(&downloaded).unwrap();
-    assert_eq!(content.trim(), "get sse");
+    assert_eq!(content.trim(), "hello sse");
 }
 
 #[test]
-fn should_put_file_to_sse_stage_with_directory_enabled() {
+fn should_put_and_get_file_on_sse_stage_with_directory_enabled() {
     // Given Stage with server-side encryption and DIRECTORY enabled
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = random_stage_name("TEST_SSE_DIR");
@@ -86,8 +66,8 @@ fn should_put_file_to_sse_stage_with_directory_enabled() {
          DIRECTORY = (ENABLE = TRUE)"
     ));
 
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file = create_test_file(temp_dir.path(), "test.txt", "Initial contents\n");
+    let upload_dir = tempfile::TempDir::new().unwrap();
+    let test_file = create_test_file(upload_dir.path(), "test.txt", "Initial contents\n");
 
     // When File is uploaded using PUT command
     let put_sql = format!(
@@ -100,4 +80,23 @@ fn should_put_file_to_sse_stage_with_directory_enabled() {
     let mut helper = crate::common::arrow_result_helper::ArrowResultHelper::from_result(result);
     let put: PutResult = helper.fetch_one().expect("Failed to fetch PUT result");
     assert_eq!(put.status, "UPLOADED");
+
+    // When File is downloaded using GET command
+    let download_dir = tempfile::TempDir::new().unwrap();
+    let get_sql = format!(
+        "GET @{stage_name}/test.txt 'file://{}/'",
+        path_to_sql_uri(download_dir.path())
+    );
+    let get_result = client.execute_query(&get_sql);
+
+    // Then File should be downloaded
+    let mut helper = crate::common::arrow_result_helper::ArrowResultHelper::from_result(get_result);
+    let get: GetResult = helper.fetch_one().expect("Failed to fetch GET result");
+    assert_eq!(get.status, "DOWNLOADED");
+
+    // And Have correct content
+    let downloaded = download_dir.path().join("test.txt");
+    assert!(downloaded.exists(), "Downloaded file should exist");
+    let content = std::fs::read_to_string(&downloaded).unwrap();
+    assert_eq!(content.trim(), "Initial contents");
 }
