@@ -5,12 +5,6 @@
 
 FROM eclipse-temurin:17-jdk
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create directory for WireMock
 RUN mkdir -p /opt/wiremock
 
 WORKDIR /wiremock
