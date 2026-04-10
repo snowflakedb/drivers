@@ -514,6 +514,9 @@ impl OdbcError {
                 JsonBindingError::InvalidBooleanValue { .. } => {
                     SqlState::InvalidCharacterValueForCast
                 }
+                JsonBindingError::BindingNumericOutOfRange { .. } => {
+                    SqlState::NumericValueOutOfRange
+                }
                 _ => SqlState::GeneralError,
             },
             OdbcError::CoreError { source, .. } => match source.as_ref() {

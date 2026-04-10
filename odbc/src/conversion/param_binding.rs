@@ -1577,7 +1577,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_binary_multibyte_nonzero_second_byte_to_boolean_true() -> TestResult {
+    fn convert_binary_multibyte_to_boolean_fails() {
         let val: [u8; 3] = [0x00, 0x01, 0x00];
         let mut ind: sql::Len = 3;
         let binding = make_binding(
@@ -1587,27 +1587,27 @@ mod tests {
             3,
             &mut ind,
         );
-        let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("true".to_string()));
-        Ok(())
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Multi-byte binary should be rejected for SQL_BIT (ODBC spec: len must equal 1)"
+        );
     }
 
     #[test]
-    fn convert_binary_multibyte_all_zero_to_boolean_false() -> TestResult {
-        let val: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
-        let mut ind: sql::Len = 4;
+    fn convert_binary_empty_to_boolean_fails() {
+        let val: [u8; 0] = [];
+        let mut ind: sql::Len = 0;
         let binding = make_binding(
             CDataType::Binary,
             sql::SqlDataType::EXT_BIT,
             val.as_ptr() as sql::Pointer,
-            4,
+            0,
             &mut ind,
         );
-        let (ty, v) = convert_binding(&binding)?;
-        assert_eq!(ty, SnowflakeLogicalType::Boolean);
-        assert_eq!(v, Value::String("false".to_string()));
-        Ok(())
+        assert!(
+            convert_binding(&binding).is_err(),
+            "Empty binary should be rejected for SQL_BIT (ODBC spec: len must equal 1)"
+        );
     }
 
     #[test]
@@ -2512,7 +2512,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(JsonBindingError::InvalidBooleanValue { .. })
         ));
     }
 
@@ -2528,7 +2528,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(JsonBindingError::InvalidBooleanValue { .. })
         ));
     }
 
@@ -2650,7 +2650,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(JsonBindingError::InvalidBooleanValue { .. })
         ));
     }
 
@@ -2666,7 +2666,7 @@ mod tests {
         );
         assert!(matches!(
             convert_binding(&binding),
-            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+            Err(JsonBindingError::InvalidBooleanValue { .. })
         ));
     }
 }

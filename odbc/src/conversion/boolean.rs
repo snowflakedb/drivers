@@ -5,7 +5,9 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::JsonBindingError;
-use crate::conversion::error::{InvalidBooleanValueSnafu, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{
+    BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::numeric_helpers::{
     reject_multi_field_interval, write_interval_second, write_single_field_interval,
@@ -232,13 +234,16 @@ impl ReadODBC for SnowflakeBoolean {
             }
             CDataType::Binary => {
                 let len = buffer_data_len(binding);
-                if len == 0 {
-                    return Ok(false);
+                if len != 1 {
+                    return BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "SQL_C_BINARY to SQL_BIT requires exactly 1 byte, got {len}"
+                        ),
+                    }
+                    .fail();
                 }
-                let slice = unsafe {
-                    std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
-                };
-                Ok(slice.iter().any(|&b| b != 0))
+                let byte = unsafe { *(binding.parameter_value_ptr as *const u8) };
+                Ok(byte != 0)
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
