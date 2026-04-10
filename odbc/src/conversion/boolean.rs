@@ -161,7 +161,7 @@ impl ReadODBC for SnowflakeBoolean {
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, JsonBindingError> {
         let result = match binding.value_type {
-            CDataType::Bit => read_unaligned::<u8>(binding) != 0,
+            CDataType::Default | CDataType::Bit => read_unaligned::<u8>(binding) != 0,
             CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) != 0,
             CDataType::UTinyInt => read_unaligned::<u8>(binding) != 0,
             CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) != 0,
@@ -198,6 +198,14 @@ impl ReadODBC for SnowflakeBoolean {
                 let s = read_char_str(binding)?;
                 let trimmed = s.trim();
                 if let Ok(v) = trimmed.parse::<f64>() {
+                    if !v.is_finite() {
+                        return NumericMagnitudeOverflowSnafu {
+                            reason: format!(
+                                "non-finite f64 value {v} cannot be converted to boolean"
+                            ),
+                        }
+                        .fail();
+                    }
                     v != 0.0
                 } else {
                     return UnsupportedCDataTypeSnafu {
@@ -210,6 +218,14 @@ impl ReadODBC for SnowflakeBoolean {
                 let s = read_wchar_str(binding)?;
                 let trimmed = s.trim();
                 if let Ok(v) = trimmed.parse::<f64>() {
+                    if !v.is_finite() {
+                        return NumericMagnitudeOverflowSnafu {
+                            reason: format!(
+                                "non-finite f64 value {v} cannot be converted to boolean"
+                            ),
+                        }
+                        .fail();
+                    }
                     v != 0.0
                 } else {
                     return UnsupportedCDataTypeSnafu {

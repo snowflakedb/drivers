@@ -5,6 +5,7 @@
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -198,8 +199,9 @@ TEST_CASE("should reject SQL_C_NUMERIC overflow into NUMBER(3,0)", "[c_numeric][
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the server rejects the value with an error
+  // Then the server rejects the value with SQLSTATE 22003
   CHECK(ret == SQL_ERROR);
+  CHECK(get_sqlstate(stmt) == "22003");
 }
 
 TEST_CASE("should bind SQL_C_NUMERIC with NULL indicator", "[c_numeric][conversion][sql_fixed]") {

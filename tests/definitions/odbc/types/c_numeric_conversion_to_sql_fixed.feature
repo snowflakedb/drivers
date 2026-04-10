@@ -35,7 +35,7 @@ Feature: ODBC SQL_C_NUMERIC to fixed SQL type conversions
   Scenario: should reject SQL_C_NUMERIC overflow into NUMBER(3,0)
     Given Snowflake client is logged in
     When SQL_C_NUMERIC with value 99999 is bound to a NUMBER(3,0) column and inserted
-    Then the server rejects the value with an error
+    Then the server rejects the value with SQLSTATE 22003
 
   @odbc_e2e
   Scenario: should bind SQL_C_NUMERIC with NULL indicator

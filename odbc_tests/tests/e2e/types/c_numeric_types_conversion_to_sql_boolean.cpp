@@ -291,6 +291,44 @@ TEST_CASE("should bind SQL_C_NUMERIC negative to SQL_BIT as true", "[c_numeric_t
   }
 }
 
+TEST_CASE("should bind SQL_C_DEFAULT to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  conn.execute("CREATE TABLE t_default (col BOOLEAN)");
+
+  SQLCHAR val_true = 1;
+  SQLCHAR val_false = 0;
+  SQLLEN ind = 0;
+
+  // When SQL_C_DEFAULT 1 is bound to SQL_BIT and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t_default VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_BIT, 1, 0, &val_true, 0, &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // And SQL_C_DEFAULT 0 is bound to SQL_BIT and inserted
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_BIT, 1, 0, &val_false, 0, &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the values are read back as true and false
+  auto sel = conn.createStatement();
+  ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t_default ORDER BY col DESC"), SQL_NTS);
+  REQUIRE_ODBC(ret, sel);
+  ret = SQLFetch(sel.getHandle());
+  REQUIRE_ODBC(ret, sel);
+  CHECK(get_data<SQL_C_BIT>(sel, 1) == 1);
+  ret = SQLFetch(sel.getHandle());
+  REQUIRE_ODBC(ret, sel);
+  CHECK(get_data<SQL_C_BIT>(sel, 1) == 0);
+}
+
 TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_BIT", "[c_numeric_types][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
   Connection conn;

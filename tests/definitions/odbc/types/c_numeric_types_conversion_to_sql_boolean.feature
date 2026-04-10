@@ -56,6 +56,13 @@ Feature: ODBC numeric C types to SQL_BIT (BOOLEAN) conversions
     Then a negative numeric is stored as true (SQL_C_BIT 1)
 
   @odbc_e2e
+  Scenario: should bind SQL_C_DEFAULT to SQL_BIT
+    Given Snowflake client is logged in
+    When SQL_C_DEFAULT 1 is bound to SQL_BIT and inserted
+    And SQL_C_DEFAULT 0 is bound to SQL_BIT and inserted
+    Then the values are read back as true and false
+
+  @odbc_e2e
   Scenario: should bind SQL_C_SLONG with NULL indicator to SQL_BIT
     Given Snowflake client is logged in
     When SQL_C_SLONG is bound with SQL_NULL_DATA and inserted

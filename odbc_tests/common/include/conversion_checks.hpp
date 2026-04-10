@@ -241,6 +241,7 @@ inline void check_incompatible_bindparam(const HandleWrapper& stmt_handle, SQLSM
     auto records = get_diag_rec(stmt_handle);
     INFO("c_type=" << c_type << " sql_type=" << sql_type << " rejected at SQLBindParameter");
     REQUIRE(!records.empty());
+    CHECK(records[0].sqlState == "07006");
     return;
   }
   REQUIRE(ret == SQL_SUCCESS);
@@ -250,6 +251,7 @@ inline void check_incompatible_bindparam(const HandleWrapper& stmt_handle, SQLSM
   INFO("c_type=" << c_type << " sql_type=" << sql_type << " ret=" << ret << " sqlstate=" << sqlstate);
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
+  CHECK(records[0].sqlState == "07006");
 }
 
 inline void set_numeric_magnitude(SQL_NUMERIC_STRUCT& ns, uint64_t magnitude) {

@@ -41,7 +41,7 @@ Feature: ODBC C float types to SQL fixed-point conversions via parameter binding
   Scenario: should reject SQL_C_DOUBLE overflow into NUMBER(3,0)
     Given Snowflake client is logged in
     When A double value exceeding the column precision is bound and inserted
-    Then the server rejects the value with an error
+    Then the server rejects the value with SQLSTATE 22003
 
   @odbc_e2e
   Scenario: should bind SQL_C_DOUBLE with NULL indicator to SQL_INTEGER

@@ -508,6 +508,9 @@ impl OdbcError {
                 JsonBindingError::NumericMagnitudeOverflow { .. } => {
                     SqlState::NumericValueOutOfRange
                 }
+                JsonBindingError::UnsupportedCDataType { .. } => {
+                    SqlState::RestrictedDataTypeAttributeViolation
+                }
                 _ => SqlState::GeneralError,
             },
             OdbcError::CoreError { source, .. } => match source.as_ref() {
@@ -712,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn other_json_binding_errors_map_to_hy000() {
+    fn unsupported_c_data_type_maps_to_07006() {
         let json_err = UnsupportedCDataTypeSnafu {
             c_type: crate::api::CDataType::Char,
         }
@@ -721,6 +724,9 @@ mod tests {
             source: json_err,
             location: snafu::Location::new("test", 0, 0),
         };
-        assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::RestrictedDataTypeAttributeViolation
+        );
     }
 }

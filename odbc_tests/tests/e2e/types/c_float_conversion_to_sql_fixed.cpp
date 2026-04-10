@@ -13,6 +13,7 @@
 #include "Connection.hpp"
 #include "Schema.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -165,8 +166,9 @@ TEST_CASE("should reject SQL_C_DOUBLE overflow into NUMBER(3,0)", "[c_float][con
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the server rejects the value with an error
+  // Then the server rejects the value with SQLSTATE 22003
   CHECK(ret == SQL_ERROR);
+  CHECK(get_sqlstate(stmt) == "22003");
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator to SQL_INTEGER", "[c_float][conversion][sql_fixed]") {
