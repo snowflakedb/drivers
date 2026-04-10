@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import importlib
 
+from importlib import metadata
 from logging import getLogger
 from types import ModuleType
 from typing import Any, Callable, TypeVar, cast
@@ -53,7 +54,11 @@ def _import_or_missing(module_name: str) -> ModuleType | MissingOptionalDependen
     """
     try:
         mod = importlib.import_module(module_name)
-        logger.info("%s is installed (version: %s)", module_name, mod.__version__)
+        try:
+            version = metadata.version(module_name)
+        except metadata.PackageNotFoundError:
+            version = "unknown"
+        logger.info("%s is installed (version: %s)", module_name, version)
         return mod
     except ImportError:
         logger.info("%s is not installed; %s-based features will be unavailable", module_name, module_name)
