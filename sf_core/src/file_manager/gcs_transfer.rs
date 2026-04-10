@@ -61,9 +61,9 @@ pub async fn download_from_gcs(
     .await?;
 
     let headers = response.headers();
-    let digest = try_get_header(headers, GCS_META_SFC_DIGEST);
+    let digest = try_get_header(headers, GCS_META_SFC_DIGEST)?;
 
-    let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA) {
+    let file_metadata = match try_get_header(headers, GCS_META_ENCRYPTIONDATA)? {
         Some(encryption_data_str) => {
             let enc_data: serde_json::Value = serde_json::from_str(&encryption_data_str)
                 .context(gcs_download_error::DeserializationSnafu)?;
@@ -82,7 +82,7 @@ pub async fn download_from_gcs(
                 })?
                 .to_string();
 
-            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC).context(
+            let mat_desc_str = try_get_header(headers, GCS_META_MATDESC)?.context(
                 gcs_download_error::MissingMetadataSnafu {
                     field: GCS_META_MATDESC,
                 },
@@ -383,11 +383,19 @@ fn percent_encode_path(s: &str) -> String {
     encoded
 }
 
-fn try_get_header(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get(name)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
+fn try_get_header(
+    headers: &reqwest::header::HeaderMap,
+    name: &str,
+) -> Result<Option<String>, GcsDownloadError> {
+    match headers.get(name) {
+        Some(value) => {
+            let s = value
+                .to_str()
+                .context(gcs_download_error::InvalidHeaderValueSnafu)?;
+            Ok(Some(s.to_string()))
+        }
+        None => Ok(None),
+    }
 }
 
 async fn read_error_body(response: reqwest::Response) -> String {
@@ -937,6 +945,135 @@ mod tests {
         assert_eq!(
             url,
             "https://custom.example.com/my-bucket/dir/file%20name.csv"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // 9. try_get_header: missing vs invalid header values
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn try_get_header_missing_returns_ok_none() {
+        let headers = reqwest::header::HeaderMap::new();
+        let result = try_get_header(&headers, "x-missing").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn try_get_header_valid_returns_ok_some() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-test", "hello".parse().unwrap());
+        let result = try_get_header(&headers, "x-test").unwrap();
+        assert_eq!(result, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn try_get_header_invalid_utf8_returns_error() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "x-bad",
+            reqwest::header::HeaderValue::from_bytes(&[0x80, 0x81]).unwrap(),
+        );
+        let result = try_get_header(&headers, "x-bad");
+        assert!(result.is_err(), "non-UTF8 header should produce an error");
+        assert!(matches!(
+            result.unwrap_err(),
+            GcsDownloadError::InvalidHeaderValue { .. }
+        ));
+    }
+
+    // ---------------------------------------------------------------
+    // 10. GCS download metadata extraction
+    // ---------------------------------------------------------------
+
+    fn build_gcs_download_headers(
+        encryption_data: Option<&str>,
+        mat_desc: Option<&str>,
+        digest: Option<&str>,
+    ) -> reqwest::header::HeaderMap {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(v) = encryption_data {
+            headers.insert(GCS_META_ENCRYPTIONDATA, v.parse().unwrap());
+        }
+        if let Some(v) = mat_desc {
+            headers.insert(GCS_META_MATDESC, v.parse().unwrap());
+        }
+        if let Some(v) = digest {
+            headers.insert(GCS_META_SFC_DIGEST, v.parse().unwrap());
+        }
+        headers
+    }
+
+    const VALID_ENCRYPTION_DATA: &str =
+        r#"{"WrappedContentKey":{"EncryptedKey":"dGVzdA=="},"ContentEncryptionIV":"aXYxMjM0NTY="}"#;
+    const VALID_MAT_DESC: &str = r#"{"smkId":"1","queryId":"qid","keySize":"128"}"#;
+
+    #[test]
+    fn gcs_metadata_sse_no_headers_returns_none() {
+        let headers = build_gcs_download_headers(None, None, None);
+        let digest = try_get_header(&headers, GCS_META_SFC_DIGEST).unwrap();
+        let file_metadata = try_get_header(&headers, GCS_META_ENCRYPTIONDATA).unwrap();
+        assert!(digest.is_none());
+        assert!(file_metadata.is_none());
+    }
+
+    #[test]
+    fn gcs_metadata_encrypted_all_headers_returns_metadata() {
+        let headers = build_gcs_download_headers(
+            Some(VALID_ENCRYPTION_DATA),
+            Some(VALID_MAT_DESC),
+            Some("sha256digest"),
+        );
+
+        let digest = try_get_header(&headers, GCS_META_SFC_DIGEST).unwrap();
+        assert_eq!(digest, Some("sha256digest".to_string()));
+
+        let enc_data_str = try_get_header(&headers, GCS_META_ENCRYPTIONDATA)
+            .unwrap()
+            .unwrap();
+        let enc_data: serde_json::Value = serde_json::from_str(&enc_data_str).unwrap();
+
+        let encrypted_key = enc_data["WrappedContentKey"]["EncryptedKey"]
+            .as_str()
+            .unwrap();
+        assert_eq!(encrypted_key, "dGVzdA==");
+
+        let iv = enc_data["ContentEncryptionIV"].as_str().unwrap();
+        assert_eq!(iv, "aXYxMjM0NTY=");
+
+        let mat_desc_str = try_get_header(&headers, GCS_META_MATDESC).unwrap().unwrap();
+        let material_desc: MaterialDescription = serde_json::from_str(&mat_desc_str).unwrap();
+        assert_eq!(material_desc.smk_id, "1");
+    }
+
+    #[test]
+    fn gcs_metadata_encryptiondata_present_but_matdesc_missing_errors_in_download() {
+        let headers = build_gcs_download_headers(Some(VALID_ENCRYPTION_DATA), None, Some("digest"));
+
+        let enc_data_str = try_get_header(&headers, GCS_META_ENCRYPTIONDATA)
+            .unwrap()
+            .unwrap();
+        assert!(!enc_data_str.is_empty());
+
+        let mat_desc_result: Result<Option<String>, _> = try_get_header(&headers, GCS_META_MATDESC);
+        assert!(
+            mat_desc_result.unwrap().is_none(),
+            "matdesc should be None when header is absent"
+        );
+    }
+
+    #[test]
+    fn gcs_metadata_malformed_encryptiondata_returns_deserialization_error() {
+        let headers =
+            build_gcs_download_headers(Some("not-valid-json"), Some(VALID_MAT_DESC), None);
+
+        let enc_data_str = try_get_header(&headers, GCS_META_ENCRYPTIONDATA)
+            .unwrap()
+            .unwrap();
+        let parse_result: Result<serde_json::Value, _> = serde_json::from_str(&enc_data_str);
+        assert!(
+            parse_result.is_err(),
+            "malformed JSON should fail deserialization"
         );
     }
 }

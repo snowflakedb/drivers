@@ -1024,6 +1024,90 @@ mod tests {
         ));
     }
 
+    // ---------------------------------------------------------------
+    // Upload encryption material parsing (to_file_upload_data)
+    // ---------------------------------------------------------------
+
+    fn make_upload_json(encryption_material_fragment: &str) -> String {
+        format!(
+            r#"{{
+                "src_locations": ["path/to/file.csv"],
+                "stageInfo": {{
+                    "locationType": "GCS",
+                    "location": "bucket/prefix/",
+                    "creds": {{ "GCS_ACCESS_TOKEN": "fake" }},
+                    "region": "us-central1"
+                }},
+                {encryption_material_fragment}
+                "autoCompress": false,
+                "sourceCompression": "NONE",
+                "overwrite": false
+            }}"#
+        )
+    }
+
+    #[test]
+    fn upload_encryption_material_null_returns_none() {
+        let json = make_upload_json(r#""encryptionMaterial": null,"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_absent_returns_none() {
+        let json = make_upload_json("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_empty_array_returns_none() {
+        let json = make_upload_json(r#""encryptionMaterial": [],"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_single_returns_some() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42},"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_some());
+    }
+
+    #[test]
+    fn upload_encryption_material_array_of_one_returns_some() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": [{"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42}],"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_some());
+    }
+
+    #[test]
+    fn upload_encryption_material_array_of_many_returns_error() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": [
+                {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 1},
+                {"queryStageMasterKey": "b3l6","queryId": "qid-2","smkId": 2}
+            ],"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let result = data.to_file_upload_data();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Expected exactly one encryption material"),
+            "Error should mention the constraint: {err_msg}"
+        );
+    }
+
     #[test]
     fn test_unsupported_column_type_returns_error() {
         let row_type = RowType {
