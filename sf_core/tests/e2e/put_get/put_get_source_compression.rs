@@ -3,7 +3,7 @@ use crate::common::file_utils::shared_test_data_dir;
 use crate::common::put_get_common::PutResult;
 use crate::common::put_get_common::upload_to_stage_with_options;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ResultSetResponse;
 use std::path::PathBuf;
 use test_case::test_case;
 
@@ -170,7 +170,7 @@ fn should_compress_uncompressed_file_when_source_compression_set_to_none_and_aut
 }
 
 fn assert_put_results(
-    put_data: ExecuteResult,
+    put_data: ResultSetResponse,
     expected_source_filename: &str,
     expected_source_compression: &str,
     expected_target_filename: &str,

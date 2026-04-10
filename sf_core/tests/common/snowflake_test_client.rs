@@ -175,7 +175,10 @@ impl SnowflakeTestClient {
         response.stmt_handle.unwrap()
     }
 
-    pub fn execute_statement_query(&self, stmt: &StatementHandle) -> ExecuteResult {
+    pub fn execute_statement_query(
+        &self,
+        stmt: &StatementHandle,
+    ) -> execute_query_response::Result {
         self.execute_statement_query_with_bindings(stmt, None)
     }
 
@@ -183,7 +186,7 @@ impl SnowflakeTestClient {
         &self,
         stmt: &StatementHandle,
         json_bindings: Option<&str>,
-    ) -> ExecuteResult {
+    ) -> execute_query_response::Result {
         let bindings = json_bindings.map(|json| {
             let ptr = json.as_bytes().as_ptr() as u64;
             QueryBindings {
@@ -230,10 +233,11 @@ impl SnowflakeTestClient {
         serde_json::to_string(&bindings).unwrap()
     }
 
-    pub fn result_chunks(&self, stmt: &StatementHandle) -> ResultChunksResult {
+    pub fn result_chunks(&self, stmt: &StatementHandle, query_id: &str) -> ResultChunksResult {
         self.client
             .statement_result_chunks_blocking(StatementResultChunksRequest {
                 stmt_handle: Some(*stmt),
+                query_id: query_id.to_string(),
             })
             .unwrap()
             .result
@@ -257,8 +261,8 @@ impl SnowflakeTestClient {
             .unwrap();
     }
 
-    /// Executes a SQL query and returns the result
-    pub fn execute_query(&self, sql: &str) -> ExecuteResult {
+    /// Executes a SQL statement, ignoring the result. Use for DDL/side-effect queries.
+    pub fn execute_sql(&self, sql: &str) {
         let stmt_handle = self.new_statement();
 
         self.client
@@ -268,18 +272,20 @@ impl SnowflakeTestClient {
             })
             .unwrap();
 
-        let response = self
-            .client
+        self.client
             .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
             })
             .unwrap();
 
-        response.result.unwrap()
+        self.release_statement(&stmt_handle);
     }
 
-    pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
+    pub fn execute_query_no_unwrap(
+        &self,
+        sql: &str,
+    ) -> Result<execute_query_response::Result, String> {
         let stmt_handle = self.new_statement();
 
         if let Err(e) = self
@@ -289,28 +295,110 @@ impl SnowflakeTestClient {
                 query: sql.to_string(),
             })
         {
+            self.release_statement(&stmt_handle);
             return Err(format!("Failed to set SQL query: {e:?}"));
         }
 
-        match self
-            .client
-            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+        let result =
+            match self
+                .client
+                .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings: None,
+                }) {
+                Ok(response) => Ok(response.result.unwrap()),
+                Err(e) => match *e {
+                    ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
+                    ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
+                },
+            };
+        self.release_statement(&stmt_handle);
+        result
+    }
+
+    /// Execute a single query and get the result set (Arrow stream) directly.
+    pub fn execute_query(&self, sql: &str) -> ResultSetResponse {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        let result = self.execute_statement_query(&stmt_handle);
+        let query_id = unwrap_single_query_id(&result);
+        let rs = self.get_result_set(&stmt_handle, &query_id);
+        self.release_statement(&stmt_handle);
+        rs
+    }
+
+    /// Get a result set by query_id using the statement handle.
+    pub fn get_result_set(&self, stmt: &StatementHandle, query_id: &str) -> ResultSetResponse {
+        self.client
+            .statement_get_result_set_blocking(StatementGetResultSetRequest {
+                stmt_handle: Some(*stmt),
+                query_id: query_id.to_string(),
+            })
+            .unwrap()
+    }
+
+    /// Get a result set by query_id using the connection handle.
+    pub fn connection_get_result_set(&self, query_id: &str) -> ResultSetResponse {
+        self.client
+            .connection_get_result_set_blocking(ConnectionGetResultSetRequest {
+                conn_handle: Some(self.conn_handle),
+                query_id: query_id.to_string(),
+            })
+            .unwrap()
+    }
+
+    /// Execute a multistatement query.
+    pub fn execute_multistatement(&self, sql: &str, count: i64) -> execute_query_response::Result {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        self.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
                 stmt_handle: Some(stmt_handle),
-                bindings: None,
-            }) {
-            Ok(response) => {
-                let proto_result = response.result.unwrap();
-                Ok(proto_result)
-            }
-            Err(e) => match e.as_ref() {
-                ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
-                ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
-            },
-        }
+                options: [("multi_statement_count".to_string(), ConfigSetting::from(count))]
+                    .into_iter()
+                    .collect(),
+            })
+            .unwrap();
+        let result = self.execute_statement_query(&stmt_handle);
+        self.release_statement(&stmt_handle);
+        result
+    }
+
+    /// Execute a multistatement query, returning error on failure.
+    pub fn execute_multistatement_no_unwrap(
+        &self,
+        sql: &str,
+        count: i64,
+    ) -> Result<execute_query_response::Result, String> {
+        let stmt_handle = self.new_statement();
+        self.set_sql_query(&stmt_handle, sql);
+        self.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
+                stmt_handle: Some(stmt_handle),
+                options: [("multi_statement_count".to_string(), ConfigSetting::from(count))]
+                    .into_iter()
+                    .collect(),
+            })
+            .unwrap();
+        let result =
+            match self
+                .client
+                .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings: None,
+                }) {
+                Ok(response) => Ok(response.result.unwrap()),
+                Err(e) => match *e {
+                    ProtoError::Application(e) => Err(format!("{e:?}")),
+                    ProtoError::Transport(e) => Err(format!("{e:?}")),
+                },
+            };
+        self.release_statement(&stmt_handle);
+        result
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
-        self.execute_query(&format!(
+        self.execute_sql(&format!(
             "create temporary stage if not exists {stage_name}"
         ));
     }
@@ -477,6 +565,17 @@ impl Drop for SnowflakeTestClient {
             })
         {
             tracing::warn!("Failed to release database handle in Drop: {e:?}");
+        }
+    }
+}
+
+/// Extract the query_id from a single-statement execute result.
+/// Panics if the result is a multi-statement result.
+pub fn unwrap_single_query_id(result: &execute_query_response::Result) -> String {
+    match result {
+        execute_query_response::Result::Single(d) => d.query_id.clone(),
+        execute_query_response::Result::Multi(_) => {
+            panic!("Expected single-statement result, got multi-statement")
         }
     }
 }

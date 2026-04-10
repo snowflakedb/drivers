@@ -2,10 +2,11 @@ use crate::common::arrow_deserialize::RecordBatch;
 use crate::common::arrow_result_helper::{
     ArrowResultHelper, assert_record_batches_match, assert_schemas_match,
 };
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
 use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
 use arrow::array::Array;
 use arrow::compute::concat_batches;
+use sf_core::protobuf::generated::database_driver_v1::execute_query_response;
 
 #[test]
 fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
@@ -90,19 +91,27 @@ fn should_return_arrow_matching_json_for_large_multi_chunk_result() {
 
     client.set_sql_query(&stmt, &select_query);
     let arrow_result = client.execute_statement_query(&stmt);
+    let arrow_query_id = unwrap_single_query_id(&arrow_result);
+    let arrow_rs = client.get_result_set(&stmt, &arrow_query_id);
 
     client.set_sql_query(
         &stmt,
         "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = JSON",
     );
     let result = client.execute_statement_query(&stmt);
-    assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
+    let desc = match result {
+        execute_query_response::Result::Single(d) => d,
+        _ => panic!("expected single"),
+    };
+    assert_eq!(desc.rows_affected, Some(1), "Cannot force JSON result set");
 
     client.set_sql_query(&stmt, &select_query);
     let json_result = client.execute_statement_query(&stmt);
+    let json_query_id = unwrap_single_query_id(&json_result);
+    let json_rs = client.get_result_set(&stmt, &json_query_id);
 
-    let mut arrow_helper = ArrowResultHelper::from_result(arrow_result);
-    let mut json_helper = ArrowResultHelper::from_result(json_result);
+    let mut arrow_helper = ArrowResultHelper::from_result(arrow_rs);
+    let mut json_helper = ArrowResultHelper::from_result(json_rs);
 
     let arrow_schema = arrow_helper.schema();
     let json_schema = json_helper.schema();

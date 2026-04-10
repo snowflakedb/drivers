@@ -369,11 +369,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let alter_response = snowflake_query(
         query_params.clone(),
         &session_token,
-        QueryInput {
-            sql: alter_sql.to_string(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new(alter_sql),
         QueryExecutionMode::Blocking,
     )
     .await?;
@@ -387,11 +383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = snowflake_query(
         query_params,
         &session_token,
-        QueryInput {
-            sql: cli.sql.clone(),
-            bindings: None,
-            describe_only: None,
-        },
+        QueryInput::new(cli.sql.clone()),
         QueryExecutionMode::Blocking,
     )
     .await?;

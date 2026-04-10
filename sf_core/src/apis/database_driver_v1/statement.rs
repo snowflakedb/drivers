@@ -11,6 +11,7 @@ use super::validation::{
 };
 use crate::chunks::ChunkDownloadData;
 use crate::config::ParamStore;
+use crate::config::param_registry::ParamKey;
 use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
@@ -279,13 +280,37 @@ impl DatabaseDriverV1 {
         let result = self
             .execute_query_internal(stmt_handle, None, Some(true))
             .await?;
+        let descriptor = result.into_descriptor();
+
+        // For describe_only, use prebuilt stream from execute
+        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .build()
+        })?;
+        let mut stmt = stmt_ptr.lock().await;
+        let chunk_info = stmt.chunk_info.as_mut().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "No chunk info available; execute a query first".to_string(),
+            }
+            .build()
+        })?;
+        let stream = chunk_info.prebuilt_stream.take().ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "No prebuilt stream available".to_string(),
+            }
+            .build()
+        })?;
+        let query = stmt.query.clone().unwrap_or_default();
+
         Ok(PrepareResult {
-            stream: result.stream,
-            query_id: result.query_id,
-            columns: result.columns,
-            number_of_binds: result.number_of_binds,
-            query: result.query,
-            sql_state: result.sql_state,
+            stream,
+            query_id: descriptor.query_id,
+            columns: descriptor.columns,
+            number_of_binds: descriptor.number_of_binds,
+            query,
+            sql_state: descriptor.sql_state,
         })
     }
 }
@@ -301,16 +326,41 @@ pub struct ColumnMetadata {
     pub nullable: bool,
 }
 
-pub struct ExecuteResult {
-    pub stream: Box<FFI_ArrowArrayStream>,
-    pub rows_affected: Option<i64>,
+/// Metadata for a single result set (maps to proto ResultSetDescriptor).
+#[derive(Clone)]
+pub struct ResultSetDescriptor {
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
+    pub rows_affected: Option<i64>,
     pub statement_type_id: Option<i64>,
-    pub query: String,
     pub sql_state: Option<String>,
     pub stats: Option<Stats>,
     pub number_of_binds: i32,
+}
+
+/// Result of executing a query (maps to proto ExecuteQueryResponse).
+pub enum ExecuteQueryResult {
+    Single(ResultSetDescriptor),
+    Multi {
+        parent: ResultSetDescriptor,
+        query_ids: Vec<String>,
+    },
+}
+
+impl ExecuteQueryResult {
+    /// Extract the descriptor regardless of single/multi variant.
+    pub fn into_descriptor(self) -> ResultSetDescriptor {
+        match self {
+            ExecuteQueryResult::Single(d) => d,
+            ExecuteQueryResult::Multi { parent, .. } => parent,
+        }
+    }
+}
+
+/// A fully resolved result set with data (maps to proto ResultSetResponse).
+pub struct ResolvedResultSet {
+    pub descriptor: ResultSetDescriptor,
+    pub stream: Box<FFI_ArrowArrayStream>,
 }
 
 impl DatabaseDriverV1 {
@@ -318,7 +368,7 @@ impl DatabaseDriverV1 {
         &self,
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
-    ) -> Result<ExecuteResult, ApiError> {
+    ) -> Result<ExecuteQueryResult, ApiError> {
         self.execute_query_internal(stmt_handle, bindings, None)
             .await
     }
@@ -328,7 +378,7 @@ impl DatabaseDriverV1 {
         stmt_handle: Handle,
         bindings: Option<BindingType<'a>>,
         describe_only: Option<bool>,
-    ) -> Result<ExecuteResult, ApiError> {
+    ) -> Result<ExecuteQueryResult, ApiError> {
         let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
                 argument: "Statement handle not found".to_string(),
@@ -336,7 +386,7 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let mut stmt = stmt_ptr.lock().await;
+        let stmt = stmt_ptr.lock().await;
 
         let query = extract_query(&stmt)?;
         let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
@@ -346,6 +396,7 @@ impl DatabaseDriverV1 {
             sql: query.clone(),
             bindings: query_bindings,
             describe_only,
+            query_parameters: build_query_parameters(&stmt.settings),
         };
 
         let response = {
@@ -384,18 +435,43 @@ impl DatabaseDriverV1 {
             .await;
         }
 
-        let chunks = response.data.to_chunk_download_data().unwrap_or_default();
-        let total = response.data.total.unwrap_or(0);
-        let remote_row_count: i64 = chunks.iter().map(|c| c.row_count as i64).sum();
+        let descriptor = response_to_descriptor(&response.data);
+
+        // Build the Arrow stream eagerly — this handles all result formats
+        // (Arrow, JSON, PUT/GET file transfers) via process_query_response.
+        // Skip for multi-statement parents (they only contain metadata).
+        let prebuilt_stream = if super::multistatement::is_multistatement(&response.data) {
+            None
+        } else {
+            let query_result = process_query_response(&response.data, &http_client)
+                .await
+                .context(QueryResponseProcessingSnafu)?;
+            Some(Box::new(FFI_ArrowArrayStream::new(query_result.reader)))
+        };
+
+        // Re-acquire lock to store results
+        let mut stmt = stmt_ptr.lock().await;
         stmt.chunk_info = Some(StoredChunkInfo {
+            query_id: descriptor.query_id.clone(),
+            descriptor: descriptor.clone(),
             initial_chunk_base64: response.data.to_initial_base64_opt().map(String::from),
-            initial_chunk_row_count: total - remote_row_count,
-            chunks,
+            chunks: response.data.to_chunk_download_data().unwrap_or_default(),
+            prebuilt_stream,
+            number_of_binds: response.data.number_of_binds.unwrap_or(0),
+            stream_consumed: false,
         });
 
-        let result = response_to_execute_result(response.data, &http_client, query).await?;
         stmt.state = StatementState::Executed;
-        Ok(result)
+
+        if super::multistatement::is_multistatement(&response.data) {
+            let query_ids = super::multistatement::child_query_ids(&response.data);
+            Ok(ExecuteQueryResult::Multi {
+                parent: descriptor,
+                query_ids,
+            })
+        } else {
+            Ok(ExecuteQueryResult::Single(descriptor))
+        }
     }
 
     /// Execute query asynchronously (non-blocking) — returns immediately with query_id.
@@ -464,6 +540,7 @@ impl DatabaseDriverV1 {
     pub async fn statement_result_chunks(
         &self,
         stmt_handle: Handle,
+        query_id: &str,
     ) -> Result<StoredChunkInfo, ApiError> {
         let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
@@ -480,10 +557,24 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
+        if !query_id.is_empty() && chunk_info.query_id != query_id {
+            return Err(InvalidArgumentSnafu {
+                argument: format!(
+                    "query_id mismatch: requested '{}' but statement has '{}'",
+                    query_id, chunk_info.query_id
+                ),
+            }
+            .build());
+        }
+
         Ok(StoredChunkInfo {
+            query_id: chunk_info.query_id.clone(),
+            descriptor: chunk_info.descriptor.clone(),
             initial_chunk_base64: chunk_info.initial_chunk_base64.clone(),
-            initial_chunk_row_count: chunk_info.initial_chunk_row_count,
             chunks: chunk_info.chunks.clone(),
+            prebuilt_stream: None, // prebuilt stream is not cloneable; chunks path only
+            number_of_binds: chunk_info.number_of_binds,
+            stream_consumed: chunk_info.stream_consumed,
         })
     }
 
@@ -491,7 +582,7 @@ impl DatabaseDriverV1 {
         &self,
         conn_handle: Handle,
         query_id: String,
-    ) -> Result<ExecuteResult, ApiError> {
+    ) -> Result<ExecuteQueryResult, ApiError> {
         let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
             InvalidArgumentSnafu {
                 argument: "Connection handle not found".to_string(),
@@ -536,7 +627,15 @@ impl DatabaseDriverV1 {
             .await;
         }
 
-        response_to_execute_result(response.data, &http_client, String::new()).await
+        let descriptor = response_to_descriptor(&response.data);
+        if super::multistatement::is_multistatement(&response.data) {
+            Ok(ExecuteQueryResult::Multi {
+                parent: descriptor,
+                query_ids: super::multistatement::child_query_ids(&response.data),
+            })
+        } else {
+            Ok(ExecuteQueryResult::Single(descriptor))
+        }
     }
 
     pub async fn connection_abort_query(
@@ -599,60 +698,175 @@ fn extract_query(stmt: &Statement) -> Result<String, ApiError> {
     })
 }
 
-/// Convert a Snowflake query response into an `ExecuteResult` by processing
-/// the Arrow data, extracting column metadata, and assembling all fields.
-///
-/// Async because `process_query_response` may download additional Arrow
-/// chunks over HTTP for large result sets.
-async fn response_to_execute_result(
-    data: Data,
-    http_client: &reqwest::Client,
-    query: String,
-) -> Result<ExecuteResult, ApiError> {
-    let query_result = process_query_response(&data, http_client)
-        .await
-        .context(QueryResponseProcessingSnafu)?;
-
-    let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
+/// Extract metadata from a Snowflake query response into a `ResultSetDescriptor`.
+fn response_to_descriptor(data: &Data) -> ResultSetDescriptor {
     let query_id = data.query_id.clone().unwrap_or_default();
-    let rows_affected = calculate_rows_affected(&data);
-    let statement_type_id = data.statement_type_id;
+    let rows_affected = calculate_rows_affected(data);
+    let columns = data
+        .row_type
+        .as_ref()
+        .map(|row_types| {
+            row_types
+                .iter()
+                .map(|rt| ColumnMetadata {
+                    name: rt.name.clone(),
+                    r#type: rt.type_.clone(),
+                    precision: rt.precision.map(|v| v as i64),
+                    scale: rt.scale.map(|v| v as i64),
+                    length: rt.length.map(|v| v as i64),
+                    byte_length: rt.byte_length.map(|v| v as i64),
+                    nullable: rt.nullable,
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| put_get_columns(data.command.as_deref()));
 
-    let columns = query_result.columns.unwrap_or_else(|| {
-        data.row_type
-            .unwrap_or_default()
-            .iter()
-            .map(|rt| ColumnMetadata {
-                name: rt.name.clone(),
-                r#type: rt.type_.clone(),
-                precision: rt.precision.map(|v| v as i64),
-                scale: rt.scale.map(|v| v as i64),
-                length: rt.length.map(|v| v as i64),
-                byte_length: rt.byte_length.map(|v| v as i64),
-                nullable: rt.nullable,
-            })
-            .collect()
-    });
-
-    let number_of_binds = data.number_of_binds.unwrap_or(0);
-
-    Ok(ExecuteResult {
-        stream,
-        rows_affected,
+    ResultSetDescriptor {
         query_id,
         columns,
-        statement_type_id,
-        query,
-        sql_state: data.sql_state,
-        stats: data.stats,
-        number_of_binds,
-    })
+        rows_affected,
+        statement_type_id: data.statement_type_id,
+        sql_state: data.sql_state.clone(),
+        stats: data.stats.clone(),
+        number_of_binds: data.number_of_binds.unwrap_or(0),
+    }
+}
+
+/// Return client-synthesized column metadata for PUT/GET commands,
+/// which don't include `rowType` in the Snowflake response.
+fn put_get_columns(command: Option<&str>) -> Vec<ColumnMetadata> {
+    use super::query::{download_column_metadata, upload_column_metadata};
+    match command {
+        Some("UPLOAD") => upload_column_metadata(),
+        Some("DOWNLOAD") => download_column_metadata(),
+        _ => Vec::new(),
+    }
+}
+
+/// Build a `ResolvedResultSet` from a Snowflake HTTP response by fetching the query result
+/// by query_id and building the Arrow stream.
+async fn fetch_and_resolve_result_set(
+    conn_ptr: &Arc<Mutex<Connection>>,
+    query_id: &str,
+) -> Result<ResolvedResultSet, ApiError> {
+    let (query_parameters, http_client, retry_policy) = {
+        let conn = conn_ptr.lock().await;
+        (
+            conn.query_transport_parameters()?,
+            conn.http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            conn.retry_policy.clone(),
+        )
+    };
+
+    let response = {
+        let mut ctx = RefreshContext::from_arc(conn_ptr).await?;
+        let mut last_error = None;
+        loop {
+            let session_token = ctx.refresh_token(last_error).await?;
+            match snowflake_get_query_result(
+                &http_client,
+                &query_parameters,
+                session_token.reveal(),
+                query_id,
+                &retry_policy,
+            )
+            .await
+            {
+                Ok(result) => break Ok(result),
+                Err(e) => last_error = Some(e),
+            }
+        }
+    }?;
+
+    if response.success {
+        let conn = conn_ptr.lock().await;
+        conn.update_session_params_cache(
+            "",
+            response.data.parameters.as_ref(),
+            &super::connection::FinalSessionNames {
+                database: response.data.final_database_name.clone(),
+                schema: response.data.final_schema_name.clone(),
+                warehouse: response.data.final_warehouse_name.clone(),
+                role: response.data.final_role_name.clone(),
+            },
+        )
+        .await;
+    }
+
+    let descriptor = response_to_descriptor(&response.data);
+    let query_result = process_query_response(&response.data, &http_client)
+        .await
+        .context(QueryResponseProcessingSnafu)?;
+    let stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
+
+    Ok(ResolvedResultSet { descriptor, stream })
+}
+
+impl DatabaseDriverV1 {
+    /// Fetch a result set by query_id using the statement's stored chunk info (fast path)
+    /// or by re-fetching from Snowflake (for multi-statement children).
+    pub async fn statement_get_result_set(
+        &self,
+        stmt_handle: Handle,
+        query_id: String,
+    ) -> Result<ResolvedResultSet, ApiError> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let mut stmt = stmt_ptr.lock().await;
+
+        // Fast path: if the query_id matches stored chunk_info, use prebuilt stream
+        if let Some(ref mut info) = stmt.chunk_info
+            && info.query_id == query_id
+            && let Some(prebuilt) = info.prebuilt_stream.take()
+        {
+            let descriptor = info.descriptor.clone();
+            return Ok(ResolvedResultSet {
+                descriptor,
+                stream: prebuilt,
+            });
+        }
+
+        // Slow path: fetch from Snowflake by query_id (multi-statement children)
+        let conn = stmt.conn.clone();
+        drop(stmt);
+        fetch_and_resolve_result_set(&conn, &query_id).await
+    }
+
+    /// Fetch a result set by query_id using the connection (stateless, always fetches from Snowflake).
+    pub async fn connection_get_result_set(
+        &self,
+        conn_handle: Handle,
+        query_id: String,
+    ) -> Result<ResolvedResultSet, ApiError> {
+        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        fetch_and_resolve_result_set(&conn_ptr, &query_id).await
+    }
 }
 
 pub struct StoredChunkInfo {
+    pub query_id: String,
+    pub descriptor: ResultSetDescriptor,
     pub initial_chunk_base64: Option<String>,
-    pub initial_chunk_row_count: i64,
     pub chunks: Vec<ChunkDownloadData>,
+    /// Pre-built Arrow stream from execute. Consumed once by `statement_get_result_set`.
+    pub prebuilt_stream: Option<Box<FFI_ArrowArrayStream>>,
+    /// Number of bind parameters (only for prepared statements).
+    pub number_of_binds: i32,
+    /// Tracks whether the prebuilt stream was already consumed.
+    pub stream_consumed: bool,
 }
 
 pub struct Statement {
@@ -691,6 +905,35 @@ impl Statement {
             return QueryExecutionMode::Async;
         }
         QueryExecutionMode::Blocking
+    }
+}
+
+fn setting_to_json_value(setting: &Setting) -> serde_json::Value {
+    match setting {
+        Setting::String(s) => serde_json::Value::String(s.clone()),
+        Setting::Int(i) => serde_json::json!(i),
+        Setting::Double(d) => serde_json::json!(d),
+        Setting::Bool(b) => serde_json::Value::Bool(*b),
+        Setting::Bytes(b) => serde_json::Value::String(String::from_utf8_lossy(b).into_owned()),
+    }
+}
+
+/// Server-side parameter names forwarded in the query request.
+/// Each entry maps a local `ParamKey` to the Snowflake server-side parameter name.
+const QUERY_PARAMETER_NAMES: &[(ParamKey, &str)] =
+    &[(param_names::MULTI_STATEMENT_COUNT, "MULTI_STATEMENT_COUNT")];
+
+fn build_query_parameters(settings: &ParamStore) -> Option<HashMap<String, serde_json::Value>> {
+    let mut params = HashMap::new();
+    for (key, server_name) in QUERY_PARAMETER_NAMES {
+        if let Some(setting) = settings.get(*key) {
+            params.insert(server_name.to_string(), setting_to_json_value(setting));
+        }
+    }
+    if params.is_empty() {
+        None
+    } else {
+        Some(params)
     }
 }
 

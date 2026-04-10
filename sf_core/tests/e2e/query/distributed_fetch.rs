@@ -1,4 +1,4 @@
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use sf_core::protobuf::generated::database_driver_v1::*;
 
@@ -20,9 +20,10 @@ fn distributed_fetch_simple_query() {
     let stmt = client.new_statement();
     client.set_sql_query(&stmt, "SELECT 42 AS answer, 'hello' AS greeting");
     let _execute_result = client.execute_statement_query(&stmt);
+    let query_id = unwrap_single_query_id(&_execute_result);
 
     // Then result chunks should contain at least one inline chunk
-    let chunks_result = client.result_chunks(&stmt);
+    let chunks_result = client.result_chunks(&stmt, &query_id);
     assert!(
         !chunks_result.chunks.is_empty(),
         "Should have at least one chunk"
@@ -59,9 +60,10 @@ fn distributed_fetch_large_result_produces_multiple_chunks() {
          FROM TABLE(GENERATOR(ROWCOUNT => 500000)) v ORDER BY id",
     );
     let _execute_result = client.execute_statement_query(&stmt);
+    let query_id = unwrap_single_query_id(&_execute_result);
 
     // Then result chunks should contain at least 2 chunks
-    let chunks_result = client.result_chunks(&stmt);
+    let chunks_result = client.result_chunks(&stmt, &query_id);
     assert!(
         chunks_result.chunks.len() >= 2,
         "Large result should produce at least 2 chunks, got {}",

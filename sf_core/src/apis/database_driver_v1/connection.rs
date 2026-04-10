@@ -110,6 +110,7 @@ impl DatabaseDriverV1 {
             sql: sql.to_string(),
             bindings: None,
             describe_only: None,
+            query_parameters: None,
         };
         let query_parameters = conn.query_transport_parameters()?;
         let http_client = conn
