@@ -2091,3 +2091,63 @@ class TestGetResultsFromSfqid:
             cursor.execute("SELECT 1")
 
         assert cursor._prefetch_hook is None
+
+
+class TestAbortQuery:
+    """Unit tests for Cursor.abort_query method."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_abort_query_returns_true_on_success(self, cursor, mock_connection):
+        """abort_query sends correct RPC args and returns True on success."""
+        mock_connection.db_api.connection_abort_query.return_value.success = True
+
+        result = cursor.abort_query("01234567-abcd-ef01-0000-000000000001")
+
+        assert result is True
+        request = mock_connection.db_api.connection_abort_query.call_args.args[0]
+        assert request.conn_handle == ConnectionHandle(id=1)
+        assert request.query_id == "01234567-abcd-ef01-0000-000000000001"
+
+    def test_abort_query_returns_false_on_failure(self, cursor, mock_connection):
+        """abort_query returns False when the server reports failure."""
+        mock_connection.db_api.connection_abort_query.return_value.success = False
+
+        result = cursor.abort_query("some-qid")
+
+        assert result is False
+
+    def test_abort_query_does_not_mutate_cursor_state(self, cursor, mock_connection):
+        """abort_query does not modify description, rowcount, or execute_result."""
+        mock_connection.db_api.connection_abort_query.return_value.success = True
+
+        cursor.abort_query("some-qid")
+
+        assert cursor.description is None
+        assert cursor.rowcount is None
+
+    def test_abort_query_raises_on_closed_cursor_or_connection(self, cursor, mock_connection):
+        """abort_query raises InterfaceError when cursor or connection is closed."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor.abort_query("qid")
+
+        fresh = SnowflakeCursor(mock_connection)
+        mock_connection.is_closed.return_value = True
+        with pytest.raises(InterfaceError):
+            fresh.abort_query("qid")
+
+    def test_abort_query_propagates_rpc_error(self, cursor, mock_connection):
+        """abort_query propagates ProgrammingError from the RPC layer."""
+        mock_connection.db_api.connection_abort_query.side_effect = ProgrammingError("Request failed")
+        with pytest.raises(ProgrammingError, match="Request failed"):
+            cursor.abort_query("bad-qid")

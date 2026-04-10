@@ -2168,3 +2168,33 @@ class TestGetResultsFromSfqid:
         with connection.cursor() as cur2:
             with pytest.raises(ProgrammingError):
                 cur2.get_results_from_sfqid(qid)
+
+
+class TestCursorAbortQuery:
+    """Integration tests for Cursor.abort_query method."""
+
+    def test_abort_query_returns_false_for_completed_query(self, cursor):
+        """abort_query returns False for a query that has already completed."""
+        cursor.execute("SELECT 1")
+        qid = cursor.sfqid
+
+        result = cursor.abort_query(qid)
+        assert result is False
+
+    @pytest.mark.skip_universal(reason="[SNOW-2872511] execute_async not yet implemented")
+    def test_abort_query_returns_true_for_running_query(self, connection):
+        """abort_query returns True when aborting a currently running query."""
+        long_running_query = "SELECT SYSTEM$WAIT(30, 'SECONDS')"
+        cur_query = connection.cursor()
+
+        cur_query.execute_async(long_running_query)
+        sfqid = cur_query.sfqid
+
+        result = connection.cursor().abort_query(sfqid)
+        assert result is True
+
+        try:
+            connection.cursor().query_result(sfqid)
+        except ProgrammingError as e:
+            assert "57014" in e.msg
+            assert "canceled" in e.msg

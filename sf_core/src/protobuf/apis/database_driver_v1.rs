@@ -1243,6 +1243,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(result.into())
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_abort_query", skip(self, input))]
+    async fn connection_abort_query(
+        &self,
+        input: ConnectionAbortQueryRequest,
+    ) -> Result<ConnectionAbortQueryResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let success = match self
+            .driver
+            .connection_abort_query(conn_handle.into(), input.query_id)
+            .await
+        {
+            Ok(()) => true,
+            Err(_) => false,
+        };
+
+        Ok(ConnectionAbortQueryResponse { success })
+    }
+
     #[instrument(name = "DatabaseDriverV1::connection_send_http", skip(self, input))]
     async fn connection_send_http(
         &self,
