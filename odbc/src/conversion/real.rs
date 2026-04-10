@@ -355,7 +355,7 @@ impl ReadODBC for SnowflakeReal {
     ) -> Result<Self::Representation<'a>, JsonBindingError> {
         let value = match binding.value_type {
             CDataType::Float => read_unaligned::<f32>(binding) as f64,
-            CDataType::Double => read_unaligned::<f64>(binding),
+            CDataType::Default | CDataType::Double => read_unaligned::<f64>(binding),
             CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as f64,
             CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as f64,
             CDataType::SBigInt => read_unaligned::<i64>(binding) as f64,

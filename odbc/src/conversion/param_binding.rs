@@ -1554,6 +1554,22 @@ mod tests {
     }
 
     #[test]
+    fn convert_default_as_real() -> TestResult {
+        let val: f64 = 4.25;
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::DOUBLE,
+            &val as *const f64 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, Value::String("4.25".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn convert_slong_as_real() -> TestResult {
         let val: i32 = 42;
         let binding = make_binding(
@@ -1619,6 +1635,38 @@ mod tests {
         let (ty, v) = convert_binding(&binding)?;
         assert_eq!(ty, SnowflakeLogicalType::Real);
         assert_eq!(v, Value::String("3.14".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_boolean_true() -> TestResult {
+        let val: u8 = 1;
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("true".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_default_as_boolean_false() -> TestResult {
+        let val: u8 = 0;
+        let binding = make_binding(
+            CDataType::Default,
+            sql::SqlDataType::EXT_BIT,
+            &val as *const u8 as sql::Pointer,
+            0,
+            std::ptr::null_mut(),
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Boolean);
+        assert_eq!(v, Value::String("false".to_string()));
         Ok(())
     }
 
@@ -1806,5 +1854,37 @@ mod tests {
         assert_eq!(ty, SnowflakeLogicalType::Boolean);
         assert_eq!(v, Value::String("false".to_string()));
         Ok(())
+    }
+
+    #[test]
+    fn convert_char_nan_as_boolean_fails() {
+        let val = b"NaN\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_char_infinity_as_boolean_fails() {
+        let val = b"inf\0";
+        let binding = make_binding(
+            CDataType::Char,
+            sql::SqlDataType::EXT_BIT,
+            val.as_ptr() as sql::Pointer,
+            sql::NTS,
+            std::ptr::null_mut(),
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
     }
 }

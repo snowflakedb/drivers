@@ -174,6 +174,28 @@ TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator", "[c_float][conversion]
   CHECK(get_data_optional<SQL_C_DOUBLE>(fetch_stmt, 1) == std::nullopt);
 }
 
+TEST_CASE("should bind SQL_C_DEFAULT to SQL_DOUBLE and read back", "[c_float][conversion][sql_real]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TABLE t (col FLOAT)");
+
+  // When A double value is bound with SQL_C_DEFAULT and SQL_DOUBLE and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLDOUBLE val = 2.718;
+  SQLLEN ind = 0;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DEFAULT, SQL_DOUBLE, 0, 0, &val, 0, &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then The value should be read back correctly as SQL_C_DOUBLE
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(2.718));
+}
+
 TEST_CASE("should bind SQL_C_DOUBLE zero", "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
   Connection conn;

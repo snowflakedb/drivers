@@ -44,6 +44,12 @@ Feature: ODBC C float types to SQL real conversions via parameter binding
     Then The column value should be NULL
 
   @odbc_e2e
+  Scenario: should bind SQL_C_DEFAULT to SQL_DOUBLE and read back
+    Given Snowflake client is logged in
+    When A double value is bound with SQL_C_DEFAULT and SQL_DOUBLE and inserted
+    Then The value should be read back correctly as SQL_C_DOUBLE
+
+  @odbc_e2e
   Scenario: should bind SQL_C_DOUBLE zero
     Given Snowflake client is logged in
     When Zero is bound as SQL_C_DOUBLE and inserted
