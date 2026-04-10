@@ -92,7 +92,7 @@ pub struct Data {
     #[serde(rename = "queryAbortsAfterSecs")]
     _query_abort_timeout: Option<i64>,
     #[serde(rename = "resultIds")]
-    _result_ids: Option<String>,
+    pub result_ids: Option<String>,
     #[serde(rename = "resultTypes")]
     _result_types: Option<String>,
     #[serde(rename = "queryResultFormat")]
@@ -161,7 +161,7 @@ pub struct SnowflakeResult {}
 pub struct SnowflakeRows {}
 
 /// Statistics for DML operations (INSERT, UPDATE, DELETE)
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone)]
 pub struct Stats {
     #[serde(rename = "numRowsInserted")]
     pub num_rows_inserted: Option<i64>,

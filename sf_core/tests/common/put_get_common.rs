@@ -1,7 +1,7 @@
 pub use super::arrow_deserialize::ArrowDeserialize;
 use crate::common::file_utils::path_to_sql_uri;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::protobuf::generated::database_driver_v1::ExecuteResult;
+use sf_core::protobuf::generated::database_driver_v1::ResultSetResponse;
 
 // Structured types for Snowflake command results using our arrow_deserialize macro
 #[derive(ArrowDeserialize, Debug, PartialEq)]
@@ -28,7 +28,7 @@ pub fn upload_to_stage(
     client: &SnowflakeTestClient,
     stage_name: &str,
     file_pattern: &str,
-) -> ExecuteResult {
+) -> ResultSetResponse {
     upload_to_stage_with_options(client, stage_name, file_pattern, "")
 }
 
@@ -37,7 +37,7 @@ pub fn upload_to_stage_with_options(
     stage_name: &str,
     file_pattern: &str,
     options: &str,
-) -> ExecuteResult {
+) -> ResultSetResponse {
     client.create_temporary_stage(stage_name);
     let put_sql = build_put_command(stage_name, file_pattern, options);
     client.execute_query(&put_sql)
@@ -47,7 +47,7 @@ pub fn get_file_from_stage(
     client: &SnowflakeTestClient,
     stage_name: &str,
     filename: &str,
-) -> (ExecuteResult, tempfile::TempDir) {
+) -> (ResultSetResponse, tempfile::TempDir) {
     let download_dir = tempfile::TempDir::new().unwrap();
     let get_sql = format!(
         "GET @{stage_name}/{filename} file://{}/",

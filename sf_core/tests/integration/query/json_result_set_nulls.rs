@@ -1,7 +1,8 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
 use crate::common::test_utils::{TableCleanupGuard, unique_table_name};
 use arrow::array::Array;
+use sf_core::protobuf::generated::database_driver_v1::execute_query_response;
 
 /// Forces the session to return JSON result format and executes the given query.
 fn execute_json_query(client: &SnowflakeTestClient, query: &str) -> ArrowResultHelper {
@@ -12,11 +13,17 @@ fn execute_json_query(client: &SnowflakeTestClient, query: &str) -> ArrowResultH
         "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = JSON",
     );
     let result = client.execute_statement_query(&stmt);
-    assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
+    let desc = match result {
+        execute_query_response::Result::Single(d) => d,
+        _ => panic!("expected single"),
+    };
+    assert_eq!(desc.rows_affected, Some(1), "Cannot force JSON result set");
 
     client.set_sql_query(&stmt, query);
     let result = client.execute_statement_query(&stmt);
-    let helper = ArrowResultHelper::from_result(result);
+    let query_id = unwrap_single_query_id(&result);
+    let rs = client.get_result_set(&stmt, &query_id);
+    let helper = ArrowResultHelper::from_result(rs);
     client.release_statement(&stmt);
     helper
 }
@@ -190,7 +197,9 @@ fn should_match_null_positions_between_arrow_and_json_formats() {
         &format!("SELECT * FROM {table} ORDER BY txt NULLS FIRST"),
     );
     let arrow_result = client.execute_statement_query(&stmt);
-    let mut arrow_helper = ArrowResultHelper::from_result(arrow_result);
+    let arrow_query_id = unwrap_single_query_id(&arrow_result);
+    let arrow_rs = client.get_result_set(&stmt, &arrow_query_id);
+    let mut arrow_helper = ArrowResultHelper::from_result(arrow_rs);
     let arrow_batch = arrow_helper.next_batch().expect("Expected arrow batch");
 
     client.set_sql_query(
@@ -204,7 +213,9 @@ fn should_match_null_positions_between_arrow_and_json_formats() {
         &format!("SELECT * FROM {table} ORDER BY txt NULLS FIRST"),
     );
     let json_result = client.execute_statement_query(&stmt);
-    let mut json_helper = ArrowResultHelper::from_result(json_result);
+    let json_query_id = unwrap_single_query_id(&json_result);
+    let json_rs = client.get_result_set(&stmt, &json_query_id);
+    let mut json_helper = ArrowResultHelper::from_result(json_rs);
     let json_batch = json_helper.next_batch().expect("Expected json batch");
 
     assert_eq!(arrow_batch.num_rows(), json_batch.num_rows());

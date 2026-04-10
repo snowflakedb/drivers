@@ -3,7 +3,7 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::config::{get_parameters, setup_logging};
 use crate::common::private_key_helper;
-use crate::common::snowflake_test_client::SnowflakeTestClient;
+use crate::common::snowflake_test_client::{SnowflakeTestClient, unwrap_single_query_id};
 use sf_core::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
@@ -23,9 +23,11 @@ fn should_maintain_session_across_multiple_queries() {
         let sql = format!("SELECT {} AS query_num", i);
         client.set_sql_query(&stmt, &sql);
         let result = client.execute_statement_query(&stmt);
+        let query_id = unwrap_single_query_id(&result);
+        let rs = client.get_result_set(&stmt, &query_id);
 
         // Then each query should succeed with the correct result
-        let mut helper = ArrowResultHelper::from_result(result);
+        let mut helper = ArrowResultHelper::from_result(rs);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0][0], i as i64);
@@ -45,9 +47,11 @@ fn should_execute_queries_with_delay_between_them() {
         let sql = format!("SELECT {} AS seq", i);
         client.set_sql_query(&stmt, &sql);
         let result = client.execute_statement_query(&stmt);
+        let query_id = unwrap_single_query_id(&result);
+        let rs = client.get_result_set(&stmt, &query_id);
 
         // Then each query should succeed
-        let mut helper = ArrowResultHelper::from_result(result);
+        let mut helper = ArrowResultHelper::from_result(rs);
         let rows = helper.transform_into_array::<i64>().unwrap();
         assert_eq!(rows[0][0], i as i64);
 
