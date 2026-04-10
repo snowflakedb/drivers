@@ -492,7 +492,7 @@ jobs:
       - name: Rerun failed Python tests (Linux)
         if: steps.run_python_tests_linux.outcome == 'failure' && github.event_name == 'merge_group'
         working-directory: python
-        run: hatch run test.py${{ matrix.py }}:all-cov --last-failed
+        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -518,7 +518,7 @@ jobs:
         if: steps.run_python_tests_windows.outcome == 'failure' && github.event_name == 'merge_group'
         working-directory: python
         shell: pwsh
-        run: hatch run test.py${{ matrix.py }}:all-cov --last-failed
+        run: hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov --last-failed
         env:
           PARAMETER_PATH: ${{ github.workspace }}\parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
