@@ -26,7 +26,7 @@ use error_trace::ErrorTrace;
 use snafu::ResultExt;
 use std::future::Future;
 use std::sync::LazyLock;
-use tracing::instrument;
+use tracing::{Instrument, instrument};
 
 fn setting_to_json(setting: Setting) -> serde_json::Value {
     match setting {
@@ -1512,9 +1512,11 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         tracing::debug!(api_method = %input.api_method, "Telemetry: api_usage");
 
-        self.driver
-            .record_api_usage(handle, &input.api_method)
-            .await;
+        if let Some((conn_span, session_id)) = self.driver.telemetry_context(handle).await {
+            Self::record_api_usage(session_id, &input.api_method)
+                .instrument(conn_span)
+                .await;
+        }
 
         Ok(TelemetrySendResponse {})
     }
@@ -1536,12 +1538,38 @@ impl DatabaseDriver for DatabaseDriverImpl {
             "Telemetry: wrapper_error"
         );
 
-        self.driver
-            .record_wrapper_error(handle, &input.exception_type, &input.error_source)
-            .await;
+        if let Some((conn_span, session_id)) = self.driver.telemetry_context(handle).await {
+            Self::record_wrapper_error(session_id, &input.exception_type, &input.error_source)
+                .instrument(conn_span)
+                .await;
+        }
 
         Ok(TelemetrySendResponse {})
     }
+}
+
+impl DatabaseDriverImpl {
+    #[instrument(
+        name = "api_call",
+        skip_all,
+        fields(
+            snowflake.session.id = session_id,
+            api_method = %api_method,
+        )
+    )]
+    async fn record_api_usage(session_id: i64, api_method: &str) {}
+
+    #[instrument(
+        name = "exception",
+        skip_all,
+        fields(
+            snowflake.session.id = session_id,
+            otel.status_code = "ERROR",
+            exception_type = %exception_type,
+            exception_source = %error_source,
+        )
+    )]
+    async fn record_wrapper_error(session_id: i64, exception_type: &str, error_source: &str) {}
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}

@@ -4,6 +4,7 @@ pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_tracer;
+use ::opentelemetry::trace::TracerProvider;
 use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
@@ -37,10 +38,14 @@ struct EmptyLayer;
 impl<S: Subscriber> Layer<S> for EmptyLayer {}
 
 pub fn init(config: LoggingConfig) -> Result<(), LogError> {
-    init_logging::<EmptyLayer>(config, None)
+    init_logging::<EmptyLayer>(config, None, None)
 }
 
-pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<(), LogError>
+pub fn init_logging<L>(
+    config: LoggingConfig,
+    extra_layer: Option<L>,
+    telemetry_sessions: Option<crate::telemetry::snowflake_exporter::SessionRegistry>,
+) -> Result<(), LogError>
 where
     L: Layer<Registry> + Send + Sync,
 {
@@ -68,6 +73,18 @@ where
         None
     };
     let subscriber = subscriber.with(opentelemetry_layer);
+
+    let snowflake_layer = if let Some(sessions) = telemetry_sessions {
+        let exporter = crate::telemetry::snowflake_exporter::SnowflakeInBandExporter::new(sessions);
+        let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_batch_exporter(exporter)
+            .build();
+        let tracer = provider.tracer("snowflake.telemetry");
+        Some(OpenTelemetryLayer::new(tracer))
+    } else {
+        None
+    };
+    let subscriber = subscriber.with(snowflake_layer);
 
     let stderr_layer = if config.stderr {
         Some(
