@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::JsonBindingError;
-use crate::conversion::error::UnsupportedCDataTypeSnafu;
+use crate::conversion::error::{InvalidBooleanValueSnafu, UnsupportedCDataTypeSnafu};
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::numeric_helpers::{
     reject_multi_field_interval, write_interval_second, write_single_field_interval,
@@ -158,7 +158,7 @@ impl WriteODBCType for SnowflakeBoolean {
 /// Parse a string value to a boolean per ODBC spec: the string is first
 /// converted to a numeric value, then 0 → false, nonzero → true.
 /// Also accepts "true"/"false" literals for Snowflake compatibility.
-fn parse_str_to_bool(s: &str, c_type: CDataType) -> Result<bool, JsonBindingError> {
+fn parse_str_to_bool(s: &str) -> Result<bool, JsonBindingError> {
     let trimmed = s.trim();
     if let Ok(i) = trimmed.parse::<i64>() {
         return Ok(i != 0);
@@ -166,13 +166,19 @@ fn parse_str_to_bool(s: &str, c_type: CDataType) -> Result<bool, JsonBindingErro
     if let Ok(f) = trimmed.parse::<f64>() {
         return match f.is_finite() {
             true => Ok(f != 0.0),
-            false => UnsupportedCDataTypeSnafu { c_type }.fail(),
+            false => InvalidBooleanValueSnafu {
+                value: trimmed.to_string(),
+            }
+            .fail(),
         };
     }
     match trimmed.to_ascii_lowercase().as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
-        _ => UnsupportedCDataTypeSnafu { c_type }.fail(),
+        _ => InvalidBooleanValueSnafu {
+            value: trimmed.to_string(),
+        }
+        .fail(),
     }
 }
 
@@ -182,7 +188,9 @@ impl ReadODBC for SnowflakeBoolean {
         binding: &'a ParameterBinding,
     ) -> Result<Self::Representation<'a>, JsonBindingError> {
         match binding.value_type {
-            CDataType::Bit | CDataType::UTinyInt => Ok(read_unaligned::<u8>(binding) != 0),
+            CDataType::Default | CDataType::Bit | CDataType::UTinyInt => {
+                Ok(read_unaligned::<u8>(binding) != 0)
+            }
             CDataType::TinyInt | CDataType::STinyInt => Ok(read_unaligned::<i8>(binding) != 0),
             CDataType::Long | CDataType::SLong => Ok(read_unaligned::<i32>(binding) != 0),
             CDataType::ULong => Ok(read_unaligned::<u32>(binding) != 0),
@@ -193,8 +201,8 @@ impl ReadODBC for SnowflakeBoolean {
             CDataType::Float => {
                 let v = read_unaligned::<f32>(binding);
                 if !v.is_finite() {
-                    return UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                    return InvalidBooleanValueSnafu {
+                        value: v.to_string(),
                     }
                     .fail();
                 }
@@ -203,8 +211,8 @@ impl ReadODBC for SnowflakeBoolean {
             CDataType::Double => {
                 let v = read_unaligned::<f64>(binding);
                 if !v.is_finite() {
-                    return UnsupportedCDataTypeSnafu {
-                        c_type: binding.value_type,
+                    return InvalidBooleanValueSnafu {
+                        value: v.to_string(),
                     }
                     .fail();
                 }
@@ -212,11 +220,11 @@ impl ReadODBC for SnowflakeBoolean {
             }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
-                parse_str_to_bool(&s, binding.value_type)
+                parse_str_to_bool(&s)
             }
             CDataType::WChar => {
                 let s = read_wchar_str(binding)?;
-                parse_str_to_bool(&s, binding.value_type)
+                parse_str_to_bool(&s)
             }
             CDataType::Numeric => {
                 let n = read_unaligned::<sql::Numeric>(binding);
@@ -227,8 +235,10 @@ impl ReadODBC for SnowflakeBoolean {
                 if len == 0 {
                     return Ok(false);
                 }
-                let first = unsafe { *(binding.parameter_value_ptr as *const u8) };
-                Ok(first != 0)
+                let slice = unsafe {
+                    std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
+                };
+                Ok(slice.iter().any(|&b| b != 0))
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
