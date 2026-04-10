@@ -171,108 +171,72 @@ void CArrowStreamIterator::initColumnConverters() {
 }
 
 ReturnVal CArrowStreamIterator::next() {
-  // Check if we need to load the next batch
   while (m_currentRowIndex >= m_rowCount) {
     if (!loadNextBatch()) {
-      // Stream exhausted
       return ReturnVal(nullptr, nullptr);
     }
   }
 
-  // Handle empty schema (no columns)
-  if (m_columnCount == 0) {
-    if (m_useDictResult) {
-      m_latestReturnedRow.reset(PyDict_New());
-    } else {
-      m_latestReturnedRow.reset(PyTuple_New(0));
+  PyObject* row = buildRowObject();
+  if (row == nullptr) {
+    if (py::checkPyError()) {
+      PyObject *type, *val, *traceback;
+      PyErr_Fetch(&type, &val, &traceback);
+      PyErr_Clear();
+      m_currentPyException.reset(val);
+      Py_XDECREF(type);
+      Py_XDECREF(traceback);
+      return ReturnVal(nullptr, m_currentPyException.get());
     }
-    m_currentRowIndex++;
-    m_totalRowsReturned++;
-    return ReturnVal(m_latestReturnedRow.get(), nullptr);
+    return ReturnVal(nullptr, nullptr);
   }
 
-  // Convert current row to Python object
-  if (m_useDictResult) {
-    createDictRowPyObject();
-  } else {
-    createRowPyObject();
-  }
-
-  // Check for Python errors during conversion
-  if (py::checkPyError()) {
-    PyObject *type, *val, *traceback;
-    PyErr_Fetch(&type, &val, &traceback);
-    PyErr_Clear();
-    m_currentPyException.reset(val);
-    Py_XDECREF(type);
-    Py_XDECREF(traceback);
-    return ReturnVal(nullptr, m_currentPyException.get());
-  }
-
-  // Increment row counter
+  m_latestReturnedRow.reset(row);
   m_currentRowIndex++;
   m_totalRowsReturned++;
-
-  // Return the row
   return ReturnVal(m_latestReturnedRow.get(), nullptr);
 }
 
 PyObject* CArrowStreamIterator::nextN(int64_t size) {
-  bool fetchAll = (size < 0);
+  PyObject* pylist = PyList_New(size);
+  if (pylist == nullptr) {
+    return nullptr;
+  }
 
-  // For bounded fetches, pre-allocate the list and fill with PyList_SET_ITEM
-  // (avoids reallocation and the extra incref/decref of PyList_Append).
-  // For unbounded (fetchAll), use PyList_Append since count is unknown.
-  if (!fetchAll) {
-    PyObject* pylist = PyList_New(size);
-    if (pylist == nullptr) {
+  int64_t collected = 0;
+  while (collected < size) {
+    while (m_currentRowIndex >= m_rowCount) {
+      if (!loadNextBatch()) {
+        if (py::checkPyError()) {
+          PyList_SetSlice(pylist, collected, size, nullptr);
+          Py_DECREF(pylist);
+          return nullptr;
+        }
+        if (PyList_SetSlice(pylist, collected, size, nullptr) != 0) {
+          Py_DECREF(pylist);
+          return nullptr;
+        }
+        return pylist;
+      }
+    }
+
+    PyObject* row = buildRowObject();
+    if (row == nullptr) {
+      PyList_SetSlice(pylist, collected, size, nullptr);
+      Py_DECREF(pylist);
       return nullptr;
     }
 
-    int64_t collected = 0;
-    while (collected < size) {
-      // Load next batch if needed
-      while (m_currentRowIndex >= m_rowCount) {
-        if (!loadNextBatch()) {
-          // loadNextBatch returns false on both exhaustion and error.
-          // If a Python exception is set, this was an error — discard partial results.
-          if (py::checkPyError()) {
-            // Slots [0..collected) hold owned refs released by Py_DECREF(pylist).
-            // Slots [collected..size) are NULL (PyList_New zero-initializes).
-            PyList_SetSlice(pylist, collected, size, nullptr);
-            Py_DECREF(pylist);
-            return nullptr;
-          }
-          // Stream exhausted before filling — shrink list to actual size.
-          // PyList_SetSlice with NULL removes the trailing slots.
-          if (PyList_SetSlice(pylist, collected, size, nullptr) != 0) {
-            Py_DECREF(pylist);
-            return nullptr;
-          }
-          return pylist;
-        }
-      }
-
-      PyObject* row = createRowForList();
-      if (row == nullptr) {
-        // Slots [0..collected) hold owned refs that Py_DECREF(pylist) will release.
-        // Slots [collected..size) are NULL (PyList_New zero-initializes items).
-        // PyList_SetSlice removes them; Py_XDECREF(NULL) inside is a safe no-op.
-        PyList_SetSlice(pylist, collected, size, nullptr);
-        Py_DECREF(pylist);
-        return nullptr;
-      }
-
-      PyList_SET_ITEM(pylist, collected, row);  // steals reference
-      m_currentRowIndex++;
-      m_totalRowsReturned++;
-      collected++;
-    }
-
-    return pylist;
+    PyList_SET_ITEM(pylist, collected, row);  // steals reference
+    m_currentRowIndex++;
+    m_totalRowsReturned++;
+    collected++;
   }
 
-  // Unbounded fetch: use PyList_Append since total count is unknown
+  return pylist;
+}
+
+PyObject* CArrowStreamIterator::nextAll() {
   PyObject* pylist = PyList_New(0);
   if (pylist == nullptr) {
     return nullptr;
@@ -289,7 +253,7 @@ PyObject* CArrowStreamIterator::nextN(int64_t size) {
       }
     }
 
-    PyObject* row = createRowForList();
+    PyObject* row = buildRowObject();
     if (row == nullptr) {
       Py_DECREF(pylist);
       return nullptr;
@@ -300,14 +264,14 @@ PyObject* CArrowStreamIterator::nextN(int64_t size) {
       Py_DECREF(pylist);
       return nullptr;
     }
-    Py_DECREF(row);  // PyList_Append took its own ref
+    Py_DECREF(row);
 
     m_currentRowIndex++;
     m_totalRowsReturned++;
   }
 }
 
-PyObject* CArrowStreamIterator::createRowForList() {
+PyObject* CArrowStreamIterator::buildRowObject() {
   if (m_columnCount == 0) {
     return m_useDictResult ? PyDict_New() : PyTuple_New(0);
   }
@@ -357,46 +321,6 @@ PyObject* CArrowStreamIterator::createRowForList() {
     PyTuple_SET_ITEM(pytuple, colIdx, val);  // steals reference
   }
   return pytuple;
-}
-
-void CArrowStreamIterator::createRowPyObject() {
-  PyObject* pytuple = PyTuple_New(m_columnCount);
-
-  for (int64_t colIdx = 0; colIdx < m_columnCount; ++colIdx) {
-    PyObject* val = m_columnConverters[colIdx]->toPyObject(m_currentRowIndex);
-
-    if (py::checkPyError()) {
-      logger->debug(__FILE__, __func__, __LINE__,
-                    "Python error occurred during conversion of column %lld", colIdx);
-      Py_DECREF(pytuple);
-      return;
-    }
-
-    PyTuple_SET_ITEM(pytuple, colIdx, val);
-  }
-
-  m_latestReturnedRow.reset(pytuple);
-}
-
-void CArrowStreamIterator::createDictRowPyObject() {
-  PyObject* pydict = PyDict_New();
-
-  for (int64_t colIdx = 0; colIdx < m_columnCount; ++colIdx) {
-    const char* colName = m_schema->children[colIdx]->name;
-    PyObject* val = m_columnConverters[colIdx]->toPyObject(m_currentRowIndex);
-
-    if (py::checkPyError()) {
-      logger->debug(__FILE__, __func__, __LINE__,
-                    "Python error occurred during conversion of column %s", colName);
-      Py_DECREF(pydict);
-      return;
-    }
-
-    PyDict_SetItemString(pydict, colName, val);
-    Py_DECREF(val);  // PyDict_SetItemString increments reference
-  }
-
-  m_latestReturnedRow.reset(pydict);
 }
 
 }  // namespace sf
