@@ -13,3 +13,9 @@ Feature: ODBC SQLBindParameter SQL_C_BINARY to SQL_BIT conversion
     Given Snowflake client is logged in
     When the C type value is bound as SQL_BIT and SELECT ? is executed
     Then the result should be FALSE
+
+  @odbc_e2e
+  Scenario: should reject multi-byte SQL_C_BINARY for SQL_BIT.
+    Given Snowflake client is logged in
+    When a multi-byte binary buffer is bound as SQL_BIT and executed
+    Then the execution should fail with SQLSTATE 22003
