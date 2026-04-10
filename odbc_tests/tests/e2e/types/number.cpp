@@ -131,7 +131,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select numbers from table with multi
 
   // And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3), <type>(20,5)) exists
   conn.execute(
-      "CREATE OR REPLACE TABLE number_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3), col4 "
+      "CREATE TEMPORARY TABLE number_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3), col4 "
       "NUMBER(20,5))");
 
   // And Row (123, 123.45, 123.456, 12345.67890) is inserted
@@ -182,7 +182,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle scale and precision boundarie
   // Given Snowflake client is logged in
 
   // And Table with columns (<type>(5,2), <type>(8,0)) exists
-  conn.execute("CREATE OR REPLACE TABLE number_boundary_table (col1 NUMBER(5,2), col2 NUMBER(8,0))");
+  conn.execute("CREATE TEMPORARY TABLE number_boundary_table (col1 NUMBER(5,2), col2 NUMBER(8,0))");
 
   // And Row (999.99, 99999999) is inserted
   conn.execute("INSERT INTO number_boundary_table VALUES (999.99, 99999999)");
@@ -236,7 +236,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table with m
   // Given Snowflake client is logged in
 
   // And Table with columns (<type>(10,0), <type>(10,2), <type>(15,3)) exists
-  conn.execute("CREATE TABLE number_null_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3))");
+  conn.execute("CREATE TEMPORARY TABLE number_null_table (col1 NUMBER(10,0), col2 NUMBER(10,2), col3 NUMBER(15,3))");
   // And Row (NULL, NULL, NULL) is inserted
   conn.execute("INSERT INTO number_null_table VALUES (NULL, NULL, NULL)");
   // And Row (123, 123.45, 123.456) is inserted
@@ -278,7 +278,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should download large result set from table
 
   // And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows, from 0 to 29999 in the
   // first column and from 0.12345 to 29999.12345 in the second column
-  conn.execute("CREATE OR REPLACE TABLE number_large_table (col1 NUMBER(38,0), col2 NUMBER(20,5))");
+  conn.execute("CREATE TEMPORARY TABLE number_large_table (col1 NUMBER(38,0), col2 NUMBER(20,5))");
   conn.execute(
       "INSERT INTO number_large_table SELECT seq8(), seq8() + 0.12345 FROM TABLE(GENERATOR(ROWCOUNT => 30000))");
 
@@ -371,7 +371,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle high precision values from ta
 
   // And Table with columns (<type>(38,0), <type>(38,2), <type>(38,10), <type>(38,37)) exists
   conn.execute(
-      "CREATE TABLE number_high_prec ("
+      "CREATE TEMPORARY TABLE number_high_prec ("
       "col1 NUMBER(38,0), col2 NUMBER(38,2), col3 NUMBER(38,10), col4 NUMBER(38,37))");
 
   // And Row (12345678901234567890123456789012345678, 123456789012345678901234567890123456.78,
@@ -400,7 +400,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle high precision boundaries fro
   // Given Snowflake client is logged in
 
   // And Table with columns (<type>(38,0), <type>(38,37)) exists
-  conn.execute("CREATE TABLE number_high_prec_boundary (col1 NUMBER(38,0), col2 NUMBER(38,37))");
+  conn.execute("CREATE TEMPORARY TABLE number_high_prec_boundary (col1 NUMBER(38,0), col2 NUMBER(38,37))");
 
   // And Row (99999999999999999999999999999999999999, 1.2345678901234567890123456789012345678) is inserted
   conn.execute(
@@ -535,7 +535,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert number using parameter bindin
   // Given Snowflake client is logged in
 
   // And Table with columns (<type>(10,0), <type>(10,2)) exists
-  conn.execute("CREATE TABLE number_bind_insert (col1 NUMBER(10,0), col2 NUMBER(10,2))");
+  conn.execute("CREATE TEMPORARY TABLE number_bind_insert (col1 NUMBER(10,0), col2 NUMBER(10,2))");
 
   // When Rows (0, 0.00), (123, 123.45), (-456, -67.89), (999999, 999.99), (NULL, NULL) are inserted using binding
   auto insert_row = [&](const char* val1, const char* val2) {
@@ -612,7 +612,7 @@ TEST_CASE_METHOD(ConnSchemaFixture,
   // Given Snowflake client is logged in
 
   // And Table with columns (<type>(38,0), <type>(38,2)) exists
-  conn.execute("CREATE TABLE number_bind_high_prec (col1 NUMBER(38,0), col2 NUMBER(38,2))");
+  conn.execute("CREATE TEMPORARY TABLE number_bind_high_prec (col1 NUMBER(38,0), col2 NUMBER(38,2))");
 
   // When Rows (12345678901234567890123456789012345678, 123456789012345678901234567890123456.78),
   // (99999999999999999999999999999999999999, 0.01), (-99999999999999999999999999999999999999, -0.01) are inserted

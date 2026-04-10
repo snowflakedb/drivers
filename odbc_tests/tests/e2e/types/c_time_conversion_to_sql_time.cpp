@@ -1,16 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_TYPE_TIME to SQL_TYPE_TIME and read back", "[c_time][conversion][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME to SQL_TYPE_TIME and read back",
+                 "[c_time][conversion][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   // When SQL_C_TYPE_TIME 14:30:45 is bound to SQL_TYPE_TIME and inserted
   auto stmt = conn.createStatement();
@@ -35,11 +34,10 @@ TEST_CASE("should bind SQL_C_TYPE_TIME to SQL_TYPE_TIME and read back", "[c_time
   CHECK(time.second == 45);
 }
 
-TEST_CASE("should bind SQL_C_TYPE_TIME with NULL indicator to SQL_TYPE_TIME", "[c_time][conversion][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIME with NULL indicator to SQL_TYPE_TIME",
+                 "[c_time][conversion][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   // When SQL_C_TYPE_TIME is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();

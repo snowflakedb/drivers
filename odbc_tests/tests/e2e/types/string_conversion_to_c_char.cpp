@@ -142,7 +142,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "Test string basic query", "[e2e][types][str
   // Given A Snowflake connection
 
   // When A string value is inserted and selected via SQL_C_CHAR
-  conn.execute("CREATE OR REPLACE TABLE test_string_basic (str_col VARCHAR(1000))");
+  conn.execute("CREATE TEMPORARY TABLE test_string_basic (str_col VARCHAR(1000))");
   conn.execute("INSERT INTO test_string_basic (str_col) VALUES ('Hello World')");
   auto stmt = conn.createStatement();
 
@@ -166,7 +166,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "Test basic string binding", "[e2e][types][s
   // Given A Snowflake connection
 
   // When A string value is inserted via parameter binding and selected
-  conn.execute("CREATE OR REPLACE TABLE test_string_basic_binding (str_col VARCHAR(1000))");
+  conn.execute("CREATE TEMPORARY TABLE test_string_basic_binding (str_col VARCHAR(1000))");
   auto stmt = conn.createStatement();
 
   SQLRETURN ret =

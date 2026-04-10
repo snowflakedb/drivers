@@ -11,7 +11,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> TIME SQL 
                  "[conversion_matrix][bindparam][time]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_time (val TIME)");
+  conn.execute("CREATE TEMPORARY TABLE cm_time (val TIME)");
   ResultWriter report(get_report_path("bindparam_to_time"));
 
   // When each C type is bound to each TIME SQL type and executed

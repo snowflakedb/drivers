@@ -4,7 +4,7 @@
 #include "SchemaFixtures.hpp"
 
 TEST_CASE_METHOD(ConnSchemaFixture, "Test integer single column, single row binding", "[bindings_tests]") {
-  conn.execute("CREATE OR REPLACE TABLE universal_driver_odbc_small_binding_integer_test_table (id NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE universal_driver_odbc_small_binding_integer_test_table (id NUMBER)");
 
   {
     auto stmt = conn.createStatement();

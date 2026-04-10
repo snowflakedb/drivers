@@ -12,7 +12,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> BINARY SQ
                  "[conversion_matrix][bindparam][binary]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_binary (val BINARY)");
+  conn.execute("CREATE TEMPORARY TABLE cm_binary (val BINARY)");
   ResultWriter report(get_report_path("bindparam_to_binary"));
 
   // When each C type is bound to each BINARY SQL type and executed

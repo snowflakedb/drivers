@@ -58,7 +58,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLNumResultCols returns correct count for 
   // Given Snowflake client is logged in
 
   // And a table with 3 columns exists
-  conn.execute("CREATE TABLE num_cols_test (id INT, name VARCHAR(100), active BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE num_cols_test (id INT, name VARCHAR(100), active BOOLEAN)");
 
   // When SELECT * is executed on the table
   auto stmt = conn.execute("SELECT * FROM num_cols_test");

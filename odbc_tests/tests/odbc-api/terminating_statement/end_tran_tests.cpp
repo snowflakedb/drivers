@@ -8,7 +8,6 @@
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "Schema.hpp"
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
@@ -27,7 +26,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit persists inserted
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_COMMIT_T (ID INTEGER)"), SQL_NTS);
+  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE ENDTRAN_COMMIT_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
@@ -82,7 +81,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback discards insert
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
+  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE ENDTRAN_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
@@ -131,7 +130,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Commit on environment ha
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_ENV_COMMIT_T (ID INTEGER)"), SQL_NTS);
+  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE ENDTRAN_ENV_COMMIT_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
@@ -185,7 +184,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback on environment 
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_ENV_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
+  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE ENDTRAN_ENV_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
@@ -291,7 +290,8 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLEndTran: Rollback in autocommit m
                  "[odbc-api][endtran][terminating_statement]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE ENDTRAN_AC_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE ENDTRAN_AC_ROLLBACK_T (ID INTEGER)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);

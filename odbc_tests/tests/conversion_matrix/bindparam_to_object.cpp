@@ -10,7 +10,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> OBJECT co
                  "[conversion_matrix][bindparam][object]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_object (val OBJECT)");
+  conn.execute("CREATE TEMPORARY TABLE cm_object (val OBJECT)");
   ResultWriter report(get_report_path("bindparam_to_object"));
 
   // When each C type is bound to SQL_VARCHAR targeting an OBJECT column

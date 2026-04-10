@@ -181,7 +181,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select decfloats from table", "[decf
   // Given Snowflake client is logged in
 
   // And Table with DECFLOAT column exists with values [0, 123.456, -789.012, 1.23e20, -9.87e-15]
-  conn.execute("CREATE OR REPLACE TABLE decfloat_table (col DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE decfloat_table (col DECFLOAT)");
   conn.execute("INSERT INTO decfloat_table VALUES ('0'), ('123.456'), ('-789.012'), ('1.23E+20'), ('-9.87E-15')");
 
   // When Query "SELECT * FROM <table>" is executed
@@ -216,7 +216,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle full 38-digit precision value
 
   // And Table with DECFLOAT column exists with values [12345678901234567890123456789012345678,
   // 1.2345678901234567890123456789012345678E+100, 1.2345678901234567890123456789012345678E-100]
-  conn.execute("CREATE OR REPLACE TABLE decfloat_precision_table (col DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE decfloat_precision_table (col DECFLOAT)");
   conn.execute(
       "INSERT INTO decfloat_precision_table VALUES "
       "('12345678901234567890123456789012345678'), "
@@ -258,7 +258,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle extreme exponent values from 
   // Given Snowflake client is logged in
 
   // And Table with DECFLOAT column exists with values [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
-  conn.execute("CREATE OR REPLACE TABLE decfloat_extreme_table (col DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE decfloat_extreme_table (col DECFLOAT)");
   conn.execute(
       "INSERT INTO decfloat_extreme_table VALUES "
       "('1E+16384'), ('1E-16383'), ('-1.234E+8000'), ('9.876E-8000')");
@@ -302,7 +302,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table", "[de
   // Given Snowflake client is logged in
 
   // And Table with DECFLOAT column exists with values [NULL, 123.456, NULL, -789.012]
-  conn.execute("CREATE OR REPLACE TABLE decfloat_null_table (col DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE decfloat_null_table (col DECFLOAT)");
   conn.execute("INSERT INTO decfloat_null_table VALUES (NULL), ('123.456'), (NULL), ('-789.012')");
 
   // When Query "SELECT * FROM <table>" is executed
@@ -332,7 +332,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should download large result set with multi
   // Given Snowflake client is logged in
 
   // And Table with DECFLOAT column exists with values from 0 to 19999
-  conn.execute("CREATE OR REPLACE TABLE decfloat_large_table (col DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE decfloat_large_table (col DECFLOAT)");
   conn.execute(
       "INSERT INTO decfloat_large_table "
       "SELECT seq8()::DECFLOAT FROM TABLE(GENERATOR(ROWCOUNT => 20000))");
@@ -470,7 +470,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert decfloat using parameter bind
   // Given Snowflake client is logged in
 
   // And Table with DECFLOAT column exists
-  conn.execute("CREATE OR REPLACE TABLE decfloat_bind_insert (col DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE decfloat_bind_insert (col DECFLOAT)");
 
   // When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
   const char* values[] = {"0", "123.456", "-789.012"};
@@ -526,7 +526,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert extreme decfloat values using
   // Given Snowflake client is logged in
 
   // And Table with DECFLOAT column exists
-  conn.execute("CREATE OR REPLACE TABLE decfloat_extreme_bind (col DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE decfloat_extreme_bind (col DECFLOAT)");
 
   // When DECFLOAT values [1E+16384, 1E-16383, -1.234E+8000] are inserted using explicit binding
   const char* values[] = {"1E+16384", "1E-16383", "-1.234E+8000"};

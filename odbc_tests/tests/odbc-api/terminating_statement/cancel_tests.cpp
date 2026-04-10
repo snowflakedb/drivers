@@ -512,7 +512,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancel: Cancel after DDL execution",
                  "[odbc-api][cancel][terminating_statement]") {
   Schema::use_temp_session_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE OR REPLACE TABLE cancel_test_tmp (id INT)"), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TEMPORARY TABLE cancel_test_tmp (id INT)"), SQL_NTS);
   REQUIRE_THAT(OdbcResult(ret, SQL_HANDLE_STMT, stmt_handle()), OdbcMatchers::Succeeded());
 
   ret = SQLCancel(stmt_handle());

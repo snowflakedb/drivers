@@ -213,7 +213,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select floats from table for float a
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
-  conn.execute("CREATE TABLE float_table (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE float_table (col FLOAT)");
   conn.execute("INSERT INTO float_table VALUES (0.0), (123.456), (-789.012), (1.23e5), (-9.87e-3)");
 
   // When Query "SELECT * FROM float_table" is executed
@@ -243,7 +243,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle special float values from tab
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
-  conn.execute("CREATE TABLE float_special (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE float_special (col FLOAT)");
   conn.execute("INSERT INTO float_special SELECT 'NaN'::FLOAT");
   conn.execute("INSERT INTO float_special SELECT 'inf'::FLOAT");
   conn.execute("INSERT INTO float_special SELECT '-inf'::FLOAT");
@@ -278,7 +278,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle float boundary values from ta
 
   // And Table with <type> column exists with boundary values [1.7976931348623157e308, -1.7976931348623157e308,
   // 2.2250738585072014e-308, 5e-324, 123456789012345.0]
-  conn.execute("CREATE TABLE float_boundary (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE float_boundary (col FLOAT)");
   conn.execute("INSERT INTO float_boundary VALUES (1.7976931348623157e308)");
   conn.execute("INSERT INTO float_boundary VALUES (-1.7976931348623157e308)");
   conn.execute("INSERT INTO float_boundary VALUES (2.2250738585072014e-308)");
@@ -314,7 +314,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table for fl
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
-  conn.execute("CREATE TABLE float_null (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE float_null (col FLOAT)");
   conn.execute("INSERT INTO float_null VALUES (NULL), (123.456), (NULL), (-789.012)");
 
   // When Query "SELECT * FROM <table>" is executed
@@ -340,7 +340,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select large result set from table f
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists with 50000 sequential values
-  conn.execute("CREATE TABLE float_large (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE float_large (col FLOAT)");
   conn.execute("INSERT INTO float_large SELECT seq8()::FLOAT FROM TABLE(GENERATOR(ROWCOUNT => 50000))");
 
   // When Query "SELECT * FROM <table>" is executed
@@ -431,7 +431,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert float using parameter binding
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists
-  conn.execute("CREATE TABLE float_bind_insert (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE float_bind_insert (col FLOAT)");
 
   // When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
   constexpr SQLULEN num_rows = 4;

@@ -52,7 +52,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at maximum 128 MB 
   std::mt19937 gen(seed);
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("CREATE OR REPLACE TABLE lob_128mb (val VARCHAR(134217728))");
+  conn.execute("CREATE TEMPORARY TABLE lob_128mb (val VARCHAR(134217728))");
 
   // When A string of 134217728 ASCII characters is generated and inserted
   const size_t string_length = 134217728;  // 128 MB
@@ -105,7 +105,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle LOB string at historical 16 M
   std::mt19937 gen(seed);
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("CREATE OR REPLACE TABLE lob_16mb (val VARCHAR)");
+  conn.execute("CREATE TEMPORARY TABLE lob_16mb (val VARCHAR)");
 
   // When A string of 16777216 ASCII characters is generated and inserted
   const size_t string_length = 16777216;  // 16 MB

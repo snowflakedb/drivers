@@ -990,7 +990,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLFetch returns 24000 when no result set e
 
   // When a non-SELECT statement is executed (no result set)
   SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE OR REPLACE TABLE fetch_no_resultset_t (id INT)", SQL_NTS);
+      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE fetch_no_resultset_t (id INT)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_ERROR with SQLSTATE 24000 (Invalid cursor state)
@@ -1377,7 +1377,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLFetchScroll returns 24000 when no result
 
   // When a DDL statement is executed (no result set)
   SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), sqlchar("CREATE OR REPLACE TABLE fetch_scroll_test (id INT)"), SQL_NTS);
+      SQLExecDirect(stmt.getHandle(), sqlchar("CREATE TEMPORARY TABLE fetch_scroll_test (id INT)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetchScroll is called on the statement with no result set

@@ -9,7 +9,6 @@
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "Schema.hpp"
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
@@ -68,15 +67,11 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLDescribeParam: Describes INSERT p
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      sqlchar(("CREATE OR REPLACE TABLE " + Schema::name() + ".dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)")
-                  .c_str()),
-      SQL_NTS);
+      stmt_handle(), sqlchar("CREATE TEMPORARY TABLE dp_typed_t(c1 INTEGER, c2 VARCHAR(100), c3 DOUBLE)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  ret = SQLPrepare(stmt_handle(), sqlchar(("INSERT INTO " + Schema::name() + ".dp_typed_t VALUES(?, ?, ?)").c_str()),
-                   SQL_NTS);
+  ret = SQLPrepare(stmt_handle(), sqlchar("INSERT INTO dp_typed_t VALUES(?, ?, ?)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: The reference driver reports SQL_VARCHAR with the same large fixed

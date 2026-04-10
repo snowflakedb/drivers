@@ -32,8 +32,8 @@ TEST_CASE("SQLRowCount returns HY009 when called with null pointer.", "[query]")
   ret = SQLRowCount(stmt.getHandle(), nullptr);
 
   // Then SQLRowCount should return SQL_ERROR with SQLSTATE HY009 (Invalid use of null pointer)
-  OLD_DRIVER_ONLY("BD#27") { REQUIRE(ret == SQL_SUCCESS); }
-  NEW_DRIVER_ONLY("BD#27") {
+  OLD_DRIVER_ONLY("BD#25") { REQUIRE(ret == SQL_SUCCESS); }
+  NEW_DRIVER_ONLY("BD#25") {
     REQUIRE(ret == SQL_ERROR);
     CHECK(get_sqlstate(stmt) == "HY009");
   }
@@ -102,7 +102,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns 0 for DDL statements.")
 
   // When SQLExecDirect is called to execute a DDL statement
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(),
-                                sqlchar("CREATE OR REPLACE TABLE rowcount_ddl_t (id INT, value VARCHAR(50))"), SQL_NTS);
+                                sqlchar("CREATE TEMPORARY TABLE rowcount_ddl_t (id INT, value VARCHAR(50))"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLRowCount is called to get the number of rows affected
@@ -120,7 +120,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns -1 for ALTER TABLE DDL 
 
   // When an ALTER TABLE DDL statement is executed
   SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE OR REPLACE TABLE rowcount_alter_t (id INT)", SQL_NTS);
+      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE rowcount_alter_t (id INT)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"ALTER TABLE rowcount_alter_t ADD COLUMN value VARCHAR(50)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -139,8 +139,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "SQLRowCount returns -1 for DROP TABLE DDL s
   auto stmt = conn.createStatement();
 
   // When a DROP TABLE DDL statement is executed
-  SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE OR REPLACE TABLE rowcount_drop_t (id INT)", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE rowcount_drop_t (id INT)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"DROP TABLE rowcount_drop_t", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);

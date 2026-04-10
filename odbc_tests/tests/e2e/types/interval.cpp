@@ -369,7 +369,7 @@ TEST_CASE("should select INTERVAL YEAR TO MONTH values from table", "[interval]"
   Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR TO MONTH column is created
-  conn.execute("CREATE TABLE interval_ym_table (C1 INTERVAL YEAR TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_ym_table (C1 INTERVAL YEAR TO MONTH)");
 
   // And The table is populated with YEAR TO MONTH values including corner cases
   conn.execute(
@@ -407,7 +407,7 @@ TEST_CASE("should select INTERVAL DAY TO SECOND values from table", "[interval]"
   Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY TO SECOND column is created
-  conn.execute("CREATE TABLE interval_dt_table (C1 INTERVAL DAY TO SECOND)");
+  conn.execute("CREATE TEMPORARY TABLE interval_dt_table (C1 INTERVAL DAY TO SECOND)");
 
   // And The table is populated with DAY TO SECOND values including corner cases
   conn.execute(
@@ -446,7 +446,7 @@ TEST_CASE("should select INTERVAL YEAR(2) TO MONTH values from table", "[interva
   Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR(2) TO MONTH column is created
-  conn.execute("CREATE TABLE interval_ym2_table (C1 INTERVAL YEAR(2) TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_ym2_table (C1 INTERVAL YEAR(2) TO MONTH)");
 
   // And The table is populated with values ['0-0', '1-2', '-1-3', '99-11', '-99-11', NULL]
   conn.execute(
@@ -484,7 +484,7 @@ TEST_CASE("should select INTERVAL YEAR(7) TO MONTH values from table", "[interva
   Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR(7) TO MONTH column is created
-  conn.execute("CREATE TABLE interval_ym7_table (C1 INTERVAL YEAR(7) TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_ym7_table (C1 INTERVAL YEAR(7) TO MONTH)");
 
   // And The table is populated with values ['0-0', '1-2', '-1-3', '9999999-11', '-9999999-11', NULL]
   conn.execute(
@@ -522,7 +522,7 @@ TEST_CASE("should select INTERVAL DAY(3) TO SECOND values from table", "[interva
   Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY(3) TO SECOND column is created
-  conn.execute("CREATE TABLE interval_dt3_table (C1 INTERVAL DAY(3) TO SECOND)");
+  conn.execute("CREATE TEMPORARY TABLE interval_dt3_table (C1 INTERVAL DAY(3) TO SECOND)");
 
   // And The table is populated with values ['0 0:0:0.0', '1 2:3:4.567', '-1 2:3:4.567',
   //   '999 23:59:59.999999', '-999 23:59:59.999999', NULL]
@@ -566,7 +566,7 @@ TEST_CASE("should insert and select back INTERVAL YEAR TO MONTH values using par
   Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL YEAR TO MONTH column is created
-  conn.execute("CREATE TABLE interval_bind_ym (C1 INTERVAL YEAR TO MONTH)");
+  conn.execute("CREATE TEMPORARY TABLE interval_bind_ym (C1 INTERVAL YEAR TO MONTH)");
 
   // When INTERVAL YEAR TO MONTH values ['0-0', '1-2', '-1-3', '999999999-11', '-999999999-11', NULL]
   //   are inserted using parameter binding
@@ -623,7 +623,7 @@ TEST_CASE("should insert and select back INTERVAL DAY TO SECOND values using par
   Schema::use_temp_session_schema(conn);
 
   // And A temporary table with INTERVAL DAY TO SECOND column is created
-  conn.execute("CREATE TABLE interval_bind_dt (C1 INTERVAL DAY TO SECOND)");
+  conn.execute("CREATE TEMPORARY TABLE interval_bind_dt (C1 INTERVAL DAY TO SECOND)");
 
   // When INTERVAL DAY TO SECOND values ['0 0:0:0.0', '12 3:4:5.678', '-1 2:3:4.567',
   //   '99999 23:59:59.999999', '-99999 23:59:59.999999', NULL] are inserted using parameter binding

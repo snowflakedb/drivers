@@ -38,9 +38,13 @@ pushd odbc_tests
     # --- Schema lifecycle ---
     SCHEMA_TOOL="$(pwd)/cmake-build/tools/schema_tool"
     if SCHEMA_NAME=$("$SCHEMA_TOOL" create); then
-        export ODBC_TEST_SCHEMA="$SCHEMA_NAME"
-        trap '"$SCHEMA_TOOL" drop "$SCHEMA_NAME" 2>/dev/null || true' EXIT
-        echo "run: using shared schema $SCHEMA_NAME"
+        if [[ ! "$SCHEMA_NAME" =~ ^TEMP_TEST_SCHEMA_[0-9]+$ ]]; then
+            echo "run: schema_tool returned invalid name '$SCHEMA_NAME', falling back to per-process"
+        else
+            export ODBC_TEST_SCHEMA="$SCHEMA_NAME"
+            trap '"$SCHEMA_TOOL" drop "$SCHEMA_NAME" 2>/dev/null || true' EXIT
+            echo "run: using shared schema $SCHEMA_NAME"
+        fi
     else
         echo "run: schema pre-creation failed, falling back to per-process"
     fi

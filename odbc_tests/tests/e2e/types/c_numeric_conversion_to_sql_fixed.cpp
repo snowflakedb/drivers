@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
@@ -9,12 +9,11 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_NUMERIC to SQL_INTEGER and read back", "[c_numeric][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC to SQL_INTEGER and read back",
+                 "[c_numeric][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_int (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_int (col NUMBER)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -42,12 +41,11 @@ TEST_CASE("should bind SQL_C_NUMERIC to SQL_INTEGER and read back", "[c_numeric]
   CHECK(get_data<SQL_C_SBIGINT>(sel, 1) == 42);
 }
 
-TEST_CASE("should bind negative SQL_C_NUMERIC to SQL_BIGINT", "[c_numeric][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind negative SQL_C_NUMERIC to SQL_BIGINT",
+                 "[c_numeric][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_big (col BIGINT)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_big (col BIGINT)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -75,12 +73,11 @@ TEST_CASE("should bind negative SQL_C_NUMERIC to SQL_BIGINT", "[c_numeric][conve
   CHECK(get_data<SQL_C_SBIGINT>(sel, 1) == -99);
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC with scale to SQL_DECIMAL", "[c_numeric][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC with scale to SQL_DECIMAL",
+                 "[c_numeric][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_dec (col DECIMAL(10,2))");
+  conn.execute("CREATE TEMPORARY TABLE t_num_dec (col DECIMAL(10,2))");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -109,12 +106,10 @@ TEST_CASE("should bind SQL_C_NUMERIC with scale to SQL_DECIMAL", "[c_numeric][co
   NEW_DRIVER_ONLY("BD#33") { CHECK(get_data<SQL_C_CHAR>(sel, 1) == "123.45"); }
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC zero", "[c_numeric][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC zero", "[c_numeric][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_zero (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_zero (col NUMBER)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -142,12 +137,11 @@ TEST_CASE("should bind SQL_C_NUMERIC zero", "[c_numeric][conversion][sql_fixed]"
   CHECK(get_data<SQL_C_SBIGINT>(sel, 1) == 0);
 }
 
-TEST_CASE("should bind large SQL_C_NUMERIC exceeding 64-bit range", "[c_numeric][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind large SQL_C_NUMERIC exceeding 64-bit range",
+                 "[c_numeric][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_big128 (col NUMBER(38,0))");
+  conn.execute("CREATE TEMPORARY TABLE t_num_big128 (col NUMBER(38,0))");
 
   // 10^20 = 100000000000000000000 which exceeds UINT64_MAX
   SQL_NUMERIC_STRUCT ns = {};
@@ -176,12 +170,11 @@ TEST_CASE("should bind large SQL_C_NUMERIC exceeding 64-bit range", "[c_numeric]
   CHECK(get_data<SQL_C_CHAR>(sel, 1) == "100000000000000000000");
 }
 
-TEST_CASE("should reject SQL_C_NUMERIC overflow into NUMBER(3,0)", "[c_numeric][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_NUMERIC overflow into NUMBER(3,0)",
+                 "[c_numeric][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_ovf (col NUMBER(3,0))");
+  conn.execute("CREATE TEMPORARY TABLE t_num_ovf (col NUMBER(3,0))");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 10;
@@ -204,12 +197,11 @@ TEST_CASE("should reject SQL_C_NUMERIC overflow into NUMBER(3,0)", "[c_numeric][
   CHECK(get_sqlstate(stmt) == "22003");
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC with NULL indicator", "[c_numeric][conversion][sql_fixed]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_NUMERIC with NULL indicator",
+                 "[c_numeric][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
-  conn.execute("CREATE TABLE t_num_null (col NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE t_num_null (col NUMBER)");
 
   SQL_NUMERIC_STRUCT ns = {};
   SQLLEN ind = SQL_NULL_DATA;

@@ -69,9 +69,13 @@ docker run --rm \
         # Schema lifecycle
         SCHEMA_TOOL=\"./cmake-build-reference/tools/schema_tool\"
         if SCHEMA_NAME=\$(\"\$SCHEMA_TOOL\" create); then
-            export ODBC_TEST_SCHEMA=\"\$SCHEMA_NAME\"
-            trap '\"\$SCHEMA_TOOL\" drop \"\$SCHEMA_NAME\" 2>/dev/null || true' EXIT
-            echo \"run_reference: using shared schema \$SCHEMA_NAME\"
+            if [[ ! \"\$SCHEMA_NAME\" =~ ^TEMP_TEST_SCHEMA_[0-9]+$ ]]; then
+                echo \"run_reference: schema_tool returned invalid name, falling back to per-process\"
+            else
+                export ODBC_TEST_SCHEMA=\"\$SCHEMA_NAME\"
+                trap '\"\$SCHEMA_TOOL\" drop \"\$SCHEMA_NAME\" 2>/dev/null || true' EXIT
+                echo \"run_reference: using shared schema \$SCHEMA_NAME\"
+            fi
         else
             echo \"run_reference: schema pre-creation failed, falling back to per-process\"
         fi

@@ -14,7 +14,7 @@ TEST_CASE("conversion matrix: all C types -> REAL SQL types via SQLBindParameter
   // Given Snowflake client is logged in
   Connection conn;
   Schema::use_temp_session_schema(conn);
-  conn.execute("CREATE OR REPLACE TABLE cm_real (val FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE cm_real (val FLOAT)");
   ResultWriter report(get_report_path("bindparam_to_real"));
 
   // When each C type is bound to each REAL SQL type and executed

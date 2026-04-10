@@ -15,7 +15,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> FIXED SQL
                  "[conversion_matrix][bindparam][fixed]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_fixed (val NUMBER)");
+  conn.execute("CREATE TEMPORARY TABLE cm_fixed (val NUMBER)");
   ResultWriter report(get_report_path("bindparam_to_fixed"));
 
   // When each C type is bound to each FIXED SQL type and executed

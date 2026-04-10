@@ -22,7 +22,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> INTERVAL 
                  "[conversion_matrix][bindparam][interval]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_interval (val VARCHAR)");
+  conn.execute("CREATE TEMPORARY TABLE cm_interval (val VARCHAR)");
   ResultWriter report(get_report_path("bindparam_to_interval"));
 
   // When each C type is bound to each INTERVAL SQL type and executed

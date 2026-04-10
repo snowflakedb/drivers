@@ -19,12 +19,18 @@
 //
 // 1. Shared schema (ODBC_TEST_SCHEMA env var set by runner script):
 //    The runner pre-creates a single schema for all test processes.
-//    use_temp_session_schema() just issues USE SCHEMA — no CREATE.
+//    use_temp_session_schema() issues USE SCHEMA to select it.
 //    The runner's trap/finally drops the schema on exit.
 //
 // 2. Fallback (no env var — IDE, direct ctest, individual binary):
-//    Generates a random schema name, issues CREATE SCHEMA IF NOT EXISTS.
-//    The Catch2 SchemaCleanupListener drops it in testRunEnded.
+//    Generates a random schema name, issues CREATE SCHEMA IF NOT EXISTS
+//    then USE SCHEMA. The Catch2 SchemaCleanupListener drops it in
+//    testRunEnded.
+//
+// USE SCHEMA is always executed because each ConnSchemaFixture creates a
+// new connection whose active schema defaults to PUBLIC. CREATE SCHEMA
+// alone only auto-selects on actual creation, not when IF NOT EXISTS
+// hits an already-existing schema.
 //
 // Schemas are NOT dropped via std::atexit because the ODBC driver's Rust
 // runtime tears down TLS before C++ atexit handlers run, making any ODBC
@@ -38,42 +44,42 @@ class Schema {
   Schema& operator=(Schema&&) = delete;
 
   static void use_temp_session_schema(Connection& conn) {
-    used_ = true;
+    initiated_ = true;
     if (!is_external_schema()) {
-      conn.execute("CREATE SCHEMA IF NOT EXISTS " + session_schema_name());
+      conn.execute("CREATE SCHEMA IF NOT EXISTS " + resolve_schema_name());
     }
-    conn.execute("USE SCHEMA " + session_schema_name());
+    conn.execute("USE SCHEMA " + resolve_schema_name());
   }
 
   static void use_temp_session_schema(SQLHDBC dbc) {
-    used_ = true;
+    initiated_ = true;
     if (!is_external_schema()) {
-      execute_on_dbc(dbc, "CREATE SCHEMA IF NOT EXISTS " + session_schema_name());
+      execute_on_dbc(dbc, "CREATE SCHEMA IF NOT EXISTS " + resolve_schema_name());
     }
-    execute_on_dbc(dbc, "USE SCHEMA " + session_schema_name());
+    execute_on_dbc(dbc, "USE SCHEMA " + resolve_schema_name());
   }
 
-  static const std::string& name() { return session_schema_name(); }
+  static const std::string& name() { return resolve_schema_name(); }
 
   static bool is_external_schema() {
     static const bool external = (std::getenv("ODBC_TEST_SCHEMA") != nullptr);
     return external;
   }
 
-  static bool was_used() { return used_; }
+  static bool was_initiated() { return initiated_; }
 
  private:
-  static inline bool used_ = false;
+  static inline bool initiated_ = false;
 
-  static const std::string& session_schema_name() {
+  static const std::string& resolve_schema_name() {
     static std::string schema_name = [] {
       const char* env = std::getenv("ODBC_TEST_SCHEMA");
-      return env ? std::string(env) : generate_random_name();
+      return env ? std::string(env) : generate_random_schema_name();
     }();
     return schema_name;
   }
 
-  static std::string generate_random_name() {
+  static std::string generate_random_schema_name() {
     std::random_device rd;
     std::mt19937_64 gen(rd());
     return "TEMP_TEST_SCHEMA_" + std::to_string(gen());

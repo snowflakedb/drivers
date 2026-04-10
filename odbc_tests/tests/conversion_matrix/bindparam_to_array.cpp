@@ -10,7 +10,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> ARRAY col
                  "[conversion_matrix][bindparam][array]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_array (val ARRAY)");
+  conn.execute("CREATE TEMPORARY TABLE cm_array (val ARRAY)");
   ResultWriter report(get_report_path("bindparam_to_array"));
 
   // When each C type is bound to SQL_VARCHAR targeting an ARRAY column

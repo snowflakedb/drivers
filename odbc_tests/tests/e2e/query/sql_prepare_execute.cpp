@@ -627,7 +627,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "DML returning SQL_NO_DATA via SQLPrepare + 
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlexecute-function#returns
 
   // Given Snowflake client is logged in
-  conn.execute("CREATE TABLE prep_dml_nodata (id INT)");
+  conn.execute("CREATE TEMPORARY TABLE prep_dml_nodata (id INT)");
   auto stmt = conn.createStatement();
 
   // When a DELETE that affects no rows is prepared and executed
@@ -645,7 +645,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "INSERT via SQLPrepare + SQLExecute with ver
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlprepare-function#summary
 
   // Given Snowflake client is logged in
-  conn.execute("CREATE TABLE prep_insert_test (id INT, name VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE prep_insert_test (id INT, name VARCHAR(100))");
 
   // When an INSERT is prepared with bound parameters and executed
   {

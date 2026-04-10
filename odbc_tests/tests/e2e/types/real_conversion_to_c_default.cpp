@@ -37,7 +37,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - basic values", "[
 
   // When FLOAT/DOUBLE values are inserted and fetched via SQL_C_DEFAULT
   conn.execute(
-      "CREATE OR REPLACE TABLE test_real_default ("
+      "CREATE TEMPORARY TABLE test_real_default ("
       "  f1 FLOAT, "
       "  f2 DOUBLE, "
       "  f3 FLOAT)");
@@ -68,7 +68,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - extreme values ne
   // Given A Snowflake connection
 
   // When Extreme values near DBL_MAX are inserted and fetched via SQL_C_DEFAULT
-  conn.execute("CREATE OR REPLACE TABLE test_real_extreme (val DOUBLE)");
+  conn.execute("CREATE TEMPORARY TABLE test_real_extreme (val DOUBLE)");
   conn.execute(
       "INSERT INTO test_real_extreme VALUES "
       "(1.7976931348623157e308), "
@@ -132,7 +132,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - FLOAT, DOUBLE, RE
 
   // When Same value is stored in FLOAT, DOUBLE, REAL columns and fetched via SQL_C_DEFAULT
   conn.execute(
-      "CREATE OR REPLACE TABLE test_real_synonyms ("
+      "CREATE TEMPORARY TABLE test_real_synonyms ("
       "  f FLOAT, "
       "  d DOUBLE, "
       "  r REAL)");
@@ -153,7 +153,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL SQL_C_DEFAULT matches explicit SQL_C_D
   // Given A Snowflake connection
 
   // When Values are fetched with SQL_C_DOUBLE and SQL_C_DEFAULT
-  conn.execute("CREATE OR REPLACE TABLE test_real_default_vs_explicit (val DOUBLE)");
+  conn.execute("CREATE TEMPORARY TABLE test_real_default_vs_explicit (val DOUBLE)");
   conn.execute(
       "INSERT INTO test_real_default_vs_explicit VALUES "
       "(1.5), (-2.75), (0.0), (999999.999), (1.7976931348623157e308)");
@@ -189,7 +189,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "REAL default conversion - multiple rows", "
   // Given A Snowflake connection
 
   // When Multiple DOUBLE rows are fetched via SQL_C_DEFAULT
-  conn.execute("CREATE OR REPLACE TABLE test_real_multi (val DOUBLE)");
+  conn.execute("CREATE TEMPORARY TABLE test_real_multi (val DOUBLE)");
   conn.execute(
       "INSERT INTO test_real_multi VALUES "
       "(1.5), (-2.75), (0.0), (1e100), (-1e100)");

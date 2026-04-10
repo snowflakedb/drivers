@@ -141,7 +141,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select hardcoded string values from 
   // Given Snowflake client is logged in
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("CREATE OR REPLACE TABLE str_from_table (id INT, val VARCHAR(1000))");
+  conn.execute("CREATE TEMPORARY TABLE str_from_table (id INT, val VARCHAR(1000))");
 
   // And The table is populated with string values
   conn.execute("INSERT INTO str_from_table VALUES (1, 'hello')");
@@ -172,7 +172,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case string values fro
   // Given Snowflake client is logged in
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("CREATE OR REPLACE TABLE str_corner_cases (id INT, val VARCHAR(10000))");
+  conn.execute("CREATE TEMPORARY TABLE str_corner_cases (id INT, val VARCHAR(10000))");
 
   // And The table is populated with corner case string values
   conn.execute("INSERT INTO str_corner_cases VALUES (1, '')");                // empty string
@@ -232,7 +232,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert and select back hardcoded str
   // Given Snowflake client is logged in
 
   // And A temporary table with VARCHAR column is created
-  conn.execute("CREATE OR REPLACE TABLE str_bind_insert (id INT, val VARCHAR(10000))");
+  conn.execute("CREATE TEMPORARY TABLE str_bind_insert (id INT, val VARCHAR(10000))");
 
   // When String value 'Test binding value 日本語' is inserted using parameter binding
   {

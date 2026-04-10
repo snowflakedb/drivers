@@ -97,7 +97,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should select boolean values from table", "
   // Given Snowflake client is logged in
 
   // And Table with columns (BOOLEAN, BOOLEAN, BOOLEAN) exists
-  conn.execute("CREATE TABLE boolean_table (c1 BOOLEAN, c2 BOOLEAN, c3 BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE boolean_table (c1 BOOLEAN, c2 BOOLEAN, c3 BOOLEAN)");
 
   // And Row (TRUE, FALSE, TRUE) is inserted
   conn.execute("INSERT INTO boolean_table VALUES (TRUE, FALSE, TRUE)");
@@ -115,7 +115,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL values from table", "[bo
   // Given Snowflake client is logged in
 
   // And Table with BOOLEAN column exists
-  conn.execute("CREATE TABLE boolean_null_table (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE boolean_null_table (col BOOLEAN)");
 
   // And Rows [NULL, TRUE, FALSE] are inserted
   conn.execute("INSERT INTO boolean_null_table VALUES (NULL), (TRUE), (FALSE)");
@@ -155,7 +155,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should download large result set with multi
   // Given Snowflake client is logged in
 
   // And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
-  conn.execute("CREATE TABLE boolean_large_table (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE boolean_large_table (col BOOLEAN)");
   conn.execute(
       "INSERT INTO boolean_large_table "
       "SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => 1000000))");
@@ -250,7 +250,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should insert boolean using parameter bindi
   // Given Snowflake client is logged in
 
   // And Table with BOOLEAN column exists
-  conn.execute("CREATE TABLE boolean_bind_table (col BOOLEAN)");
+  conn.execute("CREATE TEMPORARY TABLE boolean_bind_table (col BOOLEAN)");
 
   // When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
   constexpr SQLULEN num_rows = 3;

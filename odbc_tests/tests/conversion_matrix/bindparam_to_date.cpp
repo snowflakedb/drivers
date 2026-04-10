@@ -11,7 +11,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> DATE SQL 
                  "[conversion_matrix][bindparam][date]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_date (val DATE)");
+  conn.execute("CREATE TEMPORARY TABLE cm_date (val DATE)");
   ResultWriter report(get_report_path("bindparam_to_date"));
 
   // When each C type is bound to each DATE SQL type and executed

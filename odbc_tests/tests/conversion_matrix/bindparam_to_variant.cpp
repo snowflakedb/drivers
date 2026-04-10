@@ -10,7 +10,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> VARIANT c
                  "[conversion_matrix][bindparam][variant]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_variant (val VARIANT)");
+  conn.execute("CREATE TEMPORARY TABLE cm_variant (val VARIANT)");
   ResultWriter report(get_report_path("bindparam_to_variant"));
 
   // When each C type is bound to SQL_VARCHAR targeting a VARIANT column

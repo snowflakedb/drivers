@@ -35,9 +35,13 @@ cmake --build cmake-build -- -j $((NPROC * 2))
 # --- Schema lifecycle: pre-create a shared schema for all test processes ----------
 SCHEMA_TOOL="./cmake-build/tools/schema_tool"
 if SCHEMA_NAME=$("$SCHEMA_TOOL" create); then
-    export ODBC_TEST_SCHEMA="$SCHEMA_NAME"
-    trap '"$SCHEMA_TOOL" drop "$SCHEMA_NAME" 2>/dev/null || true' EXIT
-    echo "run_tests: using shared schema $SCHEMA_NAME"
+    if [[ ! "$SCHEMA_NAME" =~ ^TEMP_TEST_SCHEMA_[0-9]+$ ]]; then
+        echo "run_tests: schema_tool returned invalid name '$SCHEMA_NAME', falling back to per-process"
+    else
+        export ODBC_TEST_SCHEMA="$SCHEMA_NAME"
+        trap '"$SCHEMA_TOOL" drop "$SCHEMA_NAME" 2>/dev/null || true' EXIT
+        echo "run_tests: using shared schema $SCHEMA_NAME"
+    fi
 else
     echo "run_tests: schema pre-creation failed, falling back to per-process"
 fi

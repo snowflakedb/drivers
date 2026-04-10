@@ -8,7 +8,6 @@
 
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "Schema.hpp"
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
@@ -46,7 +45,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Executes prepared DDL st
                  "[odbc-api][execute][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_ddl_t(c1 INTEGER)";
+  std::string sql = "CREATE TABLE ex_ddl_t(c1 INTEGER)";
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -54,7 +53,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Executes prepared DDL st
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "SELECT c1 FROM " + Schema::name() + ".ex_ddl_t";
+  sql = "SELECT c1 FROM ex_ddl_t";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -62,7 +61,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Executes prepared DDL st
   REQUIRE(ret == SQL_NO_DATA);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "DROP TABLE " + Schema::name() + ".ex_ddl_t";
+  sql = "DROP TABLE ex_ddl_t";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 }
@@ -71,12 +70,12 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: INSERT returns correct S
                  "[odbc-api][execute][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_ins_t(c1 INTEGER)";
+  std::string sql = "CREATE TEMPORARY TABLE ex_ins_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "INSERT INTO " + Schema::name() + ".ex_ins_t VALUES(1),(2),(3)";
+  sql = "INSERT INTO ex_ins_t VALUES(1),(2),(3)";
   ret = SQLPrepare(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -89,7 +88,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: INSERT returns correct S
   REQUIRE(rowCount == 3);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "SELECT c1 FROM " + Schema::name() + ".ex_ins_t ORDER BY c1";
+  sql = "SELECT c1 FROM ex_ins_t ORDER BY c1";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -115,17 +114,17 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: UPDATE returns correct S
                  "[odbc-api][execute][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_upd_t(c1 INTEGER)";
+  std::string sql = "CREATE TEMPORARY TABLE ex_upd_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "INSERT INTO " + Schema::name() + ".ex_upd_t VALUES(1),(2),(3)";
+  sql = "INSERT INTO ex_upd_t VALUES(1),(2),(3)";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "UPDATE " + Schema::name() + ".ex_upd_t SET c1 = c1 + 10";
+  sql = "UPDATE ex_upd_t SET c1 = c1 + 10";
   ret = SQLPrepare(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -138,7 +137,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: UPDATE returns correct S
   REQUIRE(rowCount == 3);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "SELECT c1 FROM " + Schema::name() + ".ex_upd_t ORDER BY c1";
+  sql = "SELECT c1 FROM ex_upd_t ORDER BY c1";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -164,17 +163,17 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: DELETE returns correct S
                  "[odbc-api][execute][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_del_t(c1 INTEGER)";
+  std::string sql = "CREATE TEMPORARY TABLE ex_del_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "INSERT INTO " + Schema::name() + ".ex_del_t VALUES(1),(2),(3)";
+  sql = "INSERT INTO ex_del_t VALUES(1),(2),(3)";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "DELETE FROM " + Schema::name() + ".ex_del_t WHERE c1 IN (2, 3)";
+  sql = "DELETE FROM ex_del_t WHERE c1 IN (2, 3)";
   ret = SQLPrepare(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -187,7 +186,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: DELETE returns correct S
   REQUIRE(rowCount == 2);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "SELECT c1 FROM " + Schema::name() + ".ex_del_t ORDER BY c1";
+  sql = "SELECT c1 FROM ex_del_t ORDER BY c1";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -213,12 +212,12 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affe
 
   // TODO: Restore SECTIONs once ConfigInstallation supports re-entry within sections
   {
-    std::string create_sql = "CREATE TABLE " + Schema::name() + ".ex_nod_t(c1 INTEGER)";
+    std::string create_sql = "CREATE TEMPORARY TABLE ex_nod_t(c1 INTEGER)";
     SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(create_sql.c_str()), SQL_NTS);
     REQUIRE(ret == SQL_SUCCESS);
     SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-    std::string dml_sql = "DELETE FROM " + Schema::name() + ".ex_nod_t WHERE c1 = 999";
+    std::string dml_sql = "DELETE FROM ex_nod_t WHERE c1 = 999";
     ret = SQLPrepare(stmt_handle(), sqlchar(dml_sql.c_str()), SQL_NTS);
     REQUIRE(ret == SQL_SUCCESS);
 
@@ -232,12 +231,12 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: SQL_NO_DATA for DML affe
   }
 
   {
-    std::string create_sql = "CREATE TABLE " + Schema::name() + ".ex_nou_t(c1 INTEGER)";
+    std::string create_sql = "CREATE TEMPORARY TABLE ex_nou_t(c1 INTEGER)";
     SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(create_sql.c_str()), SQL_NTS);
     REQUIRE(ret == SQL_SUCCESS);
     SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-    std::string dml_sql = "UPDATE " + Schema::name() + ".ex_nou_t SET c1 = 2 WHERE c1 = 999";
+    std::string dml_sql = "UPDATE ex_nou_t SET c1 = 2 WHERE c1 = 999";
     ret = SQLPrepare(stmt_handle(), sqlchar(dml_sql.c_str()), SQL_NTS);
     REQUIRE(ret == SQL_SUCCESS);
 
@@ -293,12 +292,12 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Re-executes INSERT with 
                  "[odbc-api][execute][submitting_request]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_reins_t(c1 INTEGER)";
+  std::string sql = "CREATE TEMPORARY TABLE ex_reins_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "INSERT INTO " + Schema::name() + ".ex_reins_t VALUES(?)";
+  sql = "INSERT INTO ex_reins_t VALUES(?)";
   ret = SQLPrepare(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -317,7 +316,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: Re-executes INSERT with 
     REQUIRE(rowCount == 1);
   }
 
-  sql = "SELECT c1 FROM " + Schema::name() + ".ex_reins_t ORDER BY c1";
+  sql = "SELECT c1 FROM ex_reins_t ORDER BY c1";
   ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -478,7 +477,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42S02 for table not foun
                  "[odbc-api][execute][submitting_request][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "SELECT * FROM " + Schema::name() + ".nonexistent_table";
+  std::string sql = "SELECT * FROM nonexistent_table";
 
   // Note: Snowflake validates table existence at prepare time, so the 42S02
   // error may be raised by SQLPrepare rather than SQLExecute.
@@ -509,14 +508,14 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 22000 for NOT NULL const
                  "[odbc-api][execute][submitting_request][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_nn_t(c1 INTEGER NOT NULL)";
+  std::string sql = "CREATE TEMPORARY TABLE ex_nn_t(c1 INTEGER NOT NULL)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   // Note: The reference driver returns 22000 instead of 23000 in ODBC spec
   // for integrity constraint violations.
-  sql = "INSERT INTO " + Schema::name() + ".ex_nn_t VALUES(NULL)";
+  sql = "INSERT INTO ex_nn_t VALUES(NULL)";
   ret = SQLPrepare(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -528,7 +527,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42710 for table already 
                  "[odbc-api][execute][submitting_request][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_dup_t(c1 INTEGER)";
+  std::string sql = "CREATE TABLE ex_dup_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
@@ -547,12 +546,12 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 21S01 for INSERT column 
                  "[odbc-api][execute][submitting_request][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE TABLE " + Schema::name() + ".ex_mis_t(c1 INTEGER)";
+  std::string sql = "CREATE TEMPORARY TABLE ex_mis_t(c1 INTEGER)";
   SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar(sql.c_str()), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  sql = "INSERT INTO " + Schema::name() + ".ex_mis_t(c1) VALUES(1, 2)";
+  sql = "INSERT INTO ex_mis_t(c1) VALUES(1, 2)";
 
   // Note: Snowflake validates column counts at prepare time, so the 21S01
   // error may be raised by SQLPrepare rather than SQLExecute.
@@ -567,7 +566,7 @@ TEST_CASE_METHOD(StmtSessionSchemaFixture, "SQLExecute: 42601 for CREATE VIEW co
                  "[odbc-api][execute][submitting_request][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  std::string sql = "CREATE VIEW " + Schema::name() + ".ex_vm_v (a, b) AS SELECT 1";
+  std::string sql = "CREATE VIEW ex_vm_v (a, b) AS SELECT 1";
 
   // Note: Snowflake validates at prepare time. The reference driver returns
   // 42601 instead of 21S02 in the ODBC spec for a CREATE VIEW where the

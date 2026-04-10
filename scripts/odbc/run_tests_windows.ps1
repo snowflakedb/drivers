@@ -24,8 +24,13 @@ try {
     try {
         $schemaName = & $schemaTool create 2>$null
         if ($LASTEXITCODE -eq 0 -and $schemaName) {
-            $env:ODBC_TEST_SCHEMA = $schemaName.Trim()
-            Write-Host "run_tests: using shared schema $($env:ODBC_TEST_SCHEMA)"
+            $trimmed = $schemaName.Trim()
+            if ($trimmed -match '^TEMP_TEST_SCHEMA_[0-9]+$') {
+                $env:ODBC_TEST_SCHEMA = $trimmed
+                Write-Host "run_tests: using shared schema $($env:ODBC_TEST_SCHEMA)"
+            } else {
+                Write-Host "run_tests: schema_tool returned invalid name, falling back to per-process"
+            }
         }
     } catch {
         Write-Host "run_tests: schema pre-creation failed, falling back to per-process"

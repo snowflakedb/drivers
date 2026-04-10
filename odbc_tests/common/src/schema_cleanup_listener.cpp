@@ -25,12 +25,12 @@
 //
 // Skips cleanup when:
 //  - ODBC_TEST_SCHEMA is set (runner script handles the shared schema)
-//  - Schema was never used in this process (no schema to drop)
+//  - Schema was never initiated in this process (no schema to drop)
 struct SchemaCleanupListener : Catch::EventListenerBase {
   using EventListenerBase::EventListenerBase;
 
   void testRunEnded(const Catch::TestRunStats&) override {
-    if (Schema::is_external_schema() || !Schema::was_used()) {
+    if (Schema::is_external_schema() || !Schema::was_initiated()) {
       return;
     }
     try {
@@ -45,7 +45,7 @@ struct SchemaCleanupListener : Catch::EventListenerBase {
  private:
   static void drop_schema_raw(const std::string& schema_name) {
     auto dsn_config = DataSourceConfig::Snowflake();
-    auto installation = dsn_config.install();
+    [[maybe_unused]] auto installation = dsn_config.install();
     std::string conn_str = dsn_config.connection_string();
 
     SQLHENV env = SQL_NULL_HENV;
@@ -54,7 +54,11 @@ struct SchemaCleanupListener : Catch::EventListenerBase {
     if (!SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env))) {
       return;
     }
-    SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+    if (!SQL_SUCCEEDED(SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0))) {
+      std::cerr << "SchemaCleanupListener: SQLSetEnvAttr(SQL_OV_ODBC3) failed\n";
+      SQLFreeHandle(SQL_HANDLE_ENV, env);
+      return;
+    }
 
     if (!SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc))) {
       SQLFreeHandle(SQL_HANDLE_ENV, env);

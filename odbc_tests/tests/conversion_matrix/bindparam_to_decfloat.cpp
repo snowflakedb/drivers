@@ -13,7 +13,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> DECFLOAT 
                  "[conversion_matrix][bindparam][decfloat]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  conn.execute("CREATE OR REPLACE TABLE cm_decfloat (val DECFLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE cm_decfloat (val DECFLOAT)");
   ResultWriter report(get_report_path("bindparam_to_decfloat"));
 
   // When each C type is bound to each candidate SQL type and executed

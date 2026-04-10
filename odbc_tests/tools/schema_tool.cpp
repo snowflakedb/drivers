@@ -13,6 +13,7 @@
 #include <sql.h>
 #include <sqlext.h>
 
+#include <cstring>
 #include <iostream>
 #include <optional>
 #include <random>
@@ -50,7 +51,10 @@ struct OdbcConnection {
       std::cerr << TAG << ": SQLAllocHandle(ENV) failed\n";
       return false;
     }
-    SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+    if (!SQL_SUCCEEDED(SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0))) {
+      std::cerr << TAG << ": SQLSetEnvAttr(SQL_OV_ODBC3) failed\n";
+      return false;
+    }
 
     if (!SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc))) {
       std::cerr << TAG << ": SQLAllocHandle(DBC) failed\n";
@@ -134,7 +138,8 @@ static int cmd_create() {
   const std::string name = generate_schema_name();
 
   OdbcConnection conn;
-  if (const auto installation = open_connection(conn); !installation) {
+  auto installation = open_connection(conn);
+  if (!installation) {
     return 1;
   }
   if (!conn.exec("CREATE SCHEMA IF NOT EXISTS " + name)) {
