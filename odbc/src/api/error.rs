@@ -551,6 +551,8 @@ impl OdbcError {
                         ErrorType::GenericError(_) => {
                             if message.contains("SQL compilation error") {
                                 SqlState::SyntaxErrorOrAccessRuleViolation
+                            } else if message.contains("out of representable range") {
+                                SqlState::NumericValueOutOfRange
                             } else {
                                 SqlState::GeneralError
                             }
@@ -575,6 +577,8 @@ impl OdbcError {
                         ErrorType::InternalError(_) => {
                             if message.contains("SQL compilation error") {
                                 SqlState::SyntaxErrorOrAccessRuleViolation
+                            } else if message.contains("out of representable range") {
+                                SqlState::NumericValueOutOfRange
                             } else {
                                 SqlState::GeneralError
                             }
