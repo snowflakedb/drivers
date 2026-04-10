@@ -73,6 +73,23 @@ class ParamStyle(Enum):
         """Check if this style uses server-side binding."""
         return self in (ParamStyle.QMARK, ParamStyle.NUMERIC)
 
+    def placeholders(self, n: int) -> str:
+        """Build a comma-separated placeholder string for *n* parameters.
+
+        Examples:
+            >>> ParamStyle.QMARK.placeholders(3)
+            '?, ?, ?'
+            >>> ParamStyle.NUMERIC.placeholders(3)
+            ':1, :2, :3'
+            >>> ParamStyle.FORMAT.placeholders(2)
+            '%s, %s'
+        """
+        if self.is_client_side():
+            return ", ".join("%s" for _ in range(n))
+        if self is ParamStyle.NUMERIC:
+            return ", ".join(f":{i}" for i in range(1, n + 1))
+        return ", ".join("?" for _ in range(n))
+
 
 # Numeric types for IS_NUMERIC check (mirrors reference connector's compat.py)
 _NUM_DATA_TYPES: tuple[type, ...] = (int, float, Decimal)

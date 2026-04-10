@@ -297,14 +297,7 @@ class SnowflakeCursorBase(abc.ABC):
             raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
         if not isinstance(args, Sequence):
             raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
-        paramstyle = self._connection.paramstyle
-        if paramstyle.is_client_side():
-            placeholders = ", ".join("%s" for _ in range(len(args)))
-        elif paramstyle == ParamStyle.NUMERIC:
-            placeholders = ", ".join(f":{i}" for i in range(1, len(args) + 1))
-        else:
-            placeholders = ", ".join("?" for _ in range(len(args)))
-        command = f"CALL {procname}({placeholders})"
+        command = f"CALL {procname}({self._connection.paramstyle.placeholders(len(args))})"
         self.execute(command, args)
         return args
 
