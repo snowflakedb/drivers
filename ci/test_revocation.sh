@@ -4,6 +4,7 @@
 #
 
 set -o pipefail
+set +x
 
 THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 DRIVER_ROOT="$( dirname "${THIS_DIR}")"
@@ -23,10 +24,11 @@ REVOCATION_REPO="https://github.com/snowflake-eng/revocation-validation.git"
 REVOCATION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/revocation-validation.XXXXXX")"
 trap 'rm -rf "$REVOCATION_DIR"' EXIT
 if [ -n "$GITHUB_USER" ] && [ -n "$GITHUB_TOKEN" ]; then
-    git -c "http.${REVOCATION_REPO%.git}.extraheader=AUTHORIZATION: basic $(printf '%s:%s' "$GITHUB_USER" "$GITHUB_TOKEN" | base64)" \
-        clone --depth 1 --branch "$REVOCATION_BRANCH" "$REVOCATION_REPO" "$REVOCATION_DIR"
+    git clone -q --depth 1 --branch "$REVOCATION_BRANCH" \
+        "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/snowflake-eng/revocation-validation.git" \
+        "$REVOCATION_DIR"
 else
-    git clone --depth 1 --branch "$REVOCATION_BRANCH" "$REVOCATION_REPO" "$REVOCATION_DIR"
+    git clone -q --depth 1 --branch "$REVOCATION_BRANCH" "$REVOCATION_REPO" "$REVOCATION_DIR"
 fi
 
 cd "$REVOCATION_DIR"
