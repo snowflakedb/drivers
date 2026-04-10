@@ -10,6 +10,7 @@ Additional test coverage for the following features is deferred:
 These deferred tests will be added as the underlying features are implemented.
 """
 
+import logging
 import subprocess
 import sys
 import textwrap
@@ -20,7 +21,6 @@ import warnings
 from unittest.mock import patch
 
 import pytest
-import requests
 
 from snowflake.connector._internal.logout_config_mapping import (
     PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS,
@@ -31,28 +31,14 @@ from tests.private_key_helper import get_test_private_key_path
 from tests.wiremock_client import WiremockClient
 
 
-# Helper functions for HTTP verification
-def get_wiremock_requests(wiremock_base_url: str) -> list:
-    """Query Wiremock admin API for all captured requests."""
-    requests_url = f"{wiremock_base_url}/__admin/requests"
-    response = requests.get(requests_url)
-    return response.json().get("requests", [])
-
-
-def filter_logout_requests(all_requests: list) -> list:
-    """Filter requests to find logout requests (POST /session?delete=true)."""
-    return [r for r in all_requests if "delete=true" in r.get("request", {}).get("url", "")]
-
-
-def assert_logout_request_format(logout_request: dict):
+def assert_logout_request_format(logout_request: dict) -> None:
     """Verify logout request has correct format."""
     req = logout_request["request"]
     assert req["method"] == "POST", "Logout should use POST method"
     assert "delete=true" in req["url"], "Logout should have delete=true query param"
     assert "Authorization" in req.get("headers", {}), "Logout should have Authorization header"
-    assert "Snowflake Token" in req.get("headers", {}).get("Authorization", [""])[0], (
-        "Authorization should contain 'Snowflake Token'"
-    )
+    auth_header = req.get("headers", {}).get("Authorization", [""])[0]
+    assert auth_header.startswith("Snowflake Token="), "Authorization should start with 'Snowflake Token='"
 
 
 class TestLogoutTokenCleanup:
@@ -152,8 +138,7 @@ class TestLogoutEdgeCases:
             conn.close()
 
             # Then Only one logout request is sent
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) == 1, (
                 f"Should send exactly 1 logout request despite 3 close() calls, got {len(logout_requests)}"
@@ -190,8 +175,7 @@ class TestLogoutEdgeCases:
                 t.join()
 
             # Then Only one logout request is sent
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) == 1, (
                 f"Should send exactly 1 logout request despite concurrent close() calls, got {len(logout_requests)}"
@@ -310,8 +294,7 @@ class TestLogoutPythonWrapper:
             assert conn.is_closed(), "Connection closed: auto-detection was not invoked to prevent logout"
 
             # And Logout request is sent
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) == 1, (
                 f"Should send logout request with auto_detection=False, got {len(logout_requests)} requests"
@@ -322,7 +305,7 @@ class TestLogoutPythonWrapper:
             assert "delete=true" in logout_req["url"], "Logout should have delete=true query param"
 
             # And Connection close metrics are recorded in telemetry
-            _telemetry_verified = conn.is_closed()  # TODO(SNOW-2912513): telemetry not yet implemented
+            assert conn.is_closed()  # TODO(SNOW-2912513): placeholder until telemetry is implemented
 
             # And No deprecation warning is emitted
             deprecation_warnings = [
@@ -335,34 +318,35 @@ class TestLogoutPythonWrapper:
             assert conn.is_closed()
 
     def test_should_pass_correct_parameters_when_server_session_keep_alive_is_none_and_auto_detection_true(
-        self, core_mock
+        self, int_test_connection_factory, core_proxy
     ):
         """Verify Python wrapper passes None keep-alive and True auto-detection to Core.
 
         Phase 2 truth table: server_session_keep_alive=None + enable_auto_detection=True
         → no Phase 2 remap (only False + True triggers remap) → Core receives None + True.
         """
-        from snowflake.connector.connection import Connection
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
 
-        with warnings.catch_warnings(record=True) as captured_warnings:
-            warnings.simplefilter("always")
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always")
 
-            # Given Snowflake Python client is created with server_session_keep_alive set to none
-            server_session_keep_alive_param = None
+                # Given Snowflake Python client is created with server_session_keep_alive set to none
+                server_session_keep_alive_param = None
 
-            # And enable_server_session_keep_alive_auto_detection is set to true
-            conn = Connection(
-                user="test",
-                account="test",
-                server_session_keep_alive=server_session_keep_alive_param,
-                enable_server_session_keep_alive_auto_detection=True,
-            )
+                # And enable_server_session_keep_alive_auto_detection is set to true
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    server_session_keep_alive=server_session_keep_alive_param,
+                    enable_server_session_keep_alive_auto_detection=True,
+                )
 
-        # When Client closes connection
-        conn.close()
+            # When Client closes connection
+            conn.close()
 
         # Then server_session_keep_alive none is passed to Core
-        options = core_mock.get_options_sent()
+        options = core_proxy.get_options_sent()
         assert "server_session_keep_alive" not in options, "None keep-alive should not be sent to Core"
 
         # And enable_server_session_keep_alive_auto_detection true is passed to Core
@@ -422,41 +406,41 @@ class TestLogoutPythonWrapper:
             )
 
             # Verify logout was actually sent to Core (False = explicit logout)
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
             assert len(logout_requests) == 1, (
                 f"server_session_keep_alive=False should send exactly one logout request, got {len(logout_requests)}"
             )
 
     def test_should_pass_server_session_keep_alive_false_to_core_when_auto_detection_explicitly_disabled(
-        self, core_mock
+        self, int_test_connection_factory, core_proxy
     ):
         """Verify Python wrapper passes False to Core when auto_detection is explicitly disabled.
 
         False + auto_detection=False (explicit) → no Phase 2 remap → Core receives False (force logout).
         No deprecation warning: user opted out of auto-detection consciously.
         """
-        from snowflake.connector.connection import Connection
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
 
-        with warnings.catch_warnings(record=True) as captured_warnings:
-            warnings.simplefilter("always")
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always")
 
-            # Given Snowflake Python client is created with server_session_keep_alive set to false
-            server_session_keep_alive_param = False
+                # Given Snowflake Python client is created with server_session_keep_alive set to false
+                server_session_keep_alive_param = False
 
-            # And enable_server_session_keep_alive_auto_detection is set to false
-            conn = Connection(
-                user="test",
-                account="test",
-                server_session_keep_alive=server_session_keep_alive_param,
-                enable_server_session_keep_alive_auto_detection=False,
-            )
+                # And enable_server_session_keep_alive_auto_detection is set to false
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    server_session_keep_alive=server_session_keep_alive_param,
+                    enable_server_session_keep_alive_auto_detection=False,
+                )
 
-        # When Client closes connection
-        conn.close()
+            # When Client closes connection
+            conn.close()
 
         # Then server_session_keep_alive false is passed to Core
-        options = core_mock.get_options_sent()
+        options = core_proxy.get_options_sent()
         assert options.get("server_session_keep_alive") is False, (
             "False + auto_detection=False → no remap → Core receives False"
         )
@@ -501,7 +485,9 @@ class TestLogoutPythonWrapper:
             # And Logout request completes within 15 seconds
             assert elapsed < 15.0, f"Close should complete within 15 seconds, took {elapsed:.1f}s"
 
-    def test_should_use_best_effort_error_handling_strategy_by_default(self, int_test_connection_factory, core_proxy):
+    def test_should_use_best_effort_error_handling_strategy_by_default(
+        self, int_test_connection_factory, core_proxy, tmp_path
+    ):
         """Verify close() does not raise when server returns 500 on all logout attempts.
 
         Best-effort strategy: close() succeeds even if logout fails.
@@ -516,12 +502,31 @@ class TestLogoutPythonWrapper:
             # And Server will return 500 Internal Server Error on logout on all attempts
             wiremock.add_mapping("session/logout_500_always.json")
 
-            # When Connection is closed
-            conn.close()  # Must NOT raise with best-effort strategy
+            # Capture Core logs to a temp file. We use a file instead of pytest caplog
+            # because the Rust→Python FFI log bridge (sf_core_init_logger callback in
+            # c_api.py) writes to the snowflake.connector._core logger which has
+            # propagate=False and NullHandler by default — caplog can't intercept it
+            # without reconfiguring propagation. A FileHandler on the logger directly
+            # captures the FFI-bridged logs.
+            log_file = tmp_path / "core.log"
+            core_logger = logging.getLogger("snowflake.connector._core")
+            handler = logging.FileHandler(str(log_file))
+            handler.setLevel(logging.WARNING)
+            handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+            core_logger.addHandler(handler)
+            original_level = core_logger.level
+            core_logger.setLevel(logging.WARNING)
+
+            try:
+                # When Connection is closed
+                conn.close()  # Must NOT raise with best-effort strategy
+            finally:
+                core_logger.removeHandler(handler)
+                core_logger.setLevel(original_level)
+                handler.close()
 
             # Then Logout attempts are bounded by the default retry limit
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
             assert len(logout_requests) <= 3, (
                 f"Expected at most 3 logout attempts (default max_attempts), got {len(logout_requests)}"
             )
@@ -530,13 +535,16 @@ class TestLogoutPythonWrapper:
             assert len(logout_requests) > 0, "At least one logout attempt should have been made"
 
             # And Error is logged as WARN
-            _warn_logged = True  # TODO(SNOW-2314153): WARN log capture requires logging integration
+            log_content = log_file.read_text()
+            assert "WARNING" in log_content and "Logout failed" in log_content, (
+                f"Expected WARNING log with 'Logout failed' from Core.\nCaptured:\n{log_content}"
+            )
 
             # And close() method does not raise exception
-            _close_succeeded = conn.is_closed()  # verified above: conn.close() did not raise
+            assert conn.is_closed(), "Connection should be closed despite all logout attempts failing"
 
             # And Connection cleanup succeeds
-            assert conn.is_closed(), "Connection should be closed despite all logout attempts failing"
+            assert conn.is_closed()
 
             # And Error handling strategy is best-effort by default
             options = core_proxy.get_options_sent()
@@ -572,8 +580,7 @@ class TestLogoutRetryBehavior:
             assert conn.is_closed(), "Connection should be closed after successful retry"
 
             # And Two logout requests were sent to server
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
             assert len(logout_requests) == 2, (
                 f"Expected 2 logout requests (1 failure + 1 success), got {len(logout_requests)}"
             )
@@ -595,14 +602,13 @@ class TestLogoutRetryBehavior:
             conn.close(retry=False)
 
             # Then Logout is not retried
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
             assert len(logout_requests) == 1, (
-                f"Expected exactly 1 logout request (no retry), got {len(logout_requests)}"
+                f"retry=False should prevent retries despite 503, got {len(logout_requests)} requests"
             )
 
             # And Only one logout request was sent to server
-            assert len(logout_requests) == 1, "retry=False should prevent any retry attempts"
+            assert logout_requests[0]["request"]["method"] == "POST", "Logout should be POST"
 
             # And Error is handled according to best-effort strategy
             assert conn.is_closed(), (
@@ -685,8 +691,7 @@ class TestAutoCleanup:
             assert "CLOSE_CALLED" in result.stdout, "Subprocess must confirm close() was called"
 
             # Then atexit handler is unregistered
-            all_requests = get_wiremock_requests(wiremock_url)
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
 
             # And Subsequent process exit will not trigger second close
             assert len(logout_requests) == 1, (
@@ -694,6 +699,8 @@ class TestAutoCleanup:
                 f"Got {len(logout_requests)}: unregister failed or atexit fired despite close()."
             )
 
+    # This test spawns 2 subprocesses × 120s timeout each (240s worst case).
+    # CI timeout must be >= 300s.
     def test_should_call_close_with_retry_false_from_atexit_handler(self, int_test_connection_factory):
         """Verify atexit handler calls close(retry=False), no retries, exceptions suppressed."""
         private_key_path = get_test_private_key_path()
@@ -737,8 +744,7 @@ class TestAutoCleanup:
             assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
 
             # Then atexit handler calls close(retry=False)
-            all_requests = get_wiremock_requests(wiremock.http_url())
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
 
             # And No retries are attempted during atexit close
             assert len(logout_requests) == 1, (
@@ -815,8 +821,7 @@ class TestAutoCleanup:
             )
 
             # Then Auto-cleanup is triggered for all 10 leaked connections
-            all_requests = get_wiremock_requests(wiremock_url)
-            logout_requests = filter_logout_requests(all_requests)
+            logout_requests = wiremock.get_logout_requests()
             assert len(logout_requests) == 10, (
                 f"Expected 10 logout requests (one per leaked connection), got {len(logout_requests)}"
             )
