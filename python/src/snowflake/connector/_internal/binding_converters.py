@@ -65,15 +65,6 @@ class ParamStyle(Enum):
         available = [s.value for s in cls]
         raise ProgrammingError(f"Invalid paramstyle: {value!r}. Supported: {', '.join(sorted(available))}")
 
-    @classmethod
-    def from_str_or_class(cls, value: str | ParamStyle) -> ParamStyle:
-        """Return a member from a :class:`ParamStyle` or a PEP 249 paramstyle string."""
-        if isinstance(value, cls):
-            return value
-        if isinstance(value, str):
-            return cls.from_string(value)
-        raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
-
     def is_client_side(self) -> bool:
         """Check if this style uses client-side SQL interpolation."""
         return self in (ParamStyle.FORMAT, ParamStyle.PYFORMAT)

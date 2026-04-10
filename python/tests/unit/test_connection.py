@@ -117,6 +117,8 @@ class TestParamstyleSetter:
         connection.paramstyle = "qmark"
         assert connection.paramstyle == ParamStyle.QMARK
         assert connection._paramstyle is ParamStyle.QMARK
+        connection.paramstyle = "  QMARK  "
+        assert connection.paramstyle == ParamStyle.QMARK
 
     def test_assign_enum_unchanged(self, connection):
         connection.paramstyle = ParamStyle.NUMERIC
@@ -129,16 +131,6 @@ class TestParamstyleSetter:
     def test_assign_invalid_type_raises(self, connection):
         with pytest.raises(ProgrammingError, match="paramstyle must be str or ParamStyle"):
             connection.paramstyle = 123  # type: ignore[assignment]
-
-    def test_paramstyle_from_str_or_class_enum_identity(self):
-        assert ParamStyle.from_str_or_class(ParamStyle.QMARK) is ParamStyle.QMARK
-
-    def test_paramstyle_from_str_or_class_string(self):
-        assert ParamStyle.from_str_or_class("  qmark ") == ParamStyle.QMARK
-
-    def test_paramstyle_from_str_or_class_rejects_bad_type(self):
-        with pytest.raises(ProgrammingError, match="paramstyle must be str or ParamStyle"):
-            ParamStyle.from_str_or_class(1)  # type: ignore[arg-type]
 
     def test_cursor_execute_after_string_assign(self, connection, mock_db_api):
         """Layered clients set ``connection.paramstyle = \"pyformat\"``; cursor must not see a bare str."""

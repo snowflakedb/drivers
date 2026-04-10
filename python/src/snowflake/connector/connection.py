@@ -106,10 +106,10 @@ class Connection:
                 is ignored because the passcode flow is selected automatically.
             **kwargs: Additional connection parameters
         """
-        # paramstyle
+        # paramstyle (via setter so str | ParamStyle normalization is single-sourced)
         from snowflake.connector import paramstyle as default_paramstyle
 
-        self._paramstyle = ParamStyle.from_str_or_class(paramstyle or default_paramstyle)
+        self.paramstyle = paramstyle or default_paramstyle
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
@@ -351,7 +351,12 @@ class Connection:
     @paramstyle.setter
     def paramstyle(self, value: str | ParamStyle) -> None:
         """Set binding style from a :class:`ParamStyle` or PEP 249 string (e.g. ``"pyformat"``)."""
-        self._paramstyle = ParamStyle.from_str_or_class(value)
+        if isinstance(value, ParamStyle):
+            self._paramstyle = value
+        elif isinstance(value, str):
+            self._paramstyle = ParamStyle.from_string(value)
+        else:
+            raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
 
     def execute_string(
         self,
