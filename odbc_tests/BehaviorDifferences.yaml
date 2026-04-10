@@ -398,3 +398,16 @@ behavior_differences:
       the behavior of other numeric C types bound to SQL_BIT.
       Impact: Applications binding SQL_C_NUMERIC values to BOOLEAN columns
       will succeed on the new driver for any nonzero value.
+  38:
+    name: "TIME to SQL_C_CHAR/WCHAR truncation and buffer-too-small handling"
+    type: "Bug Fix"
+    description: |
+      OLD driver: TIME to SQL_C_CHAR with a buffer smaller than 9 bytes
+      returns SQL_SUCCESS instead of SQL_ERROR with SQLSTATE 22003. TIME
+      to SQL_C_CHAR or SQL_C_WCHAR with a buffer of exactly 9 bytes (enough
+      for HH:MM:SS but not fractional seconds) returns SQL_ERROR with
+      SQLSTATE 22003 instead of SQL_SUCCESS_WITH_INFO with SQLSTATE 01004.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 when the buffer is
+      too small (< 9 bytes for CHAR, < 18 bytes for WCHAR), and returns
+      SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 when the buffer can hold
+      the base time but truncates fractional seconds, per the ODBC spec.
