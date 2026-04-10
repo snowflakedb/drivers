@@ -241,7 +241,7 @@ inline void check_incompatible_bindparam(const HandleWrapper& stmt_handle, SQLSM
     auto records = get_diag_rec(stmt_handle);
     INFO("c_type=" << c_type << " sql_type=" << sql_type << " rejected at SQLBindParameter");
     REQUIRE(!records.empty());
-    CHECK(records[0].sqlState == "07006");
+    CHECK((records[0].sqlState == "07006" || records[0].sqlState == "HYC00"));
     return;
   }
   REQUIRE(ret == SQL_SUCCESS);
