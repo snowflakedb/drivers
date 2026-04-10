@@ -109,7 +109,7 @@ class Connection:
         # paramstyle
         from snowflake.connector import paramstyle as default_paramstyle
 
-        self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
+        self._paramstyle = ParamStyle.from_str_or_class(paramstyle or default_paramstyle)
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
@@ -347,6 +347,11 @@ class Connection:
             ParamStyle: The paramstyle enum value
         """
         return self._paramstyle
+
+    @paramstyle.setter
+    def paramstyle(self, value: str | ParamStyle) -> None:
+        """Set binding style from a :class:`ParamStyle` or PEP 249 string (e.g. ``"pyformat"``)."""
+        self._paramstyle = ParamStyle.from_str_or_class(value)
 
     def execute_string(
         self,

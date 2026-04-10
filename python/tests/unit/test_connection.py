@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
     ConnectionGetInfoResponse,
@@ -13,9 +14,11 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     ConnectionSetOptionsResponse,
     DatabaseHandle,
+    StatementHandle,
     ValidationIssue,
 )
 from snowflake.connector.constants import QueryStatus
+from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
@@ -96,6 +99,74 @@ class TestSetAutocommitValidation:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
                 Connection(user="test_user", account="test_account", autocommit=1)
+
+
+class TestParamstyleSetter:
+    """PEP 249 uses string paramstyle; assignment normalizes once on the connection."""
+
+    @pytest.fixture(autouse=True)
+    def _no_native_stream_ops(self):
+        """Avoid touching real Arrow stream memory when cursor tests run execute()."""
+        with (
+            patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
+            patch("snowflake.connector.cursor._query_result.release_arrow_stream"),
+        ):
+            yield
+
+    def test_assign_string_normalizes(self, connection):
+        connection.paramstyle = "qmark"
+        assert connection.paramstyle == ParamStyle.QMARK
+        assert connection._paramstyle is ParamStyle.QMARK
+
+    def test_assign_enum_unchanged(self, connection):
+        connection.paramstyle = ParamStyle.NUMERIC
+        assert connection.paramstyle == ParamStyle.NUMERIC
+
+    def test_assign_invalid_string_raises(self, connection):
+        with pytest.raises(ProgrammingError, match="Invalid paramstyle"):
+            connection.paramstyle = "bogus"
+
+    def test_assign_invalid_type_raises(self, connection):
+        with pytest.raises(ProgrammingError, match="paramstyle must be str or ParamStyle"):
+            connection.paramstyle = 123  # type: ignore[assignment]
+
+    def test_paramstyle_from_str_or_class_enum_identity(self):
+        assert ParamStyle.from_str_or_class(ParamStyle.QMARK) is ParamStyle.QMARK
+
+    def test_paramstyle_from_str_or_class_string(self):
+        assert ParamStyle.from_str_or_class("  qmark ") == ParamStyle.QMARK
+
+    def test_paramstyle_from_str_or_class_rejects_bad_type(self):
+        with pytest.raises(ProgrammingError, match="paramstyle must be str or ParamStyle"):
+            ParamStyle.from_str_or_class(1)  # type: ignore[arg-type]
+
+    def test_cursor_execute_after_string_assign(self, connection, mock_db_api):
+        """Layered clients set ``connection.paramstyle = \"pyformat\"``; cursor must not see a bare str."""
+        mock_db_api.statement_new.return_value = MagicMock(stmt_handle=StatementHandle(id=1))
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_db_api.statement_execute_query.return_value.result = execute_result
+
+        connection.paramstyle = "pyformat"
+        cur = SnowflakeCursor(connection)
+        cur.execute("SELECT %(v)s", {"v": 1})
+        mock_db_api.statement_execute_query.assert_called()
+
+    def test_cursor_execute_qmark_after_string_assign(self, connection, mock_db_api):
+        mock_db_api.statement_new.return_value = MagicMock(stmt_handle=StatementHandle(id=1))
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_db_api.statement_execute_query.return_value.result = execute_result
+
+        connection.paramstyle = "qmark"
+        cur = SnowflakeCursor(connection)
+        cur.execute("SELECT ?", (1,))
+        req = mock_db_api.statement_execute_query.call_args[0][0]
+        assert req.HasField("bindings")
 
 
 class TestSetAutocommit:

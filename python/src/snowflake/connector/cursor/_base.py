@@ -348,7 +348,7 @@ class SnowflakeCursorBase(abc.ABC):
         if parameters is None:
             return operation, None
 
-        paramstyle = self._connection.paramstyle  # Always returns ParamStyle enum
+        paramstyle = self._connection.paramstyle
 
         if paramstyle.is_client_side():
             # format paramstyle only supports positional params (%s), not named params
