@@ -206,7 +206,7 @@ pub enum JsonBindingError {
         location: Location,
     },
 
-    #[snafu(display("SQL_NUMERIC_STRUCT magnitude overflow: {reason}"))]
+    #[snafu(display("Numeric value out of range: {reason}"))]
     NumericMagnitudeOverflow {
         reason: String,
         #[snafu(implicit)]

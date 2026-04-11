@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{
+    JsonBindingError, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
@@ -377,21 +379,39 @@ impl ReadODBC for SnowflakeReal {
             }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
-                s.trim().parse::<f64>().map_err(|_| {
+                let v = s.trim().parse::<f64>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
                         c_type: binding.value_type,
                     }
                     .build()
-                })?
+                })?;
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!(
+                            "non-finite f64 value {v} cannot be bound to real SQL type"
+                        ),
+                    }
+                    .fail();
+                }
+                v
             }
             CDataType::WChar => {
                 let s = read_wchar_str(binding)?;
-                s.trim().parse::<f64>().map_err(|_| {
+                let v = s.trim().parse::<f64>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
                         c_type: binding.value_type,
                     }
                     .build()
-                })?
+                })?;
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!(
+                            "non-finite f64 value {v} cannot be bound to real SQL type"
+                        ),
+                    }
+                    .fail();
+                }
+                v
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

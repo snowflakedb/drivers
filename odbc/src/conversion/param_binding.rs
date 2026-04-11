@@ -278,11 +278,23 @@ pub(crate) fn read_numeric_struct(
             }
             .fail();
         }
-    } else if magnitude <= i128::MAX as u128 {
-        magnitude as i128
+    } else if ns.sign == 1 {
+        if magnitude <= i128::MAX as u128 {
+            magnitude as i128
+        } else {
+            return NumericMagnitudeOverflowSnafu {
+                reason: format!(
+                    "SQL_NUMERIC_STRUCT magnitude {magnitude} exceeds i128 positive range"
+                ),
+            }
+            .fail();
+        }
     } else {
         return NumericMagnitudeOverflowSnafu {
-            reason: format!("SQL_NUMERIC_STRUCT magnitude {magnitude} exceeds i128 positive range"),
+            reason: format!(
+                "SQL_NUMERIC_STRUCT sign {} is invalid; expected 0 or 1",
+                ns.sign
+            ),
         }
         .fail();
     };
