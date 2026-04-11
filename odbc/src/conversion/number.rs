@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{
+    JsonBindingError, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
@@ -12,7 +14,9 @@ use crate::conversion::numeric_helpers::{
     check_integer_range, fractional_warning, reject_multi_field_interval, whole_digits_len,
     write_interval_second, write_numeric_as_binary, write_single_field_interval,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
@@ -368,6 +372,75 @@ impl ReadODBC for SnowflakeNumber {
             CDataType::UBigInt => read_unaligned::<u64>(binding) as i128,
             CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) as i128,
             CDataType::UTinyInt => read_unaligned::<u8>(binding) as i128,
+            CDataType::Float => {
+                let v = read_unaligned::<f32>(binding) as f64;
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("non-finite f32 value {v} cannot be converted to integer"),
+                    }
+                    .fail();
+                }
+                let truncated = v.trunc();
+                if truncated < (i128::MIN as f64) || truncated > (i128::MAX as f64) {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("f32 value {v} out of i128 range"),
+                    }
+                    .fail();
+                }
+                truncated as i128
+            }
+            CDataType::Double => {
+                let v = read_unaligned::<f64>(binding);
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("non-finite f64 value {v} cannot be converted to integer"),
+                    }
+                    .fail();
+                }
+                let truncated = v.trunc();
+                if truncated < (i128::MIN as f64) || truncated > (i128::MAX as f64) {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!("f64 value {v} out of i128 range"),
+                    }
+                    .fail();
+                }
+                truncated as i128
+            }
+            CDataType::Bit => read_unaligned::<u8>(binding) as i128,
+            CDataType::Numeric => {
+                let (mantissa, scale) = read_numeric_struct(binding)?;
+                if scale > 0 {
+                    let divisor = 10i128.checked_pow(scale as u32).ok_or_else(|| {
+                        NumericMagnitudeOverflowSnafu {
+                            reason: format!("10^{scale} overflows i128 (positive scale too large)"),
+                        }
+                        .build()
+                    })?;
+                    mantissa / divisor
+                } else if scale < 0 {
+                    let abs_scale = if scale == i8::MIN {
+                        (i8::MAX as u32) + 1
+                    } else {
+                        (-scale) as u32
+                    };
+                    let multiplier = 10i128.checked_pow(abs_scale).ok_or_else(|| {
+                        NumericMagnitudeOverflowSnafu {
+                            reason: format!(
+                                "10^{abs_scale} overflows i128 (negative scale too large)"
+                            ),
+                        }
+                        .build()
+                    })?;
+                    mantissa.checked_mul(multiplier).ok_or_else(|| {
+                        NumericMagnitudeOverflowSnafu {
+                            reason: format!("mantissa * 10^{abs_scale} overflows i128"),
+                        }
+                        .build()
+                    })?
+                } else {
+                    mantissa
+                }
+            }
             CDataType::Char => {
                 let s = read_char_str(binding)?;
                 s.trim().parse::<i128>().map_err(|_| {

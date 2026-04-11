@@ -367,3 +367,34 @@ behavior_differences:
       Spec reference: ODBC "C to SQL: Character" conversion table lists
       SQL_C_BINARY as a valid source type for SQL_VARCHAR.
       https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
+  35:
+    name: "Negative integer to SQL_BIT rejected during parameter binding"
+    description: |
+      OLD driver: Returns SQL_ERROR with SQLSTATE 22003 (numeric value out
+      of range) when binding a negative integer (e.g., -1) to SQL_BIT.
+      NEW driver: Treats any nonzero value as true (1) per the C boolean
+      convention, consistent with how boolean conversions work in the fetch
+      direction.
+      Impact: Applications binding negative integers to BOOLEAN columns will
+      succeed on the new driver instead of failing.
+  36:
+    name: "Subnormal double (DBL_MIN) stored as zero during parameter binding"
+    description: |
+      OLD driver: Loses precision for very small subnormal double values
+      near DBL_MIN (2.2e-308), storing them as 0.0.
+      NEW driver: Preserves subnormal double values through the binding
+      pipeline, storing and retrieving 2.2e-308 correctly.
+      Impact: Applications working with extremely small floating-point
+      values will get correct results on the new driver.
+  37:
+    name: "SQL_C_NUMERIC nonzero value to SQL_BIT rejected during parameter binding"
+    description: |
+      OLD driver: Returns SQL_ERROR with SQLSTATE 22003 (numeric value out
+      of range) when binding a SQL_C_NUMERIC with a value other than 0 or 1
+      (e.g., 42) to SQL_BIT. The driver sends the raw numeric magnitude to
+      the server which rejects it for a BOOLEAN column.
+      NEW driver: Correctly converts any nonzero SQL_C_NUMERIC mantissa to
+      true (1) and zero to false (0) before sending to the server, matching
+      the behavior of other numeric C types bound to SQL_BIT.
+      Impact: Applications binding SQL_C_NUMERIC values to BOOLEAN columns
+      will succeed on the new driver for any nonzero value.

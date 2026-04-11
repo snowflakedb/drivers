@@ -504,7 +504,15 @@ impl OdbcError {
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::JsonBinding { .. } => SqlState::GeneralError,
+            OdbcError::JsonBinding { source, .. } => match source {
+                JsonBindingError::NumericMagnitudeOverflow { .. } => {
+                    SqlState::NumericValueOutOfRange
+                }
+                JsonBindingError::UnsupportedCDataType { .. } => {
+                    SqlState::RestrictedDataTypeAttributeViolation
+                }
+                _ => SqlState::GeneralError,
+            },
             OdbcError::CoreError { source, .. } => match source.as_ref() {
                 CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
                 CoreProtobufError::Application {
@@ -543,6 +551,8 @@ impl OdbcError {
                         ErrorType::GenericError(_) => {
                             if message.contains("SQL compilation error") {
                                 SqlState::SyntaxErrorOrAccessRuleViolation
+                            } else if message.contains("out of representable range") {
+                                SqlState::NumericValueOutOfRange
                             } else {
                                 SqlState::GeneralError
                             }
@@ -567,6 +577,8 @@ impl OdbcError {
                         ErrorType::InternalError(_) => {
                             if message.contains("SQL compilation error") {
                                 SqlState::SyntaxErrorOrAccessRuleViolation
+                            } else if message.contains("out of representable range") {
+                                SqlState::NumericValueOutOfRange
                             } else {
                                 SqlState::GeneralError
                             }
@@ -685,5 +697,79 @@ impl ErrorTrace for CoreProtobufError {
                 }]
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::conversion::error::{NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu};
+
+    #[test]
+    fn numeric_magnitude_overflow_maps_to_22003() {
+        let json_err = NumericMagnitudeOverflowSnafu {
+            reason: "test overflow".to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn server_numeric_out_of_range_maps_to_22003() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "DML operation to table T failed on column COL with error: \
+                          Number out of representable range: type FIXED[SB2](3,0){nullable}, \
+                          value 99999"
+                    .to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn server_generic_error_maps_to_hy000() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "Some other server error".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn unsupported_c_data_type_maps_to_07006() {
+        let json_err = UnsupportedCDataTypeSnafu {
+            c_type: crate::api::CDataType::Char,
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::RestrictedDataTypeAttributeViolation
+        );
     }
 }
