@@ -8,6 +8,10 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 ///
 /// Uses `up_to_n_times(1)` to make the 503 response only match once,
 /// then subsequent requests match the success response.
+///
+/// **Mount order matters**: wiremock matches mocks in registration order when
+/// priorities are equal. The 503 mock must be mounted first so it fires on the
+/// first matching request; once exhausted, the success mock takes over.
 pub async fn mount_503_then_success(server: &MockServer) {
     // First request -> 503 (only matches once)
     Mock::given(method("GET"))

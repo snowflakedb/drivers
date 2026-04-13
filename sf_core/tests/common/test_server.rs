@@ -7,7 +7,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
+
+/// Read the full incoming HTTP request bytes from a stream.
+///
+/// Returns the bytes read (up to 4096). Returns an empty vec if the read fails.
+async fn read_request_bytes(stream: &mut TcpStream) -> Vec<u8> {
+    let mut buf = vec![0u8; 4096];
+    let n = stream.read(&mut buf).await.unwrap_or(0);
+    buf.truncate(n);
+    buf
+}
 
 /// Spawn a test server that responds to HTTP requests.
 ///
@@ -74,24 +84,28 @@ where
 
 /// Spawn a server that captures the full HTTP request for verification.
 ///
-/// The server reads the full request and returns it, allowing tests to verify
-/// request format, headers, body, etc.
+/// The server handles **one request**, captures its raw bytes, and resolves the
+/// `JoinHandle` to those bytes. Await the handle after the request to retrieve them:
 ///
-/// # Arguments
-/// * `response` - The raw HTTP response bytes to return for all requests
-///
-/// # Returns
-/// * `SocketAddr` - The address the server is listening on
-/// * `Arc<AtomicUsize>` - Counter for number of attempts made
-/// * `JoinHandle<Vec<u8>>` - Handle that resolves to the captured request bytes
-///
-/// # Example
 /// ```ignore
 /// let (addr, attempts, server) = spawn_capture_server().await;
 /// // ... make request to addr ...
-/// let captured_request = server.await.unwrap();
-/// assert!(captured_request.starts_with(b"POST /session"));
+/// let captured_bytes: Vec<u8> = server.await.unwrap();
+/// assert!(captured_bytes.starts_with(b"POST /session"));
 /// ```
+///
+/// **Access model**: this function returns `JoinHandle<Vec<u8>>` — the captured
+/// request is retrieved by awaiting the handle. Contrast with
+/// [`spawn_capture_server_with_response`], which processes the request inside the
+/// closure and returns `JoinHandle<()>` (no bytes returned to the caller).
+///
+/// # Arguments
+/// * No arguments — always responds with `{"success":true}` 200 OK.
+///
+/// # Returns
+/// * `SocketAddr` - The address the server is listening on
+/// * `Arc<AtomicUsize>` - Counter for number of requests handled
+/// * `JoinHandle<Vec<u8>>` - Handle that resolves to the captured request bytes
 pub async fn spawn_capture_server() -> (
     SocketAddr,
     Arc<AtomicUsize>,
@@ -106,10 +120,7 @@ pub async fn spawn_capture_server() -> (
         let (mut stream, _) = listener.accept().await.unwrap();
         attempts_clone.fetch_add(1, Ordering::SeqCst);
 
-        // Read the request
-        let mut buf = vec![0u8; 4096];
-        let n = stream.read(&mut buf).await.unwrap();
-        buf.truncate(n);
+        let buf = read_request_bytes(&mut stream).await;
 
         // Send success response
         let body = r#"{"success":true}"#;
@@ -129,7 +140,14 @@ pub async fn spawn_capture_server() -> (
 
 /// Spawn a capture server with custom response.
 ///
-/// Like `spawn_capture_server`, but allows specifying the response.
+/// Handles up to `max_attempts` requests. For each request the raw bytes are
+/// decoded as UTF-8 (lossy) and passed to `responder`, which returns the raw
+/// HTTP response bytes to send back.
+///
+/// **Access model**: the captured request is processed *inside* `responder` —
+/// this function returns `JoinHandle<()>` (no bytes returned to the caller).
+/// Contrast with [`spawn_capture_server`], which resolves the handle to the
+/// raw captured bytes.
 ///
 /// # Arguments
 /// * `max_attempts` - Maximum number of requests to handle
@@ -137,7 +155,7 @@ pub async fn spawn_capture_server() -> (
 ///
 /// # Returns
 /// * `SocketAddr` - The address the server is listening on
-/// * `JoinHandle` - Handle to the server task
+/// * `JoinHandle<()>` - Handle to the server task
 pub async fn spawn_capture_server_with_response<F>(
     max_attempts: usize,
     responder: F,
@@ -156,10 +174,8 @@ where
             let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
             let responder = responder.clone();
 
-            // Read request
-            let mut buf = vec![0u8; 4096];
-            let n = stream.read(&mut buf).await.unwrap_or(0);
-            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let raw = read_request_bytes(&mut stream).await;
+            let request = String::from_utf8_lossy(&raw).to_string();
 
             let response = responder(request);
             let _ = stream.write_all(&response).await;
