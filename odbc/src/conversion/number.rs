@@ -5,7 +5,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    JsonBindingError, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
+    UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -15,7 +16,7 @@ use crate::conversion::numeric_helpers::{
     write_interval_second, write_numeric_as_binary, write_single_field_interval,
 };
 use crate::conversion::param_binding::{
-    read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
+    buffer_data_len, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -458,6 +459,32 @@ impl ReadODBC for SnowflakeNumber {
                     }
                     .build()
                 })?
+            }
+            CDataType::Binary => {
+                let len = buffer_data_len(binding);
+                let expected = match binding.sql_data_type {
+                    sql::SqlDataType::EXT_BIG_INT => 8usize,
+                    sql::SqlDataType::INTEGER => 4,
+                    sql::SqlDataType::SMALLINT => 2,
+                    sql::SqlDataType::EXT_TINY_INT => 1,
+                    _ => 4,
+                };
+                if len != expected {
+                    return BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "SQL_C_BINARY buffer length {len} does not match expected size {expected} for {:?}",
+                            binding.sql_data_type
+                        ),
+                    }
+                    .fail();
+                }
+                match expected {
+                    8 => read_unaligned::<i64>(binding) as i128,
+                    4 => read_unaligned::<i32>(binding) as i128,
+                    2 => read_unaligned::<i16>(binding) as i128,
+                    1 => read_unaligned::<i8>(binding) as i128,
+                    _ => unreachable!(),
+                }
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

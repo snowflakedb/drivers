@@ -6,9 +6,13 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{
+    BindingNumericOutOfRangeSnafu, JsonBindingError, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
@@ -112,6 +116,29 @@ impl ReadODBC for SnowflakeDate {
                     }
                     .build()
                 })
+            }
+            CDataType::Binary => {
+                let len = buffer_data_len(binding);
+                if len != std::mem::size_of::<sql::Date>() {
+                    return BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "SQL_C_BINARY buffer length {len} does not match SQL_DATE_STRUCT size ({})",
+                            std::mem::size_of::<sql::Date>()
+                        ),
+                    }
+                    .fail();
+                }
+                let date = read_unaligned::<sql::Date>(binding);
+                NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
+                    .ok_or_else(|| {
+                        BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
+                                date.year, date.month, date.day
+                            ),
+                        }
+                        .build()
+                    })
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,

@@ -7,12 +7,15 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    InvalidArrowValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericValueOutOfRangeSnafu,
+    UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
-    JsonBindingError, NumericValueOutOfRangeSnafu, UnsupportedCDataTypeSnafu,
+    InvalidArrowValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
@@ -397,6 +400,45 @@ fn read_timestamp_odbc(binding: &ParameterBinding) -> Result<NaiveDateTime, Json
                     }
                     .build()
                 })
+        }
+        CDataType::Binary => {
+            let len = buffer_data_len(binding);
+            if len != std::mem::size_of::<sql::Timestamp>() {
+                return BindingNumericOutOfRangeSnafu {
+                    reason: format!(
+                        "SQL_C_BINARY buffer length {len} does not match SQL_TIMESTAMP_STRUCT size ({})",
+                        std::mem::size_of::<sql::Timestamp>()
+                    ),
+                }
+                .fail();
+            }
+            let ts = read_unaligned::<sql::Timestamp>(binding);
+            let date = NaiveDate::from_ymd_opt(ts.year as i32, ts.month as u32, ts.day as u32)
+                .ok_or_else(|| {
+                    BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
+                            ts.year, ts.month, ts.day
+                        ),
+                    }
+                    .build()
+                })?;
+            let time = NaiveTime::from_hms_nano_opt(
+                ts.hour as u32,
+                ts.minute as u32,
+                ts.second as u32,
+                ts.fraction,
+            )
+            .ok_or_else(|| {
+                BindingNumericOutOfRangeSnafu {
+                    reason: format!(
+                        "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}, fraction={}",
+                        ts.hour, ts.minute, ts.second, ts.fraction
+                    ),
+                }
+                .build()
+            })?;
+            Ok(NaiveDateTime::new(date, time))
         }
         _ => UnsupportedCDataTypeSnafu {
             c_type: binding.value_type,

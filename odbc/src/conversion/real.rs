@@ -5,7 +5,8 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    JsonBindingError, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+    BindingNumericOutOfRangeSnafu, JsonBindingError, NumericMagnitudeOverflowSnafu,
+    UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
@@ -16,7 +17,8 @@ use crate::conversion::numeric_helpers::{
     write_single_field_interval,
 };
 use crate::conversion::param_binding::{
-    format_numeric_value, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
+    buffer_data_len, format_numeric_value, read_char_str, read_numeric_struct, read_unaligned,
+    read_wchar_str,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -407,6 +409,36 @@ impl ReadODBC for SnowflakeReal {
                     return NumericMagnitudeOverflowSnafu {
                         reason: format!(
                             "non-finite f64 value {v} cannot be bound to real SQL type"
+                        ),
+                    }
+                    .fail();
+                }
+                v
+            }
+            CDataType::Binary => {
+                let len = buffer_data_len(binding);
+                let expected = match binding.sql_data_type {
+                    sql::SqlDataType::REAL => 4usize,
+                    _ => 8,
+                };
+                if len != expected {
+                    return BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "SQL_C_BINARY buffer length {len} does not match expected size {expected} for {:?}",
+                            binding.sql_data_type
+                        ),
+                    }
+                    .fail();
+                }
+                let v = if expected == 4 {
+                    read_unaligned::<f32>(binding) as f64
+                } else {
+                    read_unaligned::<f64>(binding)
+                };
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!(
+                            "non-finite value {v} from SQL_C_BINARY cannot be bound to real SQL type"
                         ),
                     }
                     .fail();

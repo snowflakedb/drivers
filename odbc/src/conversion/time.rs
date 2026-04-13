@@ -7,10 +7,13 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    InvalidArrowValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu, ReadArrowError,
-    UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    BindingNumericOutOfRangeSnafu, InvalidArrowValueSnafu, JsonBindingError,
+    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedCDataTypeSnafu,
+    UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
@@ -189,6 +192,29 @@ impl ReadODBC for SnowflakeTime {
                     .map_err(|_| {
                         UnsupportedCDataTypeSnafu {
                             c_type: binding.value_type,
+                        }
+                        .build()
+                    })
+            }
+            CDataType::Binary => {
+                let len = buffer_data_len(binding);
+                if len != std::mem::size_of::<sql::Time>() {
+                    return BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "SQL_C_BINARY buffer length {len} does not match SQL_TIME_STRUCT size ({})",
+                            std::mem::size_of::<sql::Time>()
+                        ),
+                    }
+                    .fail();
+                }
+                let time = read_unaligned::<sql::Time>(binding);
+                NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
+                    .ok_or_else(|| {
+                        BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}",
+                                time.hour, time.minute, time.second
+                            ),
                         }
                         .build()
                     })
