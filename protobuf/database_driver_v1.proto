@@ -161,10 +161,13 @@ message ResultSetDescriptor {
   optional QueryStats stats = 6;
 }
 
-// Multi-statement execution: child query IDs (metadata fetched lazily).
+// Multi-statement execution: child query IDs and their statement types.
 message MultiStatementResult {
   ResultSetDescriptor parent = 1;
   repeated string query_ids = 2;
+  // Statement type IDs for each child, parallel to query_ids.
+  // Used by wrappers to classify results (ResultSet vs update count) without lazy fetch.
+  repeated int64 statement_type_ids = 3;
 }
 
 // Partitioned result

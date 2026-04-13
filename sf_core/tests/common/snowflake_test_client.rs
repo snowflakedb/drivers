@@ -354,9 +354,12 @@ impl SnowflakeTestClient {
         self.client
             .statement_set_options_blocking(StatementSetOptionsRequest {
                 stmt_handle: Some(stmt_handle),
-                options: [("multi_statement_count".to_string(), ConfigSetting::from(count))]
-                    .into_iter()
-                    .collect(),
+                options: [(
+                    "multi_statement_count".to_string(),
+                    ConfigSetting::from(count),
+                )]
+                .into_iter()
+                .collect(),
             })
             .unwrap();
         let result = self.execute_statement_query(&stmt_handle);
@@ -375,9 +378,12 @@ impl SnowflakeTestClient {
         self.client
             .statement_set_options_blocking(StatementSetOptionsRequest {
                 stmt_handle: Some(stmt_handle),
-                options: [("multi_statement_count".to_string(), ConfigSetting::from(count))]
-                    .into_iter()
-                    .collect(),
+                options: [(
+                    "multi_statement_count".to_string(),
+                    ConfigSetting::from(count),
+                )]
+                .into_iter()
+                .collect(),
             })
             .unwrap();
         let result =

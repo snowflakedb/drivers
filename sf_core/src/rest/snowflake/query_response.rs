@@ -94,7 +94,7 @@ pub struct Data {
     #[serde(rename = "resultIds")]
     pub result_ids: Option<String>,
     #[serde(rename = "resultTypes")]
-    _result_types: Option<String>,
+    pub result_types: Option<String>,
     #[serde(rename = "queryResultFormat")]
     pub query_result_format: Option<String>,
     #[serde(rename = "asyncResult")]

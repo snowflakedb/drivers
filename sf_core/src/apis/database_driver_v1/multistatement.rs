@@ -9,7 +9,25 @@ pub fn is_multistatement(data: &Data) -> bool {
 
 /// Parse comma-separated `resultIds` from a multi-statement response into individual query IDs.
 pub fn child_query_ids(data: &Data) -> Vec<String> {
-    data.result_ids
+    parse_comma_separated_strings(&data.result_ids)
+}
+
+/// Parse comma-separated `resultTypes` from a multi-statement response into statement type IDs.
+pub fn child_statement_type_ids(data: &Data) -> Vec<i64> {
+    data.result_types
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|types| {
+            types
+                .split(',')
+                .filter_map(|t| t.trim().parse::<i64>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_comma_separated_strings(field: &Option<String>) -> Vec<String> {
+    field
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(|ids| ids.split(',').map(|id| id.trim().to_string()).collect())

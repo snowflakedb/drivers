@@ -6,7 +6,7 @@ use crate::apis::database_driver_v1::FetchChunkInput;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::config::config_manager;
 use crate::config::path_resolver;
-use crate::file_manager::FileManagerError;
+use crate::handle_manager::Handle;
 use crate::protobuf::generated::database_driver_v1::*;
 use converter::{
     ToProtobuf, core_validation_issue_to_proto, flat_sections_to_nested_json,
