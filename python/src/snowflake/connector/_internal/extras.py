@@ -86,9 +86,9 @@ def requires_dependency(module: ModuleType | MissingOptionalDependency) -> Calla
 
     def decorator(func: F) -> F:
         @functools.wraps(func)
-        def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             check_dependency(module)
-            return func(self, *args, **kwargs)
+            return func(*args, **kwargs)
 
         return cast(F, wrapper)
 
