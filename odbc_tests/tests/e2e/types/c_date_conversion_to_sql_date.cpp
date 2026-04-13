@@ -23,7 +23,8 @@ TEST_CASE("should bind SQL_C_TYPE_DATE to SQL_TYPE_DATE and read back", "[c_date
   val.month = 4;
   val.day = 13;
   SQLLEN ind = sizeof(val);
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_TYPE_DATE, 0, 0, &val, sizeof(val), &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_DATE, SQL_TYPE_DATE, 0, 0, &val, sizeof(val),
+                         &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
