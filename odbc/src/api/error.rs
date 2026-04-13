@@ -538,9 +538,6 @@ impl OdbcError {
                 JsonBindingError::InvalidBooleanValue { .. } => {
                     SqlState::InvalidCharacterValueForCast
                 }
-                JsonBindingError::BindingNumericOutOfRange { .. } => {
-                    SqlState::NumericValueOutOfRange
-                }
                 _ => SqlState::GeneralError,
             },
             OdbcError::CoreError { source, .. } => match source.as_ref() {
@@ -733,7 +730,9 @@ impl ErrorTrace for CoreProtobufError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversion::error::{NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu};
+    use crate::conversion::error::{
+        InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+    };
 
     #[test]
     fn numeric_magnitude_overflow_maps_to_22003() {
@@ -785,6 +784,22 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn invalid_boolean_value_maps_to_22018() {
+        let json_err = InvalidBooleanValueSnafu {
+            value: "hello".to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::InvalidCharacterValueForCast
+        );
     }
 
     #[test]

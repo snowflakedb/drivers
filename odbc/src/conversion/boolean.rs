@@ -6,7 +6,7 @@ use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{
-    BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, UnsupportedCDataTypeSnafu,
+    InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
 };
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::numeric_helpers::{
@@ -235,7 +235,7 @@ impl ReadODBC for SnowflakeBoolean {
             CDataType::Binary => {
                 let len = buffer_data_len(binding);
                 if len != 1 {
-                    return BindingNumericOutOfRangeSnafu {
+                    return NumericMagnitudeOverflowSnafu {
                         reason: format!(
                             "SQL_C_BINARY to SQL_BIT requires exactly 1 byte, got {len}"
                         ),
