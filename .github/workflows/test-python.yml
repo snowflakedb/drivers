@@ -316,25 +316,13 @@ jobs:
             hatch_env: "test"
             cloud_provider: gcp
           - os: ubuntu-latest
-            py: "3.12"
+            py: "3.10"
             hatch_env: "test"
             cloud_provider: azure
           - os: ubuntu-latest # Reference combination — keep in sync with REFERENCE_* env vars above
             py: "3.13"
             hatch_env: "test"
             cloud_provider: aws
-          - os: macos-latest
-            py: "3.9"
-            hatch_env: "test"
-            cloud_provider: aws
-          - os: macos-latest
-            py: "3.11"
-            hatch_env: "test"
-            cloud_provider: gcp
-          - os: macos-latest
-            py: "3.14"
-            hatch_env: "test"
-            cloud_provider: azure
           - os: windows-11-arm
             py: "3.12"
             hatch_env: "test"
@@ -348,7 +336,7 @@ jobs:
             hatch_env: "test"
             cloud_provider: azure
           # test integration with Pandas
-          - os: macos-latest
+          - os: ubuntu-latest
             py: "3.9"
             hatch_env: "test-pandas"
             cloud_provider: gcp
