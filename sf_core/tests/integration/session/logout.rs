@@ -596,7 +596,12 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
         );
 
         //And Error is ignored
-        server.await.unwrap();
+        let server_result = server.await;
+        assert!(
+            server_result.is_ok(),
+            "Mock server should complete cleanly for {} — SESSION_GONE was absorbed",
+            strategy_type
+        );
     }
 }
 

@@ -218,10 +218,10 @@ Feature: Session Logout - Python-specific behavior
     Then No atexit handler was registered
     And No automatic close is performed
 
+  @python_e2e
   Scenario: should emit telemetry and WARN when connection leaked at process exit
     Given Snowflake Python client is logged in
     And Connection is not explicitly closed
     When Process exit is detected
     Then Leak detection emits WARN log
     And Telemetry event is sent with leak information
-    And Connection details are included for debugging

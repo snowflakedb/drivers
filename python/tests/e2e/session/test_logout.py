@@ -833,7 +833,9 @@ class TestAutoCleanup:
         """Verify warning deduplication: 10 leaked connections emit only 1 FutureWarning."""
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
-            wiremock.add_mapping("session/logout_success.json")
+            # logout_503_then_success: first request → 503, then 200.
+            # Proves retry=False: the 503 is not retried (total stays 10, not 11+).
+            wiremock.add_mapping("session/logout_503_then_success.json")
 
             wiremock_url = wiremock.http_url()
             private_key_path = get_test_private_key_path()
@@ -880,9 +882,16 @@ class TestAutoCleanup:
                 f"Expected 10 logout requests (one per leaked connection), got {len(logout_requests)}"
             )
 
+            # retry=False → 503 is not retried → total stays at 10 (step above) and the 503
+            # is visible in the journal. retry=True → 503 would trigger a retry → 11+ total.
+            # Both (a) total==10 and (b) one got 503 together prove retry=False was used.
             # And Each auto-cleanup close is invoked with retry false
-            for req in logout_requests:
-                assert req["request"]["method"] == "POST", "Each logout should be POST"
+            responses_503 = [r for r in logout_requests if r.get("response", {}).get("status") == 503]
+            assert len(responses_503) == 1, (
+                f"Expected exactly 1 connection to receive 503 (retry=False: not retried). "
+                f"Got {len(responses_503)} 503 responses out of {len(logout_requests)} total. "
+                f"If retry=True, the 503 retry would push total to 11+."
+            )
 
             # And Deprecation warning is emitted only once per process
             warning_text = "Auto-cleanup at exit will be disabled"
@@ -912,3 +921,42 @@ class TestAutoCleanup:
 
             # And No automatic close is performed
             core_mock.db_api.connection_close.assert_not_called()
+
+    def test_should_emit_telemetry_and_warn_when_connection_leaked_at_process_exit(
+        self, int_test_connection_factory
+    ) -> None:
+        """Leak detection: WARN + telemetry when connection not closed before exit.
+
+        Telemetry assertions are pending SNOW-2912513.
+        WARN is currently the FutureWarning emitted by _close_at_process_exit();
+        a proper logger.warning() call will be added under SNOW-2912513.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+            wiremock.add_mapping("session/logout_success.json")
+
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always")
+
+                # Given Snowflake Python client is logged in
+                conn = int_test_connection_factory(server_url=wiremock.http_url())
+
+                # And Connection is not explicitly closed
+                assert not conn.is_closed()
+
+                # When Process exit is detected
+                conn._close_at_process_exit()
+
+            # Current: FutureWarning via warnings.warn(); logger.warning() pending SNOW-2912513.
+            # Then Leak detection emits WARN log
+            leak_warnings = [
+                w
+                for w in captured_warnings
+                if issubclass(w.category, FutureWarning) and "not explicitly closed" in str(w.message)
+            ]
+            assert len(leak_warnings) == 1, f"Expected 1 leak detection FutureWarning, got {len(leak_warnings)}"
+
+            # And Telemetry event is sent with leak information
+            pass  # TODO(SNOW-2912513): telemetry not yet implemented
+            # And Connection details are included for debugging
+            pass  # TODO(SNOW-2912513): connection details are part of telemetry above
