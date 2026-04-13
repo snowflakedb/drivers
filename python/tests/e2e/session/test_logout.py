@@ -38,7 +38,7 @@ def assert_logout_request_format(logout_request: dict) -> None:
     assert "delete=true" in req["url"], "Logout should have delete=true query param"
     assert "Authorization" in req.get("headers", {}), "Logout should have Authorization header"
     auth_header = req.get("headers", {}).get("Authorization", [""])[0]
-    assert auth_header.startswith("Snowflake Token="), "Authorization should start with 'Snowflake Token='"
+    assert auth_header[:16] == "Snowflake Token=", "Authorization header should start with 'Snowflake Token='"
 
 
 class TestLogoutTokenCleanup:
@@ -305,7 +305,7 @@ class TestLogoutPythonWrapper:
             assert "delete=true" in logout_req["url"], "Logout should have delete=true query param"
 
             # And Connection close metrics are recorded in telemetry
-            assert conn.is_closed()  # TODO(SNOW-2912513): placeholder until telemetry is implemented
+            pass  # TODO(SNOW-2912513): telemetry not yet implemented — step unverified
 
             # And No deprecation warning is emitted
             deprecation_warnings = [
@@ -532,7 +532,10 @@ class TestLogoutPythonWrapper:
             )
 
             # And No further requests are sent after retry limit is reached
-            assert len(logout_requests) > 0, "At least one logout attempt should have been made"
+            assert len(logout_requests) == PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS, (
+                f"Expected exactly {PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS} attempts (limit hit, no more sent). "
+                f"Got {len(logout_requests)}"
+            )
 
             # And Error is logged as WARN
             log_content = log_file.read_text()
@@ -541,7 +544,7 @@ class TestLogoutPythonWrapper:
             )
 
             # And close() method does not raise exception
-            assert conn.is_closed(), "Connection should be closed despite all logout attempts failing"
+            pass  # proven by conn.close() completing without exception in the try block above
 
             # And Connection cleanup succeeds
             assert conn.is_closed()
@@ -608,7 +611,10 @@ class TestLogoutRetryBehavior:
             )
 
             # And Only one logout request was sent to server
-            assert logout_requests[0]["request"]["method"] == "POST", "Logout should be POST"
+            logout_req = logout_requests[0]["request"]
+            assert logout_req["method"] == "POST" and "delete=true" in logout_req["url"], (
+                "Single logout request should be POST with delete=true"
+            )
 
             # And Error is handled according to best-effort strategy
             assert conn.is_closed(), (
@@ -633,7 +639,7 @@ class TestAutoCleanup:
             with pytest.warns(FutureWarning):
                 conn = Connection(user="test", account="test")
 
-            # When Connection configuration is checked
+            # When Connection is initialized
             auto_cleanup_value = conn.auto_cleanup
 
             # Then auto_cleanup defaults to true

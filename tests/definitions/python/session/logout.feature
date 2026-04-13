@@ -172,7 +172,7 @@ Feature: Session Logout - Python-specific behavior
     # Phase 2 (doc for: SNOW-2314152): preserve backward compatibility.
     # Python has legacy atexit auto-cleanup, so it defaults to on.
     Given Snowflake Python client is created with default parameters
-    When Connection configuration is checked
+    When Connection is initialized
     Then auto_cleanup defaults to true
     And atexit handler is registered at connection init
 
