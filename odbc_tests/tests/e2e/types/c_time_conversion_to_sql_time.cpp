@@ -9,10 +9,12 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_TYPE_TIME to SQL_TYPE_TIME and read back", "[c_time][conversion][sql_time]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col TIME)");
 
+  // When SQL_C_TYPE_TIME 14:30:45 is bound to SQL_TYPE_TIME and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -26,15 +28,18 @@ TEST_CASE("should bind SQL_C_TYPE_TIME to SQL_TYPE_TIME and read back", "[c_time
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the value is read back as "14:30:45"
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "14:30:45");
 }
 
 TEST_CASE("should bind SQL_C_TYPE_TIME with NULL indicator to SQL_TYPE_TIME", "[c_time][conversion][sql_time]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col TIME)");
 
+  // When SQL_C_TYPE_TIME is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -44,6 +49,7 @@ TEST_CASE("should bind SQL_C_TYPE_TIME with NULL indicator to SQL_TYPE_TIME", "[
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data_optional<SQL_C_CHAR>(fetch_stmt, 1) == std::nullopt);
 }

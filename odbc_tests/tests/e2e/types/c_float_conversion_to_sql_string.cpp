@@ -9,10 +9,12 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR and read back", "[c_float][conversion][sql_string]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col VARCHAR(100))");
 
+  // When SQL_C_DOUBLE 3.14 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -23,6 +25,7 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR and read back", "[c_float][co
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the string representation contains 3.14
   auto sel = conn.createStatement();
   ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t"), SQL_NTS);
   REQUIRE_ODBC(ret, sel);
@@ -33,10 +36,12 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR and read back", "[c_float][co
 }
 
 TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR and read back", "[c_float][conversion][sql_string]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col VARCHAR(100))");
 
+  // When SQL_C_FLOAT 42.0 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -47,6 +52,7 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR and read back", "[c_float][con
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the string representation contains 42
   auto sel = conn.createStatement();
   ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t"), SQL_NTS);
   REQUIRE_ODBC(ret, sel);
@@ -57,10 +63,12 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR and read back", "[c_float][con
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator to SQL_VARCHAR", "[c_float][conversion][sql_string]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col VARCHAR(100))");
 
+  // When SQL_C_DOUBLE is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -70,6 +78,7 @@ TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator to SQL_VARCHAR", "[c_flo
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data_optional<SQL_C_CHAR>(fetch_stmt, 1) == std::nullopt);
 }

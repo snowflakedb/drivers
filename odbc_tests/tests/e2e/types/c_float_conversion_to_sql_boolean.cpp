@@ -7,10 +7,12 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_DOUBLE one to SQL_BIT via float", "[c_float][conversion][sql_boolean]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col BOOLEAN)");
 
+  // When SQL_C_DOUBLE 1.0 is bound to SQL_BIT and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -21,15 +23,18 @@ TEST_CASE("should bind SQL_C_DOUBLE one to SQL_BIT via float", "[c_float][conver
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the value is read back as SQL_C_BIT 1
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 1);
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE zero to SQL_BIT via float", "[c_float][conversion][sql_boolean]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col BOOLEAN)");
 
+  // When SQL_C_DOUBLE 0.0 is bound to SQL_BIT and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -40,15 +45,18 @@ TEST_CASE("should bind SQL_C_DOUBLE zero to SQL_BIT via float", "[c_float][conve
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the value is read back as SQL_C_BIT 0
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 0);
 }
 
 TEST_CASE("should bind SQL_C_FLOAT to SQL_BIT", "[c_float][conversion][sql_boolean]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col BOOLEAN)");
 
+  // When SQL_C_FLOAT 1.0 is bound to SQL_BIT and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -59,6 +67,7 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_BIT", "[c_float][conversion][sql_boole
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the value is read back as SQL_C_BIT 1
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 1);
 }

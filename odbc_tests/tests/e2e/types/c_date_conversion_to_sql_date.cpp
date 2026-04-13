@@ -9,10 +9,12 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_TYPE_DATE to SQL_TYPE_DATE and read back", "[c_date][conversion][sql_date]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col DATE)");
 
+  // When SQL_C_TYPE_DATE 2026-04-13 is bound to SQL_TYPE_DATE and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -26,15 +28,18 @@ TEST_CASE("should bind SQL_C_TYPE_DATE to SQL_TYPE_DATE and read back", "[c_date
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the value is read back as "2026-04-13"
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2026-04-13");
 }
 
 TEST_CASE("should bind SQL_C_TYPE_DATE with NULL indicator to SQL_TYPE_DATE", "[c_date][conversion][sql_date]") {
+  // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
   conn.execute("CREATE TABLE t (col DATE)");
 
+  // When SQL_C_TYPE_DATE is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
@@ -44,6 +49,7 @@ TEST_CASE("should bind SQL_C_TYPE_DATE with NULL indicator to SQL_TYPE_DATE", "[
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
+  // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data_optional<SQL_C_CHAR>(fetch_stmt, 1) == std::nullopt);
 }
