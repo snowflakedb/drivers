@@ -370,14 +370,12 @@ behavior_differences:
   35:
     name: "Limited cross-type conversion support for SQL_BIT parameter binding"
     description: |
-      OLD driver: Only accepts SQL_C_BIT (0/1) and SQL_C_CHAR ("0"/"1")
-      for binding to SQL_BIT. Other C types and values are rejected:
-        - Integer values other than 0/1 fail with 22003
-        - Negative integers fail with 22003
-        - SQL_C_CHAR "true"/"false" and numeric strings like "42" are rejected
-        - SQL_C_FLOAT is not supported at all
-        - SQL_C_DOUBLE rejects negative values
-        - SQL_C_DOUBLE NaN is silently converted to false instead of failing
+      OLD driver: Has restricted value ranges for SQL_BIT parameter binding.
+      Integer and SQL_C_DOUBLE types only accept 0 and 1; other values
+      (negative, >1) fail with 22003. SQL_C_CHAR only accepts "0"/"1";
+      string literals like "true"/"false" and numeric strings are rejected.
+      SQL_C_FLOAT is not supported at all. SQL_C_DOUBLE NaN is silently
+      converted to false instead of failing.
       NEW driver: Supports all numeric and string C types for SQL_BIT
       binding. Any nonzero value is true, zero is false. Boolean string
       literals ("true"/"false") and numeric strings are accepted.
