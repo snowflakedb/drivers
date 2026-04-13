@@ -22,7 +22,7 @@ TEST_CASE("should bind SQL_C_CHAR float string to SQL_DOUBLE", "[c_char][convers
   REQUIRE_ODBC(ret, stmt);
   char val[] = "3.14";
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
@@ -44,7 +44,7 @@ TEST_CASE("should bind SQL_C_CHAR integer string to SQL_REAL", "[c_char][convers
   REQUIRE_ODBC(ret, stmt);
   char val[] = "100";
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_REAL, 0, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_REAL, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
@@ -66,7 +66,7 @@ TEST_CASE("should bind SQL_C_WCHAR float string to SQL_DOUBLE", "[c_char][conver
   REQUIRE_ODBC(ret, stmt);
   SQLWCHAR val[] = {'2', '.', '7', '1', 0};
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DOUBLE, 0, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);

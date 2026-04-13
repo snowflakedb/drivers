@@ -18,7 +18,7 @@ TEST_CASE("should bind SQL_C_CHAR true string to SQL_BIT", "[c_char][conversion]
   REQUIRE_ODBC(ret, stmt);
   char val[] = "1";
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BIT, 1, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BIT, 1, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
@@ -40,7 +40,7 @@ TEST_CASE("should bind SQL_C_CHAR false string to SQL_BIT", "[c_char][conversion
   REQUIRE_ODBC(ret, stmt);
   char val[] = "0";
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BIT, 1, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BIT, 1, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
@@ -62,7 +62,7 @@ TEST_CASE("should bind SQL_C_WCHAR true string to SQL_BIT", "[c_char][conversion
   REQUIRE_ODBC(ret, stmt);
   SQLWCHAR val[] = {'1', 0};
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_BIT, 1, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_BIT, 1, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);

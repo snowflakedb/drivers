@@ -20,7 +20,7 @@ TEST_CASE("should bind SQL_C_CHAR to SQL_VARCHAR and read back", "[c_char][conve
   REQUIRE_ODBC(ret, stmt);
   char val[] = "hello world";
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 200, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 200, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
@@ -42,7 +42,7 @@ TEST_CASE("should bind SQL_C_CHAR empty string to SQL_VARCHAR", "[c_char][conver
   REQUIRE_ODBC(ret, stmt);
   char val[] = "";
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 200, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 200, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
@@ -64,7 +64,7 @@ TEST_CASE("should bind SQL_C_WCHAR to SQL_VARCHAR and read back", "[c_char][conv
   REQUIRE_ODBC(ret, stmt);
   SQLWCHAR val[] = {'t', 'e', 's', 't', 0};
   SQLLEN ind = SQL_NTS;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_VARCHAR, 200, 0, val, 0, &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_VARCHAR, 200, 0, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
