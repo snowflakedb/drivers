@@ -4,7 +4,6 @@
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
-#include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_CHAR '1' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
   // Given Snowflake client is logged in

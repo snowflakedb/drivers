@@ -13,7 +13,7 @@ TEST_CASE("should bind SQL_C_DOUBLE nonzero to SQL_BIT.", "[query][bind_paramete
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = 1.5;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);
@@ -31,7 +31,7 @@ TEST_CASE("should bind SQL_C_DOUBLE zero to SQL_BIT.", "[query][bind_parameter][
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = 0.0;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);
@@ -50,7 +50,7 @@ TEST_CASE("should bind SQL_C_FLOAT nonzero to SQL_BIT.", "[query][bind_parameter
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = 0.5f;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);
@@ -69,7 +69,7 @@ TEST_CASE("should bind SQL_C_DOUBLE negative to SQL_BIT.", "[query][bind_paramet
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = -3.14;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);
@@ -87,7 +87,7 @@ TEST_CASE("should bind SQL_C_FLOAT zero to SQL_BIT.", "[query][bind_parameter][c
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = 0.0f;
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When the C type value is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);
@@ -106,7 +106,7 @@ TEST_CASE("should reject SQL_C_DOUBLE NaN to SQL_BIT.", "[query][bind_parameter]
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = std::numeric_limits<SQLDOUBLE>::quiet_NaN();
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When SQL_C_DOUBLE NaN is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);
@@ -122,7 +122,7 @@ TEST_CASE("should reject SQL_C_DOUBLE infinity to SQL_BIT.", "[query][bind_param
   Connection conn;
   auto stmt = conn.createStatement();
   SQLDOUBLE param = std::numeric_limits<SQLDOUBLE>::infinity();
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When SQL_C_DOUBLE infinity is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);
@@ -138,7 +138,7 @@ TEST_CASE("should reject SQL_C_FLOAT NaN to SQL_BIT.", "[query][bind_parameter][
   Connection conn;
   auto stmt = conn.createStatement();
   SQLREAL param = std::numeric_limits<SQLREAL>::quiet_NaN();
-  SQLLEN indicator = 0;
+  SQLLEN indicator = sizeof(param);
   // When SQL_C_FLOAT NaN is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_FLOAT, SQL_BIT, 1, 0, &param,
                                    sizeof(param), &indicator);

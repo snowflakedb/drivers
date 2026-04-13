@@ -3,7 +3,6 @@
 #include "Connection.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
-#include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_NUMERIC nonzero to SQL_BIT.", "[query][bind_parameter][c_numeric_to_boolean]") {
   // Given Snowflake client is logged in
