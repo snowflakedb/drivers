@@ -452,6 +452,61 @@ class TestLogoutPythonWrapper:
             f"got: {[str(w.message) for w in deprecation_warnings]}"
         )
 
+    @pytest.mark.parametrize(
+        "auto_detection",
+        [True, False],
+        ids=["auto_detection_true", "auto_detection_false"],
+    )
+    def test_should_skip_logout_when_server_session_keep_alive_is_true_regardless_of_auto_detection(
+        self, int_test_connection_factory, core_proxy, auto_detection: bool
+    ) -> None:
+        """Verify no logout is sent when server_session_keep_alive=True, regardless of auto_detection.
+
+        Phase 2 truth table: True + any auto_detection → no logout, no deprecation.
+        Core receives server_session_keep_alive=True and skips the logout request.
+        """
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
+
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always")
+
+                # Given Snowflake Python client is created with server_session_keep_alive set to true
+                server_session_keep_alive_param = True
+
+                # And enable_server_session_keep_alive_auto_detection is set to <auto_detection>
+                conn = int_test_connection_factory(
+                    server_url=wiremock.http_url(),
+                    server_session_keep_alive=server_session_keep_alive_param,
+                    enable_server_session_keep_alive_auto_detection=auto_detection,
+                )
+
+                # When Connection is closed
+                conn.close()
+
+            # Then No logout request is sent
+            logout_requests = wiremock.get_logout_requests()
+            assert len(logout_requests) == 0, (
+                f"Expected no logout when server_session_keep_alive=True "
+                f"(auto_detection={auto_detection}), got {len(logout_requests)} requests"
+            )
+
+            # And server_session_keep_alive true is passed to Core
+            options = core_proxy.get_options_sent()
+            assert options.get("server_session_keep_alive") is True, (
+                f"Expected server_session_keep_alive=True passed to Core, "
+                f"got {options.get('server_session_keep_alive')!r}"
+            )
+
+            # And No deprecation warning is emitted
+            deprecation_warnings = [
+                w for w in captured_warnings if issubclass(w.category, (FutureWarning, DeprecationWarning))
+            ]
+            assert len(deprecation_warnings) == 0, (
+                f"server_session_keep_alive=True should not emit deprecation warning, "
+                f"got: {[str(w.message) for w in deprecation_warnings]}"
+            )
+
     def test_should_use_python_default_15_second_timeout_and_3_max_retries(
         self, int_test_connection_factory, core_proxy
     ):

@@ -85,6 +85,7 @@ Feature: Session Logout - Python-specific behavior
   #                     Wrapper Defaults
   # ===========================================================================
 
+  @python_e2e
   Scenario Outline: should skip logout when server_session_keep_alive is true regardless of auto_detection
     # Phase 2 truth table: True + any + any → No logout, No deprecation
     # Verifies Python correctly passes true to Core
