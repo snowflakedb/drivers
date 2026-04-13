@@ -1,4 +1,3 @@
-#include <cmath>
 #include <limits>
 
 #include <catch2/catch_test_macros.hpp>
@@ -113,11 +112,12 @@ TEST_CASE("should reject SQL_C_DOUBLE NaN to SQL_BIT.", "[query][bind_parameter]
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  // Then the execution should fail because NaN is not a valid boolean value
-  CHECK(ret == SQL_ERROR);
+  // Then the execution should fail with SQLSTATE 22018 (invalid character value for cast)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
 TEST_CASE("should reject SQL_C_DOUBLE infinity to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
+  SKIP_OLD_DRIVER("BD-40", "Old driver may return different SQLSTATE for infinity");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -128,8 +128,8 @@ TEST_CASE("should reject SQL_C_DOUBLE infinity to SQL_BIT.", "[query][bind_param
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  // Then the execution should fail because infinity is not a valid boolean value
-  CHECK(ret == SQL_ERROR);
+  // Then the execution should fail with SQLSTATE 22018 (invalid character value for cast)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
 
 TEST_CASE("should reject SQL_C_FLOAT NaN to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
@@ -144,6 +144,6 @@ TEST_CASE("should reject SQL_C_FLOAT NaN to SQL_BIT.", "[query][bind_parameter][
                                    sizeof(param), &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
-  // Then the execution should fail because NaN is not a valid boolean value
-  CHECK(ret == SQL_ERROR);
+  // Then the execution should fail with SQLSTATE 22018 (invalid character value for cast)
+  REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("22018"));
 }
