@@ -57,7 +57,7 @@ fn should_execute_mixed_statement_types() {
     // Given Snowflake client is logged in
     let client = SnowflakeTestClient::connect_with_default_auth();
 
-    // When Multistatement query with ALTER SESSION, CREATE TABLE, INSERT, SELECT and DROP is executed
+    // When Multistatement query with various types is executed
     let table = unique_table_name("ms_mix_test");
     let sql = format!(
         "\

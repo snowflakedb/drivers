@@ -197,11 +197,16 @@ impl From<NativeExecuteQueryResult> for ExecuteQueryResponse {
             NativeExecuteQueryResult::Single(descriptor) => ExecuteQueryResponse {
                 result: Some(execute_query_response::Result::Single(descriptor.into())),
             },
-            NativeExecuteQueryResult::Multi { parent, query_ids } => ExecuteQueryResponse {
+            NativeExecuteQueryResult::Multi {
+                parent,
+                query_ids,
+                statement_type_ids,
+            } => ExecuteQueryResponse {
                 result: Some(execute_query_response::Result::Multi(
                     MultiStatementResult {
                         parent: Some(parent.into()),
                         query_ids,
+                        statement_type_ids,
                     },
                 )),
             },

@@ -19,8 +19,9 @@ use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
     ArrowArrayStreamPtr, BinaryDataPtr, ConnectionGetParameterRequest, ConnectionHandle,
-    QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
-    StatementPrepareRequest, StatementSetSqlQueryRequest, query_bindings,
+    ExecuteQueryResponse, QueryBindings, StatementExecuteQueryRequest,
+    StatementGetResultSetRequest, StatementHandle, StatementPrepareRequest,
+    StatementSetSqlQueryRequest, query_bindings,
 };
 use snafu::ResultExt;
 use tokio_util::sync::CancellationToken;
@@ -136,9 +137,17 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             tracing::info!("exec_direct: response={:?}", response);
             let response = response?;
 
-            let query_id = response.result.as_ref().map(|r| r.query_id.clone());
+            let query_id = response.result.as_ref().and_then(|r| match r {
+                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Single(desc) => {
+                    Some(desc.query_id.clone())
+                }
+                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Multi(multi) => {
+                    multi.parent.as_ref().map(|p| p.query_id.clone())
+                }
+            });
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
-            let execute_state = create_execute_state(response, ExecutionOrigin::Direct)?;
+            let execute_state =
+                create_execute_state(*conn_handle, stmt_handle, response, ExecutionOrigin::Direct)?;
             let is_zero_dml = matches!(
                 &execute_state,
                 StatementState::DmlExecuted {
@@ -383,9 +392,17 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
 
-            let query_id = response.result.as_ref().map(|r| r.query_id.clone());
+            let query_id = response.result.as_ref().and_then(|r| match r {
+                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Single(desc) => {
+                    Some(desc.query_id.clone())
+                }
+                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Multi(multi) => {
+                    multi.parent.as_ref().map(|p| p.query_id.clone())
+                }
+            });
 
-            let execute_state = create_execute_state(response, origin)?;
+            let execute_state =
+                create_execute_state(*conn_handle, stmt.stmt_handle, response, origin)?;
             let is_zero_dml = matches!(
                 &execute_state,
                 StatementState::DmlExecuted {
@@ -435,15 +452,40 @@ fn set_state(stmt: &mut Statement, state: StatementState) {
 }
 
 fn create_execute_state(
-    response: StatementExecuteQueryResponse,
+    _conn_handle: ConnectionHandle,
+    stmt_handle: StatementHandle,
+    response: ExecuteQueryResponse,
     origin: ExecutionOrigin,
 ) -> OdbcResult<StatementState> {
     tracing::debug!("create_execute_state: response={:?}", response);
     let result = response.result.required("Execute result is required")?;
-    let stream = result.stream.required("Stream is required")?;
+
+    // Extract descriptor based on whether it's a single or multi-statement response
+    let descriptor = match result {
+        sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Single(desc) => desc,
+        sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Multi(multi) => {
+            // For multi-statement, use the parent descriptor
+            multi.parent.required("Multi-statement parent descriptor is required")?
+        }
+    };
+
+    let query_id = descriptor.query_id.clone();
+    let rows_affected = descriptor.rows_affected;
+    let statement_type_id = descriptor.statement_type_id;
+
+    // Fetch the result set with the stream
+    let result_set_response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        c.statement_get_result_set(StatementGetResultSetRequest {
+            stmt_handle: Some(stmt_handle),
+            query_id,
+        })
+        .await
+    })?;
+
+    let stream = result_set_response.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream)?;
-    let rows_affected = result.rows_affected;
-    if let Some(id) = result.statement_type_id {
+
+    if let Some(id) = statement_type_id {
         if is_ddl_statement(id) {
             return Ok(StatementState::DdlExecuted {
                 schema: reader.schema(),

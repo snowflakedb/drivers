@@ -344,6 +344,7 @@ pub enum ExecuteQueryResult {
     Multi {
         parent: ResultSetDescriptor,
         query_ids: Vec<String>,
+        statement_type_ids: Vec<i64>,
     },
 }
 
@@ -465,9 +466,12 @@ impl DatabaseDriverV1 {
 
         if super::multistatement::is_multistatement(&response.data) {
             let query_ids = super::multistatement::child_query_ids(&response.data);
+            let statement_type_ids =
+                super::multistatement::child_statement_type_ids(&response.data);
             Ok(ExecuteQueryResult::Multi {
                 parent: descriptor,
                 query_ids,
+                statement_type_ids,
             })
         } else {
             Ok(ExecuteQueryResult::Single(descriptor))
@@ -496,6 +500,7 @@ impl DatabaseDriverV1 {
             sql: query.clone(),
             bindings: query_bindings,
             describe_only: None,
+            query_parameters: build_query_parameters(&stmt.settings),
         };
         let request_id = uuid::Uuid::new_v4();
 
@@ -629,9 +634,13 @@ impl DatabaseDriverV1 {
 
         let descriptor = response_to_descriptor(&response.data);
         if super::multistatement::is_multistatement(&response.data) {
+            let query_ids = super::multistatement::child_query_ids(&response.data);
+            let statement_type_ids =
+                super::multistatement::child_statement_type_ids(&response.data);
             Ok(ExecuteQueryResult::Multi {
                 parent: descriptor,
-                query_ids: super::multistatement::child_query_ids(&response.data),
+                query_ids,
+                statement_type_ids,
             })
         } else {
             Ok(ExecuteQueryResult::Single(descriptor))
