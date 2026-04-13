@@ -62,11 +62,11 @@ TEST_CASE("should bind SQL_C_SSHORT nonzero to SQL_BIT.", "[query][bind_paramete
 }
 
 TEST_CASE("should bind SQL_C_SBIGINT nonzero to SQL_BIT.", "[query][bind_parameter][c_integer_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-35", "Old driver rejects negative integers for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-38", "Old driver rejects integer values > 1 for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
-  SQLBIGINT param = -1;
+  SQLBIGINT param = 42;
   SQLLEN indicator = 0;
   // When the C type value is bound as SQL_BIT and SELECT ? is executed
   SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_SBIGINT, SQL_BIT, 1, 0, &param,
