@@ -110,7 +110,7 @@ TEST_CASE("REAL SQL_C_FLOAT overflow returns 22003", "[e2e][types][real]") {
   CHECK(check_no_truncation<SQL_C_FLOAT>(stmt_ok, 1) == 1e38f);
 }
 
-TEST_CASE("REAL NULL to SQL_C_FLOAT and SQL_C_DOUBLE", "[real][conversion][c_real][null]") {
+TEST_CASE("REAL NULL to SQL_C_FLOAT and SQL_C_DOUBLE", "[real][conversion][c_float][null]") {
   // Given A Snowflake connection
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -122,7 +122,7 @@ TEST_CASE("REAL NULL to SQL_C_FLOAT and SQL_C_DOUBLE", "[real][conversion][c_rea
   check_null_via_get_data(conn.execute_fetch("SELECT NULL::DOUBLE"), 1, SQL_C_FLOAT);
 }
 
-TEST_CASE("REAL NULL mixed with non-NULL in multiple rows", "[real][conversion][c_real][null]") {
+TEST_CASE("REAL NULL mixed with non-NULL in multiple rows", "[real][conversion][c_float][null]") {
   // Given A Snowflake connection
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -153,7 +153,7 @@ TEST_CASE("REAL NULL mixed with non-NULL in multiple rows", "[real][conversion][
   }
 }
 
-TEST_CASE("REAL SQLGetData NULL without indicator returns 22002", "[real][conversion][c_real][null][22002]") {
+TEST_CASE("REAL SQLGetData NULL without indicator returns 22002", "[real][conversion][c_float][null][22002]") {
   // Given A Snowflake connection
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

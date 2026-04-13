@@ -10,7 +10,7 @@
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR and read back", "[c_numeric_types][conversion][sql_char]") {
+TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR and read back", "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -38,7 +38,7 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR and read back", "[c_numeric_ty
   CHECK(get_data<SQL_C_CHAR>(sel, 1) == "42");
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR", "[c_numeric_types][conversion][sql_char]") {
+TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -67,7 +67,7 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR", "[c_numeric_types][conversi
   CHECK(s.find("3.14") != std::string::npos);
 }
 
-TEST_CASE("should bind SQL_C_BIT to SQL_VARCHAR", "[c_numeric_types][conversion][sql_char]") {
+TEST_CASE("should bind SQL_C_BIT to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -95,7 +95,7 @@ TEST_CASE("should bind SQL_C_BIT to SQL_VARCHAR", "[c_numeric_types][conversion]
   CHECK(get_data<SQL_C_CHAR>(sel, 1) == "1");
 }
 
-TEST_CASE("should bind SQL_C_NUMERIC to SQL_VARCHAR", "[c_numeric_types][conversion][sql_char]") {
+TEST_CASE("should bind SQL_C_NUMERIC to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -129,7 +129,7 @@ TEST_CASE("should bind SQL_C_NUMERIC to SQL_VARCHAR", "[c_numeric_types][convers
   NEW_DRIVER_ONLY("BD#33") { CHECK(get_data<SQL_C_CHAR>(sel, 1) == "123.45"); }
 }
 
-TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR", "[c_numeric_types][conversion][sql_char]") {
+TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -157,7 +157,7 @@ TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR", "[c_numeric_types][convers
   CHECK(get_data<SQL_C_CHAR>(sel, 1) == "9999999999");
 }
 
-TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_VARCHAR", "[c_numeric_types][conversion][sql_char]") {
+TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_VARCHAR", "[c_numeric_types][conversion][sql_string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
