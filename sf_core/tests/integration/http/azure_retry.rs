@@ -65,9 +65,10 @@ async fn azure_download_success_returns_data_and_metadata() {
     let stage = azure_stage(&server.uri());
     let result = sf_core::file_manager::download_from_azure(&stage, "file.csv").await;
 
-    let (data, metadata) = result.expect("download should succeed");
+    let (data, digest, metadata) = result.expect("download should succeed");
     assert_eq!(data, b"encrypted-data");
-    assert_eq!(metadata.digest, "test-digest");
+    assert_eq!(digest, Some("test-digest".to_string()));
+    let metadata = metadata.expect("encryption metadata should be present");
     assert_eq!(metadata.encrypted_key, "dGVzdC1rZXk=");
     assert_eq!(metadata.iv, "dGVzdC1pdg==");
     assert_eq!(metadata.material_desc.query_id, "test-query");

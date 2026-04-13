@@ -12,9 +12,7 @@ pub use gcs_transfer::download_from_gcs;
 
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
-use azure_transfer::{
-    AzureDownloadError, AzureUploadError, download_from_azure, upload_to_azure_or_skip,
-};
+use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
 use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encrypt_file_data};
 use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
 use openssl::error::ErrorStack as OpenSslErrorStack;
