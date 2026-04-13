@@ -204,7 +204,8 @@ TEST_CASE("should bind SQL_C_UBIGINT to SQL_BIT", "[c_integer][conversion][sql_b
   CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 1);
 }
 
-TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_BIT via integer", "[c_integer][conversion][sql_boolean]") {
+TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_BIT via integer",
+          "[c_integer][conversion][sql_boolean]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
