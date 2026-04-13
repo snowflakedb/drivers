@@ -239,11 +239,12 @@ pub struct StageInfo {
     #[serde(rename = "presignedUrl")]
     presigned_url: Option<String>,
 
+    #[serde(rename = "storageAccount")]
+    storage_account: Option<String>,
+
     // unused fields
     #[serde(rename = "path")]
     _path: Option<String>,
-    #[serde(rename = "storageAccount")]
-    _storage_account: Option<String>,
     #[serde(rename = "isClientSideEncrypted")]
     _is_client_side_encrypted: Option<bool>,
     #[serde(rename = "useS3RegionalUrl")]
@@ -266,13 +267,14 @@ pub struct Credentials {
     #[serde(rename = "GCS_ACCESS_TOKEN")]
     gcs_access_token: Option<String>,
 
+    #[serde(rename = "AZURE_SAS_TOKEN")]
+    azure_sas_token: Option<String>,
+
     // unused fields
     #[serde(rename = "AWS_ID")]
     _aws_id: Option<String>,
     #[serde(rename = "AWS_KEY")]
     _aws_key: Option<String>,
-    #[serde(rename = "AZURE_SAS_TOKEN")]
-    _azure_sas_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -646,12 +648,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
         // Determine location type (default to S3 for backward compatibility)
         let location_type = match value.location_type.as_deref() {
             Some("GCS") => file_manager::LocationType::Gcs,
-            Some("AZURE") => {
-                return UnsupportedStorageTypeSnafu {
-                    storage_type: "Azure",
-                }
-                .fail();
-            }
+            Some("AZURE") => file_manager::LocationType::Azure,
             Some("S3") | None => file_manager::LocationType::S3,
             Some(other) => {
                 return InvalidFormatSnafu {
@@ -725,7 +722,16 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
                     .filter(|t| !t.is_empty())
                     .map(|t| t.clone().into()),
             },
-            file_manager::LocationType::Azure => unreachable!("Azure rejected above"),
+            file_manager::LocationType::Azure => file_manager::CloudCredentials::Azure {
+                sas_token: creds_data
+                    .azure_sas_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> AZURE_SAS_TOKEN",
+                    })?
+                    .clone()
+                    .into(),
+            },
         };
 
         let end_point = value
@@ -745,6 +751,24 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             value.use_regional_url.unwrap_or(false) || region.eq_ignore_ascii_case("me-central2");
         let use_virtual_url = value.use_virtual_url.unwrap_or(false);
 
+        let storage_account = match location_type {
+            file_manager::LocationType::Azure => Some(
+                value
+                    .storage_account
+                    .as_ref()
+                    .filter(|sa| !sa.is_empty())
+                    .context(MissingParameterSnafu {
+                        parameter: "stage info -> storageAccount",
+                    })?
+                    .clone(),
+            ),
+            _ => value
+                .storage_account
+                .as_ref()
+                .filter(|sa| !sa.is_empty())
+                .cloned(),
+        };
+
         Ok(file_manager::StageInfo {
             location_type,
             bucket,
@@ -755,6 +779,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             presigned_url,
             use_virtual_url,
             use_regional_url,
+            storage_account,
         })
     }
 }
@@ -805,12 +830,6 @@ pub enum QueryResponseError {
     #[snafu(display("Invalid Snowflake response: {message}"))]
     InvalidFormat {
         message: String,
-        #[snafu(implicit)]
-        location: snafu::Location,
-    },
-    #[snafu(display("Unsupported storage type: {storage_type}"))]
-    UnsupportedStorageType {
-        storage_type: &'static str,
         #[snafu(implicit)]
         location: snafu::Location,
     },
