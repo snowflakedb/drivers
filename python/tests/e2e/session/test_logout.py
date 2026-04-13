@@ -37,7 +37,7 @@ def assert_logout_request_format(logout_request: dict) -> None:
     assert req["method"] == "POST", "Logout should use POST method"
     assert "delete=true" in req["url"], "Logout should have delete=true query param"
     assert "Authorization" in req.get("headers", {}), "Logout should have Authorization header"
-    auth_header = req.get("headers", {}).get("Authorization", [""])[0]
+    auth_header = req.get("headers", {}).get("Authorization", "")
     assert auth_header[:16] == "Snowflake Token=", "Authorization header should start with 'Snowflake Token='"
 
 
@@ -300,9 +300,7 @@ class TestLogoutPythonWrapper:
                 f"Should send logout request with auto_detection=False, got {len(logout_requests)} requests"
             )
 
-            logout_req = logout_requests[0]["request"]
-            assert logout_req["method"] == "POST", "Logout should use POST method"
-            assert "delete=true" in logout_req["url"], "Logout should have delete=true query param"
+            assert_logout_request_format(logout_requests[0])
 
             # And Connection close metrics are recorded in telemetry
             pass  # TODO(SNOW-2912513): telemetry not yet implemented — step unverified
@@ -611,10 +609,7 @@ class TestLogoutRetryBehavior:
             )
 
             # And Only one logout request was sent to server
-            logout_req = logout_requests[0]["request"]
-            assert logout_req["method"] == "POST" and "delete=true" in logout_req["url"], (
-                "Single logout request should be POST with delete=true"
-            )
+            assert_logout_request_format(logout_requests[0])
 
             # And Error is handled according to best-effort strategy
             assert conn.is_closed(), (
@@ -758,9 +753,7 @@ class TestAutoCleanup:
             )
 
             # And Session is logged out if conditions allow
-            logout_req = logout_requests[0]["request"]
-            assert logout_req["method"] == "POST", "Logout should use POST method"
-            assert "delete=true" in logout_req["url"], "Logout should have delete=true query param"
+            assert_logout_request_format(logout_requests[0])
 
         # Phase B: server error — atexit handler must not crash the process
         with WiremockClient().start() as wiremock2:
