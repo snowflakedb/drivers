@@ -1,9 +1,22 @@
 use clap::{Arg, Command};
+use serde::Serialize;
+use sf_core::crl::config::{CertRevocationCheckMode, CrlConfig};
 use sf_core::tls::config::TlsConfig;
 use sf_core::tls::create_tls_client_with_config;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
+
+#[derive(Serialize)]
+struct TestResult {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status_code: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_type: Option<String>,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -96,6 +109,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Allow insecure TLS connections")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("crl-mode")
+                .long("crl-mode")
+                .help("CRL check mode")
+                .value_name("MODE")
+                .default_value("disabled")
+                .value_parser(["disabled", "enabled", "advisory"]),
+        )
+        .arg(
+            Arg::new("no-crl-cache")
+                .long("no-crl-cache")
+                .help("Disable CRL disk and memory caching")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("allow-certs-without-crl-url")
+                .long("allow-certs-without-crl-url")
+                .help("Allow certificates that have no CRL distribution point")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("result-file")
+                .long("result-file")
+                .help("Write JSON test result to file")
+                .value_name("FILE"),
+        )
         .get_matches();
 
     let log_level = match matches.get_count("verbose") {
@@ -110,8 +149,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("TLS Client starting");
     info!("Target URL: {}", url);
 
+    let crl_mode = match matches.get_one::<String>("crl-mode").map(|s| s.as_str()) {
+        Some("enabled") => CertRevocationCheckMode::Enabled,
+        Some("advisory") => CertRevocationCheckMode::Advisory,
+        _ => CertRevocationCheckMode::Disabled,
+    };
+
+    let no_crl_cache = matches.get_flag("no-crl-cache");
+    let crl_config = CrlConfig {
+        check_mode: crl_mode,
+        allow_certificates_without_crl_url: matches.get_flag("allow-certs-without-crl-url"),
+        enable_disk_caching: !no_crl_cache,
+        enable_memory_caching: !no_crl_cache,
+        ..CrlConfig::default()
+    };
+
     let mut tls_config = TlsConfig {
-        crl_config: sf_core::crl::config::CrlConfig::default(),
+        crl_config,
         custom_root_store_path: matches.get_one::<String>("cert-store").map(PathBuf::from),
         verify_hostname: !matches.get_flag("no-verify-hostname"),
         verify_certificates: !matches.get_flag("no-verify-certs"),
@@ -121,6 +175,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tls_config.verify_hostname = false;
         tls_config.verify_certificates = false;
     }
+
+    let result_file = matches.get_one::<String>("result-file").cloned();
 
     let client = create_tls_client_with_config(tls_config)
         .map_err(|e| format!("Failed to build TLS client: {:?}", e))?;
@@ -164,57 +220,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Sending {} request to {}", method, url);
     let start_time = std::time::Instant::now();
 
-    match request_builder.send().await {
+    let result = match request_builder.send().await {
         Ok(response) => {
             let elapsed = start_time.elapsed();
             let status = response.status();
             let headers = response.headers().clone();
 
-            info!("Response received in {:?}", elapsed);
-            info!("Status: {}", status);
+            info!("Response received in {elapsed:?}");
+            info!("Status: {status}");
             debug!("Response headers:");
             for (name, value) in headers.iter() {
-                debug!("  {}: {:?}", name, value);
+                debug!("  {name}: {value:?}");
             }
 
             let body = response.text().await?;
             if let Some(output_file) = matches.get_one::<String>("output") {
                 std::fs::write(output_file, &body)?;
-                info!("Response saved to: {}", output_file);
+                info!("Response saved to: {output_file}");
             } else {
                 println!("\nResponse Body ({} bytes):", body.len());
                 if body.len() > 1000 {
                     println!("{}...\n[truncated]", &body[..1000]);
                 } else {
-                    println!("{}", body);
+                    println!("{body}");
                 }
             }
 
             println!("\nSummary:");
-            println!("  Status: {}", status);
+            println!("  Status: {status}");
             println!("  Size: {} bytes", body.len());
-            println!("  Time: {:?}", elapsed);
-            if status.is_success() {
-                info!("Request completed successfully");
-            } else {
-                warn!("Request completed with non-success status: {}", status);
+            println!("  Time: {elapsed:?}");
+
+            TestResult {
+                success: true,
+                status_code: Some(status.as_u16()),
+                error: None,
+                error_type: None,
             }
         }
         Err(e) => {
             let elapsed = start_time.elapsed();
-            error!("Request failed after {:?}: {}", elapsed, e);
-            if e.is_timeout() {
-                error!("Suggestion: Try increasing --http-timeout or --connect-timeout");
-            } else if e.is_connect() {
-                error!("Suggestion: Check network connectivity and URL");
-            } else if e.to_string().contains("certificate") {
-                error!(
-                    "Suggestion: Try --insecure flag or provide --cert-store for custom certificates"
-                );
+            error!("Request failed after {elapsed:?}: {e}");
+
+            let err_string = e.to_string();
+            let lower = err_string.to_lowercase();
+            let error_type = if e.is_timeout() {
+                "timeout"
+            } else if lower.contains("certificate")
+                || lower.contains("tls")
+                || lower.contains("ssl")
+                || lower.contains("handshake")
+                || lower.contains("verify")
+                || lower.contains("crl")
+                || lower.contains("revok")
+            {
+                "certificate"
+            } else {
+                "network"
+            };
+
+            TestResult {
+                success: false,
+                status_code: None,
+                error: Some(err_string),
+                error_type: Some(error_type.to_string()),
             }
-            return Err(e.into());
         }
+    };
+
+    if let Some(ref path) = result_file {
+        let json = serde_json::to_string_pretty(&result)?;
+        std::fs::write(path, &json)?;
+        info!("Result written to: {path}");
     }
 
-    Ok(())
+    if result.success {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
 }
