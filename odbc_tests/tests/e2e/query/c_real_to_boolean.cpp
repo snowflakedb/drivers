@@ -45,7 +45,7 @@ TEST_CASE("should bind SQL_C_DOUBLE zero to SQL_BIT.", "[query][bind_parameter][
 }
 
 TEST_CASE("should bind SQL_C_FLOAT nonzero to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-40", "Old driver does not support SQL_C_FLOAT to SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver has limited SQL_C_FLOAT/DOUBLE support for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -64,7 +64,7 @@ TEST_CASE("should bind SQL_C_FLOAT nonzero to SQL_BIT.", "[query][bind_parameter
 }
 
 TEST_CASE("should bind SQL_C_DOUBLE negative to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-40", "Old driver rejects negative SQL_C_DOUBLE for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver rejects negative SQL_C_DOUBLE for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -101,7 +101,7 @@ TEST_CASE("should bind SQL_C_FLOAT zero to SQL_BIT.", "[query][bind_parameter][c
 }
 
 TEST_CASE("should reject SQL_C_DOUBLE NaN to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-40", "Old driver silently converts NaN to false instead of SQL_ERROR");
+  SKIP_OLD_DRIVER("BD-35", "Old driver silently converts NaN to false instead of SQL_ERROR");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -117,7 +117,7 @@ TEST_CASE("should reject SQL_C_DOUBLE NaN to SQL_BIT.", "[query][bind_parameter]
 }
 
 TEST_CASE("should reject SQL_C_DOUBLE infinity to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-40", "Old driver may return different SQLSTATE for infinity");
+  SKIP_OLD_DRIVER("BD-35", "Old driver may return different SQLSTATE for infinity");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -133,7 +133,7 @@ TEST_CASE("should reject SQL_C_DOUBLE infinity to SQL_BIT.", "[query][bind_param
 }
 
 TEST_CASE("should reject SQL_C_FLOAT NaN to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-40", "Old driver does not support SQL_C_FLOAT to SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver has limited SQL_C_FLOAT/DOUBLE support for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

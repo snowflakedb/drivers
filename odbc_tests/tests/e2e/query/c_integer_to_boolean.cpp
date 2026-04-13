@@ -7,7 +7,7 @@
 #include "odbc_matchers.hpp"
 
 TEST_CASE("should bind SQL_C_SLONG nonzero to SQL_BIT.", "[query][bind_parameter][c_integer_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-38", "Old driver rejects integer values > 1 for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver rejects integer values other than 0/1 for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -62,7 +62,7 @@ TEST_CASE("should bind SQL_C_SSHORT nonzero to SQL_BIT.", "[query][bind_paramete
 }
 
 TEST_CASE("should bind SQL_C_SBIGINT nonzero to SQL_BIT.", "[query][bind_parameter][c_integer_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-38", "Old driver rejects integer values > 1 for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver rejects integer values other than 0/1 for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -154,7 +154,7 @@ TEST_CASE("should bind SQL_C_ULONG zero to SQL_BIT.", "[query][bind_parameter][c
 }
 
 TEST_CASE("should bind SQL_C_UTINYINT nonzero to SQL_BIT.", "[query][bind_parameter][c_integer_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-38", "Old driver rejects integer values > 1 for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver rejects integer values other than 0/1 for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

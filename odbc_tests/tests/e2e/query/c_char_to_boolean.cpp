@@ -79,7 +79,7 @@ TEST_CASE("should bind SQL_C_WCHAR '0' to SQL_BIT.", "[query][bind_parameter][c_
 }
 
 TEST_CASE("should bind SQL_C_CHAR 'true' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-39", "Old driver only accepts '0'/'1' strings for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver only accepts '0'/'1' strings for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -98,7 +98,7 @@ TEST_CASE("should bind SQL_C_CHAR 'true' to SQL_BIT.", "[query][bind_parameter][
 }
 
 TEST_CASE("should bind SQL_C_CHAR 'false' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-39", "Old driver only accepts '0'/'1' strings for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver only accepts '0'/'1' strings for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -117,7 +117,7 @@ TEST_CASE("should bind SQL_C_CHAR 'false' to SQL_BIT.", "[query][bind_parameter]
 }
 
 TEST_CASE("should bind SQL_C_CHAR numeric '42' to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
-  SKIP_OLD_DRIVER("BD-39", "Old driver only accepts '0'/'1' strings for SQL_BIT");
+  SKIP_OLD_DRIVER("BD-35", "Old driver only accepts '0'/'1' strings for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
