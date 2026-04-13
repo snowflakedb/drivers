@@ -4,13 +4,13 @@ use std::time::Duration;
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
+use super::connection::RefreshContext;
+use super::error::ApiError;
 use crate::config::rest_parameters::ClientInfo;
-use crate::rest::snowflake::{
-    self, RestError, SessionTokens, SnowflakeResponseError, heartbeat::send_heartbeat,
-};
+use crate::rest::snowflake::{RestError, SessionTokens, heartbeat::send_heartbeat};
 
-const MIN_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(900);
 const MAX_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// Handle to a per-connection heartbeat background task.
@@ -47,11 +47,11 @@ impl Drop for HeartbeatHandle {
 
 /// Compute the heartbeat interval from master token validity.
 ///
-/// Returns `master_validity / 4`, clamped to `[900s, 3600s]`.
+/// Returns `master_validity / 4`, capped at 3600s.
 /// Falls back to 3600s if `master_validity` is `None`.
 pub(crate) fn compute_heartbeat_interval(master_validity: Option<Duration>) -> Duration {
     master_validity
-        .map(|v| (v / 4).clamp(MIN_HEARTBEAT_INTERVAL, MAX_HEARTBEAT_INTERVAL))
+        .map(|v| (v / 4).min(MAX_HEARTBEAT_INTERVAL))
         .unwrap_or(MAX_HEARTBEAT_INTERVAL)
 }
 
@@ -95,6 +95,14 @@ async fn heartbeat_loop(
 ) {
     tracing::info!(interval_secs = interval.as_secs(), "Heartbeat task started");
 
+    let server_url = match Url::parse(&server_url) {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!(error = %e, "Invalid server URL, heartbeat task exiting");
+            return;
+        }
+    };
+
     loop {
         tokio::select! {
             () = tokio::time::sleep(interval) => {}
@@ -104,120 +112,51 @@ async fn heartbeat_loop(
             }
         }
 
-        if cancel_token.is_cancelled() {
-            tracing::info!("Heartbeat task cancelled after wakeup");
-            return;
-        }
-
-        let session_token = {
-            let guard = tokens.read().await;
-            match guard.as_ref() {
-                Some(t) => t.session_token.clone(),
-                None => {
-                    tracing::info!("Session tokens cleared, heartbeat task exiting");
+        let mut ctx = RefreshContext::from_parts(
+            tokens.clone(),
+            http_client.clone(),
+            server_url.to_string(),
+            client_info.clone(),
+        );
+        let mut last_error: Option<RestError> = None;
+        loop {
+            let token = tokio::select! {
+                result = ctx.refresh_token(last_error.take()) => match result {
+                    Ok(t) => t,
+                    Err(ApiError::MasterTokenExpired { .. }) => {
+                        tracing::error!("Master token expired, heartbeat task exiting");
+                        return;
+                    }
+                    Err(ApiError::ConnectionNotInitialized { .. }) => {
+                        tracing::info!("Session tokens cleared, heartbeat task exiting");
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Heartbeat failed, will retry next interval");
+                        break;
+                    }
+                },
+                () = cancel_token.cancelled() => {
+                    tracing::info!("Heartbeat task cancelled during token refresh");
                     return;
                 }
-            }
-        };
+            };
 
-        let result = send_heartbeat(
-            &http_client,
-            &server_url,
-            &client_info,
-            session_token.reveal(),
-        )
-        .await;
-
-        match result {
-            Ok(()) => {
-                tracing::debug!("Heartbeat succeeded");
-            }
-            Err(RestError::InvalidSnowflakeResponse {
-                source: SnowflakeResponseError::SessionExpired { .. },
-                ..
-            }) => {
-                tracing::info!("Heartbeat got 401, attempting token refresh");
-                if !try_refresh_and_retry(
-                    &tokens,
-                    &http_client,
-                    &server_url,
-                    &client_info,
-                    &session_token,
-                )
-                .await
-                {
+            let result = tokio::select! {
+                res = send_heartbeat(&http_client, &server_url, &client_info, token.reveal()) => res,
+                () = cancel_token.cancelled() => {
+                    tracing::info!("Heartbeat task cancelled during heartbeat request");
                     return;
                 }
+            };
+
+            match result {
+                Ok(()) => {
+                    tracing::debug!("Heartbeat succeeded");
+                    break;
+                }
+                Err(e) => last_error = Some(e),
             }
-            Err(e) => {
-                tracing::warn!(error = %e, "Heartbeat failed, will retry next interval");
-            }
-        }
-    }
-}
-
-/// Attempt to refresh the session token and retry the heartbeat once.
-///
-/// Returns `true` if the loop should continue, `false` if the task should exit.
-async fn try_refresh_and_retry(
-    tokens: &Arc<AsyncRwLock<Option<SessionTokens>>>,
-    http_client: &reqwest::Client,
-    server_url: &str,
-    client_info: &ClientInfo,
-    failed_token: &crate::sensitive::SensitiveString,
-) -> bool {
-    let mut guard = tokens.write().await;
-
-    let current_tokens = match guard.as_ref() {
-        Some(t) => t.clone(),
-        None => {
-            tracing::info!("Session tokens cleared during refresh, heartbeat task exiting");
-            return false;
-        }
-    };
-
-    // Another task may have already refreshed the token while we waited for the write lock.
-    if current_tokens.session_token.reveal() != failed_token.reveal() {
-        tracing::debug!("Session already refreshed by another task, retrying heartbeat");
-        let new_token = current_tokens.session_token.clone();
-        drop(guard);
-        return retry_heartbeat(http_client, server_url, client_info, &new_token).await;
-    }
-
-    if current_tokens.is_master_expired() {
-        tracing::error!("Master token expired, heartbeat task exiting");
-        return false;
-    }
-
-    match snowflake::refresh_session(http_client, server_url, client_info, &current_tokens).await {
-        Ok(new_tokens) => {
-            let new_token = new_tokens.session_token.clone();
-            *guard = Some(new_tokens);
-            drop(guard);
-            tracing::info!("Session refreshed by heartbeat task");
-            retry_heartbeat(http_client, server_url, client_info, &new_token).await
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Heartbeat token refresh failed, task exiting");
-            false
-        }
-    }
-}
-
-async fn retry_heartbeat(
-    http_client: &reqwest::Client,
-    server_url: &str,
-    client_info: &ClientInfo,
-    token: &crate::sensitive::SensitiveString,
-) -> bool {
-    match send_heartbeat(http_client, server_url, client_info, token.reveal()).await {
-        Ok(()) => {
-            tracing::debug!("Heartbeat retry succeeded after refresh");
-            true
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Heartbeat retry failed after refresh");
-            true
         }
     }
 }
@@ -268,9 +207,9 @@ mod tests {
     }
 
     #[test]
-    fn compute_interval_clamp_min() {
+    fn compute_interval_no_bottom_clamp() {
         let interval = compute_heartbeat_interval(Some(Duration::from_secs(100)));
-        assert_eq!(interval, MIN_HEARTBEAT_INTERVAL);
+        assert_eq!(interval, Duration::from_secs(25));
     }
 
     #[test]
