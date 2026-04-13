@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: b974556e-247a-437b-8292-359b8e8a1138
+    -- DTM_QRY:
+    desc table "DTMREPLAYTESTDB"."PUBLIC"."hq17907_accum"
+  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."hq17907_accum"

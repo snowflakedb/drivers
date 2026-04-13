@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: f8397bc4-3e42-45bb-923e-9b463e8b9e72
+    -- DTM_QRY:
+    desc table "DTMREPLAYTESTDB"."PUBLIC"."cv_test1"
+  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."cv_test1"

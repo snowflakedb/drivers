@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 45cb7b0e-8f5d-4c44-b0e1-524580872db5
+    -- DTM_QRY:
+    show schemas like 'b'
+  mapped: show schemas like 'b'

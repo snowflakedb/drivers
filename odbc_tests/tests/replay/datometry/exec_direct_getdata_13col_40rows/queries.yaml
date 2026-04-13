@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: c16f1d20-1a06-49e0-bac2-a8c55cd2da81
+    -- DTM_QRY:
+    desc table "DTMREPLAYTESTDB"."PUBLIC"."td_kw"
+  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."td_kw"

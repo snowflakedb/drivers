@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: f1b55c39-bf10-4162-9005-df2e488e7488
+    -- DTM_QRY:
+    desc table "DTMREPLAYTESTDB"."PUBLIC"."uma_table_4"
+  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."uma_table_4"

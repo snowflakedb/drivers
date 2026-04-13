@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 9b42deaf-a6bb-4076-aa2e-c4be896720a8
+    -- DTM_QRY:
+    desc table "DTMREPLAYTESTDB"."PUBLIC"."TBK_PARTY_ROLE_H_HQ_18538"
+  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."TBK_PARTY_ROLE_H_HQ_18538"

@@ -1,0 +1,4 @@
+queries:
+- index: 0
+  original: select count(*) from "DTMREPLAYTESTDB"."__DTM_MDSTORE"."__DTM_MDSTORE_TABLE" where lower(schemaname)  =  'public' and lower(objectname)  =  'x4'
+  mapped: select count(*) from "DTMREPLAYTESTDB"."__DTM_MDSTORE"."__DTM_MDSTORE_TABLE" where lower(schemaname)  =  'public' and lower(objectname)  =  'x4'
