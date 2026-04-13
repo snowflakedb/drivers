@@ -16,7 +16,8 @@ use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_response::{Data, Stats};
 use crate::rest::snowflake::{
-    QueryExecutionMode, QueryInput, snowflake_get_query_result, snowflake_query_with_client,
+    QueryExecutionMode, QueryInput, snowflake_abort_query, snowflake_get_query_result,
+    snowflake_query_with_client,
 };
 
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -503,6 +504,48 @@ impl DatabaseDriverV1 {
         }
 
         response_to_execute_result(response.data, &http_client, String::new()).await
+    }
+
+    pub async fn connection_abort_query(
+        &self,
+        conn_handle: Handle,
+        query_id: String,
+    ) -> Result<(), ApiError> {
+        let conn_ptr = self.connections.get_obj(conn_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let (query_parameters, http_client) = {
+            let conn = conn_ptr.lock().await;
+            (
+                conn.query_transport_parameters()?,
+                conn.http_client
+                    .clone()
+                    .context(ConnectionNotInitializedSnafu)?,
+            )
+        };
+
+        {
+            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
+            let mut last_error = None;
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match snowflake_abort_query(
+                    &http_client,
+                    &query_parameters,
+                    session_token.reveal(),
+                    &query_id,
+                )
+                .await
+                {
+                    Ok(()) => break Ok(()),
+                    Err(e) => last_error = Some(e),
+                }
+            }
+        }
     }
 }
 

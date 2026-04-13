@@ -32,6 +32,7 @@ from .._internal.errorcode import ER_CURSOR_IS_CLOSED
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
+    ConnectionAbortQueryRequest,
     ConnectionGetQueryResultRequest,
     ExecuteResult,
     PrepareResult,
@@ -991,6 +992,12 @@ class SnowflakeCursorBase(abc.ABC):
         """Execute a query asynchronously without waiting for results."""
         raise NotImplementedError("execute_async is not yet implemented")
 
+    @_requires_open
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
-        raise NotImplementedError("abort_query is not yet implemented")
+        request = ConnectionAbortQueryRequest(
+            conn_handle=self._connection.conn_handle,
+            query_id=qid,
+        )
+        response = self._connection.db_api.connection_abort_query(request)
+        return response.success

@@ -509,6 +509,16 @@ message ConnectionGetQueryResultResponse {
   ExecuteResult result = 1;
 }
 
+// Abort a running query by its Snowflake Query ID.
+message ConnectionAbortQueryRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionAbortQueryResponse {
+  bool success = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -827,6 +837,8 @@ service DatabaseDriver {
   // Fetch the result of a previously executed query by Snowflake Query ID
   rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  // Abort a running query by Snowflake Query ID
+  rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
   // Token request (ISSUE/RENEW) executed with master token in sf_core

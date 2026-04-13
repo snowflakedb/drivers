@@ -6,6 +6,13 @@ use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
+/// Response from the `POST /queries/{qid}/abort-request` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct AbortQueryResponse {
+    pub success: bool,
+    pub message: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct Response {
     pub data: Data,
