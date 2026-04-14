@@ -35,7 +35,7 @@ TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIMESTAMP and read back"
   REQUIRE_ODBC(ret, stmt);
 
   // Then the value contains the date and time components
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  auto fetch_stmt = conn.execute_fetch("SELECT CAST(col AS VARCHAR) FROM t");
   std::string result = get_data<SQL_C_CHAR>(fetch_stmt, 1);
   CHECK(result.find("2026-04-13") != std::string::npos);
   CHECK(result.find("14:30:45") != std::string::npos);
@@ -53,8 +53,8 @@ TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP with NULL indicator to SQL_TYPE_TIME
   SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
   SQLLEN ind = SQL_NULL_DATA;
-  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP, 0, 0, nullptr, 0,
-                         &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_TYPE_TIMESTAMP, SQL_TYPE_TIMESTAMP, 0, 0, nullptr,
+                         0, &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);

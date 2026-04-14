@@ -28,7 +28,7 @@ TEST_CASE("should bind SQL_C_TYPE_DATE to SQL_TYPE_DATE and read back", "[c_date
   REQUIRE_ODBC(ret, stmt);
 
   // Then the value is read back as "2026-04-13"
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  auto fetch_stmt = conn.execute_fetch("SELECT CAST(col AS VARCHAR) FROM t");
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2026-04-13");
 }
 
