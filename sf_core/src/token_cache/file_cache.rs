@@ -939,14 +939,29 @@ mod tests {
             }
         }
 
-        /// Stress test: runs the concurrent-writes scenario many times to expose
-        /// lock-acquisition flakiness.  Run with:
+        /// Stress test that deliberately uses a tight retry budget to expose
+        /// lock-acquisition reliability under heavy contention.
+        ///
+        /// With the old `create_dir`/`remove_dir` approach, all threads sleep
+        /// for the same fixed delay and wake up simultaneously (convoy effect),
+        /// wasting retry attempts.  With OS-level locking + jittered backoff,
+        /// threads spread out their retries and acquire the lock more
+        /// efficiently within the same budget.
+        ///
+        /// Run with:
         ///   cargo test -p sf_core -- stress_concurrent_lock --ignored --nocapture
         #[test]
         #[ignore] // slow — run manually to validate locking reliability
         fn stress_concurrent_lock() {
-            const ITERATIONS: usize = 50;
-            const STRESS_THREADS: usize = 20;
+            const ITERATIONS: usize = 20;
+            const STRESS_THREADS: usize = 100;
+            // Tight budget: enough for OS-level locking with jitter,
+            // but causes convoy-driven exhaustion with fixed-delay retries.
+            // With 100 threads and 30 retries at fixed 2ms delay, the convoy
+            // effect caps success at ~31 threads per round. With jittered
+            // backoff, threads spread their wakeups and all 100 can succeed.
+            const STRESS_RETRY_COUNT: u32 = 30;
+            const STRESS_RETRY_DELAY: Duration = Duration::from_millis(2);
 
             let mut failures = 0;
 
@@ -954,8 +969,8 @@ mod tests {
                 let dir = tempfile::tempdir().expect("Failed to create temp dir");
                 let cache = Arc::new(
                     FileTokenCache::with_directory(dir.path().to_path_buf())
-                        .retry_count(LOCK_RETRY_COUNT)
-                        .retry_delay(Duration::from_millis(50)),
+                        .retry_count(STRESS_RETRY_COUNT)
+                        .retry_delay(STRESS_RETRY_DELAY),
                 );
                 let barrier = Arc::new(Barrier::new(STRESS_THREADS));
 
@@ -988,7 +1003,6 @@ mod tests {
                 }
 
                 if round_ok {
-                    // verify all keys readable
                     for i in 0..STRESS_THREADS {
                         let key = format!("key_{i}");
                         let expected = format!("value_{i}");
@@ -1008,8 +1022,11 @@ mod tests {
             }
 
             eprintln!(
-                "\nStress test result: {}/{ITERATIONS} rounds passed, {failures} failed",
-                ITERATIONS - failures
+                "\nStress test: {}/{ITERATIONS} rounds passed, {failures} failed  \
+                 (threads={STRESS_THREADS}, retries={STRESS_RETRY_COUNT}, \
+                 delay={}ms)",
+                ITERATIONS - failures,
+                STRESS_RETRY_DELAY.as_millis(),
             );
             assert_eq!(
                 failures, 0,
