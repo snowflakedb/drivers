@@ -14,7 +14,7 @@ use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::sync::Arc;
 
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
@@ -66,9 +66,13 @@ async fn perform_put_get(
             })
         }
         "DOWNLOAD" => {
-            let file_download_data = data
-                .to_file_download_data()
-                .context(FileTransferPreparationSnafu)?;
+            let file_download_data = data.to_file_download_data().map_err(|e| {
+                if e.to_string().contains("source locations") {
+                    RemoteFileNotFoundSnafu.build()
+                } else {
+                    FileTransferPreparationSnafu.into_error(e)
+                }
+            })?;
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;
@@ -362,6 +366,11 @@ pub enum QueryResponseProcessingError {
     #[snafu(display("Failed to prepare file transfer data"))]
     FileTransferPreparation {
         source: QueryResponseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("While getting file(s) there was an error: the file does not exist"))]
+    RemoteFileNotFound {
         #[snafu(implicit)]
         location: Location,
     },
