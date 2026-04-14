@@ -70,6 +70,42 @@ TEST_CASE("ARRAY to SQL_C_BINARY nested", "[array][conversion][c_binary]") {
   CHECK(json.get<picojson::array>().size() == 2);
 }
 
+TEST_CASE("ARRAY to SQL_C_BINARY buffer too small", "[array][conversion][c_binary][01004]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When An ARRAY value is fetched into a buffer smaller than the JSON representation
+  auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)");
+  SQLCHAR buffer[4] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+
+  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(indicator > static_cast<SQLLEN>(sizeof(buffer)));
+  auto records = get_diag_rec(stmt);
+  CHECK(!records.empty());
+  CHECK(records[0].sqlState == "01004");
+}
+
+TEST_CASE("ARRAY to SQL_C_BINARY exact buffer fit", "[array][conversion][c_binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When An ARRAY value is fetched into an exact-size buffer
+  auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)");
+
+  SQLCHAR probe[256] = {};
+  SQLLEN full_len = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, probe, sizeof(probe), &full_len);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then The indicator equals the buffer size used and the data is valid JSON
+  CHECK(full_len > 0);
+  auto json = parse_json(std::string(reinterpret_cast<char*>(probe), static_cast<size_t>(full_len)));
+  CHECK(json.is<picojson::array>());
+}
+
 TEST_CASE("ARRAY NULL to SQL_C_BINARY", "[array][conversion][c_binary][null]") {
   // Given Snowflake client is logged in
   Connection conn;
