@@ -176,6 +176,10 @@ pipeline {
                                     def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
                                         export PARAMETER_PATH=$(pwd)/parameters.json
+                                        # Serialize tests: the keyring crate's linux-native backend (kernel keyutils)
+                                        # doesn't provide UntilDelete persistence in Docker, so KeyringTokenCache
+                                        # falls back to FileTokenCache whose mkdir-based locking breaks under
+                                        # parallel execution. Single-threading avoids the lock contention.
                                         cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir . -- --test-threads=1
                                     ''')
                                     if (testExitCode != 0) {
