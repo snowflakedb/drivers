@@ -25,7 +25,7 @@ def dockerSetup() {
 }
 
 def installSystemDeps() {
-    sh label: 'Install system dependencies', script: 'yum install -y unzip dbus-x11 gnome-keyring'
+    sh label: 'Install system dependencies', script: 'yum install -y unzip'
 }
 
 def decodeSecrets() {
@@ -175,14 +175,9 @@ pipeline {
                                     
                                     def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
-                                        dbus-uuidgen > /var/lib/dbus/machine-id
-                                        eval "$(dbus-launch --sh-syntax)"
-                                        mkdir -p ~/.local/share/keyrings
-                                        eval "$(printf '\\n' | gnome-keyring-daemon --unlock)"
-                                        eval "$(printf '\\n' | gnome-keyring-daemon --start)"
                                         export PARAMETER_PATH=$(pwd)/parameters.json
-                                        # Skip keyring_token_cache integration tests - they require a working
-                                        # OS keyring which is unavailable in this Docker environment
+                                        # Skip keyring_token_cache tests - they require a working OS keyring
+                                        # (D-Bus Secret Service) unavailable in Docker. Already covered on GHA.
                                         cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir . \
                                             -- --skip keyring_token_cache_tests
                                     ''')
