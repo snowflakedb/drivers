@@ -11,7 +11,7 @@ TEST_CASE("should bind SQL_C_BIT one to SQL_DOUBLE", "[c_bit][conversion][sql_re
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col DOUBLE)");
+  conn.execute("CREATE TABLE t (col FLOAT)");
 
   // When SQL_C_BIT 1 is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -33,7 +33,7 @@ TEST_CASE("should bind SQL_C_BIT zero to SQL_DOUBLE", "[c_bit][conversion][sql_r
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col DOUBLE)");
+  conn.execute("CREATE TABLE t (col FLOAT)");
 
   // When SQL_C_BIT 0 is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -55,7 +55,7 @@ TEST_CASE("should bind SQL_C_BIT to SQL_REAL", "[c_bit][conversion][sql_real]") 
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col DOUBLE)");
+  conn.execute("CREATE TABLE t (col FLOAT)");
 
   // When SQL_C_BIT 1 is bound to SQL_REAL and inserted
   auto stmt = conn.createStatement();
