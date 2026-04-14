@@ -48,3 +48,15 @@ Feature: ODBC VARIANT to SQL_C_CHAR and SQL_C_WCHAR conversions
     Given Snowflake client is logged in
     When A NULL VARIANT value is queried
     Then Indicator returns SQL_NULL_DATA
+
+  @odbc_e2e
+  Scenario: VARIANT to SQL_C_CHAR scalar values
+    Given Snowflake client is logged in
+    When Scalar values (integer, float, cast, boolean, string) are converted to VARIANT and fetched as SQL_C_CHAR
+    Then Each scalar VARIANT value is returned as its JSON representation
+
+  @odbc_e2e
+  Scenario: VARIANT to SQL_C_CHAR parse_json NULL
+    Given Snowflake client is logged in
+    When PARSE_JSON NULL and SQL NULL VARIANT values are fetched
+    Then PARSE_JSON NULL returns JSON null string, SQL NULL returns SQL_NULL_DATA

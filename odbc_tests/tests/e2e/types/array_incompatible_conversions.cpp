@@ -9,10 +9,13 @@
 #include "conversion_checks.hpp"
 
 TEST_CASE("should fail converting ARRAY to numeric C types", "[array][conversion][negative]") {
+  // Given Snowflake client is logged in
   Connection conn;
 
+  // When An ARRAY value is fetched with numeric C types
   auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)");
 
+  // Then Each conversion should fail with SQLSTATE 07006
   {
     SQLCHAR value = {};
     check_incompatible_conversion(stmt, 1, SQL_C_BIT, &value, sizeof(value));
@@ -64,10 +67,13 @@ TEST_CASE("should fail converting ARRAY to numeric C types", "[array][conversion
 }
 
 TEST_CASE("should fail converting ARRAY to temporal C types", "[array][conversion][negative]") {
+  // Given Snowflake client is logged in
   Connection conn;
 
+  // When An ARRAY value is fetched with temporal C types
   auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)");
 
+  // Then Each conversion should fail with SQLSTATE 07006
   {
     SQL_DATE_STRUCT value = {};
     check_incompatible_conversion(stmt, 1, SQL_C_TYPE_DATE, &value, sizeof(value));
@@ -83,10 +89,13 @@ TEST_CASE("should fail converting ARRAY to temporal C types", "[array][conversio
 }
 
 TEST_CASE("should fail converting ARRAY to interval C types", "[array][conversion][negative]") {
+  // Given Snowflake client is logged in
   Connection conn;
 
+  // When An ARRAY value is fetched with interval C types
   auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)");
 
+  // Then Each conversion should fail with SQLSTATE 07006
   SQL_INTERVAL_STRUCT value = {};
   check_incompatible_conversion(stmt, 1, SQL_C_INTERVAL_YEAR, &value, sizeof(value));
   check_incompatible_conversion(stmt, 1, SQL_C_INTERVAL_MONTH, &value, sizeof(value));
@@ -104,10 +113,13 @@ TEST_CASE("should fail converting ARRAY to interval C types", "[array][conversio
 }
 
 TEST_CASE("should fail converting ARRAY to SQL_C_GUID", "[array][conversion][negative]") {
+  // Given Snowflake client is logged in
   Connection conn;
 
+  // When An ARRAY value is fetched as SQL_C_GUID
   auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)");
 
+  // Then Conversion should fail with SQLSTATE 07006
   SQLGUID value = {};
   check_incompatible_conversion(stmt, 1, SQL_C_GUID, &value, sizeof(value));
 }

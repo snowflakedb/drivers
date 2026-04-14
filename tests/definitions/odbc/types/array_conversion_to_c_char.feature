@@ -48,3 +48,9 @@ Feature: ODBC ARRAY to SQL_C_CHAR and SQL_C_WCHAR conversions
     Given Snowflake client is logged in
     When A NULL ARRAY value is queried
     Then Indicator returns SQL_NULL_DATA
+
+  @odbc_e2e
+  Scenario: ARRAY to SQL_C_CHAR with null elements
+    Given Snowflake client is logged in
+    When An ARRAY with interleaved null elements is fetched as SQL_C_CHAR
+    Then Null elements are represented as JSON null in the array

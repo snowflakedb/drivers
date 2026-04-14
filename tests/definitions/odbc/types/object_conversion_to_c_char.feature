@@ -42,3 +42,21 @@ Feature: ODBC OBJECT to SQL_C_CHAR and SQL_C_WCHAR conversions
     Given Snowflake client is logged in
     When A NULL OBJECT value is queried
     Then Indicator returns SQL_NULL_DATA
+
+  @odbc_e2e
+  Scenario: OBJECT to SQL_C_CHAR null key omission
+    Given Snowflake client is logged in
+    When An OBJECT with a null-valued key is constructed using OBJECT_CONSTRUCT
+    Then The null-valued key is omitted from the JSON result
+
+  @odbc_e2e
+  Scenario: OBJECT to SQL_C_CHAR keep null
+    Given Snowflake client is logged in
+    When An OBJECT with a null-valued key is constructed using OBJECT_CONSTRUCT_KEEP_NULL
+    Then The null-valued key is preserved with JSON null value
+
+  @odbc_e2e
+  Scenario: OBJECT to SQL_C_CHAR parse_json NULL semantics
+    Given Snowflake client is logged in
+    When An OBJECT is constructed with PARSE_JSON NULL, SQL NULL, and string null values
+    Then JSON null key is preserved, SQL NULL key is omitted, and string null is kept as string

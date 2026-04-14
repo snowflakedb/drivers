@@ -79,3 +79,24 @@ Feature: ODBC-specific semi-structured type (VARIANT/OBJECT/ARRAY) handling
     Given Snowflake client is logged in
     When Query returning a NULL VARIANT is executed
     Then Indicator should be SQL_NULL_DATA
+
+  # =========================================================================== #
+  #                     MULTI-ROW TABLE OPERATIONS                              #
+  # =========================================================================== #
+
+  @odbc_e2e
+  Scenario: should select multi-row table with all semi-structured columns
+    Given Snowflake client is logged in
+    And Table with VARIANT, OBJECT, and ARRAY columns exists with multiple rows including NULLs
+    When Query "SELECT v, o, a FROM <table> ORDER BY id" is executed
+    Then Each row should contain the expected semi-structured values including NULLs
+
+  # =========================================================================== #
+  #                          STRUCTURED TYPES                                   #
+  # =========================================================================== #
+
+  @odbc_e2e
+  Scenario: should handle structured types
+    Given Snowflake client is logged in
+    When Structured type expressions (typed array, typed object, typed map) are fetched as SQL_C_CHAR
+    Then Each structured type returns valid JSON data
