@@ -4,13 +4,16 @@ use std::fs;
 #[cfg(unix)]
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
+
+use fs2::FileExt;
+use rand::Rng;
 
 use keyring::credential::{CredentialApi, CredentialBuilderApi, CredentialPersistence};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snafu::{ResultExt, ensure};
-use tracing::{debug, warn};
+use tracing::warn;
 
 use super::{
     CacheDirectoryResolutionSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
@@ -22,7 +25,6 @@ use super::{FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu, Irregu
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
 const DEFAULT_RETRY_COUNT: u32 = 5;
 const DEFAULT_RETRY_DELAY: Duration = Duration::from_millis(100);
-const DEFAULT_STALE_LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheFileContent {
@@ -101,11 +103,16 @@ fn hash_cache_key(key: &str) -> String {
     hex::encode(hash)
 }
 
-/// RAII file lock guard that uses a `.lck` file alongside the cache file.
+/// RAII file lock guard using OS-level file locking (`flock` on Unix,
+/// `LockFileEx` on Windows) via the `fs2` crate.
 ///
-/// The lock is released (file removed) when the guard is dropped.
+/// The lock is released when the guard is dropped (closing the file
+/// descriptor). The `.lck` file persists on disk but holds no lock once
+/// the handle is closed — this is harmless and avoids the
+/// `RemoveDirectory` pending-delete race that plagued the old
+/// `create_dir`/`remove_dir` approach on Windows.
 struct FileLock {
-    lock_path: PathBuf,
+    _file: fs::File,
 }
 
 impl FileLock {
@@ -113,114 +120,44 @@ impl FileLock {
         cache_path: &Path,
         retry_count: u32,
         retry_delay: Duration,
-        stale_timeout: Duration,
     ) -> Result<Self, TokenCacheError> {
         let lock_path = cache_path.with_extension(format!("{DEFAULT_CACHE_FILE_NAME}.lck"));
 
+        let file = Self::open_lock_file(&lock_path)?;
+
+        let base_ms = retry_delay.as_millis() as f64;
+        let mut sleep_ms = base_ms;
+
         for attempt in 0..retry_count {
-            match fs::create_dir(&lock_path) {
-                Ok(()) => {
-                    return Ok(FileLock { lock_path });
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // TOCTOU: another thread could acquire the lock between
-                    // is_stale returning true and remove_dir. This only matters
-                    // when the lock is genuinely stale (>60s, i.e. holder
-                    // crashed), which is rare. The proper fix is replacing
-                    // mkdir-based locking with flock(2) / LockFileEx, which
-                    // lets the OS release locks on process crash and removes
-                    // the need for stale detection entirely.
-                    if Self::is_stale(&lock_path, stale_timeout) {
-                        let _ = fs::remove_dir(&lock_path);
-                        continue;
-                    }
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(FileLock { _file: file }),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if attempt < retry_count - 1 {
-                        std::thread::sleep(retry_delay);
+                        // Decorrelated jitter: sleep ∈ [base, min(3×prev, 16×base)]
+                        let upper = (sleep_ms * 3.0).min(base_ms * 16.0);
+                        sleep_ms = rand::rng().random_range(base_ms..=upper);
+                        std::thread::sleep(Duration::from_millis(sleep_ms as u64));
                     }
                 }
-                // On Windows, concurrent create_dir + remove_dir can transiently
-                // fail when the directory is in a pending-delete state.  Treat
-                // these as retryable lock contention rather than fatal errors.
-                // On the final attempt, fall through to the Err(e) arm so the
-                // original OS error is preserved (avoids masking genuine
-                // permission failures behind a generic LockExhausted).
-                #[cfg(windows)]
-                Err(ref e)
-                    if Self::is_transient_windows_error(e, &lock_path)
-                        && attempt < retry_count - 1 =>
-                {
-                    std::thread::sleep(retry_delay);
-                }
-                Err(e) => {
-                    return Err(e).context(LockAcquisitionSnafu);
-                }
+                Err(e) => return Err(e).context(LockAcquisitionSnafu),
             }
         }
 
         LockExhaustedSnafu.fail()
     }
 
-    /// On Windows, `RemoveDirectory` marks a directory for deletion-on-close
-    /// rather than removing it synchronously.  Between that mark and the actual
-    /// removal, `CreateDirectory` on the same path can fail with one of several
-    /// transient error codes instead of `ERROR_ALREADY_EXISTS`.
-    ///
-    /// `ERROR_SHARING_VIOLATION` and `ERROR_DELETE_PENDING` are unambiguously
-    /// transient.  `ERROR_ACCESS_DENIED` is broader (can also mean genuine ACL
-    /// denial), so we only treat it as transient when the lock directory still
-    /// exists — that indicates contention rather than a permission problem on
-    /// the parent directory.
-    ///
-    /// See <https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-removedirectoryw>
-    #[cfg(windows)]
-    fn is_transient_windows_error(e: &std::io::Error, lock_path: &Path) -> bool {
-        // Win32 system error codes.
-        // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
-        const ERROR_ACCESS_DENIED: i32 = 5;
-        const ERROR_SHARING_VIOLATION: i32 = 32;
-        const ERROR_DELETE_PENDING: i32 = 303;
+    fn open_lock_file(lock_path: &Path) -> Result<fs::File, TokenCacheError> {
+        let mut opts = fs::OpenOptions::new();
+        opts.create(true).truncate(false).write(true);
 
-        match e.raw_os_error() {
-            Some(ERROR_SHARING_VIOLATION | ERROR_DELETE_PENDING) => true,
-            Some(ERROR_ACCESS_DENIED) => lock_path.exists(),
-            _ => false,
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.custom_flags(libc::O_NOFOLLOW);
+            opts.mode(0o600);
         }
-    }
 
-    fn is_stale(lock_path: &Path, stale_timeout: Duration) -> bool {
-        let metadata = match fs::metadata(lock_path) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
-            Err(e) => {
-                warn!(
-                    path = ?lock_path,
-                    error = %e,
-                    "failed to read lock metadata while checking staleness"
-                );
-                return false;
-            }
-        };
-        let modified = match metadata.modified() {
-            Ok(t) => t,
-            Err(e) => {
-                debug!(
-                    path = ?lock_path,
-                    error = %e,
-                    "filesystem does not support modification times, cannot determine lock staleness"
-                );
-                return false;
-            }
-        };
-        match SystemTime::now().duration_since(modified) {
-            Ok(age) => age > stale_timeout,
-            Err(_) => false,
-        }
-    }
-}
-
-impl Drop for FileLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir(&self.lock_path);
+        opts.open(lock_path).context(LockAcquisitionSnafu)
     }
 }
 
@@ -398,7 +335,6 @@ pub(super) struct FileTokenCache {
     cache_file_path: PathBuf,
     retry_count: u32,
     retry_delay: Duration,
-    stale_lock_timeout: Duration,
 }
 
 impl FileTokenCache {
@@ -411,7 +347,6 @@ impl FileTokenCache {
             cache_file_path: cache_dir.join(file_name),
             retry_count: DEFAULT_RETRY_COUNT,
             retry_delay: DEFAULT_RETRY_DELAY,
-            stale_lock_timeout: DEFAULT_STALE_LOCK_TIMEOUT,
         })
     }
 
@@ -423,7 +358,6 @@ impl FileTokenCache {
             cache_file_path: cache_dir.join(file_name),
             retry_count: DEFAULT_RETRY_COUNT,
             retry_delay: DEFAULT_RETRY_DELAY,
-            stale_lock_timeout: DEFAULT_STALE_LOCK_TIMEOUT,
         }
     }
 
@@ -436,12 +370,6 @@ impl FileTokenCache {
     #[allow(dead_code)]
     pub fn retry_delay(mut self, delay: Duration) -> Self {
         self.retry_delay = delay;
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn stale_lock_timeout(mut self, timeout: Duration) -> Self {
-        self.stale_lock_timeout = timeout;
         self
     }
 
@@ -577,12 +505,7 @@ impl FileTokenCache {
     }
 
     fn acquire_lock(&self) -> Result<FileLock, TokenCacheError> {
-        FileLock::acquire(
-            &self.cache_file_path,
-            self.retry_count,
-            self.retry_delay,
-            self.stale_lock_timeout,
-        )
+        FileLock::acquire(&self.cache_file_path, self.retry_count, self.retry_delay)
     }
 }
 
@@ -661,57 +584,6 @@ impl CredentialApi for FileTokenCacheEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[cfg(windows)]
-    mod file_lock_tests {
-        use super::*;
-        use std::path::Path;
-
-        #[test]
-        fn transient_error_sharing_violation_and_delete_pending() {
-            let path = Path::new("unused");
-            // ERROR_SHARING_VIOLATION (32) and ERROR_DELETE_PENDING (303)
-            // are unconditionally transient regardless of path existence.
-            for code in [32, 303] {
-                let err = std::io::Error::from_raw_os_error(code);
-                assert!(
-                    FileLock::is_transient_windows_error(&err, path),
-                    "expected code {code} to be transient"
-                );
-            }
-        }
-
-        #[test]
-        fn transient_error_access_denied_only_when_lock_dir_exists() {
-            let temp_dir = tempfile::tempdir().expect("failed to create temp dir for test");
-            let existing = temp_dir.path().to_path_buf(); // guaranteed to exist for the duration of the test
-            let missing = existing.join("nonexistent_child");
-            assert!(!missing.exists(), "test precondition: path must not exist");
-
-            let err = std::io::Error::from_raw_os_error(5); // ERROR_ACCESS_DENIED
-            assert!(
-                FileLock::is_transient_windows_error(&err, &existing),
-                "ACCESS_DENIED should be transient when lock dir exists"
-            );
-            assert!(
-                !FileLock::is_transient_windows_error(&err, &missing),
-                "ACCESS_DENIED should NOT be transient when lock dir is absent"
-            );
-        }
-
-        #[test]
-        fn unrelated_error_codes_are_not_transient() {
-            let path = Path::new("unused");
-            // ERROR_FILE_NOT_FOUND (2), ERROR_PATH_NOT_FOUND (3), ERROR_INVALID_HANDLE (6)
-            for code in [2, 3, 6, 123, 9999] {
-                let err = std::io::Error::from_raw_os_error(code);
-                assert!(
-                    !FileLock::is_transient_windows_error(&err, path),
-                    "expected code {code} to NOT be transient"
-                );
-            }
-        }
-    }
 
     mod file_token_cache_tests {
         use super::*;
@@ -875,35 +747,24 @@ mod tests {
         }
 
         #[test]
-        fn lock_file_removed_after_operation() {
+        fn lock_released_after_operation() {
             let (_dir, cache) = create_temp_cache();
 
             cache
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
+            // The .lck file persists on disk but the OS-level lock must be
+            // released once the FileLock guard is dropped.
             let lock_path = cache.cache_file_path.with_extension("json.lck");
-            assert!(
-                !lock_path.exists(),
-                "Lock directory should be removed after operation"
-            );
-        }
-
-        #[test]
-        fn stale_lock_is_broken() {
-            let dir = tempfile::tempdir().expect("Failed to create temp dir");
-            let cache = FileTokenCache::with_directory(dir.path().to_path_buf())
-                .stale_lock_timeout(Duration::from_millis(50));
-            let lock_path = cache.cache_file_path.with_extension("json.lck");
-            fs::create_dir(&lock_path).expect("Failed to create stale lock dir");
-            std::thread::sleep(Duration::from_millis(100));
-
-            cache
-                .set_secret("key", b"val")
-                .expect("Should succeed after breaking stale lock");
-
-            let result = cache.get_secret("key").expect("Failed to get secret");
-            assert_eq!(result, Some(b"val".to_vec()));
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&lock_path)
+                .expect("Failed to open lock file");
+            file.try_lock_exclusive()
+                .expect("Lock should be released after operation");
         }
 
         #[test]
@@ -911,12 +772,10 @@ mod tests {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = FileTokenCache::with_directory(dir.path().to_path_buf())
                 .retry_count(10)
-                .retry_delay(Duration::from_millis(50))
-                .stale_lock_timeout(Duration::from_secs(30));
+                .retry_delay(Duration::from_millis(50));
 
             assert_eq!(cache.retry_count, 10);
             assert_eq!(cache.retry_delay, Duration::from_millis(50));
-            assert_eq!(cache.stale_lock_timeout, Duration::from_secs(30));
         }
     }
 
@@ -960,14 +819,7 @@ mod tests {
         use std::sync::{Arc, Barrier};
 
         const THREAD_COUNT: usize = 10;
-
-        // On Windows, `RemoveDirectory` is asynchronous and the
-        // "pending delete" state can cause `CreateDirectory` to return
-        // transient errors (`ERROR_DELETE_PENDING`,
-        // `ERROR_ACCESS_DENIED`, etc.), so threads need a larger retry
-        // budget to avoid spurious lock-exhaustion failures under high
-        // contention.
-        const LOCK_RETRY_COUNT: u32 = if cfg!(windows) { 1000 } else { 100 };
+        const LOCK_RETRY_COUNT: u32 = 100;
 
         fn create_shared_cache() -> (tempfile::TempDir, Arc<FileTokenCache>) {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -1085,6 +937,84 @@ mod tests {
                     String::from_utf8_lossy(&actual),
                 );
             }
+        }
+
+        /// Stress test: runs the concurrent-writes scenario many times to expose
+        /// lock-acquisition flakiness.  Run with:
+        ///   cargo test -p sf_core -- stress_concurrent_lock --ignored --nocapture
+        #[test]
+        #[ignore] // slow — run manually to validate locking reliability
+        fn stress_concurrent_lock() {
+            const ITERATIONS: usize = 50;
+            const STRESS_THREADS: usize = 20;
+
+            let mut failures = 0;
+
+            for round in 0..ITERATIONS {
+                let dir = tempfile::tempdir().expect("Failed to create temp dir");
+                let cache = Arc::new(
+                    FileTokenCache::with_directory(dir.path().to_path_buf())
+                        .retry_count(LOCK_RETRY_COUNT)
+                        .retry_delay(Duration::from_millis(50)),
+                );
+                let barrier = Arc::new(Barrier::new(STRESS_THREADS));
+
+                let handles: Vec<_> = (0..STRESS_THREADS)
+                    .map(|i| {
+                        let cache = Arc::clone(&cache);
+                        let barrier = Arc::clone(&barrier);
+                        std::thread::spawn(move || {
+                            barrier.wait();
+                            let key = format!("key_{i}");
+                            let value = format!("value_{i}");
+                            cache.set_secret(&key, value.as_bytes())
+                        })
+                    })
+                    .collect();
+
+                let mut round_ok = true;
+                for handle in handles {
+                    match handle.join() {
+                        Ok(Err(e)) => {
+                            eprintln!("  round {round}: set_secret error: {e}");
+                            round_ok = false;
+                        }
+                        Err(_) => {
+                            eprintln!("  round {round}: thread panicked");
+                            round_ok = false;
+                        }
+                        Ok(Ok(())) => {}
+                    }
+                }
+
+                if round_ok {
+                    // verify all keys readable
+                    for i in 0..STRESS_THREADS {
+                        let key = format!("key_{i}");
+                        let expected = format!("value_{i}");
+                        match cache.get_secret(&key) {
+                            Ok(Some(v)) if v == expected.as_bytes() => {}
+                            other => {
+                                eprintln!("  round {round}: read mismatch for {key}: {other:?}");
+                                round_ok = false;
+                            }
+                        }
+                    }
+                }
+
+                if !round_ok {
+                    failures += 1;
+                }
+            }
+
+            eprintln!(
+                "\nStress test result: {}/{ITERATIONS} rounds passed, {failures} failed",
+                ITERATIONS - failures
+            );
+            assert_eq!(
+                failures, 0,
+                "{failures}/{ITERATIONS} rounds failed — lock acquisition is unreliable"
+            );
         }
 
         #[test]
