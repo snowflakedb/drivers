@@ -1,7 +1,0 @@
-queries:
-- index: 0
-  original: |-
-    -- DTM_BRID: 11869c47-0973-4a10-a554-95b7c2190973
-    -- DTM_QRY:
-    desc table "DTMREPLAYTESTDB"."PUBLIC"."v_star1"
-  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."v_star1"

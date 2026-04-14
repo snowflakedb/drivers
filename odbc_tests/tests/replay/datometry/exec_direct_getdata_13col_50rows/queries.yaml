@@ -1,7 +1,0 @@
-queries:
-- index: 0
-  original: |-
-    -- DTM_BRID: b977f0c3-6456-4883-a293-0607cebb2049
-    -- DTM_QRY:
-    desc table "DTMREPLAYTESTDB"."PUBLIC"."prr_table_1"
-  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."prr_table_1"

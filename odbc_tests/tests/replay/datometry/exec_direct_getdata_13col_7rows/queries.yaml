@@ -1,7 +1,0 @@
-queries:
-- index: 0
-  original: |-
-    -- DTM_BRID: 36aa5431-ba88-42da-a56a-8172d9783bbb
-    -- DTM_QRY:
-    desc table "DTMREPLAYTESTDB"."PUBLIC"."dimcalendarfiscalweek"
-  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."dimcalendarfiscalweek"

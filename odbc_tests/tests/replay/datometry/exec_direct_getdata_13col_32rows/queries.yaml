@@ -1,7 +1,0 @@
-queries:
-- index: 0
-  original: |-
-    -- DTM_BRID: 4034f5f9-d1e4-4956-b187-936bd752b3fa
-    -- DTM_QRY:
-    desc table "DTMREPLAYTESTDB"."PUBLIC"."fcd_table_3"
-  mapped: desc table "DTMREPLAYTESTDB"."PUBLIC"."fcd_table_3"
