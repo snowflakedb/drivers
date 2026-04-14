@@ -24,8 +24,12 @@ def dockerSetup() {
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
 }
 
-def installSystemDeps() {
-    sh label: 'Install system dependencies', script: 'yum install -y unzip dbus-x11 gnome-keyring'
+def installSystemDeps(String component = null) {
+    def packages = ['unzip']
+    if (component == 'rust-core') {
+        packages.addAll(['dbus-x11', 'gnome-keyring'])
+    }
+    sh label: 'Install system dependencies', script: "yum install -y ${packages.join(' ')}"
 }
 
 def decodeSecrets() {
@@ -171,7 +175,7 @@ pipeline {
                                 dockerSetup()
                                 docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                     decodeSecrets()
-                                    installSystemDeps()
+                                    installSystemDeps('rust-core')
                                     
                                     def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
