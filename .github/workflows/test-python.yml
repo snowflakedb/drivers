@@ -345,9 +345,13 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
           - os: windows-11-arm
-            py: "3.14"
+            py: "3.12"
             hatch_env: "test-pandas"
             cloud_provider: azure
+          - os: ubuntu-latest
+            py: "3.14"
+            hatch_env: "test-pandas"
+            cloud_provider: aws
     runs-on: ${{ matrix.os }}
     name: python_tests ${{ matrix.hatch_env }} (${{ matrix.os }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
     env:
