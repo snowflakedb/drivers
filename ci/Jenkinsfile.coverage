@@ -175,7 +175,7 @@ pipeline {
                                     
                                     def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
-                                        dbus-uuidgen --ensure=/etc/machine-id
+                                        dbus-uuidgen > /etc/machine-id
                                         dbus-uuidgen --ensure
                                         eval "$(dbus-launch --sh-syntax)"
                                         mkdir -p ~/.local/share/keyrings
