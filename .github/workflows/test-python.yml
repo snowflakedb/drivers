@@ -328,7 +328,7 @@ jobs:
             hatch_env: "test"
             cloud_provider: aws
           - os: windows-11-arm
-            py: "3.10"
+            py: "3.11"
             hatch_env: "test"
             cloud_provider: gcp
           - os: windows-11-arm
