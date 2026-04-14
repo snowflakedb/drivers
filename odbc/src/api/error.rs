@@ -559,6 +559,8 @@ impl OdbcError {
                                 SqlState::SyntaxErrorOrAccessRuleViolation
                             } else if message.contains("out of representable range") {
                                 SqlState::NumericValueOutOfRange
+                            } else if message.contains("too long and would be truncated") {
+                                SqlState::StringDataTruncation
                             } else {
                                 SqlState::GeneralError
                             }
@@ -585,6 +587,8 @@ impl OdbcError {
                                 SqlState::SyntaxErrorOrAccessRuleViolation
                             } else if message.contains("out of representable range") {
                                 SqlState::NumericValueOutOfRange
+                            } else if message.contains("too long and would be truncated") {
+                                SqlState::StringDataTruncation
                             } else {
                                 SqlState::GeneralError
                             }
@@ -761,6 +765,24 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn server_truncation_error_maps_to_22001() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "String 'hello world' is too long and would be truncated".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::StringDataTruncation);
     }
 
     #[test]

@@ -421,3 +421,11 @@ behavior_differences:
       to SQL_DECIMAL.
       NEW driver: Correctly converts SQL_C_WCHAR decimal strings to
       SQL_DECIMAL values, matching the ODBC spec.
+  40:
+    name: "SQLSTATE for string data exceeding column size"
+    type: "Bug Fix"
+    description: |
+      OLD driver: Returns SQLSTATE 22000 (Data exception, generic class)
+      when inserted string data exceeds the target VARCHAR column size.
+      NEW driver: Returns SQLSTATE 22001 (String data, right truncation)
+      per the ODBC spec (SQLExecute diagnostics table).

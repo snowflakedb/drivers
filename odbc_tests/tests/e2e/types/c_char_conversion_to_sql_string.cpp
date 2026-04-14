@@ -4,6 +4,7 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
@@ -91,10 +92,12 @@ TEST_CASE("should reject SQL_C_CHAR exceeding fixed-size VARCHAR", "[c_char][con
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the insert is rejected with SQL_ERROR
+  // Then the insert is rejected with SQL_ERROR and SQLSTATE 22001
   CHECK(ret == SQL_ERROR);
-  std::string sqlstate = get_sqlstate(stmt);
-  CHECK((sqlstate == "HY000" || sqlstate == "22000"));
+
+  OLD_DRIVER_ONLY("BD#40") { CHECK(get_sqlstate(stmt) == "22000"); }
+
+  NEW_DRIVER_ONLY("BD#40") { CHECK(get_sqlstate(stmt) == "22001"); }
 }
 
 TEST_CASE("should bind SQL_C_WCHAR to SQL_VARCHAR and read back", "[c_char][conversion][sql_string]") {
