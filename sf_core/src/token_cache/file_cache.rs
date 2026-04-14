@@ -116,12 +116,19 @@ struct FileLock {
 }
 
 impl FileLock {
+    /// Derives the lock file path by appending `.lck` to the cache path.
+    fn lock_path(cache_path: &Path) -> PathBuf {
+        let mut p = cache_path.as_os_str().to_os_string();
+        p.push(".lck");
+        PathBuf::from(p)
+    }
+
     fn acquire(
         cache_path: &Path,
         retry_count: u32,
         retry_delay: Duration,
     ) -> Result<Self, TokenCacheError> {
-        let lock_path = cache_path.with_extension(format!("{DEFAULT_CACHE_FILE_NAME}.lck"));
+        let lock_path = Self::lock_path(cache_path);
 
         let file = Self::open_lock_file(&lock_path)?;
 
@@ -756,7 +763,7 @@ mod tests {
 
             // The .lck file persists on disk but the OS-level lock must be
             // released once the FileLock guard is dropped.
-            let lock_path = cache.cache_file_path.with_extension("json.lck");
+            let lock_path = FileLock::lock_path(&cache.cache_file_path);
             let file = fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
