@@ -131,8 +131,7 @@ TEST_CASE("should bind SQL_C_WCHAR decimal string to SQL_DECIMAL", "[c_char][con
   REQUIRE_ODBC(ret, stmt);
   SQLWCHAR val[] = {'6', '.', '2', '8', 0};
   SQLLEN ind = SQL_NTS;
-  ret =
-      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DECIMAL, 10, 2, val, sizeof(val), &ind);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DECIMAL, 10, 2, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
