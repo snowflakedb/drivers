@@ -135,7 +135,12 @@ TEST_CASE("should bind SQL_C_WCHAR decimal string to SQL_DECIMAL", "[c_char][con
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the old driver rejects WCHAR→DECIMAL, the new driver succeeds
+  // BD#39: On Linux the old driver rejects WCHAR→DECIMAL; on Windows it already works.
+#ifdef _WIN32
+  REQUIRE_ODBC(ret, stmt);
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
+#else
   OLD_DRIVER_ONLY("BD#39") { CHECK(ret == SQL_ERROR); }
 
   NEW_DRIVER_ONLY("BD#39") {
@@ -143,6 +148,7 @@ TEST_CASE("should bind SQL_C_WCHAR decimal string to SQL_DECIMAL", "[c_char][con
     auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
     CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
   }
+#endif
 }
 
 TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_INTEGER", "[c_char][conversion][sql_fixed]") {

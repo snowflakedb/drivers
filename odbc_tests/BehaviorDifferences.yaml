@@ -412,15 +412,16 @@ behavior_differences:
       SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 when the buffer can hold
       the base time but truncates fractional seconds, per the ODBC spec.
   39:
-    name: "SQL_C_WCHAR decimal string to SQL_DECIMAL conversion"
+    name: "SQL_C_WCHAR decimal string to SQL_DECIMAL conversion (Linux only)"
     type: "Bug Fix"
     description: |
-      OLD driver: Rejects SQL_C_WCHAR bound to SQL_DECIMAL with error
-      40610 "Invalid data for conversion". Per the ODBC spec, character
-      C types (SQL_C_CHAR and SQL_C_WCHAR) should both support conversion
-      to SQL_DECIMAL.
+      OLD driver (Linux): Rejects SQL_C_WCHAR bound to SQL_DECIMAL with
+      error 40610 "Invalid data for conversion". The old Windows driver
+      already handles this conversion correctly.
+      Per the ODBC spec, character C types (SQL_C_CHAR and SQL_C_WCHAR)
+      should both support conversion to SQL_DECIMAL.
       NEW driver: Correctly converts SQL_C_WCHAR decimal strings to
-      SQL_DECIMAL values, matching the ODBC spec.
+      SQL_DECIMAL values on all platforms, matching the ODBC spec.
   40:
     name: "SQLSTATE for string data exceeding column size"
     type: "Bug Fix"
