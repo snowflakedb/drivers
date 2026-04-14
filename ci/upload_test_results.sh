@@ -20,10 +20,14 @@ for pattern in "$@"; do
   buildkite-agent artifact upload "$pattern" || true
 done
 
+UPLOAD_FAILURES=0
+
 for pattern in "$@"; do
   for xml in $pattern; do
-    [ -f "$xml" ] || continue
-    curl -X POST --silent --show-error --max-time 30 \
+    [ -f "$xml" ] || { echo "WARNING: JUnit XML not found: $xml"; continue; }
+    echo "Uploading $xml to Test Analytics (driver=$DRIVER)..."
+    HTTP_CODE=$(curl -X POST --show-error --max-time 30 \
+      -w "%{http_code}" -o /tmp/analytics-response.json \
       -H "Authorization: Token token=$BUILDKITE_ANALYTICS_TOKEN" \
       -F "data=@$xml" \
       -F "format=junit" \
@@ -36,10 +40,23 @@ for pattern in "$@"; do
       -F "run_env[commit_sha]=$BUILDKITE_COMMIT" \
       -F "run_env[message]=$BUILDKITE_MESSAGE" \
       -F "run_env[url]=$BUILDKITE_BUILD_URL" \
-      https://analytics-api.buildkite.com/v1/uploads || echo "WARNING: Test Analytics upload failed (non-fatal)"
-    echo "Uploaded $xml to Test Analytics"
+      https://analytics-api.buildkite.com/v1/uploads 2>&1)
+
+    if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+      echo "Uploaded $xml to Test Analytics (HTTP $HTTP_CODE)"
+    else
+      echo "ERROR: Test Analytics upload failed for $xml (HTTP $HTTP_CODE)"
+      cat /tmp/analytics-response.json 2>/dev/null || true
+      echo ""
+      UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
+    fi
   done
 done
+
+if [ "$UPLOAD_FAILURES" -gt 0 ]; then
+  echo "ERROR: $UPLOAD_FAILURES Test Analytics upload(s) failed"
+  buildkite-agent annotate ":warning: $LABEL -- $UPLOAD_FAILURES Test Analytics upload(s) failed" --style "warning" --context "${DRIVER}-upload"
+fi
 
 if [ "$DOCKER_EXIT" -ne 0 ]; then
   buildkite-agent annotate ":x: $LABEL -- tests failed" --style "error" --context "${DRIVER}-result"
