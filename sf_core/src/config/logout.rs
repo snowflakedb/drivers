@@ -41,9 +41,10 @@ pub struct LogoutConfig {
     /// Maximum total attempts for logout requests (NOT number of retries)
     /// - Some(1): 1 attempt, 0 retries
     /// - Some(3): 3 attempts, 2 retries (Core default per DD)
-    /// - None: Wrappers may pass None to defer to RetryPolicy default (6 attempts)
+    /// - None: Skip Core override; RetryPolicy default (6 attempts) applies
     ///
     /// Note: This is TOTAL ATTEMPTS, not retry count. To disable retries, set to 1.
+    /// Core default is Some(3); language wrappers override to their historical values.
     pub max_attempts: Option<u32>,
 
     /// Per-request socket timeout for individual HTTP requests
@@ -322,6 +323,16 @@ mod tests {
         )]);
         let config = LogoutConfig::from_settings(&settings).unwrap();
         assert_eq!(config.error_strategy, ErrorStrategy::BestEffort);
+    }
+
+    #[test]
+    fn test_from_settings_valid_error_strategy_strict() {
+        let settings = create_test_settings(vec![(
+            "logout_error_strategy",
+            Setting::String("strict".to_string()),
+        )]);
+        let config = LogoutConfig::from_settings(&settings).unwrap();
+        assert_eq!(config.error_strategy, ErrorStrategy::Strict);
     }
 
     #[test]
