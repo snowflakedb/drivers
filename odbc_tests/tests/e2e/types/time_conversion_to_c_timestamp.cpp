@@ -2,6 +2,8 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <ctime>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
@@ -9,19 +11,27 @@
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
+static void get_local_date(int& year, int& month, int& day) {
+  std::time_t now = std::time(nullptr);
+  std::tm* local = std::localtime(&now);
+  year = local->tm_year + 1900;
+  month = local->tm_mon + 1;
+  day = local->tm_mday;
+}
+
 TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP", "[time][conversion][c_timestamp]") {
   // Given Snowflake client is logged in
   Connection conn;
 
   // When A TIME value is fetched as SQL_C_TYPE_TIMESTAMP
+  int today_y, today_m, today_d;
+  get_local_date(today_y, today_m, today_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '14:30:45'::TIME"), 1);
 
   // Then Time fields are populated and date fields are set to current date
-  CHECK(ts.year > 0);
-  CHECK(ts.month >= 1);
-  CHECK(ts.month <= 12);
-  CHECK(ts.day >= 1);
-  CHECK(ts.day <= 31);
+  CHECK(ts.year == today_y);
+  CHECK(ts.month == today_m);
+  CHECK(ts.day == today_d);
   CHECK(ts.hour == 14);
   CHECK(ts.minute == 30);
   CHECK(ts.second == 45);
@@ -33,12 +43,14 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP midnight", "[time][conversion][c_timesta
   Connection conn;
 
   // When Midnight TIME is fetched as SQL_C_TYPE_TIMESTAMP
+  int today_y, today_m, today_d;
+  get_local_date(today_y, today_m, today_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '00:00:00'::TIME"), 1);
 
   // Then All time components are zero and date is current date
-  CHECK(ts.year > 0);
-  CHECK(ts.month >= 1);
-  CHECK(ts.day >= 1);
+  CHECK(ts.year == today_y);
+  CHECK(ts.month == today_m);
+  CHECK(ts.day == today_d);
   CHECK(ts.hour == 0);
   CHECK(ts.minute == 0);
   CHECK(ts.second == 0);
@@ -50,10 +62,14 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP end of day", "[time][conversion][c_times
   Connection conn;
 
   // When End-of-day TIME is fetched as SQL_C_TYPE_TIMESTAMP
+  int today_y, today_m, today_d;
+  get_local_date(today_y, today_m, today_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '23:59:59'::TIME"), 1);
 
   // Then Time components match 23:59:59 and date is current date
-  CHECK(ts.year > 0);
+  CHECK(ts.year == today_y);
+  CHECK(ts.month == today_m);
+  CHECK(ts.day == today_d);
   CHECK(ts.hour == 23);
   CHECK(ts.minute == 59);
   CHECK(ts.second == 59);
@@ -111,12 +127,14 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP single-digit components", "[time][conver
   Connection conn;
 
   // When A TIME with single-digit hour, minute, second is fetched as SQL_C_TYPE_TIMESTAMP
+  int today_y, today_m, today_d;
+  get_local_date(today_y, today_m, today_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '01:02:03'::TIME"), 1);
 
   // Then Time components match and date is current date
-  CHECK(ts.year > 0);
-  CHECK(ts.month >= 1);
-  CHECK(ts.day >= 1);
+  CHECK(ts.year == today_y);
+  CHECK(ts.month == today_m);
+  CHECK(ts.day == today_d);
   CHECK(ts.hour == 1);
   CHECK(ts.minute == 2);
   CHECK(ts.second == 3);

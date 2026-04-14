@@ -111,7 +111,7 @@ TEST_CASE("TIME to SQL_C_BINARY exact buffer fit", "[time][conversion][c_binary]
 }
 
 TEST_CASE("TIME to SQL_C_BINARY buffer too small", "[time][conversion][c_binary][22003]") {
-  SKIP_OLD_DRIVER("BD#40", "old driver does not return 22003 for undersized binary buffer");
+  SKIP_OLD_DRIVER("BD#41", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 

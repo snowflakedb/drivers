@@ -31,7 +31,7 @@ Feature: ODBC DATE to SQL_C_BINARY conversions
 
   @odbc_e2e
   Scenario: DATE to SQL_C_BINARY buffer too small
-    # BD#39: Old driver does not return 22003 for undersized binary buffer
+    # BD#42: Old driver does not return 22003 for undersized DATE binary buffer
     Given Snowflake client is logged in
     When A DATE value is fetched into a buffer smaller than sizeof(SQL_DATE_STRUCT)
     Then SQL_ERROR is returned with SQLSTATE 22003

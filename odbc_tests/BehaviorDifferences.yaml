@@ -467,3 +467,13 @@ behavior_differences:
       is a valid target type for SQL_TYPE_TIME — the data is transferred
       as-is when the byte length fits the buffer, or SQLSTATE 22003 is
       returned when the buffer is too small.
+  42:
+    name: "DATE to SQL_C_BINARY with undersized buffer does not return 22003"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_BINARY on a DATE
+      column and the buffer is smaller than sizeof(SQL_DATE_STRUCT), the
+      old driver does not return SQL_ERROR with SQLSTATE 22003.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out
+      of range) per the ODBC specification, which states that when the byte
+      length of the data exceeds BufferLength for SQL_C_BINARY, the result
+      is undefined and SQLSTATE 22003 must be returned.

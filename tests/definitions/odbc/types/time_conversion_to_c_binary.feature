@@ -30,7 +30,7 @@ Feature: ODBC TIME to SQL_C_BINARY conversions
 
   @odbc_e2e
   Scenario: TIME to SQL_C_BINARY buffer too small
-    # BD#40: Old driver does not return 22003 for undersized binary buffer
+    # BD#41: Old driver does not support TIME to SQL_C_BINARY conversion
     Given Snowflake client is logged in
     When A TIME value is fetched into a buffer smaller than sizeof(SQL_TIME_STRUCT)
     Then SQL_ERROR is returned with SQLSTATE 22003
