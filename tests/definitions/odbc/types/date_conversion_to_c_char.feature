@@ -85,6 +85,13 @@ Feature: ODBC DATE to SQL_C_CHAR and SQL_C_WCHAR conversions
     Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
 
   @odbc_e2e
+  Scenario: DATE to SQL_C_WCHAR chunked retrieval
+    # BD#39: Old driver returns error instead of 01004 truncation
+    Given Snowflake client is logged in
+    When A DATE value is fetched via two sequential SQLGetData calls with a 6-character WCHAR buffer
+    Then The first call returns partial data with 01004 and the second call returns the remainder
+
+  @odbc_e2e
   Scenario: DATE NULL to SQL_C_WCHAR
     Given Snowflake client is logged in
     When A NULL DATE value is queried

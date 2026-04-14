@@ -240,6 +240,29 @@ TEST_CASE("DATE to SQL_C_WCHAR truncation", "[date][conversion][c_wchar][01004]"
   CHECK(records[0].sqlState == "01004");
 }
 
+TEST_CASE("DATE to SQL_C_WCHAR chunked retrieval", "[date][conversion][c_wchar]") {
+  SKIP_OLD_DRIVER("BD#39", "old driver returns error instead of 01004 truncation");
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A DATE value is fetched via two sequential SQLGetData calls with a 6-character WCHAR buffer
+  auto stmt = conn.execute_fetch("SELECT '2024-01-15'::DATE");
+
+  char16_t buf1[6] = {};
+  SQLLEN ind1 = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buf1, sizeof(buf1), &ind1);
+
+  // Then The first call returns partial data with 01004 and the second call returns the remainder
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(std::u16string(buf1) == u"2024-");
+
+  char16_t buf2[6] = {};
+  SQLLEN ind2 = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buf2, sizeof(buf2), &ind2);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(std::u16string(buf2) == u"01-15");
+}
+
 TEST_CASE("DATE NULL to SQL_C_WCHAR", "[date][conversion][c_wchar][null]") {
   // Given Snowflake client is logged in
   Connection conn;
