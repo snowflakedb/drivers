@@ -416,12 +416,36 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
-        let error_message = trace
-            .last()
-            .map(|entry| entry.message.clone())
-            .unwrap_or_default();
+        let error_message = self.structured_message().unwrap_or_else(|| {
+            trace
+                .last()
+                .map(|entry| entry.message.clone())
+                .unwrap_or_default()
+        });
         let trace_text = format_error_trace(&trace);
         format!("{}\nTrace:\n{}", error_message, trace_text)
+    }
+
+    /// Extract a user-facing message from structured protobuf error fields
+    /// when available; returns `None` to fall back to the generic trace-based
+    /// message.
+    fn structured_message(&self) -> Option<String> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { error, .. } => match error.as_ref() {
+                    ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
+                        explanation: Some(explanation),
+                        ..
+                    }) => Some(explanation.clone()),
+                    ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
+                        Some(format!("Missing required parameter: {parameter}"))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
