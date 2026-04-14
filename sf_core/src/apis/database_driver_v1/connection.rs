@@ -527,14 +527,7 @@ where
     Fut: Future<Output = Result<T, RestError>>,
 {
     let mut ctx = RefreshContext::from_arc(conn).await?;
-    let mut last_error: Option<RestError> = None;
-    loop {
-        let token = ctx.refresh_token(last_error).await?;
-        match f(token).await {
-            Ok(result) => return Ok(result),
-            Err(e) => last_error = Some(e),
-        }
-    }
+    ctx.execute_with_refresh(f).await
 }
 
 /// Context for automatic session token refresh.
@@ -705,6 +698,26 @@ impl RefreshContext {
                 }
                 .fail(),
             },
+        }
+    }
+
+    /// Execute an async operation with automatic token refresh on session expiry.
+    ///
+    /// Canonical implementation of the refresh-retry loop. On `SessionExpired`,
+    /// refreshes the session token via master token and retries exactly once.
+    /// Named to parallel [`execute_with_retry`](crate::http::retry::execute_with_retry).
+    pub async fn execute_with_refresh<F, Fut, T>(&mut self, f: F) -> Result<T, ApiError>
+    where
+        F: Fn(SensitiveString) -> Fut,
+        Fut: Future<Output = Result<T, RestError>>,
+    {
+        let mut last_error: Option<RestError> = None;
+        loop {
+            let token = self.refresh_token(last_error).await?;
+            match f(token).await {
+                Ok(result) => return Ok(result),
+                Err(e) => last_error = Some(e),
+            }
         }
     }
 }
