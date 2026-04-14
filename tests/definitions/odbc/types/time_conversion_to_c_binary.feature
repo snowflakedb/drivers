@@ -3,33 +3,44 @@ Feature: ODBC TIME to SQL_C_BINARY conversions
 
   @odbc_e2e
   Scenario: TIME to SQL_C_BINARY
+    # BD#41: Old driver does not support TIME to SQL_C_BINARY conversion
     Given Snowflake client is logged in
     When A TIME value is fetched as SQL_C_BINARY
-    Then Raw bytes are returned with positive indicator
+    Then SQL_TIME_STRUCT fields match the source time
 
   @odbc_e2e
-  Scenario: TIME to SQL_C_BINARY midnight
+  Scenario: TIME to SQL_C_BINARY struct field verification
+    # BD#41: Old driver does not support TIME to SQL_C_BINARY conversion
     Given Snowflake client is logged in
-    When Midnight TIME is fetched as SQL_C_BINARY
-    Then Raw bytes are returned with positive indicator
+    When midnight TIME is fetched as SQL_C_BINARY
+    Then SQL_TIME_STRUCT fields match
+    When end of day TIME is fetched as SQL_C_BINARY
+    Then SQL_TIME_STRUCT fields match
+    When single-digit TIME is fetched as SQL_C_BINARY
+    Then SQL_TIME_STRUCT fields match
+    When fractional TIME is fetched as SQL_C_BINARY
+    Then SQL_TIME_STRUCT fields match (fractional seconds dropped)
 
   @odbc_e2e
-  Scenario: TIME to SQL_C_BINARY end of day
+  Scenario: TIME to SQL_C_BINARY exact buffer fit
+    # BD#41: Old driver does not support TIME to SQL_C_BINARY conversion
     Given Snowflake client is logged in
-    When End-of-day TIME is fetched as SQL_C_BINARY
-    Then Raw bytes are returned with positive indicator
+    When A TIME value is fetched into a buffer of exactly sizeof(SQL_TIME_STRUCT)
+    Then SQL_SUCCESS is returned with correct struct fields
 
   @odbc_e2e
-  Scenario: TIME to SQL_C_BINARY with fractional seconds
+  Scenario: TIME to SQL_C_BINARY buffer too small
+    # BD#40: Old driver does not return 22003 for undersized binary buffer
     Given Snowflake client is logged in
-    When A TIME with fractional seconds is fetched as SQL_C_BINARY
-    Then Raw bytes are returned with positive indicator
+    When A TIME value is fetched into a buffer smaller than sizeof(SQL_TIME_STRUCT)
+    Then SQL_ERROR is returned with SQLSTATE 22003
 
   @odbc_e2e
   Scenario: TIME to SQL_C_BINARY consistent size
+    # BD#41: Old driver does not support TIME to SQL_C_BINARY conversion
     Given Snowflake client is logged in
     When Different TIME values are fetched as SQL_C_BINARY
-    Then The indicator size is consistent across all times
+    Then The indicator equals sizeof(SQL_TIME_STRUCT) for all times
 
   @odbc_e2e
   Scenario: TIME NULL to SQL_C_BINARY

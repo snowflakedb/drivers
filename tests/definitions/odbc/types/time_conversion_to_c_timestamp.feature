@@ -24,14 +24,26 @@ Feature: ODBC TIME to SQL_C_TYPE_TIMESTAMP conversions
     # BD#42: Old driver does not report 01S07 for fractional seconds
     Given Snowflake client is logged in
     When A TIME with non-zero fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
-    Then Time components are extracted with SQLSTATE 01S07 warning
+    Then Time components are extracted with SQLSTATE 01S07 warning and fraction is zero
 
   @odbc_e2e
   Scenario: TIME to SQL_C_TYPE_TIMESTAMP with high-precision fractional truncation
     # BD#42: Old driver does not report 01S07 for fractional seconds
     Given Snowflake client is logged in
     When A TIME with high-precision fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
-    Then Time components are extracted with SQLSTATE 01S07 warning
+    Then Time components are extracted with SQLSTATE 01S07 warning and fraction is zero
+
+  @odbc_e2e
+  Scenario: TIME to SQL_C_TYPE_TIMESTAMP with zero fractional seconds
+    Given Snowflake client is logged in
+    When A TIME with ".000" fractional seconds is fetched as SQL_C_TYPE_TIMESTAMP
+    Then No truncation warning is returned and fraction is zero
+
+  @odbc_e2e
+  Scenario: TIME to SQL_C_TYPE_TIMESTAMP single-digit components
+    Given Snowflake client is logged in
+    When A TIME with single-digit hour, minute, second is fetched as SQL_C_TYPE_TIMESTAMP
+    Then Time components match and date is current date
 
   @odbc_e2e
   Scenario: TIME NULL to SQL_C_TYPE_TIMESTAMP

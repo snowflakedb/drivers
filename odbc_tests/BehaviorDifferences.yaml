@@ -455,3 +455,15 @@ behavior_differences:
       returned with SQLSTATE 01S07 (Fractional truncation).
       Spec reference: "Converting Data from SQL to C Data Types" — SQL_TIME
       to SQL_C_TYPE_TIMESTAMP: "The timestamp fraction field is set to zero."
+  41:
+    name: "TIME to SQL_C_BINARY conversion not supported"
+    description: |
+      OLD driver: Returns SQL_ERROR when SQLGetData is called with
+      SQL_C_BINARY on a TIME column. The old driver does not support
+      converting TIME values to their binary SQL_TIME_STRUCT representation.
+      NEW driver: Returns SQL_SUCCESS with a 6-byte SQL_TIME_STRUCT
+      containing the hour, minute, and second fields. The indicator is
+      set to sizeof(SQL_TIME_STRUCT). Per the ODBC specification, SQL_C_BINARY
+      is a valid target type for SQL_TYPE_TIME — the data is transferred
+      as-is when the byte length fits the buffer, or SQLSTATE 22003 is
+      returned when the buffer is too small.
