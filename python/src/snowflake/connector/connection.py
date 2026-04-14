@@ -30,10 +30,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
-    ConnectionSetOptionBoolRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionsRequest,
-    ConnectionSetOptionStringRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
@@ -275,60 +273,17 @@ class Connection:
         )
 
     def _send_logout_config(self, logout_config: LogoutConfig) -> None:
-        """Send resolved LogoutConfig to Core via typed ConnectionSetOption* RPCs.
+        """Send resolved LogoutConfig to Core via batch connection_set_options RPC.
 
         Called at init time, before connection_init. Core re-derives LogoutConfig
         from connection_seed at close() time, so post-init overrides take effect.
         """
-        if logout_config.server_session_keep_alive is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
+        options = _build_config_settings(logout_config.to_option_dict())
+        if options:
+            self.db_api.connection_set_options(
+                ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.SERVER_SESSION_KEEP_ALIVE,
-                    value=logout_config.server_session_keep_alive,
-                )
-            )
-
-        if logout_config.enable_server_session_keep_alive_auto_detection is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION,
-                    value=logout_config.enable_server_session_keep_alive_auto_detection,
-                )
-            )
-
-        self.db_api.connection_set_option_string(
-            ConnectionSetOptionStringRequest(
-                conn_handle=self.conn_handle,
-                key=LogoutOptionKeys.LOGOUT_ERROR_STRATEGY,
-                value=logout_config.error_strategy,
-            )
-        )
-
-        self.db_api.connection_set_option_int(
-            ConnectionSetOptionIntRequest(
-                conn_handle=self.conn_handle,
-                key=LogoutOptionKeys.LOGOUT_TOTAL_TIMEOUT_SECONDS,
-                value=logout_config.logout_total_timeout_seconds,
-            )
-        )
-
-        if logout_config.max_attempts is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS,
-                    value=logout_config.max_attempts,
-                )
-            )
-
-        if logout_config.logout_request_timeout_seconds is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_REQUEST_TIMEOUT_SECONDS,
-                    value=logout_config.logout_request_timeout_seconds,
+                    options=options,
                 )
             )
 
@@ -397,7 +352,7 @@ class Connection:
         try:
             self.close(retry=False)
         except Exception:
-            pass  # Suppress errors during exit cleanup
+            logger.debug("close() failed during atexit cleanup")
 
     @property
     @pep249
