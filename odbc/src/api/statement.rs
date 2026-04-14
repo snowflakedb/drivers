@@ -18,10 +18,11 @@ use arrow::array::RecordBatchReader;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::{
-    ArrowArrayStreamPtr, BinaryDataPtr, ConnectionGetParameterRequest, ConnectionHandle,
-    ExecuteQueryResponse, QueryBindings, StatementExecuteQueryRequest,
-    StatementGetResultSetRequest, StatementHandle, StatementPrepareRequest,
-    StatementSetSqlQueryRequest, query_bindings,
+    ArrowArrayStreamPtr, BinaryDataPtr, ConfigSetting, ConnectionGetParameterRequest,
+    ConnectionHandle, ExecuteQueryResponse, QueryBindings, ResultSetResponse,
+    StatementExecuteQueryRequest, StatementGetResultSetRequest,
+    StatementHandle as StatementHandleProto, StatementPrepareRequest, StatementSetOptionsRequest,
+    StatementSetSqlQueryRequest, config_setting, execute_query_response, query_bindings,
 };
 use snafu::ResultExt;
 use tokio_util::sync::CancellationToken;
@@ -137,29 +138,8 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             tracing::info!("exec_direct: response={:?}", response);
             let response = response?;
 
-            let query_id = response.result.as_ref().and_then(|r| match r {
-                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Single(desc) => {
-                    Some(desc.query_id.clone())
-                }
-                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Multi(multi) => {
-                    multi.parent.as_ref().map(|p| p.query_id.clone())
-                }
-            });
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
-            let execute_state =
-                create_execute_state(*conn_handle, stmt_handle, response, ExecutionOrigin::Direct)?;
-            let is_zero_dml = matches!(
-                &execute_state,
-                StatementState::DmlExecuted {
-                    rows_affected: 0,
-                    ..
-                }
-            );
-            set_state(stmt, execute_state);
-            stmt.last_query_id = query_id.filter(|s| !s.is_empty());
-            if is_zero_dml {
-                return NoMoreDataSnafu.fail();
-            }
+            apply_execute_response(stmt, response, ExecutionOrigin::Direct)?;
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -391,30 +371,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
-
-            let query_id = response.result.as_ref().and_then(|r| match r {
-                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Single(desc) => {
-                    Some(desc.query_id.clone())
-                }
-                sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Multi(multi) => {
-                    multi.parent.as_ref().map(|p| p.query_id.clone())
-                }
-            });
-
-            let execute_state =
-                create_execute_state(*conn_handle, stmt.stmt_handle, response, origin)?;
-            let is_zero_dml = matches!(
-                &execute_state,
-                StatementState::DmlExecuted {
-                    rows_affected: 0,
-                    ..
-                }
-            );
-            set_state(stmt, execute_state);
-            stmt.last_query_id = query_id.filter(|s| !s.is_empty());
-            if is_zero_dml {
-                return NoMoreDataSnafu.fail();
-            }
+            apply_execute_response(stmt, response, origin)?;
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -451,40 +408,108 @@ fn set_state(stmt: &mut Statement, state: StatementState) {
     stmt.state = state.into();
 }
 
-fn create_execute_state(
-    _conn_handle: ConnectionHandle,
-    stmt_handle: StatementHandle,
+/// Process an `ExecuteQueryResponse` and apply the resulting state to the statement.
+///
+/// For Single results: fetches the Arrow stream via `StatementGetResultSet`, then
+/// creates the appropriate state (DDL/DML/Query).
+/// For Multi results: stores child query IDs, fetches the first child result set,
+/// and sets up state for `SQLMoreResults` iteration.
+fn apply_execute_response(
+    stmt: &mut Statement,
     response: ExecuteQueryResponse,
     origin: ExecutionOrigin,
-) -> OdbcResult<StatementState> {
-    tracing::debug!("create_execute_state: response={:?}", response);
+) -> OdbcResult<()> {
     let result = response.result.required("Execute result is required")?;
 
-    // Extract descriptor based on whether it's a single or multi-statement response
-    let descriptor = match result {
-        sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Single(desc) => desc,
-        sf_core::protobuf::generated::database_driver_v1::execute_query_response::Result::Multi(multi) => {
-            // For multi-statement, use the parent descriptor
-            multi.parent.required("Multi-statement parent descriptor is required")?
+    // Clear previous multi-statement state.
+    stmt.multi_query_ids.clear();
+    stmt.multi_current_idx = 0;
+
+    match result {
+        execute_query_response::Result::Single(descriptor) => {
+            let query_id = descriptor.query_id.clone();
+            let rs = fetch_result_set(stmt.stmt_handle, &query_id)?;
+            let execute_state = create_execute_state_from_result_set(
+                rs,
+                descriptor.statement_type_id,
+                descriptor.rows_affected,
+                origin,
+            )?;
+            let is_zero_dml = matches!(
+                &execute_state,
+                StatementState::DmlExecuted {
+                    rows_affected: 0,
+                    ..
+                }
+            );
+            set_state(stmt, execute_state);
+            stmt.last_query_id = Some(query_id).filter(|s| !s.is_empty());
+            if is_zero_dml {
+                return NoMoreDataSnafu.fail();
+            }
+            Ok(())
         }
-    };
+        execute_query_response::Result::Multi(multi) => {
+            let parent_query_id = multi
+                .parent
+                .as_ref()
+                .map(|p| p.query_id.clone())
+                .unwrap_or_default();
+            stmt.last_query_id = Some(parent_query_id).filter(|s| !s.is_empty());
+            stmt.multi_query_ids = multi.query_ids;
 
-    let query_id = descriptor.query_id.clone();
-    let rows_affected = descriptor.rows_affected;
-    let statement_type_id = descriptor.statement_type_id;
+            if stmt.multi_query_ids.is_empty() {
+                // No child statements — treat as DDL with no cursor.
+                set_state(
+                    stmt,
+                    StatementState::DdlExecuted {
+                        schema: arrow::datatypes::Schema::empty().into(),
+                        origin,
+                    },
+                );
+                return NoMoreDataSnafu.fail();
+            }
 
-    // Fetch the result set with the stream
-    let result_set_response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+            // Fetch and apply the first child result set.
+            let first_id = &stmt.multi_query_ids[0];
+            let rs = fetch_result_set(stmt.stmt_handle, first_id)?;
+            let statement_type_id = rs
+                .result_descriptor
+                .as_ref()
+                .and_then(|d| d.statement_type_id);
+            let rows_affected = rs.result_descriptor.as_ref().and_then(|d| d.rows_affected);
+            let execute_state =
+                create_execute_state_from_result_set(rs, statement_type_id, rows_affected, origin)?;
+            stmt.multi_current_idx = 1;
+            set_state(stmt, execute_state);
+            Ok(())
+        }
+    }
+}
+
+/// Fetch a result set (descriptor + Arrow stream) for a given query ID.
+fn fetch_result_set(
+    stmt_handle: StatementHandleProto,
+    query_id: &str,
+) -> OdbcResult<ResultSetResponse> {
+    let response = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
         c.statement_get_result_set(StatementGetResultSetRequest {
             stmt_handle: Some(stmt_handle),
-            query_id,
+            query_id: query_id.to_string(),
         })
         .await
     })?;
+    Ok(response)
+}
 
-    let stream = result_set_response.stream.required("Stream is required")?;
+fn create_execute_state_from_result_set(
+    rs: ResultSetResponse,
+    statement_type_id: Option<i64>,
+    rows_affected: Option<i64>,
+    origin: ExecutionOrigin,
+) -> OdbcResult<StatementState> {
+    let stream = rs.stream.required("Stream is required")?;
     let reader = reader_from_protobuf_stream(stream)?;
-
     if let Some(id) = statement_type_id {
         if is_ddl_statement(id) {
             return Ok(StatementState::DdlExecuted {
@@ -492,11 +517,9 @@ fn create_execute_state(
                 origin,
             });
         }
-        if is_dml_statement_type(Some(id))
-            && let Some(affected) = rows_affected
-        {
+        if is_dml_statement_type(Some(id)) {
             return Ok(StatementState::DmlExecuted {
-                rows_affected: affected,
+                rows_affected: rows_affected.unwrap_or(0),
                 schema: reader.schema(),
                 origin,
             });
@@ -1003,6 +1026,26 @@ pub fn set_stmt_attr(
             tracing::warn!("set_stmt_attr: {:?} is read-only", attr);
             ReadOnlyAttributeSnafu { attribute }.fail()
         }
+        StmtAttr::MultiStatementCount => {
+            let count = value_ptr as i64;
+            tracing::debug!("set_stmt_attr: MultiStatementCount = {}", count);
+            let stmt_handle = stmt.stmt_handle;
+            let mut options = std::collections::HashMap::new();
+            options.insert(
+                "multi_statement_count".to_string(),
+                ConfigSetting {
+                    value: Some(config_setting::Value::IntValue(count)),
+                },
+            );
+            global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                c.statement_set_options(StatementSetOptionsRequest {
+                    stmt_handle: Some(stmt_handle),
+                    options,
+                })
+                .await
+            })?;
+            Ok(())
+        }
         _ => {
             tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
             UnsupportedAttributeSnafu { attribute }.fail()
@@ -1149,6 +1192,10 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
             );
             Ok(())
         }
+        StmtAttr::MultiStatementCount => {
+            tracing::warn!("get_stmt_attr: MultiStatementCount is write-only");
+            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
+        }
         _ => {
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnknownAttributeSnafu { attribute }.fail()
@@ -1193,5 +1240,49 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     }
 
     stmt.cancel_token.cancel();
+    Ok(())
+}
+
+/// Advance to the next result set in a multi-statement execution (SQLMoreResults).
+///
+/// Returns `Ok(())` when a new result set is available, or `NoMoreDataSnafu`
+/// when all result sets have been consumed (the cursor is closed).
+pub fn more_results(statement_handle: sql::Handle) -> OdbcResult<()> {
+    let stmt = stmt_from_handle(statement_handle);
+    tracing::debug!(
+        "more_results: multi_current_idx={}, multi_query_ids.len()={}",
+        stmt.multi_current_idx,
+        stmt.multi_query_ids.len()
+    );
+
+    let origin = match stmt.state.as_ref() {
+        StatementState::QueryExecuted { origin, .. }
+        | StatementState::Fetching { origin, .. }
+        | StatementState::DdlExecuted { origin, .. }
+        | StatementState::DmlExecuted { origin, .. }
+        | StatementState::Done { origin, .. } => origin.clone(),
+        _ => ExecutionOrigin::Direct,
+    };
+
+    if stmt.multi_current_idx >= stmt.multi_query_ids.len() {
+        // No more result sets — close cursor per ODBC spec.
+        free_stmt(statement_handle, FreeStmtOption::Close)?;
+        stmt.multi_query_ids.clear();
+        stmt.multi_current_idx = 0;
+        return NoMoreDataSnafu.fail();
+    }
+
+    let query_id = stmt.multi_query_ids[stmt.multi_current_idx].clone();
+    stmt.multi_current_idx += 1;
+
+    let rs = fetch_result_set(stmt.stmt_handle, &query_id)?;
+    let statement_type_id = rs
+        .result_descriptor
+        .as_ref()
+        .and_then(|d| d.statement_type_id);
+    let rows_affected = rs.result_descriptor.as_ref().and_then(|d| d.rows_affected);
+    let execute_state =
+        create_execute_state_from_result_set(rs, statement_type_id, rows_affected, origin)?;
+    set_state(stmt, execute_state);
     Ok(())
 }

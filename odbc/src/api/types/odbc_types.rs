@@ -283,8 +283,12 @@ pub enum StmtAttr {
     ImpParamDesc = 10013,
     /// `SQL_ATTR_METADATA_ID` (10014) — identifier vs. pattern treatment for catalog functions.
     MetadataId = 10014,
-    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` (2000100) — last query ID (read-only string).
-    SnowflakeLastQueryId = 2000100,
+    /// `SQL_SF_STMT_ATTR_LAST_QUERY_ID` — last query ID (read-only string).
+    /// Platform-dependent: 1263 (Windows/MDAC) or 16647 (Unix/iODBC).
+    SnowflakeLastQueryId = 16647,
+    /// `SQL_SF_STMT_ATTR_MULTI_STATEMENT_COUNT` — number of statements in multi-statement query.
+    /// Platform-dependent: 1264 (Windows/MDAC) or 16648 (Unix/iODBC).
+    MultiStatementCount = 16648,
 }
 
 impl TryFrom<i32> for StmtAttr {
@@ -305,7 +309,12 @@ impl TryFrom<i32> for StmtAttr {
             10012 => Ok(StmtAttr::ImpRowDesc),
             10013 => Ok(StmtAttr::ImpParamDesc),
             10014 => Ok(StmtAttr::MetadataId),
-            2000100 => Ok(StmtAttr::SnowflakeLastQueryId),
+            // Windows/Microsoft ODBC (SQL_DRIVER_STMT_ATTR_BASE = 1000)
+            1263 => Ok(StmtAttr::SnowflakeLastQueryId),
+            1264 => Ok(StmtAttr::MultiStatementCount),
+            // Mac/iODBC (SQL_DRIVER_STMT_ATTR_BASE = 16384)
+            16647 => Ok(StmtAttr::SnowflakeLastQueryId),
+            16648 => Ok(StmtAttr::MultiStatementCount),
             _ => {
                 tracing::warn!("Unknown statement attribute: {}", value);
                 Err(OdbcError::UnknownAttribute {
@@ -1232,6 +1241,10 @@ pub struct Statement {
     pub prepared_param_count: Option<usize>,
     /// Query ID of the last executed query (`SQL_SF_STMT_ATTR_LAST_QUERY_ID`).
     pub last_query_id: Option<String>,
+    /// Child query IDs for multi-statement execution (consumed by SQLMoreResults).
+    pub multi_query_ids: Vec<String>,
+    /// Index of the next child result to fetch in `multi_query_ids`.
+    pub multi_current_idx: usize,
     /// Cancelled by `SQLCancel` (possibly from another thread) and observed
     /// by execution functions via `tokio::select!` when cross-thread cancel
     /// is wired up. Replaced with a fresh token at the start of each
@@ -1268,6 +1281,8 @@ impl Statement {
             prepared_param_count: None,
             metadata_id,
             last_query_id: None,
+            multi_query_ids: Vec::new(),
+            multi_current_idx: 0,
             cancel_token: CancellationToken::new(),
         }
     }

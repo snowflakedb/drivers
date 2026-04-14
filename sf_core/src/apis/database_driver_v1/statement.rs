@@ -391,8 +391,11 @@ impl DatabaseDriverV1 {
 
         let query = extract_query(&stmt)?;
         let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
+
         let execution_mode = stmt.execution_mode(Some(&query));
+
         let query_bindings = resolve_query_bindings(&bindings)?;
+
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
@@ -400,8 +403,11 @@ impl DatabaseDriverV1 {
             query_parameters: build_query_parameters(&stmt.settings),
         };
 
+        let conn_arc = stmt.conn.clone();
+        drop(stmt);
+
         let response = {
-            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
+            let mut ctx = RefreshContext::from_arc(&conn_arc).await?;
             let mut last_error = None;
             loop {
                 let session_token = ctx.refresh_token(last_error).await?;
@@ -422,7 +428,7 @@ impl DatabaseDriverV1 {
         }?;
 
         if response.success {
-            let conn = stmt.conn.lock().await;
+            let conn = conn_arc.lock().await;
             conn.update_session_params_cache(
                 &query,
                 response.data.parameters.as_ref(),
