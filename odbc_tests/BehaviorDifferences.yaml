@@ -430,3 +430,28 @@ behavior_differences:
       when inserted string data exceeds the target VARCHAR column size.
       NEW driver: Returns SQLSTATE 22001 (String data, right truncation)
       per the ODBC spec (SQLExecute diagnostics table).
+  41:
+    name: "DATE to SQL_C_CHAR/WCHAR truncation returns error instead of 01004"
+    type: "Bug Fix"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_CHAR or SQL_C_WCHAR on
+      a DATE column and the buffer is too small to hold the full "YYYY-MM-DD"
+      string, the old driver returns SQL_ERROR with SQLSTATE 07006 (Restricted
+      data type attribute violation). No partial data is written to the buffer.
+      NEW driver: Returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 (String
+      data, right truncation) and writes as many characters as fit in the
+      buffer (null-terminated), with the indicator set to the full string
+      length (10 bytes), per the ODBC specification for string truncation.
+  42:
+    name: "TIME to SQL_C_TYPE_TIMESTAMP does not report fractional truncation"
+    description: |
+      OLD driver: When TIME with fractional seconds (e.g. '14:30:45.123') is
+      converted to SQL_C_TYPE_TIMESTAMP, the old driver returns SQL_SUCCESS
+      and places the fractional seconds into the timestamp fraction field.
+      It does not report SQLSTATE 01S07 (Fractional truncation).
+      NEW driver: Per the ODBC specification, when SQL_TYPE_TIME is converted
+      to SQL_C_TYPE_TIMESTAMP the fraction field is set to zero. If the
+      original TIME value had fractional seconds, SQL_SUCCESS_WITH_INFO is
+      returned with SQLSTATE 01S07 (Fractional truncation).
+      Spec reference: "Converting Data from SQL to C Data Types" — SQL_TIME
+      to SQL_C_TYPE_TIMESTAMP: "The timestamp fraction field is set to zero."
