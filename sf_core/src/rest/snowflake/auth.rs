@@ -16,6 +16,12 @@ where
 
 // TODO: Delete all unused fields when we are sure they are not needed
 
+#[derive(Debug, Serialize, Default)]
+pub struct AuthRequestClientCapabilities {
+    #[serde(rename = "SMK_ID_AS_STRING")]
+    pub smk_id_as_string: bool,
+}
+
 // TODO: Currently this is only compatible with Python, should be generalized later
 #[derive(Debug, Serialize, Default)]
 pub struct AuthRequestClientEnvironment {
@@ -67,6 +73,8 @@ pub struct AuthRequestData {
     pub authenticator: Option<String>,
     #[serde(rename = "SESSION_PARAMETERS", skip_serializing_if = "Option::is_none")]
     pub session_parameters: Option<HashMap<String, serde_json::Value>>,
+    #[serde(rename = "CLIENT_CAPABILITIES")]
+    pub client_capabilities: AuthRequestClientCapabilities,
     #[serde(rename = "CLIENT_ENVIRONMENT")]
     pub client_environment: AuthRequestClientEnvironment,
     #[serde(
