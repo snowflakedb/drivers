@@ -13,6 +13,9 @@ LABEL="$2"
 DOCKER_EXIT="$3"
 shift 3
 
+RESPONSE_FILE=$(mktemp "${TMPDIR:-/tmp}/analytics-response.XXXXXX")
+trap 'rm -f "$RESPONSE_FILE"' EXIT
+
 echo "--- :buildkite: Uploading test results"
 
 for pattern in "$@"; do
@@ -26,7 +29,7 @@ for pattern in "$@"; do
     [ -f "$xml" ] || { echo "WARNING: JUnit XML not found: $xml"; continue; }
     echo "Uploading $xml to Test Analytics (driver=$DRIVER)..."
     HTTP_CODE=$(curl -s -S -X POST --max-time 30 \
-      -w "%{http_code}" -o /tmp/analytics-response.json \
+      -w "%{http_code}" -o "$RESPONSE_FILE" \
       -H "Authorization: Token token=$BUILDKITE_ANALYTICS_TOKEN" \
       -F "data=@$xml" \
       -F "format=junit" \
@@ -45,7 +48,7 @@ for pattern in "$@"; do
       echo "Uploaded $xml to Test Analytics (HTTP $HTTP_CODE)"
     else
       echo "WARNING: Test Analytics upload failed for $xml (HTTP ${HTTP_CODE:-unknown})"
-      cat /tmp/analytics-response.json 2>/dev/null || true
+      cat "$RESPONSE_FILE" 2>/dev/null || true
       echo ""
       UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
     fi
