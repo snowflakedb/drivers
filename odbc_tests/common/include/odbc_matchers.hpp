@@ -2,6 +2,7 @@
 #define ODBC_MATCHERS_HPP
 
 #include <sql.h>
+#include <sqlext.h>
 
 #include <string>
 #include <vector>

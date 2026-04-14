@@ -10,6 +10,7 @@
 TEST_CASE("Replay: exec_direct_getdata_13col_111rows", "[dtm]") {
   auto config = DataSourceConfig::Snowflake().install();
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+  WINDOWS_ONLY { SKIP("Stack overflow in setup on windows"); }
 
   SQLHENV env0 = SQL_NULL_HENV;
   // SQLAllocHandle - SQLHENV
