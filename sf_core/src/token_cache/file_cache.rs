@@ -138,7 +138,7 @@ impl FileLock {
         for attempt in 0..retry_count {
             match file.try_lock_exclusive() {
                 Ok(()) => return Ok(FileLock { _file: file }),
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(ref e) if Self::is_lock_contention(e) => {
                     if attempt < retry_count - 1 {
                         // Decorrelated jitter: sleep ∈ [base, min(3×prev, 16×base)]
                         let upper = (sleep_ms * 3.0).min(base_ms * 16.0);
@@ -151,6 +151,27 @@ impl FileLock {
         }
 
         LockExhaustedSnafu.fail()
+    }
+
+    /// Returns `true` when the error indicates the lock is held by another
+    /// handle/process and the caller should retry.
+    ///
+    /// On Unix, `flock` returns `EWOULDBLOCK` (`ErrorKind::WouldBlock`).
+    /// On Windows, `LockFileEx` with `LOCKFILE_FAIL_IMMEDIATELY` returns
+    /// `ERROR_LOCK_VIOLATION` (code 33) which Rust maps to
+    /// `ErrorKind::Uncategorized` rather than `WouldBlock`.
+    fn is_lock_contention(e: &std::io::Error) -> bool {
+        if e.kind() == std::io::ErrorKind::WouldBlock {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            const ERROR_LOCK_VIOLATION: i32 = 33;
+            if e.raw_os_error() == Some(ERROR_LOCK_VIOLATION) {
+                return true;
+            }
+        }
+        false
     }
 
     fn open_lock_file(lock_path: &Path) -> Result<fs::File, TokenCacheError> {
