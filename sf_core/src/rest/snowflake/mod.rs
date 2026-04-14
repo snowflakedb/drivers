@@ -164,6 +164,11 @@ pub struct QueryInput<'a> {
     pub describe_only: Option<bool>,
 }
 
+// TODO(SNOW-2872349): DD §3 target format is:
+//   {app}/{ver} ({os}) {impl}/{runtime_ver} UD/{ud_ver} Rust/{rust_ver}
+// e.g. PythonConnector/3.15.0 (Darwin) CPython/3.11.6 UD/0.0.0 Rust/1.88
+// The {impl}/{runtime_ver} segment is omitted until ClientInfo is dynamically
+// populated by each wrapper (currently hardcoded in rest_parameters.rs).
 pub fn build_user_agent(client_info: &ClientInfo) -> String {
     let ud_version = env!("CARGO_PKG_VERSION");
     let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
