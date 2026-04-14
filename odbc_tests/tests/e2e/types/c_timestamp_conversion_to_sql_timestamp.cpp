@@ -11,6 +11,7 @@ TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIMESTAMP and read back"
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
+  conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("CREATE TABLE t (col TIMESTAMP_NTZ)");
 
   // When SQL_C_TYPE_TIMESTAMP 2026-04-13 14:30:45 is bound and inserted
