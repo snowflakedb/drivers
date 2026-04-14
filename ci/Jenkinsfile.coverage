@@ -418,7 +418,7 @@ pipeline {
                               summary: "Jenkins Build ${env.BUILD_NUMBER}: ${currentBuild.currentResult}\n${currentBuild.description ?: ''}",
                               detailsURL: env.BUILD_URL,
                               status: 'COMPLETED',
-                              conclusion: currentBuild.currentResult == 'FAILURE' ? 'FAILURE' : 'SUCCESS'
+                              conclusion: currentBuild.currentResult == 'SUCCESS' ? 'SUCCESS' : 'FAILURE'
             }
         }
     }
