@@ -6,4 +6,5 @@
 pub mod auth;
 pub mod mfa;
 pub mod okta;
+pub mod password;
 pub mod put_get;
