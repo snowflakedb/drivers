@@ -9,12 +9,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+const CONNECTION_CLOSE: &str = "Connection: close";
+
 /// Read the full incoming HTTP request bytes from a stream.
 ///
-/// Returns the bytes read (up to 4096). Returns an empty vec if the read fails.
+/// Returns the bytes read (up to 4096). Panics if the read fails.
 async fn read_request_bytes(stream: &mut TcpStream) -> Vec<u8> {
     let mut buf = vec![0u8; 4096];
-    let n = stream.read(&mut buf).await.unwrap_or(0);
+    let n = stream
+        .read(&mut buf)
+        .await
+        .expect("server: failed to read request");
     buf.truncate(n);
     buf
 }
@@ -66,8 +71,7 @@ where
             let responder = responder.clone();
 
             // Read the request (we discard it, responder only cares about attempt number)
-            let mut buf = [0u8; 2048];
-            let _ = stream.read(&mut buf).await;
+            drop(read_request_bytes(&mut stream).await);
 
             let response = responder(attempt).await;
             stream.write_all(&response).await.unwrap();
@@ -123,13 +127,10 @@ pub async fn spawn_capture_server() -> (
         let buf = read_request_bytes(&mut stream).await;
 
         // Send success response
-        let body = r#"{"success":true}"#;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(response.as_bytes()).await.unwrap();
+        stream
+            .write_all(&json_response(r#"{"success":true}"#))
+            .await
+            .unwrap();
         let _ = stream.shutdown().await;
 
         buf
@@ -155,11 +156,12 @@ pub async fn spawn_capture_server() -> (
 ///
 /// # Returns
 /// * `SocketAddr` - The address the server is listening on
+/// * `Arc<AtomicUsize>` - Counter for number of requests handled
 /// * `JoinHandle<()>` - Handle to the server task
 pub async fn spawn_capture_server_with_response<F>(
     max_attempts: usize,
     responder: F,
-) -> (SocketAddr, tokio::task::JoinHandle<()>)
+) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
 where
     F: Fn(String) -> Vec<u8> + Send + Sync + 'static,
 {
@@ -167,11 +169,12 @@ where
     let addr = listener.local_addr().unwrap();
     let responder = Arc::new(responder);
     let attempt = Arc::new(AtomicUsize::new(0));
+    let attempt_clone = attempt.clone();
 
     let handle = tokio::spawn(async move {
         loop {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
+            let current = attempt_clone.fetch_add(1, Ordering::SeqCst) + 1;
             let responder = responder.clone();
 
             let raw = read_request_bytes(&mut stream).await;
@@ -187,13 +190,13 @@ where
         }
     });
 
-    (addr, handle)
+    (addr, attempt, handle)
 }
 
 /// Helper to create a JSON HTTP 200 response.
 pub fn json_response(body: &str) -> Vec<u8> {
     format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
         body.len(),
         body
     )
@@ -203,7 +206,7 @@ pub fn json_response(body: &str) -> Vec<u8> {
 /// Helper to create a JSON HTTP error response.
 pub fn json_error_response(status: u16, status_text: &str, body: &str) -> Vec<u8> {
     format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
         status,
         status_text,
         body.len(),
@@ -215,7 +218,7 @@ pub fn json_error_response(status: u16, status_text: &str, body: &str) -> Vec<u8
 /// Helper to create a 503 Service Unavailable response with Retry-After header.
 pub fn service_unavailable_response(body: &str, retry_after: u32) -> Vec<u8> {
     format!(
-        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
         body.len(),
         retry_after,
         body

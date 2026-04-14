@@ -711,6 +711,7 @@ class TestAutoCleanup:
 
             # Given Snowflake Python client is created with auto_cleanup enabled
             subprocess_code = textwrap.dedent(f"""\
+                import atexit
                 from snowflake.connector.connection import Connection
                 conn = Connection(
                     user="test_user",
@@ -729,6 +730,9 @@ class TestAutoCleanup:
                 assert conn.auto_cleanup is True, "auto_cleanup must be True for atexit.register to fire"
                 print("ATEXIT_REGISTERED")
                 # When close() is called explicitly
+                orig = atexit.unregister
+                def _spy(f): orig(f); print("ATEXIT_UNREGISTERED")
+                atexit.unregister = _spy
                 conn.close()
                 print("CLOSE_CALLED")
             """)
@@ -747,6 +751,7 @@ class TestAutoCleanup:
             assert "CLOSE_CALLED" in result.stdout, "Subprocess must confirm close() was called"
 
             # Then atexit handler is unregistered
+            assert "ATEXIT_UNREGISTERED" in result.stdout, "conn.close() must call atexit.unregister()"
             logout_requests = wiremock.get_logout_requests()
 
             # And Subsequent process exit will not trigger second close
@@ -779,10 +784,12 @@ class TestAutoCleanup:
                 )
             """)
 
-        # Phase A: happy path — process exits with leaked connection, server accepts logout
+        # Phase A: process exits with leaked connection; first logout attempt returns 503, second
+        # attempt returns 200. With retry=False, the 503 is never retried (len==1). This
+        # distinguishes retry=False (len==1) from retry=True (len==2: 503 + retry 200).
         with WiremockClient().start() as wiremock:
             wiremock.add_mapping("auth/login_success_jwt.json")
-            wiremock.add_mapping("session/logout_success.json")
+            wiremock.add_mapping("session/logout_503_then_success.json")
 
             # Given Snowflake Python client is created with auto_cleanup enabled
             subprocess_code = _build_subprocess_code(wiremock.http_url())
@@ -802,9 +809,11 @@ class TestAutoCleanup:
             # Then atexit handler calls close(retry=False)
             logout_requests = wiremock.get_logout_requests()
 
+            # 503 is retried under retry=True (→ len==2) but not under retry=False (→ len==1).
             # And No retries are attempted during atexit close
             assert len(logout_requests) == 1, (
-                f"retry=False means max_attempts=1 (no retries), got {len(logout_requests)} requests"
+                f"retry=False: 503 must not be retried (retry=True would push count to 2), "
+                f"got {len(logout_requests)} requests"
             )
 
             # And Session is logged out if conditions allow
@@ -825,6 +834,9 @@ class TestAutoCleanup:
             )
             assert result_b.returncode == 0, (
                 f"Process must exit cleanly despite 500 on logout.\nstderr: {result_b.stderr}"
+            )
+            assert len(wiremock2.get_logout_requests()) >= 1, (
+                "Phase B must reach the logout endpoint to prove exception suppression"
             )
 
     def test_should_emit_deprecation_warning_only_once_when_multiple_auto_cleanup_handlers_run_during_process_exit(
@@ -901,26 +913,55 @@ class TestAutoCleanup:
                 f"got {warning_count} occurrences.\nstderr:\n{result.stderr}"
             )
 
-    def test_should_not_register_atexit_handler_when_auto_cleanup_explicitly_disabled(self, core_mock):
+    def test_should_not_register_atexit_handler_when_auto_cleanup_explicitly_disabled(
+        self, int_test_connection_factory
+    ):
         """Verify auto_cleanup=False prevents atexit registration entirely."""
-        from snowflake.connector.connection import Connection
+        with WiremockClient().start() as wiremock:
+            wiremock.add_mapping("auth/login_success_jwt.json")
 
-        with patch("snowflake.connector.connection.atexit") as mock_atexit:
+            wiremock_url = wiremock.http_url()
+            private_key_path = get_test_private_key_path()
+
             # Given Snowflake Python client is created with auto_cleanup set to false
-            with pytest.warns(FutureWarning):
-                conn = Connection(user="test", account="test", auto_cleanup=False)
+            subprocess_code = textwrap.dedent(f"""\
+                import warnings
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                from snowflake.connector.connection import Connection
+                conn = Connection(
+                    user="test_user",
+                    account="test_account",
+                    database="test_database",
+                    schema="test_schema",
+                    warehouse="test_warehouse",
+                    role="test_role",
+                    server_url="{wiremock_url}",
+                    authenticator="SNOWFLAKE_JWT",
+                    private_key_file=r"{private_key_path}",
+                    auto_cleanup=False,
+                    enable_server_session_keep_alive_auto_detection=False,
+                )
+            """)
 
             # And Connection is not explicitly closed
-            assert conn.auto_cleanup is False
+            assert "conn.close()" not in subprocess_code
 
             # When Process exits
-            _process_exited = True  # no-op: no atexit handler registered, so exit does nothing
+            result = subprocess.run(
+                [sys.executable, "-c", subprocess_code],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert result.returncode == 0, f"Subprocess failed:\nstderr: {result.stderr}"
 
             # Then No atexit handler was registered
-            mock_atexit.register.assert_not_called()
+            logout_requests = wiremock.get_logout_requests()
 
             # And No automatic close is performed
-            core_mock.db_api.connection_close.assert_not_called()
+            assert len(logout_requests) == 0, (
+                "auto_cleanup=False must not register an atexit handler: no logout expected on process exit"
+            )
 
     def test_should_emit_telemetry_and_warn_when_connection_leaked_at_process_exit(
         self, int_test_connection_factory
