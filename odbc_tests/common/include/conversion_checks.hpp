@@ -139,12 +139,12 @@ inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQ
 // when the source SQL type cannot be converted to the requested C target type — for
 // example, numeric to temporal (DATE/TIME/TIMESTAMP) or numeric to GUID.
 //
-// On Windows the ODBC Driver Manager may intercept specific unsupported target types
-// before the driver is even invoked and return HYC00 ("Optional feature not
-// implemented") instead of 07006. Known intercepted types:
-//   - SQL_C_GUID (target_type = -11)
-// The relaxed check is scoped to _WIN32 builds AND only to these known target types;
-// all other target types must return exactly 07006 on every platform.
+// Platform / driver exceptions:
+//   - Windows DM: may return HYC00 for SQL_C_GUID before the driver is invoked.
+//   - Old (reference) driver: may return 22018 ("Invalid character value for cast
+//     specification") or 22003 ("Numeric value out of range") for semi-structured
+//     types (ARRAY/OBJECT/VARIANT) because it attempts the conversion rather than
+//     rejecting the target type upfront.
 inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type,
                                           void* buffer, SQLLEN buffer_size) {
   SQLLEN indicator = -999;
@@ -154,7 +154,9 @@ inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQ
   INFO("target_type=" << target_type << " ret=" << ret << " sqlstate=" << sqlstate);
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
-#ifdef _WIN32
+#ifdef SNOWFLAKE_OLD_DRIVER
+  CHECK((sqlstate == "07006" || sqlstate == "22018" || sqlstate == "22003"));
+#elif defined(_WIN32)
   if (target_type == SQL_C_GUID) {
     CHECK((sqlstate == "07006" || sqlstate == "HYC00"));
   } else {

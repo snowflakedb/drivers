@@ -128,7 +128,10 @@ fn make_converter(
         | sql::SqlDataType::EXT_W_CHAR
         | sql::SqlDataType::EXT_W_VARCHAR
         | sql::SqlDataType::EXT_W_LONG_VARCHAR => Ok(Box::new(JsonParamConverter {
-            snowflake_type: SnowflakeVarchar { len: 0 },
+            snowflake_type: SnowflakeVarchar {
+                len: 0,
+                is_semi_structured: false,
+            },
         })),
 
         sql::SqlDataType::DECIMAL | sql::SqlDataType::NUMERIC => {

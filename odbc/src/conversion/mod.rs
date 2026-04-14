@@ -217,7 +217,10 @@ impl SnowflakeFieldType {
         match logical_type {
             "TEXT" => {
                 let len = get_field_metadata(field, "charLength")?;
-                Ok(Self::Varchar(varchar::SnowflakeVarchar { len }))
+                Ok(Self::Varchar(varchar::SnowflakeVarchar {
+                    len,
+                    is_semi_structured: false,
+                }))
             }
             "FIXED" => {
                 let scale = get_field_metadata(field, "scale")?;
@@ -272,7 +275,10 @@ impl SnowflakeFieldType {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(Self::Varchar(varchar::SnowflakeVarchar { len }))
+                Ok(Self::Varchar(varchar::SnowflakeVarchar {
+                    len,
+                    is_semi_structured: true,
+                }))
             }
             lt => IncompatibleFieldMetadataSnafu {
                 logical_type: lt.to_string(),

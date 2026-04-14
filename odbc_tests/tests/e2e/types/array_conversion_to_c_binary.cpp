@@ -1,0 +1,70 @@
+#include <picojson.h>
+#include <sql.h>
+#include <sqlext.h>
+#include <sqltypes.h>
+
+#include <string>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "Connection.hpp"
+#include "conversion_checks.hpp"
+
+static picojson::value parse_json(const std::string& text) {
+  picojson::value v;
+  REQUIRE(picojson::parse(v, text).empty());
+  return v;
+}
+
+TEST_CASE("ARRAY to SQL_C_BINARY", "[array][conversion][c_binary]") {
+  Connection conn;
+
+  auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)");
+  SQLCHAR buffer[256] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(indicator > 0);
+
+  auto json = parse_json(std::string(reinterpret_cast<char*>(buffer), static_cast<size_t>(indicator)));
+  CHECK(json.is<picojson::array>());
+  CHECK(json.get<picojson::array>().size() == 3);
+}
+
+TEST_CASE("ARRAY to SQL_C_BINARY empty", "[array][conversion][c_binary]") {
+  Connection conn;
+
+  auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT()");
+  SQLCHAR buffer[256] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(indicator > 0);
+
+  auto json = parse_json(std::string(reinterpret_cast<char*>(buffer), static_cast<size_t>(indicator)));
+  CHECK(json.is<picojson::array>());
+  CHECK(json.get<picojson::array>().empty());
+}
+
+TEST_CASE("ARRAY to SQL_C_BINARY nested", "[array][conversion][c_binary]") {
+  Connection conn;
+
+  auto stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(ARRAY_CONSTRUCT(1,2), ARRAY_CONSTRUCT(3,4))");
+  SQLCHAR buffer[512] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(indicator > 0);
+
+  auto json = parse_json(std::string(reinterpret_cast<char*>(buffer), static_cast<size_t>(indicator)));
+  CHECK(json.is<picojson::array>());
+  CHECK(json.get<picojson::array>().size() == 2);
+}
+
+TEST_CASE("ARRAY NULL to SQL_C_BINARY", "[array][conversion][c_binary][null]") {
+  Connection conn;
+
+  auto stmt = conn.execute_fetch("SELECT NULL::ARRAY");
+
+  check_null_via_get_data(stmt, 1, SQL_C_BINARY);
+}
