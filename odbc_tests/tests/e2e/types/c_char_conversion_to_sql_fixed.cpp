@@ -135,7 +135,8 @@ TEST_CASE("should bind SQL_C_WCHAR decimal string to SQL_DECIMAL", "[c_char][con
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // BD#39: On Linux the old driver rejects WCHAR→DECIMAL; on Windows it already works.
+  // Then the old driver rejects WCHAR→DECIMAL, the new driver succeeds
+  // BD#39 is Linux-only; the old Windows driver already handles this conversion.
 #ifdef _WIN32
   REQUIRE_ODBC(ret, stmt);
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
