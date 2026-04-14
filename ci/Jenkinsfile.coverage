@@ -24,12 +24,8 @@ def dockerSetup() {
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
 }
 
-def installSystemDeps(String component = null) {
-    def packages = ['unzip']
-    if (component == 'rust-core') {
-        packages.addAll(['dbus-x11', 'gnome-keyring'])
-    }
-    sh label: 'Install system dependencies', script: "yum install -y ${packages.join(' ')}"
+def installSystemDeps() {
+    sh label: 'Install system dependencies', script: 'yum install -y unzip'
 }
 
 def decodeSecrets() {
@@ -175,18 +171,12 @@ pipeline {
                                 dockerSetup()
                                 docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                     decodeSecrets()
-                                    installSystemDeps('rust-core')
+                                    installSystemDeps()
                                     
                                     def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
-                                        dbus-uuidgen > /etc/machine-id
-                                        dbus-uuidgen --ensure
-                                        eval "$(dbus-launch --sh-syntax)"
-                                        mkdir -p ~/.local/share/keyrings
-                                        eval "$(printf '\\n' | gnome-keyring-daemon --unlock)"
-                                        eval "$(printf '\\n' | gnome-keyring-daemon --start)"
                                         export PARAMETER_PATH=$(pwd)/parameters.json
-                                        cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                        cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir . -- --test-threads=1
                                     ''')
                                     if (testExitCode != 0) {
                                         echo "Rust Core tests failed with exit code ${testExitCode}, continuing to generate coverage"
