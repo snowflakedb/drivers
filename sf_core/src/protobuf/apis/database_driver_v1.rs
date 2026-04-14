@@ -1590,6 +1590,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
             chunks.push(ResultChunk {
                 format: ChunkFormat::ArrowIpc as i32,
                 data: Some(result_chunk::Data::Inline(base64_data)),
+                row_count: chunk_info.initial_chunk_row_count as i32,
+                compressed_size: None,
+                uncompressed_size: None,
             });
         }
 
@@ -1600,6 +1603,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
                     url: c.url.clone(),
                     headers: c.headers.clone(),
                 })),
+                row_count: c.row_count,
+                compressed_size: Some(c.compressed_size),
+                uncompressed_size: Some(c.uncompressed_size),
             });
         }
 

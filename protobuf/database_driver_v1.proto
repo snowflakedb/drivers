@@ -672,6 +672,9 @@ message ResultChunk {
     string inline = 2;
     RemoteChunk remote = 3;
   }
+  int32 row_count = 4;
+  optional int64 compressed_size = 5;
+  optional int64 uncompressed_size = 6;
 }
 
 message ResultChunksResult {

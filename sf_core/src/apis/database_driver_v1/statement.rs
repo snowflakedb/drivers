@@ -410,9 +410,13 @@ impl DatabaseDriverV1 {
             .await;
         }
 
+        let chunks = response.data.to_chunk_download_data().unwrap_or_default();
+        let total = response.data.total.unwrap_or(0);
+        let remote_row_count: i64 = chunks.iter().map(|c| c.row_count as i64).sum();
         stmt.chunk_info = Some(StoredChunkInfo {
             initial_chunk_base64: response.data.to_initial_base64_opt().map(String::from),
-            chunks: response.data.to_chunk_download_data().unwrap_or_default(),
+            initial_chunk_row_count: total - remote_row_count,
+            chunks,
         });
 
         let result = response_to_execute_result(response.data, &http_client, query).await?;
@@ -441,6 +445,7 @@ impl DatabaseDriverV1 {
 
         Ok(StoredChunkInfo {
             initial_chunk_base64: chunk_info.initial_chunk_base64.clone(),
+            initial_chunk_row_count: chunk_info.initial_chunk_row_count,
             chunks: chunk_info.chunks.clone(),
         })
     }
@@ -601,6 +606,7 @@ async fn response_to_execute_result(
 
 pub struct StoredChunkInfo {
     pub initial_chunk_base64: Option<String>,
+    pub initial_chunk_row_count: i64,
     pub chunks: Vec<ChunkDownloadData>,
 }
 
