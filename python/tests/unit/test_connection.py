@@ -120,6 +120,12 @@ class TestParamstyleSetter:
         connection.paramstyle = "  QMARK  "
         assert connection.paramstyle == ParamStyle.QMARK
 
+    def test_assign_via_private_paramstyle_normalizes(self, connection):
+        """Legacy / SnowPy code sets ``conn._paramstyle`` directly; must coerce like ``paramstyle``."""
+        connection._paramstyle = "numeric"
+        assert connection.paramstyle == ParamStyle.NUMERIC
+        assert connection._paramstyle == ParamStyle.NUMERIC
+
     def test_assign_enum_unchanged(self, connection):
         connection.paramstyle = ParamStyle.NUMERIC
         assert connection.paramstyle == ParamStyle.NUMERIC
