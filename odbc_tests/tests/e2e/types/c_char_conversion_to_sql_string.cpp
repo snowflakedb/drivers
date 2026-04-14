@@ -5,6 +5,7 @@
 #include "Connection.hpp"
 #include "Schema.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -92,13 +93,7 @@ TEST_CASE("should truncate SQL_C_CHAR exceeding fixed-size VARCHAR", "[c_char][c
 
   // Then the insert returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
   CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  SQLCHAR sql_state[6] = {0};
-  SQLINTEGER native_error = 0;
-  SQLCHAR message_text[SQL_MAX_MESSAGE_LENGTH] = {0};
-  SQLSMALLINT message_length = 0;
-  SQLGetDiagRec(SQL_HANDLE_STMT, stmt.getHandle(), 1, sql_state, &native_error, message_text, sizeof(message_text),
-                &message_length);
-  CHECK(std::string(reinterpret_cast<char*>(sql_state)) == "01004");
+  CHECK(get_sqlstate(stmt) == "01004");
 
   // And the value is read back as "hello"
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
