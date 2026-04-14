@@ -324,17 +324,29 @@ class Connection:
         Returns:
             ParamStyle: The paramstyle enum value
         """
-        return self._paramstyle
+        return self.__paramstyle
 
     @paramstyle.setter
     def paramstyle(self, value: str | ParamStyle) -> None:
         """Set binding style from a :class:`ParamStyle` or PEP 249 string (e.g. ``"pyformat"``)."""
         if isinstance(value, ParamStyle):
-            self._paramstyle = value
+            self.__paramstyle = value
         elif isinstance(value, str):
-            self._paramstyle = ParamStyle.from_string(value)
+            self.__paramstyle = ParamStyle.from_string(value)
         else:
             raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
+
+    @property
+    @backward_compatibility
+    def _paramstyle(self) -> ParamStyle:
+        """Internal binding-style storage (legacy callers assign to ``_paramstyle``)."""
+        return self.__paramstyle
+
+    @_paramstyle.setter
+    @backward_compatibility
+    def _paramstyle(self, value: str | ParamStyle) -> None:
+        """Normalize assignments to ``_paramstyle`` (e.g. SnowPy ``temporary_paramstyle``)."""
+        self.paramstyle = value
 
     def execute_string(
         self,

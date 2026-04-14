@@ -1747,6 +1747,36 @@ class TestResetIntegration:
         assert cursor._query_result.rowcount == 42
 
 
+class TestStringParamstyleOnWrappedConnection:
+    """snowflake.core passes a connection whose paramstyle is a PEP 249 str, not ParamStyle."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        conn = MagicMock()
+        conn.conn_handle = ConnectionHandle(id=1)
+        conn.is_closed.return_value = False
+        conn.db_api.statement_new.return_value.stmt_handle = StatementHandle(id=1)
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        conn.db_api.statement_execute_query.return_value.result = execute_result
+        conn.paramstyle = "pyformat"
+        return conn
+
+    @pytest.fixture
+    def cursor(self, mock_connection):
+        return SnowflakeCursor(mock_connection)
+
+    def test_execute_with_string_paramstyle(self, cursor, mock_connection):
+        cursor.execute("SELECT %(v)s", {"v": 1})
+        mock_connection.db_api.statement_execute_query.assert_called()
+
+    def test_callproc_with_string_paramstyle(self, cursor, mock_connection):
+        cursor.callproc("myproc", (1, 2))
+        mock_connection.db_api.statement_execute_query.assert_called()
+
+
 class TestDescribe:
     """Unit tests for Cursor.describe method."""
 
