@@ -26,7 +26,7 @@ for pattern in "$@"; do
   for xml in $pattern; do
     [ -f "$xml" ] || { echo "WARNING: JUnit XML not found: $xml"; continue; }
     echo "Uploading $xml to Test Analytics (driver=$DRIVER)..."
-    HTTP_CODE=$(curl -X POST --show-error --max-time 30 \
+    HTTP_CODE=$(curl -s -S -X POST --max-time 30 \
       -w "%{http_code}" -o /tmp/analytics-response.json \
       -H "Authorization: Token token=$BUILDKITE_ANALYTICS_TOKEN" \
       -F "data=@$xml" \
@@ -40,7 +40,7 @@ for pattern in "$@"; do
       -F "run_env[commit_sha]=$BUILDKITE_COMMIT" \
       -F "run_env[message]=$BUILDKITE_MESSAGE" \
       -F "run_env[url]=$BUILDKITE_BUILD_URL" \
-      https://analytics-api.buildkite.com/v1/uploads 2>&1)
+      https://analytics-api.buildkite.com/v1/uploads)
 
     if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
       echo "Uploaded $xml to Test Analytics (HTTP $HTTP_CODE)"
