@@ -124,17 +124,12 @@ pub async fn logout_session(
                 Ok(())
             } else {
                 // Non-2xx with non-JSON body (e.g. proxy error page)
+                // Log only body length — do not log the body content to avoid
+                // leaking proxy HTML, WAF block pages, or internal server details.
                 tracing::warn!(
                     status = %status,
                     body_len = body_text.len(),
                     "Logout returned non-2xx with non-JSON body"
-                );
-                // Log the raw body at debug level only — do not surface in the error
-                // variant to avoid leaking proxy HTML, WAF blocks, or internal details.
-                tracing::debug!(
-                    status = %status,
-                    body = %body_text,
-                    "Logout returned non-JSON error response"
                 );
                 Err(RestError::InvalidSnowflakeResponse {
                     source: SnowflakeResponseError::ResponseStatus {
