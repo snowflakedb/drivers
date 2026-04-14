@@ -3,9 +3,6 @@
 These tests use Wiremock to verify that logout HTTP requests are sent correctly.
 """
 
-import pytest
-import requests
-
 from tests.wiremock_client import WiremockClient
 
 
@@ -26,18 +23,9 @@ class TestLogoutWithWiremock:
             connection.close()
 
             # Then: Verify logout request was sent
-            requests_url = f"{wiremock.http_url()}/__admin/requests"
-            response = requests.get(requests_url)
-            all_requests = response.json().get("requests", [])
+            logout_requests = wiremock.get_logout_requests()
 
-            # Find logout request
-            logout_requests = [
-                r for r in all_requests if r.get("request", {}).get("url", "").startswith("/session?delete=")
-            ]
-
-            assert len(logout_requests) >= 1, (
-                f"Expected logout request, got requests: {[r.get('request', {}).get('url') for r in all_requests]}"
-            )
+            assert len(logout_requests) >= 1, "Expected at least one logout request"
 
             logout_req = logout_requests[0]["request"]
             assert logout_req["method"] == "POST", "Logout should use POST method"
@@ -53,20 +41,14 @@ class TestLogoutWithWiremock:
             connection.close()
 
             # Verify request headers
-            requests_url = f"{wiremock.http_url()}/__admin/requests"
-            response = requests.get(requests_url)
-            all_requests = response.json().get("requests", [])
-
-            logout_requests = [
-                r for r in all_requests if r.get("request", {}).get("url", "").startswith("/session?delete=")
-            ]
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) >= 1, "Expected logout request"
 
             headers = logout_requests[0]["request"].get("headers", {})
             auth_header = headers.get("Authorization") or headers.get("authorization")
             assert auth_header is not None, "Should have Authorization header"
-            assert "Snowflake Token" in auth_header, "Should use Snowflake Token auth"
+            assert auth_header.startswith("Snowflake Token="), "Should use Snowflake Token auth"
 
     def test_should_send_logout_with_correct_content_type(self, int_test_connection_factory):
         """Verify logout request has Content-Type: application/json."""
@@ -78,13 +60,7 @@ class TestLogoutWithWiremock:
             connection.close()
 
             # Verify Content-Type header
-            requests_url = f"{wiremock.http_url()}/__admin/requests"
-            response = requests.get(requests_url)
-            all_requests = response.json().get("requests", [])
-
-            logout_requests = [
-                r for r in all_requests if r.get("request", {}).get("url", "").startswith("/session?delete=")
-            ]
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) >= 1, "Expected logout request"
 
@@ -103,13 +79,7 @@ class TestLogoutWithWiremock:
             connection.close()
 
             # Verify NO logout request was sent
-            requests_url = f"{wiremock.http_url()}/__admin/requests"
-            response = requests.get(requests_url)
-            all_requests = response.json().get("requests", [])
-
-            logout_requests = [
-                r for r in all_requests if r.get("request", {}).get("url", "").startswith("/session?delete=")
-            ]
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) == 0, (
                 f"Should NOT send logout when keep_alive=True, but got {len(logout_requests)} requests"
@@ -125,13 +95,7 @@ class TestLogoutWithWiremock:
             connection.close()
 
             # Verify logout request WAS sent
-            requests_url = f"{wiremock.http_url()}/__admin/requests"
-            response = requests.get(requests_url)
-            all_requests = response.json().get("requests", [])
-
-            logout_requests = [
-                r for r in all_requests if r.get("request", {}).get("url", "").startswith("/session?delete=")
-            ]
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) >= 1, "Should send logout when keep_alive=False"
 
@@ -145,13 +109,7 @@ class TestLogoutWithWiremock:
             connection.close()
 
             # Verify multiple logout attempts (retry)
-            requests_url = f"{wiremock.http_url()}/__admin/requests"
-            response = requests.get(requests_url)
-            all_requests = response.json().get("requests", [])
-
-            logout_requests = [
-                r for r in all_requests if r.get("request", {}).get("url", "").startswith("/session?delete=")
-            ]
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) >= 2, f"Should retry on 503, got {len(logout_requests)} attempts"
 
@@ -173,28 +131,6 @@ class TestLogoutIdempotency:
             connection.close()
 
             # Verify only ONE logout request
-            requests_url = f"{wiremock.http_url()}/__admin/requests"
-            response = requests.get(requests_url)
-            all_requests = response.json().get("requests", [])
-
-            logout_requests = [
-                r for r in all_requests if r.get("request", {}).get("url", "").startswith("/session?delete=")
-            ]
+            logout_requests = wiremock.get_logout_requests()
 
             assert len(logout_requests) == 1, f"Should send exactly 1 logout, got {len(logout_requests)}"
-
-
-class TestLogoutPhase5Optimization:
-    """Phase 5: Integration optimization tests."""
-
-    @pytest.mark.skip(reason="TODO: SNOW-2872349 - Phase 5")
-    def test_should_return_true_when_first_running_async_query_is_detected_without_checking_remaining_queries(
-        self,
-    ):
-        """Verify auto-detection returns early on first running query."""
-        # Given Async query registry contains multiple queries
-        # And First query in registry is running
-        # When Auto-detection checks for running queries
-        # Then Detection returns true immediately
-        # And Remaining queries are not checked
-        pytest.fail("TODO: SNOW-2872349")

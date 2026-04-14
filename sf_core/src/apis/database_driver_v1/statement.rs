@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt, Snafu};
 use tokio::sync::Mutex;
 
-use super::connection::{Connection, RefreshContext};
+use super::connection::{Connection, with_valid_session};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::query::process_query_response;
@@ -260,8 +260,11 @@ impl DatabaseDriverV1 {
 
 pub struct PrepareResult {
     pub stream: Box<FFI_ArrowArrayStream>,
+    pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
     pub number_of_binds: i32,
+    pub query: String,
+    pub sql_state: Option<String>,
 }
 
 impl DatabaseDriverV1 {
@@ -271,8 +274,11 @@ impl DatabaseDriverV1 {
             .await?;
         Ok(PrepareResult {
             stream: result.stream,
+            query_id: result.query_id,
             columns: result.columns,
             number_of_binds: result.number_of_binds,
+            query: result.query,
+            sql_state: result.sql_state,
         })
     }
 }
@@ -372,26 +378,24 @@ impl DatabaseDriverV1 {
             describe_only,
         };
 
-        let response = {
-            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
-            let mut last_error = None;
-            loop {
-                let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_query_with_client(
-                    &http_client,
+        let response = with_valid_session(&stmt.conn, |token| {
+            let http_client = &http_client;
+            let query_parameters = &query_parameters;
+            let query_input = &query_input;
+            let retry_policy = &retry_policy;
+            async move {
+                snowflake_query_with_client(
+                    http_client,
                     query_parameters.clone(),
-                    session_token.reveal(),
+                    token.reveal(),
                     query_input.clone(),
-                    &retry_policy,
+                    retry_policy,
                     execution_mode,
                 )
                 .await
-                {
-                    Ok(result) => break Ok(result),
-                    Err(e) => last_error = Some(e),
-                }
             }
-        }?;
+        })
+        .await?;
 
         if response.success {
             let conn = stmt.conn.lock().await;
@@ -466,25 +470,23 @@ impl DatabaseDriverV1 {
             )
         };
 
-        let response = {
-            let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
-            let mut last_error = None;
-            loop {
-                let session_token = ctx.refresh_token(last_error).await?;
-                match snowflake_get_query_result(
-                    &http_client,
-                    &query_parameters,
-                    session_token.reveal(),
-                    &query_id,
-                    &retry_policy,
+        let response = with_valid_session(&conn_ptr, |token| {
+            let http_client = &http_client;
+            let query_parameters = &query_parameters;
+            let query_id = &query_id;
+            let retry_policy = &retry_policy;
+            async move {
+                snowflake_get_query_result(
+                    http_client,
+                    query_parameters,
+                    token.reveal(),
+                    query_id,
+                    retry_policy,
                 )
                 .await
-                {
-                    Ok(result) => break Ok(result),
-                    Err(e) => last_error = Some(e),
-                }
             }
-        }?;
+        })
+        .await?;
 
         if response.success {
             let conn = conn_ptr.lock().await;

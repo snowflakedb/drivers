@@ -10,7 +10,7 @@ use keyring::credential::{CredentialApi, CredentialBuilderApi, CredentialPersist
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use snafu::{ResultExt, ensure};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::{
     CacheDirectoryResolutionSnafu, LockAcquisitionSnafu, LockExhaustedSnafu, TokenCacheError,
@@ -123,6 +123,13 @@ impl FileLock {
                     return Ok(FileLock { lock_path });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // TOCTOU: another thread could acquire the lock between
+                    // is_stale returning true and remove_dir. This only matters
+                    // when the lock is genuinely stale (>60s, i.e. holder
+                    // crashed), which is rare. The proper fix is replacing
+                    // mkdir-based locking with flock(2) / LockFileEx, which
+                    // lets the OS release locks on process crash and removes
+                    // the need for stale detection entirely.
                     if Self::is_stale(&lock_path, stale_timeout) {
                         let _ = fs::remove_dir(&lock_path);
                         continue;
@@ -181,12 +188,33 @@ impl FileLock {
     }
 
     fn is_stale(lock_path: &Path, stale_timeout: Duration) -> bool {
-        fs::metadata(lock_path)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-            .map(|age| age > stale_timeout)
-            .unwrap_or(true)
+        let metadata = match fs::metadata(lock_path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(e) => {
+                warn!(
+                    path = ?lock_path,
+                    error = %e,
+                    "failed to read lock metadata while checking staleness"
+                );
+                return false;
+            }
+        };
+        let modified = match metadata.modified() {
+            Ok(t) => t,
+            Err(e) => {
+                debug!(
+                    path = ?lock_path,
+                    error = %e,
+                    "filesystem does not support modification times, cannot determine lock staleness"
+                );
+                return false;
+            }
+        };
+        match SystemTime::now().duration_since(modified) {
+            Ok(age) => age > stale_timeout,
+            Err(_) => false,
+        }
     }
 }
 

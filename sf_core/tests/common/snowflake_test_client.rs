@@ -1,4 +1,3 @@
-use proto_utils::ProtoError;
 use sf_core::config::logout::ErrorStrategy;
 use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClient, DatabaseDriverClientBlockingExt, database_driver_client,
@@ -260,32 +259,30 @@ impl SnowflakeTestClient {
         response.result.unwrap()
     }
 
-    pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
+    /// Execute a query, returning the typed proto error on failure instead of
+    /// erasing it to `String`. This lets callers match on `DriverException`
+    /// fields (error code, message) rather than parsing Debug output.
+    #[allow(clippy::result_large_err)]
+    pub fn execute_query_no_unwrap(
+        &self,
+        sql: &str,
+    ) -> Result<ExecuteResult, proto_utils::ProtoError<DriverException>> {
         let stmt_handle = self.new_statement();
 
-        if let Err(e) = self
-            .client
+        self.client
             .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 query: sql.to_string(),
-            })
-        {
-            return Err(format!("Failed to set SQL query: {e:?}"));
-        }
+            })?;
 
-        match self
-            .client
-            .statement_execute_query_blocking(StatementExecuteQueryRequest {
-                stmt_handle: Some(stmt_handle),
-                bindings: None,
-            }) {
-            Ok(response) => {
-                let proto_result = response.result.unwrap();
-                Ok(proto_result)
-            }
-            Err(ProtoError::Application(e)) => Err(format!("Failed to execute query: {e:?}")),
-            Err(ProtoError::Transport(e)) => Err(format!("Transport error: {e:?}")),
-        }
+        let response =
+            self.client
+                .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings: None,
+                })?;
+
+        Ok(response.result.unwrap())
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
@@ -380,6 +377,20 @@ impl SnowflakeTestClient {
                 conn_handle: Some(self.conn_handle),
             })
             .map(|r| r.is_closed)
+    }
+
+    /// Get connection info (tokens, host, etc.) for inspection after close.
+    #[allow(clippy::result_large_err)]
+    pub fn connection_get_info_blocking(
+        &self,
+        include_master_token: bool,
+    ) -> Result<ConnectionGetInfoResponse, proto_utils::ProtoError<DriverException>> {
+        self.client
+            .connection_get_info_blocking(ConnectionGetInfoRequest {
+                conn_handle: Some(self.conn_handle),
+                include_master_token,
+                ..Default::default()
+            })
     }
 
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {

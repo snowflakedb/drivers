@@ -19,6 +19,7 @@ import java.sql.Savepoint;
 import java.sql.Statement;
 import java.sql.Struct;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
@@ -33,14 +34,16 @@ import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
 import net.snowflake.client.internal.unicore.ProtobufApis;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverService;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionNewRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionIntRequest;
-import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionStringRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConnectionSetOptionsResponse;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseHandle;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseInitRequest;
 import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.DatabaseNewRequest;
+import net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ValidationIssue;
 import net.snowflake.client.internal.util.NotImplementedException;
 
 public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection {
@@ -70,41 +73,27 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
           ProtobufApis.databaseDriverV1
               .connectionNew(ConnectionNewRequest.getDefaultInstance())
               .getConnHandle();
+      Map<String, ConfigSetting> optionsMap = new HashMap<>();
       connectionOptions.forEach(
           (key, value) -> {
             if (!(key instanceof String)) {
               return;
             }
-
             String keyStr = (String) key;
-            if (value instanceof String) {
-              ConnectionSetOptionStringRequest request =
-                  ConnectionSetOptionStringRequest.newBuilder()
-                      .setConnHandle(connectionHandle)
-                      .setKey(keyStr)
-                      .setValue((String) value)
-                      .build();
-              try {
-                ProtobufApis.databaseDriverV1.connectionSetOptionString(request);
-              } catch (DatabaseDriverService.ServiceException e) {
-                throw new RuntimeException(e);
-              }
-            }
-
-            if (value instanceof Integer) {
-              ConnectionSetOptionIntRequest request =
-                  ConnectionSetOptionIntRequest.newBuilder()
-                      .setConnHandle(connectionHandle)
-                      .setKey(keyStr)
-                      .setValue((Integer) value)
-                      .build();
-              try {
-                ProtobufApis.databaseDriverV1.connectionSetOptionInt(request);
-              } catch (DatabaseDriverService.ServiceException e) {
-                throw new RuntimeException(e);
-              }
+            ConfigSetting configSetting = toConfigSetting(value);
+            if (configSetting != null) {
+              optionsMap.put(keyStr, configSetting);
             }
           });
+      if (!optionsMap.isEmpty()) {
+        ConnectionSetOptionsResponse response =
+            ProtobufApis.databaseDriverV1.connectionSetOptions(
+                ConnectionSetOptionsRequest.newBuilder()
+                    .setConnHandle(connectionHandle)
+                    .putAllOptions(optionsMap)
+                    .build());
+        logConnectionOptionWarnings(response);
+      }
       ConnectionInitRequest connectionInitRequest =
           ConnectionInitRequest.newBuilder()
               .setDbHandle(databaseHandle)
@@ -137,6 +126,37 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   public String nativeSQL(String sql) throws SQLException {
     checkClosed();
     return sql;
+  }
+
+  static ConfigSetting toConfigSetting(Object value) {
+    if (value instanceof String) {
+      return ConfigSetting.newBuilder().setStringValue((String) value).build();
+    }
+    if (value instanceof Byte
+        || value instanceof Short
+        || value instanceof Integer
+        || value instanceof Long) {
+      return ConfigSetting.newBuilder().setIntValue(((Number) value).longValue()).build();
+    }
+    if (value instanceof Boolean) {
+      return ConfigSetting.newBuilder().setBoolValue((Boolean) value).build();
+    }
+    if (value instanceof Double) {
+      return ConfigSetting.newBuilder().setDoubleValue((Double) value).build();
+    }
+    // TODO(sfc-gh-boler): Support byte[] connection properties via ConfigSetting.bytes_value.
+    return null;
+  }
+
+  private static void logConnectionOptionWarnings(ConnectionSetOptionsResponse response) {
+    for (ValidationIssue warning : response.getWarningsList()) {
+      logger.warn(
+          "Connection option warning: severity={}, parameter={}, code={}, message={}",
+          warning.getSeverity(),
+          warning.getParameter(),
+          warning.getCode(),
+          warning.getMessage());
+    }
   }
 
   @Override

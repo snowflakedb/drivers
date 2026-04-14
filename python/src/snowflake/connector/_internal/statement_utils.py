@@ -65,7 +65,7 @@ def extract_rowcount(result: ExecuteResult | None) -> int:
     return -1
 
 
-def extract_sqlstate(result: ExecuteResult | None) -> str | None:
+def extract_sqlstate(result: ExecuteResult | PrepareResult | None) -> str | None:
     """Return the SQLSTATE code from an execute result, if meaningful.
 
     SQLSTATE ``"00000"`` (successful completion) is normalised to ``None``

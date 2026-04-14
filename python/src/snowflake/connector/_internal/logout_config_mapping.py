@@ -65,6 +65,26 @@ class LogoutConfig:
     max_attempts: Optional[int] = PYTHON_DEFAULT_LOGOUT_MAX_ATTEMPTS
     logout_request_timeout_seconds: Optional[int] = PYTHON_DEFAULT_LOGOUT_REQUEST_TIMEOUT_SECONDS
 
+    def to_option_dict(self) -> dict[str, "bool | int | str"]:
+        """Convert to a dict suitable for ``_build_config_settings`` + ``connection_set_options``.
+
+        ``None`` fields are omitted so Core uses its own defaults for those keys.
+        """
+        options: dict[str, bool | int | str] = {}
+        if self.server_session_keep_alive is not None:
+            options[LogoutOptionKeys.SERVER_SESSION_KEEP_ALIVE] = self.server_session_keep_alive
+        if self.enable_server_session_keep_alive_auto_detection is not None:
+            options[LogoutOptionKeys.ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION] = (
+                self.enable_server_session_keep_alive_auto_detection
+            )
+        options[LogoutOptionKeys.LOGOUT_ERROR_STRATEGY] = self.error_strategy.value
+        options[LogoutOptionKeys.LOGOUT_TOTAL_TIMEOUT_SECONDS] = self.logout_total_timeout_seconds
+        if self.max_attempts is not None:
+            options[LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS] = self.max_attempts
+        if self.logout_request_timeout_seconds is not None:
+            options[LogoutOptionKeys.LOGOUT_REQUEST_TIMEOUT_SECONDS] = self.logout_request_timeout_seconds
+        return options
+
 
 def remap_keep_alive_phase2(
     server_session_keep_alive: Optional[bool],
@@ -90,7 +110,7 @@ def remap_keep_alive_phase2(
                 "To keep current behavior, use server_session_keep_alive=None with "
                 "enable_server_session_keep_alive_auto_detection=True.",
                 FutureWarning,
-                stacklevel=4,
+                stacklevel=5,
             )
             return None
     return server_session_keep_alive

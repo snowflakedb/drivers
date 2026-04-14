@@ -155,7 +155,7 @@ mod integration_tests {
     fn test_user_agent_generation() {
         let settings = MockSettings::new();
         let client_info = ClientInfo::from_settings(&settings).unwrap();
-        let user_agent = snowflake::user_agent(&client_info);
+        let user_agent = snowflake::build_user_agent(&client_info);
 
         assert!(user_agent.contains("PythonConnector"));
         assert!(user_agent.contains("3.15.0"));

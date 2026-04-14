@@ -1,5 +1,7 @@
+use crate::http::retry::HttpError;
 use reqwest::StatusCode;
 use snafu::{Location, Snafu};
+use std::panic::Location as StdLocation;
 use std::time::Duration;
 use url::ParseError;
 
@@ -98,3 +100,52 @@ pub enum SfError {
 }
 
 // Intentionally no From<reqwest::Error> to force explicit location on construction
+
+/// Capture the caller's source location for use in snafu error construction.
+///
+/// Must be called inside a `#[track_caller]` function so the captured location
+/// is the call site in user code, not an internal library frame.
+#[track_caller]
+pub(crate) fn current_location() -> Location {
+    let caller = StdLocation::caller();
+    Location::new(caller.file(), caller.line(), caller.column())
+}
+
+/// Map an HTTP retry error to the corresponding [`SfError`] variant.
+///
+/// Use as `.map_err(map_http_error)`. The `#[track_caller]` attribute ensures
+/// the location embedded in the error points to the `.map_err()` call site.
+#[track_caller]
+pub(crate) fn map_http_error(err: HttpError) -> SfError {
+    let location = current_location();
+    match err {
+        HttpError::Transport { source, .. } => SfError::Transport { source, location },
+        HttpError::DeadlineExceeded {
+            configured,
+            elapsed,
+            ..
+        } => SfError::DeadlineExceeded {
+            configured,
+            elapsed,
+            location,
+        },
+        HttpError::MaxAttempts {
+            attempts,
+            last_status,
+            ..
+        } => SfError::RetryAttemptsExhausted {
+            attempts,
+            last_status,
+            location,
+        },
+        HttpError::RetryAfterExceeded {
+            retry_after,
+            remaining,
+            ..
+        } => SfError::RetryBudgetExceeded {
+            retry_after,
+            remaining,
+            location,
+        },
+    }
+}

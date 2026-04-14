@@ -51,3 +51,10 @@ behavior_differences:
         `client_request_mfa_token` is also accepted as a backward-compatible alias and is silently
         mapped to `client_store_temporary_credential`.
       OLD driver: `client_request_mfa_token` enables MFA token caching.
+
+  17:
+    name: "rest.request() validates HTTP method (internal API)"
+    description: |
+      Internal API used by Snowflake CLI via connection.rest.request().
+      NEW driver: Raises ValueError for unsupported HTTP methods (only 'get' and 'post' are accepted).
+      OLD driver: Does not validate the method parameter; attempts the request, which may result in an HttpError from the server.

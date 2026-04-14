@@ -132,10 +132,14 @@ impl ReadODBC for SnowflakeBinary {
     }
 }
 
+/// Hex-encode a byte slice as a lowercase string (e.g. `[0xDE, 0xAD]` → `"dead"`).
+pub(crate) fn hex_encode_lowercase(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 impl WriteJson for SnowflakeBinary {
     fn write_json(&self, value: Self::Representation<'_>) -> Result<Value, JsonBindingError> {
-        let hex: String = value.iter().map(|b| format!("{:02x}", b)).collect();
-        Ok(Value::String(hex))
+        Ok(Value::String(hex_encode_lowercase(value)))
     }
 
     fn sf_type(&self) -> SnowflakeLogicalType {

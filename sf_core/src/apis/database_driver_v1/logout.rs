@@ -16,7 +16,6 @@ use super::error::*;
 use crate::config::logout::LogoutConfig;
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
-use crate::rest::snowflake::RestError;
 use crate::rest::snowflake::logout::logout_session;
 
 /// Data extracted from a locked connection needed to perform HTTP logout.
@@ -26,6 +25,18 @@ pub(super) struct LogoutData {
     info: ClientInfo,
     retry_policy: RetryPolicy,
     refresh_ctx: RefreshContext,
+}
+
+/// Decision returned by [`should_send_logout`].
+///
+/// Eliminates the `(bool, Option<String>)` tuple whose field order was ambiguous
+/// and which permitted the meaningless state `(true, Some(reason))`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogoutDecision {
+    /// Send the logout request.
+    Send,
+    /// Skip logout; `reason` describes why (for structured logging).
+    Skip { reason: String },
 }
 
 /// Determine whether to send logout request based on configuration and async query state
@@ -47,22 +58,24 @@ pub(super) struct LogoutData {
 ///
 /// # Returns
 ///
-/// * `(send_logout, skip_reason)` - Whether to send logout and optional reason if skipped
+/// A [`LogoutDecision`] indicating whether to send logout or skip it with a reason.
 pub fn should_send_logout(
     config: &LogoutConfig,
     registry: Option<&AsyncQueryRegistry>,
-) -> (bool, Option<String>) {
+) -> LogoutDecision {
     // Check explicit server_session_keep_alive first
     match config.server_session_keep_alive {
         Some(true) => {
             // Explicit keep-alive: never logout
             tracing::info!("Skipping logout: server_session_keep_alive=true (explicit keep-alive)");
-            return (false, Some("server_session_keep_alive=true".to_string()));
+            return LogoutDecision::Skip {
+                reason: "server_session_keep_alive=true".into(),
+            };
         }
         Some(false) => {
             // Explicit kill: always logout (Phase 3 semantics - SNOW-2314152)
             tracing::info!("Sending logout: server_session_keep_alive=false (explicit kill)");
-            return (true, None);
+            return LogoutDecision::Send;
         }
         None => {
             // Delegate to auto-detection setting
@@ -79,16 +92,15 @@ pub fn should_send_logout(
                         tracing::info!(
                             "Skipping logout: auto-detection found running async queries"
                         );
-                        (
-                            false,
-                            Some("auto_detection_found_running_queries".to_string()),
-                        )
+                        LogoutDecision::Skip {
+                            reason: "auto_detection_found_running_queries".into(),
+                        }
                     }
                     Ok(false) => {
                         tracing::info!(
                             "Sending logout: auto-detection found no running async queries"
                         );
-                        (true, None)
+                        LogoutDecision::Send
                     }
                     Err(e) => {
                         // Registry lock error - default to logout
@@ -96,7 +108,7 @@ pub fn should_send_logout(
                             error = %e,
                             "Failed to check running queries, defaulting to logout"
                         );
-                        (true, None)
+                        LogoutDecision::Send
                     }
                 }
             } else {
@@ -104,7 +116,7 @@ pub fn should_send_logout(
                 tracing::warn!(
                     "Auto-detection enabled but registry not available, defaulting to logout"
                 );
-                (true, None)
+                LogoutDecision::Send
             }
         }
         Some(false) | None => {
@@ -113,7 +125,7 @@ pub fn should_send_logout(
                 "Sending logout: auto-detection disabled (enable_server_session_keep_alive_auto_detection={:?})",
                 config.enable_server_session_keep_alive_auto_detection
             );
-            (true, None)
+            LogoutDecision::Send
         }
     }
 }
@@ -155,14 +167,15 @@ pub(super) fn prepare_logout_from_conn(
     tracing::info!("Closing connection");
 
     // Check if logout should be sent based on configuration and state
-    let (send_logout, skip_reason) = should_send_logout(config, Some(&conn.async_query_registry));
-
-    if !send_logout {
-        tracing::info!(
-            reason = skip_reason.as_deref().unwrap_or("unknown"),
-            "Skipping logout based on configuration or state"
-        );
-        return Ok(None);
+    match should_send_logout(config, Some(&conn.async_query_registry)) {
+        LogoutDecision::Skip { reason } => {
+            tracing::info!(
+                reason = reason.as_str(),
+                "Skipping logout based on configuration or state"
+            );
+            return Ok(None);
+        }
+        LogoutDecision::Send => {}
     }
 
     // Logout should be sent - extract required data (all pure reads from conn)
@@ -211,26 +224,21 @@ pub(super) fn prepare_logout_from_conn(
 
 /// Send the HTTP logout request with automatic token refresh on 390112.
 ///
-/// Uses the same RefreshContext loop pattern as statement.rs.
+/// Uses `RefreshContext::execute_with_refresh` — the shared refresh-retry loop.
+/// Calls `execute_with_refresh` directly (not `with_valid_session`) because logout
+/// uses `RefreshContext::new()` (no `is_closed` check — logout runs after close).
 pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
     let mut ctx = data.refresh_ctx;
-    let mut last_error: Option<RestError> = None;
 
-    let result = loop {
-        let session_token = ctx.refresh_token(last_error).await?;
-        match logout_session(
-            &data.client,
-            &data.url,
-            session_token.reveal(),
-            &data.info,
-            &data.retry_policy,
-        )
-        .await
-        {
-            Ok(()) => break Ok(()),
-            Err(e) => last_error = Some(e),
-        }
-    };
+    let result = ctx
+        .execute_with_refresh(|token| {
+            let client = &data.client;
+            let url = &data.url;
+            let info = &data.info;
+            let retry_policy = &data.retry_policy;
+            async move { logout_session(client, url, &token, info, retry_policy).await }
+        })
+        .await;
 
     // Remap ApiError::Query (from RefreshContext) to ApiError::LogoutFailed
     result.map_err(|e| match e {
@@ -319,11 +327,13 @@ mod tests {
         let registry = AsyncQueryRegistry::new();
 
         // When checking decision
-        let (send, reason) = should_send_logout(&config, Some(&registry));
+        let decision = should_send_logout(&config, Some(&registry));
 
         // Then should NOT send logout
-        assert!(!send, "Should not send logout when keep_alive=true");
-        assert!(reason.is_some(), "Should have skip reason");
+        assert!(
+            matches!(decision, LogoutDecision::Skip { .. }),
+            "Should skip logout when keep_alive=true"
+        );
     }
 
     #[test]
@@ -338,11 +348,14 @@ mod tests {
         registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
-        let (send, reason) = should_send_logout(&config, Some(&registry));
+        let decision = should_send_logout(&config, Some(&registry));
 
         // Then should send logout (Phase 3: false means force logout - SNOW-2314152)
-        assert!(send, "Should send logout when keep_alive=false");
-        assert!(reason.is_none(), "Should not have skip reason");
+        assert_eq!(
+            decision,
+            LogoutDecision::Send,
+            "Should send logout when keep_alive=false"
+        );
     }
 
     #[test]
@@ -357,11 +370,13 @@ mod tests {
         registry.register("query1".to_string()).unwrap();
 
         // When checking decision
-        let (send, reason) = should_send_logout(&config, Some(&registry));
+        let decision = should_send_logout(&config, Some(&registry));
 
         // Then should NOT send logout (running queries detected)
-        assert!(!send, "Should not send logout when async queries running");
-        assert!(reason.is_some(), "Should have skip reason");
+        assert!(
+            matches!(decision, LogoutDecision::Skip { .. }),
+            "Should skip logout when async queries running"
+        );
     }
 
     #[test]
@@ -376,11 +391,14 @@ mod tests {
         // No queries registered
 
         // When checking decision
-        let (send, reason) = should_send_logout(&config, Some(&registry));
+        let decision = should_send_logout(&config, Some(&registry));
 
         // Then should send logout (no running queries)
-        assert!(send, "Should send logout when no async queries");
-        assert!(reason.is_none(), "Should not have skip reason");
+        assert_eq!(
+            decision,
+            LogoutDecision::Send,
+            "Should send logout when no async queries"
+        );
     }
 
     #[test]
@@ -395,11 +413,14 @@ mod tests {
         registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
-        let (send, reason) = should_send_logout(&config, Some(&registry));
+        let decision = should_send_logout(&config, Some(&registry));
 
         // Then should send logout (auto-detection disabled)
-        assert!(send, "Should send logout when auto-detection disabled");
-        assert!(reason.is_none(), "Should not have skip reason");
+        assert_eq!(
+            decision,
+            LogoutDecision::Send,
+            "Should send logout when auto-detection disabled"
+        );
     }
 
     #[test]
@@ -410,11 +431,14 @@ mod tests {
         registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
-        let (send, reason) = should_send_logout(&config, Some(&registry));
+        let decision = should_send_logout(&config, Some(&registry));
 
         // Then should send logout (Phase 3 default: always logout - SNOW-2314152)
-        assert!(send, "Phase 3 default should send logout");
-        assert!(reason.is_none(), "Should not have skip reason");
+        assert_eq!(
+            decision,
+            LogoutDecision::Send,
+            "Phase 3 default should send logout"
+        );
     }
 
     #[test]
@@ -427,10 +451,13 @@ mod tests {
         };
 
         // When checking decision without registry
-        let (send, reason) = should_send_logout(&config, None);
+        let decision = should_send_logout(&config, None);
 
         // Then should send logout (fallback when registry unavailable)
-        assert!(send, "Should send logout when registry unavailable");
-        assert!(reason.is_none(), "Should not have skip reason");
+        assert_eq!(
+            decision,
+            LogoutDecision::Send,
+            "Should send logout when registry unavailable"
+        );
     }
 }

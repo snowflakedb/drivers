@@ -74,7 +74,6 @@ class FetchMode(enum.Enum):
 
 
 def _requires_open(func: F) -> F:
-
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
         if self.is_closed():
@@ -224,20 +223,20 @@ class SnowflakeCursorBase(abc.ABC):
     @property
     def query(self) -> str | None:
         """
-        Read-only attribute containing the SQL text of the last executed query.
+        Read-only attribute containing the SQL text of the last executed or described query.
 
         Returns:
-            str | None: The SQL query string, or None if no query has been executed
+            str | None: The SQL query string, or None if no query has been executed or described
         """
         return self._query
 
     @property
     def sfqid(self) -> str | None:
         """
-        Read-only attribute containing the Snowflake Query ID for the last executed query.
+        Read-only attribute containing the Snowflake Query ID for the last executed or described query.
 
         Returns:
-            str | None: Snowflake Query ID (UUID format), or None if no query has been executed
+            str | None: Snowflake Query ID (UUID format), or None if no query has been executed or described
         """
         return self._sfqid
 
@@ -527,10 +526,12 @@ class SnowflakeCursorBase(abc.ABC):
         release_arrow_stream(get_stream_ptr(result))
 
         result_metadata = ResultMetadata.create_description(result)
+        self._sqlstate = extract_sqlstate(result)
+        self._sfqid = (result.query_id if result.query_id else None) if result else None
+        self._query = (result.query if result.query else None) if result else None
         if result_metadata:
             self._description = result_metadata  # shallow copy
             self._rowcount = 0
-            self._sqlstate = None
             # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
             self._rownumber = -1
 

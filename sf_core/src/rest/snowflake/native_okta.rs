@@ -283,7 +283,7 @@ async fn request_authenticator_endpoints(
                 .header(header::ACCEPT, "application/json")
                 .header(
                     "User-Agent",
-                    super::user_agent(&login_parameters.client_info),
+                    super::build_user_agent(&login_parameters.client_info),
                 )
                 .body(body_string.clone())
         },

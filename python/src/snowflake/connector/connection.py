@@ -9,10 +9,10 @@ from __future__ import annotations
 import atexit
 import logging
 import re
-import threading
 import warnings
 
 from collections.abc import Generator, Iterable
+from functools import cached_property
 from io import StringIO
 from typing import Any, Callable, Union, cast
 
@@ -30,10 +30,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
-    ConnectionSetOptionBoolRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionsRequest,
-    ConnectionSetOptionStringRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
@@ -51,13 +49,17 @@ from ._internal.logout_config_mapping import (
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
-from .cursor import CursorInstance, CursorType, SnowflakeCursor
+from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
 from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
 CLIENT_NAME = "PythonConnector"
-APPLICATION_RE = re.compile(r"^[\w\d_]+$")
+# The old connector used re.match(r"[\w\d_]+") without anchors, so any string
+# starting with a word character was accepted (dots, hyphens, etc. in the tail
+# were silently ignored).  We keep a start-anchored pattern without $ so that
+# callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
+APPLICATION_RE = re.compile(r"^[\w\d_]+")
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -271,60 +273,17 @@ class Connection:
         )
 
     def _send_logout_config(self, logout_config: LogoutConfig) -> None:
-        """Send resolved LogoutConfig to Core via typed ConnectionSetOption* RPCs.
+        """Send resolved LogoutConfig to Core via batch connection_set_options RPC.
 
         Called at init time, before connection_init. Core re-derives LogoutConfig
         from connection_seed at close() time, so post-init overrides take effect.
         """
-        if logout_config.server_session_keep_alive is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
+        options = _build_config_settings(logout_config.to_option_dict())
+        if options:
+            self.db_api.connection_set_options(
+                ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.SERVER_SESSION_KEEP_ALIVE,
-                    value=logout_config.server_session_keep_alive,
-                )
-            )
-
-        if logout_config.enable_server_session_keep_alive_auto_detection is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION,
-                    value=logout_config.enable_server_session_keep_alive_auto_detection,
-                )
-            )
-
-        self.db_api.connection_set_option_string(
-            ConnectionSetOptionStringRequest(
-                conn_handle=self.conn_handle,
-                key=LogoutOptionKeys.LOGOUT_ERROR_STRATEGY,
-                value=logout_config.error_strategy,
-            )
-        )
-
-        self.db_api.connection_set_option_int(
-            ConnectionSetOptionIntRequest(
-                conn_handle=self.conn_handle,
-                key=LogoutOptionKeys.LOGOUT_TOTAL_TIMEOUT_SECONDS,
-                value=logout_config.logout_total_timeout_seconds,
-            )
-        )
-
-        if logout_config.max_attempts is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS,
-                    value=logout_config.max_attempts,
-                )
-            )
-
-        if logout_config.logout_request_timeout_seconds is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_REQUEST_TIMEOUT_SECONDS,
-                    value=logout_config.logout_request_timeout_seconds,
+                    options=options,
                 )
             )
 
@@ -393,7 +352,7 @@ class Connection:
         try:
             self.close(retry=False)
         except Exception:
-            pass  # Suppress errors during exit cleanup
+            logger.debug("close() failed during atexit cleanup")
 
     @property
     @pep249
@@ -603,9 +562,14 @@ class Connection:
         return SnowflakeRestful(connection=self)
 
     @internal_api
-    def _get_connection_info(self) -> ConnectionGetInfoResponse:
+    def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
         """Refresh connection details for connection"""
-        return self.db_api.connection_get_info(ConnectionGetInfoRequest(conn_handle=self.conn_handle))
+        return self.db_api.connection_get_info(
+            ConnectionGetInfoRequest(
+                conn_handle=self.conn_handle,
+                include_master_token=include_master_token,
+            )
+        )
 
     @internal_api
     @backward_compatibility
@@ -840,10 +804,13 @@ class Connection:
         """Whether to cache the IdP token for browser-based SSO authentication."""
         raise NotImplementedError("consent_cache_id_token is not yet implemented")
 
-    @property
+    @cached_property
     def snowflake_version(self) -> str:
         """The current Snowflake server version string."""
-        raise NotImplementedError("snowflake_version is not yet implemented")
+        with self.cursor(DictCursor) as cur:
+            cur.execute("SELECT CURRENT_VERSION() AS version")
+            row: dict[str, Any] = cur.fetchone()  # type: ignore[assignment]
+        return str(row["VERSION"]).split(" ")[0]
 
     def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""
