@@ -27,9 +27,12 @@ TEST_CASE("should bind SQL_C_TYPE_DATE to SQL_TYPE_DATE and read back", "[c_date
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the value is read back as "2026-04-13"
-  auto fetch_stmt = conn.execute_fetch("SELECT CAST(col AS VARCHAR) FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "2026-04-13");
+  // Then the value is read back as 2026-04-13
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  SQL_DATE_STRUCT result = get_data<SQL_C_TYPE_DATE>(fetch_stmt, 1);
+  CHECK(result.year == 2026);
+  CHECK(result.month == 4);
+  CHECK(result.day == 13);
 }
 
 TEST_CASE("should bind SQL_C_TYPE_DATE with NULL indicator to SQL_TYPE_DATE", "[c_date][conversion][sql_date]") {
@@ -50,5 +53,5 @@ TEST_CASE("should bind SQL_C_TYPE_DATE with NULL indicator to SQL_TYPE_DATE", "[
 
   // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data_optional<SQL_C_CHAR>(fetch_stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_TYPE_DATE>(fetch_stmt, 1) == std::nullopt);
 }

@@ -1,5 +1,3 @@
-#include <string>
-
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
@@ -35,10 +33,14 @@ TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIMESTAMP and read back"
   REQUIRE_ODBC(ret, stmt);
 
   // Then the value contains the date and time components
-  auto fetch_stmt = conn.execute_fetch("SELECT CAST(col AS VARCHAR) FROM t");
-  std::string result = get_data<SQL_C_CHAR>(fetch_stmt, 1);
-  CHECK(result.find("2026-04-13") != std::string::npos);
-  CHECK(result.find("14:30:45") != std::string::npos);
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  SQL_TIMESTAMP_STRUCT result = get_data<SQL_C_TYPE_TIMESTAMP>(fetch_stmt, 1);
+  CHECK(result.year == 2026);
+  CHECK(result.month == 4);
+  CHECK(result.day == 13);
+  CHECK(result.hour == 14);
+  CHECK(result.minute == 30);
+  CHECK(result.second == 45);
 }
 
 TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP with NULL indicator to SQL_TYPE_TIMESTAMP",
@@ -61,5 +63,5 @@ TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP with NULL indicator to SQL_TYPE_TIME
 
   // Then the stored value should be NULL
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data_optional<SQL_C_CHAR>(fetch_stmt, 1) == std::nullopt);
+  CHECK(get_data_optional<SQL_C_TYPE_TIMESTAMP>(fetch_stmt, 1) == std::nullopt);
 }
