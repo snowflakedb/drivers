@@ -144,9 +144,9 @@ inline std::u16string check_wchar_success(const StatementHandleWrapper& stmt, SQ
 //   - Old (reference) driver: may return 22018 ("Invalid character value for cast
 //     specification") or 22003 ("Numeric value out of range") for semi-structured
 //     types (ARRAY/OBJECT/VARIANT) because it attempts the conversion rather than
-//     rejecting the target type upfront.
+//     rejecting the target type upfront. Pass is_semi_structured=true for those callers.
 inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type,
-                                          void* buffer, SQLLEN buffer_size) {
+                                          void* buffer, SQLLEN buffer_size, bool is_semi_structured = false) {
   SQLLEN indicator = -999;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, target_type, buffer, buffer_size, &indicator);
   auto records = get_diag_rec(stmt);
@@ -155,7 +155,11 @@ inline void check_incompatible_conversion(const StatementHandleWrapper& stmt, SQ
   REQUIRE(ret == SQL_ERROR);
   REQUIRE(!records.empty());
 #ifdef SNOWFLAKE_OLD_DRIVER
-  CHECK((sqlstate == "07006" || sqlstate == "22018" || sqlstate == "22003"));
+  if (is_semi_structured) {
+    CHECK((sqlstate == "07006" || sqlstate == "22018" || sqlstate == "22003"));
+  } else {
+    CHECK(sqlstate == "07006");
+  }
 #elif defined(_WIN32)
   if (target_type == SQL_C_GUID) {
     CHECK((sqlstate == "07006" || sqlstate == "HYC00"));

@@ -15,17 +15,10 @@
 // which is not valid JSON. Replace with "null" before parsing.
 static std::string sanitize_json(const std::string& text) {
   std::string result = text;
-  std::string target = "undefined";
   size_t pos = 0;
-  while ((pos = result.find(target, pos)) != std::string::npos) {
-    bool at_word_boundary = (pos == 0 || !std::isalnum(result[pos - 1])) &&
-                            (pos + target.size() >= result.size() || !std::isalnum(result[pos + target.size()]));
-    if (at_word_boundary) {
-      result.replace(pos, target.size(), "null");
-      pos += 4;
-    } else {
-      pos += target.size();
-    }
+  while ((pos = result.find("undefined", pos)) != std::string::npos) {
+    result.replace(pos, 9, "null");
+    pos += 4;
   }
   return result;
 }
