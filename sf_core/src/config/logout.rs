@@ -16,7 +16,7 @@ use super::{ConfigError, InvalidParameterValueSnafu};
 ///
 /// This struct is constructed from Connection fields, not passed by users.
 /// Users configure logout behavior via ConnectionSetOption* before ConnectionInit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LogoutConfig {
     /// Explicit control over server session lifecycle
     /// - Some(true): Never send logout (keep session alive - Fire & Forget)
@@ -40,8 +40,8 @@ pub struct LogoutConfig {
 
     /// Maximum total attempts for logout requests (NOT number of retries)
     /// - Some(1): 1 attempt, 0 retries
-    /// - Some(3): 3 attempts, 2 retries
-    /// - None: Use default from RetryPolicy (typically 6)
+    /// - Some(3): 3 attempts, 2 retries (Core default per DD)
+    /// - None: Wrappers may pass None to defer to RetryPolicy default (6 attempts)
     ///
     /// Note: This is TOTAL ATTEMPTS, not retry count. To disable retries, set to 1.
     pub max_attempts: Option<u32>,
@@ -63,7 +63,7 @@ impl Default for LogoutConfig {
             enable_server_session_keep_alive_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
             logout_total_timeout: Duration::from_secs(5),
-            max_attempts: None,
+            max_attempts: Some(3), // DD-specified default; wrappers may override
             logout_request_timeout: None,
         }
     }
@@ -75,69 +75,61 @@ impl LogoutConfig {
     /// All validation happens here, once, at connection_init time.
     /// This follows the same pattern as LoginParameters::from_settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
-        // Parse error_strategy from string ("best_effort" or "strict")
-        let error_strategy = match settings.get_string("logout_error_strategy") {
-            Some(v) => v.parse::<ErrorStrategy>()?,
-            None => ErrorStrategy::Strict, // default
-        };
+        let mut config = Self::default();
 
-        // Parse and validate logout_total_timeout_seconds
-        let logout_total_timeout = match settings.get_int("logout_total_timeout_seconds") {
-            Some(v) => {
-                if v <= 0 {
-                    return InvalidParameterValueSnafu {
-                        parameter: "logout_total_timeout_seconds",
-                        value: v.to_string(),
-                        explanation: "Must be positive (greater than zero)",
-                    }
-                    .fail();
+        if let Some(v) = settings.get_string("logout_error_strategy") {
+            config.error_strategy = v.parse::<ErrorStrategy>()?;
+        }
+
+        if let Some(v) = settings.get_int("logout_total_timeout_seconds") {
+            if v <= 0 {
+                return InvalidParameterValueSnafu {
+                    parameter: "logout_total_timeout_seconds",
+                    value: v.to_string(),
+                    explanation: "Must be positive (greater than zero)",
                 }
-                Duration::from_secs(v as u64)
+                .fail();
             }
-            None => Duration::from_secs(5), // default
-        };
+            config.logout_total_timeout = Duration::from_secs(v as u64);
+        }
 
-        // Parse and validate logout_max_attempts
-        let max_attempts = match settings.get_int("logout_max_attempts") {
-            Some(v) => {
-                if v <= 0 {
-                    return InvalidParameterValueSnafu {
-                        parameter: "logout_max_attempts",
-                        value: v.to_string(),
-                        explanation: "Must be positive (minimum 1 attempt required)",
-                    }
-                    .fail();
+        if let Some(v) = settings.get_int("logout_max_attempts") {
+            if v <= 0 {
+                return InvalidParameterValueSnafu {
+                    parameter: "logout_max_attempts",
+                    value: v.to_string(),
+                    explanation: "Must be positive (minimum 1 attempt required)",
                 }
-                Some(v as u32)
+                .fail();
             }
-            None => None, // Use RetryPolicy default
-        };
-
-        // Parse and validate logout_request_timeout_seconds
-        let logout_request_timeout = match settings.get_int("logout_request_timeout_seconds") {
-            Some(v) => {
-                if v < 0 {
-                    return InvalidParameterValueSnafu {
-                        parameter: "logout_request_timeout_seconds",
-                        value: v.to_string(),
-                        explanation: "Must be non-negative (zero is validated at connection_init)",
-                    }
-                    .fail();
+            if v > u32::MAX as i64 {
+                return InvalidParameterValueSnafu {
+                    parameter: "logout_max_attempts",
+                    value: v.to_string(),
+                    explanation: "Must not exceed 4294967295 (u32::MAX)",
                 }
-                Some(Duration::from_secs(v as u64))
+                .fail();
             }
-            None => None, // No per-request timeout
-        };
+            config.max_attempts = Some(v as u32);
+        }
 
-        Ok(Self {
-            server_session_keep_alive: settings.get_bool("server_session_keep_alive"),
-            enable_server_session_keep_alive_auto_detection: settings
-                .get_bool("enable_server_session_keep_alive_auto_detection"),
-            error_strategy,
-            logout_total_timeout,
-            max_attempts,
-            logout_request_timeout,
-        })
+        if let Some(v) = settings.get_int("logout_request_timeout_seconds") {
+            if v <= 0 {
+                return InvalidParameterValueSnafu {
+                    parameter: "logout_request_timeout_seconds",
+                    value: v.to_string(),
+                    explanation: "Must be positive (greater than zero)",
+                }
+                .fail();
+            }
+            config.logout_request_timeout = Some(Duration::from_secs(v as u64));
+        }
+
+        config.server_session_keep_alive = settings.get_bool("server_session_keep_alive");
+        config.enable_server_session_keep_alive_auto_detection =
+            settings.get_bool("enable_server_session_keep_alive_auto_detection");
+
+        Ok(config)
     }
 }
 
@@ -225,7 +217,16 @@ impl FromStr for ErrorStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::Setting;
     use snafu::Location;
+    use std::collections::HashMap;
+
+    fn create_test_settings(options: Vec<(&str, Setting)>) -> HashMap<String, Setting> {
+        options
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect()
+    }
 
     #[test]
     fn test_default_config() {
@@ -234,6 +235,8 @@ mod tests {
         assert_eq!(config.enable_server_session_keep_alive_auto_detection, None);
         assert_eq!(config.error_strategy, ErrorStrategy::Strict);
         assert_eq!(config.logout_total_timeout, Duration::from_secs(5));
+        assert_eq!(config.max_attempts, Some(3));
+        assert_eq!(config.logout_request_timeout, None);
     }
 
     #[test]
@@ -300,5 +303,90 @@ mod tests {
     fn test_error_strategy_as_str() {
         assert_eq!(ErrorStrategy::BestEffort.as_str(), "best_effort");
         assert_eq!(ErrorStrategy::Strict.as_str(), "strict");
+    }
+
+    // --- from_settings() tests ---
+
+    #[test]
+    fn test_from_settings_all_defaults() {
+        let settings = create_test_settings(vec![]);
+        let config = LogoutConfig::from_settings(&settings).unwrap();
+        assert_eq!(config, LogoutConfig::default());
+    }
+
+    #[test]
+    fn test_from_settings_valid_error_strategy_best_effort() {
+        let settings = create_test_settings(vec![(
+            "logout_error_strategy",
+            Setting::String("best_effort".to_string()),
+        )]);
+        let config = LogoutConfig::from_settings(&settings).unwrap();
+        assert_eq!(config.error_strategy, ErrorStrategy::BestEffort);
+    }
+
+    #[test]
+    fn test_from_settings_valid_total_timeout() {
+        let settings =
+            create_test_settings(vec![("logout_total_timeout_seconds", Setting::Int(30))]);
+        let config = LogoutConfig::from_settings(&settings).unwrap();
+        assert_eq!(config.logout_total_timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_from_settings_valid_max_attempts() {
+        let settings = create_test_settings(vec![("logout_max_attempts", Setting::Int(5))]);
+        let config = LogoutConfig::from_settings(&settings).unwrap();
+        assert_eq!(config.max_attempts, Some(5));
+    }
+
+    #[test]
+    fn test_from_settings_valid_request_timeout() {
+        let settings =
+            create_test_settings(vec![("logout_request_timeout_seconds", Setting::Int(2))]);
+        let config = LogoutConfig::from_settings(&settings).unwrap();
+        assert_eq!(config.logout_request_timeout, Some(Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn test_from_settings_rejects_zero_total_timeout() {
+        let settings =
+            create_test_settings(vec![("logout_total_timeout_seconds", Setting::Int(0))]);
+        assert!(LogoutConfig::from_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn test_from_settings_rejects_negative_total_timeout() {
+        let settings =
+            create_test_settings(vec![("logout_total_timeout_seconds", Setting::Int(-1))]);
+        assert!(LogoutConfig::from_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn test_from_settings_rejects_zero_max_attempts() {
+        let settings = create_test_settings(vec![("logout_max_attempts", Setting::Int(0))]);
+        assert!(LogoutConfig::from_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn test_from_settings_rejects_oversize_max_attempts() {
+        let oversize = u32::MAX as i64 + 1;
+        let settings = create_test_settings(vec![("logout_max_attempts", Setting::Int(oversize))]);
+        assert!(LogoutConfig::from_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn test_from_settings_rejects_zero_request_timeout() {
+        let settings =
+            create_test_settings(vec![("logout_request_timeout_seconds", Setting::Int(0))]);
+        assert!(LogoutConfig::from_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn test_from_settings_rejects_invalid_error_strategy() {
+        let settings = create_test_settings(vec![(
+            "logout_error_strategy",
+            Setting::String("bad".to_string()),
+        )]);
+        assert!(LogoutConfig::from_settings(&settings).is_err());
     }
 }
