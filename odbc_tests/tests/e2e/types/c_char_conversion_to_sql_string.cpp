@@ -5,7 +5,6 @@
 #include "Connection.hpp"
 #include "Schema.hpp"
 #include "get_data.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
@@ -75,7 +74,7 @@ TEST_CASE("should bind SQL_C_CHAR at max length to fixed-size VARCHAR", "[c_char
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "abcde");
 }
 
-TEST_CASE("should truncate SQL_C_CHAR exceeding fixed-size VARCHAR", "[c_char][conversion][sql_string]") {
+TEST_CASE("should reject SQL_C_CHAR exceeding fixed-size VARCHAR", "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -91,13 +90,8 @@ TEST_CASE("should truncate SQL_C_CHAR exceeding fixed-size VARCHAR", "[c_char][c
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
 
-  // Then the insert returns SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(get_sqlstate(stmt) == "01004");
-
-  // And the value is read back as "hello"
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "hello");
+  // Then the insert is rejected with SQL_ERROR
+  CHECK(ret == SQL_ERROR);
 }
 
 TEST_CASE("should bind SQL_C_WCHAR to SQL_VARCHAR and read back", "[c_char][conversion][sql_string]") {
