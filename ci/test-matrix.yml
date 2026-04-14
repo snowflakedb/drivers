@@ -490,7 +490,6 @@ shared_fallback_paths:
   - "proto_utils/**"
   - "proto_generator/**"
   - ".github/workflows/**"
-  - ".buildkite/**"
   - "scripts/**"
   - "ci/**"
   - "tests/definitions/**"

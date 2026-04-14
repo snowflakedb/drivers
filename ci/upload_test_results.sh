@@ -7,7 +7,6 @@
 # Examples:
 #   ci/upload_test_results.sh rust  "Rust Core" "$DOCKER_EXIT" "junit-results/rust-junit.xml"
 #   ci/upload_test_results.sh jdbc  "JDBC"      "$DOCKER_EXIT" "junit-results/TEST-*.xml"
-set -uo pipefail
 
 DRIVER="$1"
 LABEL="$2"
@@ -40,12 +39,12 @@ for pattern in "$@"; do
       -F "run_env[commit_sha]=$BUILDKITE_COMMIT" \
       -F "run_env[message]=$BUILDKITE_MESSAGE" \
       -F "run_env[url]=$BUILDKITE_BUILD_URL" \
-      https://analytics-api.buildkite.com/v1/uploads)
+      https://analytics-api.buildkite.com/v1/uploads) || true
 
-    if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+    if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 300 ] 2>/dev/null; then
       echo "Uploaded $xml to Test Analytics (HTTP $HTTP_CODE)"
     else
-      echo "ERROR: Test Analytics upload failed for $xml (HTTP $HTTP_CODE)"
+      echo "WARNING: Test Analytics upload failed for $xml (HTTP ${HTTP_CODE:-unknown})"
       cat /tmp/analytics-response.json 2>/dev/null || true
       echo ""
       UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
@@ -54,12 +53,12 @@ for pattern in "$@"; do
 done
 
 if [ "$UPLOAD_FAILURES" -gt 0 ]; then
-  echo "ERROR: $UPLOAD_FAILURES Test Analytics upload(s) failed"
-  buildkite-agent annotate ":warning: $LABEL -- $UPLOAD_FAILURES Test Analytics upload(s) failed" --style "warning" --context "${DRIVER}-upload"
+  echo "WARNING: $UPLOAD_FAILURES Test Analytics upload(s) failed"
+  buildkite-agent annotate ":warning: $LABEL -- $UPLOAD_FAILURES Test Analytics upload(s) failed" --style "warning" --context "${DRIVER}-upload" || true
 fi
 
 if [ "$DOCKER_EXIT" -ne 0 ]; then
-  buildkite-agent annotate ":x: $LABEL -- tests failed" --style "error" --context "${DRIVER}-result"
+  buildkite-agent annotate ":x: $LABEL -- tests failed" --style "error" --context "${DRIVER}-result" || true
   exit "$DOCKER_EXIT"
 fi
-buildkite-agent annotate ":white_check_mark: $LABEL -- passed" --style "success" --context "${DRIVER}-result"
+buildkite-agent annotate ":white_check_mark: $LABEL -- passed" --style "success" --context "${DRIVER}-result" || true
