@@ -96,6 +96,51 @@ TEST_CASE("should bind SQL_C_WCHAR integer string to SQL_INTEGER", "[c_char][con
   CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == 77);
 }
 
+TEST_CASE("should bind SQL_C_WCHAR negative integer string to SQL_BIGINT", "[c_char][conversion][sql_fixed]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TABLE t (col NUMBER)");
+
+  // When SQL_C_WCHAR "-1234567890" is bound to SQL_BIGINT and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLWCHAR val[] = {'-', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 0};
+  SQLLEN ind = SQL_NTS;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_BIGINT, 0, 0, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the value is read back as -1234567890
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data<SQL_C_SBIGINT>(fetch_stmt, 1) == -1234567890LL);
+}
+
+TEST_CASE("should bind SQL_C_WCHAR decimal string to SQL_DECIMAL", "[c_char][conversion][sql_fixed]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TABLE t (col NUMBER(10,2))");
+
+  // When SQL_C_WCHAR "6.28" is bound to SQL_DECIMAL and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLWCHAR val[] = {'6', '.', '2', '8', 0};
+  SQLLEN ind = SQL_NTS;
+  ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DECIMAL, 10, 2, val, sizeof(val), &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the value is read back as "6.28"
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
+}
+
 TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_INTEGER", "[c_char][conversion][sql_fixed]") {
   // Given Snowflake client is logged in
   Connection conn;
@@ -108,6 +153,27 @@ TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_INTEGER", "[c_char]
   REQUIRE_ODBC(ret, stmt);
   SQLLEN ind = SQL_NULL_DATA;
   ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_INTEGER, 0, 0, nullptr, 0, &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the stored value should be NULL
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK_FALSE(get_data_optional<SQL_C_SBIGINT>(fetch_stmt, 1).has_value());
+}
+
+TEST_CASE("should bind SQL_C_WCHAR with NULL indicator to SQL_INTEGER", "[c_char][conversion][sql_fixed]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TABLE t (col NUMBER)");
+
+  // When SQL_C_WCHAR is bound with SQL_NULL_DATA and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLLEN ind = SQL_NULL_DATA;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_INTEGER, 0, 0, nullptr, 0, &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
