@@ -101,7 +101,7 @@ mod tests {
             .and(header("Accept", "application/json"))
             .and(header_regex(
                 "User-Agent",
-                r#"^.+/\S+ \(\S+\) CPython/3\.11\.6$"#,
+                r#"^.+/\S+ \(\S+\) UD/\S* Rust/\S+$"#,
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "success": true

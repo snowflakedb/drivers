@@ -221,7 +221,7 @@ pub(super) async fn send_logout_request(data: LogoutData) -> Result<(), ApiError
         match logout_session(
             &data.client,
             &data.url,
-            session_token.reveal(),
+            &session_token,
             &data.info,
             &data.retry_policy,
         )

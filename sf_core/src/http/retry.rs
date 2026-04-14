@@ -84,11 +84,11 @@ pub enum HttpError {
 fn calculate_request_timeout(
     per_request_timeout: Option<Duration>,
     remaining: Duration,
-) -> Option<Duration> {
-    Some(match per_request_timeout {
+) -> Duration {
+    match per_request_timeout {
         Some(configured) => configured.min(remaining),
         None => remaining,
-    })
+    }
 }
 
 pub async fn execute_with_retry<T, B, F, H>(
@@ -123,8 +123,7 @@ where
 
         // Calculate dynamic timeout: min(per_request_timeout, remaining_budget).
         // Always set — ensures max_elapsed is a hard bound on in-flight requests.
-        let timeout = calculate_request_timeout(policy.per_request_timeout, remaining)
-            .expect("calculate_request_timeout always returns Some");
+        let timeout = calculate_request_timeout(policy.per_request_timeout, remaining);
         tracing::debug!(
             attempt,
             timeout_secs = timeout.as_secs(),
@@ -270,7 +269,7 @@ mod timeout_tests {
         let result = calculate_request_timeout(None, Duration::from_secs(10));
         assert_eq!(
             result,
-            Some(Duration::from_secs(10)),
+            Duration::from_secs(10),
             "Should fall back to remaining budget when per_request_timeout not configured"
         );
     }
@@ -282,7 +281,7 @@ mod timeout_tests {
         let result = calculate_request_timeout(Some(configured), remaining);
         assert_eq!(
             result,
-            Some(Duration::from_secs(5)),
+            Duration::from_secs(5),
             "Should use configured timeout when remaining is larger"
         );
     }
@@ -294,7 +293,7 @@ mod timeout_tests {
         let result = calculate_request_timeout(Some(configured), remaining);
         assert_eq!(
             result,
-            Some(Duration::from_secs(3)),
+            Duration::from_secs(3),
             "Should use remaining time when less than configured"
         );
     }
@@ -306,7 +305,7 @@ mod timeout_tests {
         let result = calculate_request_timeout(Some(configured), remaining);
         assert_eq!(
             result,
-            Some(Duration::from_millis(1500)),
+            Duration::from_millis(1500),
             "Last attempt should get all remaining time"
         );
     }

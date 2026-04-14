@@ -35,6 +35,14 @@ pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const TOKEN_REQUEST_PATH: &str = "/session/token-request";
 
+// ─── Snowflake GS protocol error codes ───────────────────────────────────────
+/// GS error code returned when a session no longer exists on the server.
+/// Logout callers treat this as success — the goal (an invalidated session) is achieved.
+pub const SESSION_GONE: i32 = 390111;
+/// GS error code returned when the session token has expired.
+/// The caller must use the master token to obtain a fresh session token and retry.
+pub const SESSION_TOKEN_EXPIRED: i32 = 390112;
+
 /// Session tokens returned from login, used for authentication and refresh
 #[derive(Debug, Clone)]
 pub struct SessionTokens {
@@ -156,12 +164,12 @@ pub struct QueryInput<'a> {
     pub describe_only: Option<bool>,
 }
 
-pub fn user_agent(client_info: &ClientInfo) -> String {
+pub fn build_user_agent(client_info: &ClientInfo) -> String {
+    let ud_version = env!("CARGO_PKG_VERSION");
+    let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
     format!(
-        "{}/{} ({}) CPython/3.11.6",
-        client_info.application,
-        client_info.version.clone(),
-        client_info.os.clone()
+        "{}/{} ({}) UD/{} Rust/{}",
+        client_info.application, client_info.version, client_info.os, ud_version, rust_version
     )
 }
 
@@ -646,7 +654,7 @@ pub async fn refresh_session(
             format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
-        .header("User-Agent", user_agent(client_info))
+        .header("User-Agent", build_user_agent(client_info))
         .json(&body)
         .build()
         .context(RequestConstructionSnafu {
@@ -758,7 +766,7 @@ pub async fn token_request(
             format!("Snowflake Token=\"{}\"", tokens.master_token.reveal()),
         )
         .header(header::ACCEPT, "application/json")
-        .header("User-Agent", user_agent(client_info))
+        .header("User-Agent", build_user_agent(client_info))
         .json(&body)
         .build()
         .context(RequestConstructionSnafu {
@@ -1404,7 +1412,7 @@ pub(crate) fn apply_query_headers(
     builder
         .header(header::AUTHORIZATION, authorization_header(session_token))
         .header(header::ACCEPT, json_header_value())
-        .header("User-Agent", user_agent(client_info))
+        .header("User-Agent", build_user_agent(client_info))
 }
 
 pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {

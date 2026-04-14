@@ -15,6 +15,7 @@ use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use sf_core::rest::snowflake::logout::logout_session;
+use sf_core::sensitive::SensitiveString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -441,7 +442,7 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
     let result = logout_session(
         &client,
         &server_url,
-        "test_token",
+        &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
     )
@@ -504,7 +505,7 @@ async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
     let result = logout_session(
         &client,
         &server_url,
-        "test_token",
+        &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
     )
@@ -582,7 +583,7 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
         let result = logout_session(
             &client,
             &server_url,
-            "test_token",
+            &SensitiveString::from("test_token"),
             &client_info,
             &RetryPolicy::default(),
         )
@@ -663,7 +664,7 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
             let result = logout_session(
                 &client,
                 &server_url,
-                "test_token",
+                &SensitiveString::from("test_token"),
                 &client_info,
                 &RetryPolicy::default(),
             )
@@ -732,7 +733,7 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
             let result = logout_session(
                 &client,
                 &server_url,
-                "test_token",
+                &SensitiveString::from("test_token"),
                 &client_info,
                 &RetryPolicy::default(),
             )
@@ -1067,7 +1068,7 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
         let result = logout_session(
             &client,
             &server_url,
-            "test_token",
+            &SensitiveString::from("test_token"),
             &client_info,
             &retry_policy,
         )
@@ -1136,7 +1137,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
         let result = logout_session(
             &client,
             &server_url,
-            "test_token",
+            &SensitiveString::from("test_token"),
             &client_info,
             &retry_policy,
         )
@@ -1652,7 +1653,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
     let result = logout_session(
         &client,
         &server_url,
-        "test_token",
+        &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
     )
@@ -1727,7 +1728,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     let result = logout_session(
         &client,
         &server_url,
-        "test_token",
+        &SensitiveString::from("test_token"),
         &client_info,
         &retry_policy,
     )
