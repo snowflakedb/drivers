@@ -23,7 +23,7 @@ Feature: ODBC C char types to SQL string conversions via parameter binding
   Scenario: should reject SQL_C_CHAR exceeding fixed-size VARCHAR
     Given Snowflake client is logged in
     When SQL_C_CHAR "hello world" is bound to VARCHAR(5) and inserted
-    Then the insert is rejected with SQL_ERROR
+    Then the insert is rejected with SQL_ERROR and SQLSTATE HY000
 
   @odbc_e2e
   Scenario: should bind SQL_C_WCHAR to SQL_VARCHAR and read back

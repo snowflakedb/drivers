@@ -4,6 +4,7 @@
 
 #include "Connection.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -134,11 +135,15 @@ TEST_CASE("should bind SQL_C_WCHAR decimal string to SQL_DECIMAL", "[c_char][con
       SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_DECIMAL, 10, 2, val, sizeof(val), &ind);
   REQUIRE_ODBC(ret, stmt);
   ret = SQLExecute(stmt.getHandle());
-  REQUIRE_ODBC(ret, stmt);
 
-  // Then the value is read back as "6.28"
-  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
+  // Then the old driver rejects WCHAR→DECIMAL, the new driver succeeds
+  OLD_DRIVER_ONLY("BD#39") { CHECK(ret == SQL_ERROR); }
+
+  NEW_DRIVER_ONLY("BD#39") {
+    REQUIRE_ODBC(ret, stmt);
+    auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+    CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "6.28");
+  }
 }
 
 TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_INTEGER", "[c_char][conversion][sql_fixed]") {

@@ -411,3 +411,11 @@ behavior_differences:
       too small (< 9 bytes for CHAR, < 18 bytes for WCHAR), and returns
       SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 when the buffer can hold
       the base time but truncates fractional seconds, per the ODBC spec.
+  39:
+    name: "SQL_C_WCHAR decimal string to SQL_DECIMAL conversion"
+    type: "New Feature"
+    description: |
+      OLD driver: Rejects SQL_C_WCHAR bound to SQL_DECIMAL with error
+      40610 "Invalid data for conversion".
+      NEW driver: Correctly converts SQL_C_WCHAR decimal strings to
+      SQL_DECIMAL values.
