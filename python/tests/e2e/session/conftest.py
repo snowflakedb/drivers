@@ -38,11 +38,15 @@ class CoreIntrospector:
         self.db_api = spy
 
     def get_options_sent(self) -> dict[str, Any]:
-        """Extract key->value pairs sent to Core via any set-option RPC path.
+        """Extract key->value pairs sent to Core via set-option RPCs at init time.
 
-        Inspects both individual typed RPCs (connection_set_option_bool/int/string)
+        Covers both individual typed RPCs (connection_set_option_bool/int/string)
         and the batch RPC (connection_set_options). Later calls overwrite earlier
         ones for the same key, matching Core's seed behavior.
+
+        NOTE: This does NOT capture close-time overrides passed via
+        ConnectionCloseRequest proto fields. Those are tested via WireMock
+        request counts (behavioral outcome), not RPC introspection.
         """
         options: dict[str, Any] = {}
         # Individual typed RPCs (e.g. close(retry=False) → connection_set_option_int)
@@ -63,27 +67,6 @@ class CoreIntrospector:
                 if field:
                     options[key] = getattr(setting, field)
         return options
-
-    def get_close_overrides(self) -> dict[str, Any]:
-        """Extract close-time override params from ConnectionCloseRequest.
-
-        These are the optional fields passed at close() time that Core merges
-        into the init-time base config via merge_with_request().
-        """
-        overrides: dict[str, Any] = {}
-        for call in self.db_api.connection_close.call_args_list:
-            req = call.args[0]
-            for field in [
-                "server_session_keep_alive",
-                "enable_server_session_keep_alive_auto_detection",
-                "error_strategy",
-                "logout_total_timeout_seconds",
-                "max_attempts",
-                "logout_request_timeout_seconds",
-            ]:
-                if req.HasField(field):
-                    overrides[field] = getattr(req, field)
-        return overrides
 
 
 @pytest.fixture

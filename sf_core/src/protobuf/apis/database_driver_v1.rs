@@ -15,7 +15,7 @@ use crate::apis::database_driver_v1::{
     ValidationSeverity as CoreValidationSeverity,
 };
 use crate::config::config_manager;
-use crate::config::logout::ErrorStrategy;
+use crate::config::logout::{CloseParamsOverrides, ErrorStrategy};
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::rest::snowflake::error::SfError;
@@ -1079,16 +1079,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 ..Default::default()
             })?;
 
+        let overrides = CloseParamsOverrides {
+            server_session_keep_alive: input.server_session_keep_alive,
+            enable_server_session_keep_alive_auto_detection: input
+                .enable_server_session_keep_alive_auto_detection,
+            error_strategy,
+            logout_total_timeout_seconds: input.logout_total_timeout_seconds,
+            max_attempts: input.max_attempts,
+            logout_request_timeout_seconds: input.logout_request_timeout_seconds,
+        };
+
         self.driver
-            .connection_close(
-                conn_handle.into(),
-                input.server_session_keep_alive,
-                input.enable_server_session_keep_alive_auto_detection,
-                error_strategy,
-                input.logout_total_timeout_seconds,
-                input.max_attempts,
-                input.logout_request_timeout_seconds,
-            )
+            .connection_close(conn_handle.into(), overrides)
             .await
             .to_protobuf()?;
         Ok(ConnectionCloseResponse {})

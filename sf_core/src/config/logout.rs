@@ -86,31 +86,39 @@ impl Default for LogoutConfig {
     }
 }
 
+/// Optional close-time overrides for logout config, passed via `ConnectionCloseRequest`.
+///
+/// Hierarchy: override here > init-time base (from `connection_set_options`) > Core defaults.
+/// `None` fields mean "keep init-time value unchanged".
+#[derive(Debug, Clone, Default)]
+pub struct CloseParamsOverrides {
+    pub server_session_keep_alive: Option<bool>,
+    pub enable_server_session_keep_alive_auto_detection: Option<bool>,
+    pub error_strategy: Option<ErrorStrategy>,
+    pub logout_total_timeout_seconds: Option<i32>,
+    pub max_attempts: Option<i32>,
+    pub logout_request_timeout_seconds: Option<i32>,
+}
+
 impl LogoutConfig {
-    /// Create a new `LogoutConfig` by merging close-time override values into `self`.
+    /// Create a new `LogoutConfig` by merging close-time overrides into `self`.
     ///
-    /// Hierarchy: override parameter > `self` (connection-wide init-time value) > Core default.
-    /// Any `None` override means "keep `self`'s value unchanged".
+    /// Hierarchy: override > `self` (init-time value) > Core default.
+    /// `None` fields in `overrides` leave `self`'s value unchanged.
     ///
     /// `max_attempts` uses total-attempt semantics (1-based): 1 = no retry, 3 = 2 retries.
-    #[allow(clippy::too_many_arguments)]
     pub fn merge_with_request(
         &self,
-        server_session_keep_alive: Option<bool>,
-        enable_server_session_keep_alive_auto_detection: Option<bool>,
-        error_strategy: Option<ErrorStrategy>,
-        logout_total_timeout_seconds: Option<i32>,
-        max_attempts: Option<i32>,
-        logout_request_timeout_seconds: Option<i32>,
+        overrides: &CloseParamsOverrides,
     ) -> Result<Self, ConfigError> {
-        let logout_total_timeout = match logout_total_timeout_seconds {
+        let logout_total_timeout = match overrides.logout_total_timeout_seconds {
             Some(seconds) => {
                 validate_positive_seconds("logout_total_timeout_seconds", seconds as i64)?
             }
             None => self.logout_total_timeout,
         };
 
-        let max_attempts = match max_attempts {
+        let max_attempts = match overrides.max_attempts {
             Some(attempts) => {
                 if attempts <= 0 {
                     return InvalidParameterValueSnafu {
@@ -125,7 +133,7 @@ impl LogoutConfig {
             None => self.max_attempts,
         };
 
-        let logout_request_timeout = match logout_request_timeout_seconds {
+        let logout_request_timeout = match overrides.logout_request_timeout_seconds {
             Some(seconds) => Some(validate_positive_seconds(
                 "logout_request_timeout_seconds",
                 seconds as i64,
@@ -134,11 +142,13 @@ impl LogoutConfig {
         };
 
         Ok(Self {
-            server_session_keep_alive: server_session_keep_alive.or(self.server_session_keep_alive),
-            enable_server_session_keep_alive_auto_detection:
-                enable_server_session_keep_alive_auto_detection
-                    .or(self.enable_server_session_keep_alive_auto_detection),
-            error_strategy: error_strategy.unwrap_or(self.error_strategy),
+            server_session_keep_alive: overrides
+                .server_session_keep_alive
+                .or(self.server_session_keep_alive),
+            enable_server_session_keep_alive_auto_detection: overrides
+                .enable_server_session_keep_alive_auto_detection
+                .or(self.enable_server_session_keep_alive_auto_detection),
+            error_strategy: overrides.error_strategy.unwrap_or(self.error_strategy),
             logout_total_timeout,
             max_attempts,
             logout_request_timeout,
@@ -477,14 +487,14 @@ mod tests {
         };
 
         let merged = base
-            .merge_with_request(
-                Some(false),
-                Some(true),
-                Some(ErrorStrategy::BestEffort),
-                Some(10),
-                Some(1), // 1 total attempt = no retries
-                Some(4),
-            )
+            .merge_with_request(&CloseParamsOverrides {
+                server_session_keep_alive: Some(false),
+                enable_server_session_keep_alive_auto_detection: Some(true),
+                error_strategy: Some(ErrorStrategy::BestEffort),
+                logout_total_timeout_seconds: Some(10),
+                max_attempts: Some(1), // 1 total attempt = no retries
+                logout_request_timeout_seconds: Some(4),
+            })
             .unwrap();
 
         assert_eq!(merged.server_session_keep_alive, Some(false));
@@ -510,7 +520,7 @@ mod tests {
         };
 
         let merged = base
-            .merge_with_request(None, None, None, None, None, None)
+            .merge_with_request(&CloseParamsOverrides::default())
             .unwrap();
 
         assert_eq!(merged, base);
@@ -520,12 +530,18 @@ mod tests {
     fn test_merge_rejects_non_positive_max_attempts() {
         let base = LogoutConfig::default();
         assert!(
-            base.merge_with_request(None, None, None, None, Some(0), None)
-                .is_err()
+            base.merge_with_request(&CloseParamsOverrides {
+                max_attempts: Some(0),
+                ..Default::default()
+            })
+            .is_err()
         );
         assert!(
-            base.merge_with_request(None, None, None, None, Some(-1), None)
-                .is_err()
+            base.merge_with_request(&CloseParamsOverrides {
+                max_attempts: Some(-1),
+                ..Default::default()
+            })
+            .is_err()
         );
     }
 
@@ -533,12 +549,18 @@ mod tests {
     fn test_merge_rejects_non_positive_total_timeout() {
         let base = LogoutConfig::default();
         assert!(
-            base.merge_with_request(None, None, None, Some(0), None, None)
-                .is_err()
+            base.merge_with_request(&CloseParamsOverrides {
+                logout_total_timeout_seconds: Some(0),
+                ..Default::default()
+            })
+            .is_err()
         );
         assert!(
-            base.merge_with_request(None, None, None, Some(-5), None, None)
-                .is_err()
+            base.merge_with_request(&CloseParamsOverrides {
+                logout_total_timeout_seconds: Some(-5),
+                ..Default::default()
+            })
+            .is_err()
         );
     }
 
@@ -546,12 +568,18 @@ mod tests {
     fn test_merge_rejects_non_positive_request_timeout() {
         let base = LogoutConfig::default();
         assert!(
-            base.merge_with_request(None, None, None, None, None, Some(0))
-                .is_err()
+            base.merge_with_request(&CloseParamsOverrides {
+                logout_request_timeout_seconds: Some(0),
+                ..Default::default()
+            })
+            .is_err()
         );
         assert!(
-            base.merge_with_request(None, None, None, None, None, Some(-1))
-                .is_err()
+            base.merge_with_request(&CloseParamsOverrides {
+                logout_request_timeout_seconds: Some(-1),
+                ..Default::default()
+            })
+            .is_err()
         );
     }
 }
