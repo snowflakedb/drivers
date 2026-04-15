@@ -1268,6 +1268,32 @@ class TestCursorExecutemany:
         assert rows == [(1, "alice"), (2, "bob"), (3, "charlie")]
 
 
+class TestCursorExecutemanyErrors:
+    """Integration tests for executemany validation errors."""
+
+    @with_paramstyle("qmark")
+    def test_bulk_row_length_mismatch(self, cursor):
+        """Test that executemany raises InterfaceError when rows have inconsistent lengths."""
+        with pytest.raises(InterfaceError) as excinfo:
+            cursor.executemany("INSERT INTO any_table VALUES (?, ?)", [(1, "a"), (2, "b", "extra")])
+        error = excinfo.value
+        assert error.errno == 251007
+        assert "bulk data size don't match" in error.msg.lower()
+        assert "expected: 2" in error.msg.lower()
+        assert "got: 3" in error.msg.lower()
+
+    @with_paramstyle("numeric")
+    def test_bulk_row_length_mismatch_numeric(self, cursor):
+        """Test that executemany raises InterfaceError for inconsistent lengths with numeric paramstyle."""
+        with pytest.raises(InterfaceError) as excinfo:
+            cursor.executemany("INSERT INTO any_table VALUES (:1, :2)", [(1, "a"), (2,)])
+        error = excinfo.value
+        assert error.errno == 251007
+        assert "bulk data size don't match" in error.msg.lower()
+        assert "expected: 2" in error.msg.lower()
+        assert "got: 1" in error.msg.lower()
+
+
 class TestCursorReset:
     """Integration tests for Cursor.reset method."""
 
