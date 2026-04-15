@@ -54,6 +54,7 @@ CLIENT_NAME = "PythonConnector"
 # were silently ignored).  We keep a start-anchored pattern without $ so that
 # callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
 APPLICATION_RE = re.compile(r"^[\w\d_]+")
+LOG_MAX_QUERY_LENGTH = 80
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -113,6 +114,8 @@ class Connection:
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
+
+        self._log_max_query_length: int = kwargs.pop("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
 
         application = kwargs.pop("application", None)
         if application is None or (isinstance(application, str) and not application):
@@ -580,7 +583,14 @@ class Connection:
     @property
     def log_max_query_length(self) -> int:
         """Maximum number of characters of a query string to log."""
-        raise NotImplementedError("log_max_query_length is not yet implemented")
+        return self._log_max_query_length
+
+    def _format_query_for_log(self, query: str) -> str:
+        """Collapse whitespace and truncate a query string for safe debug logging."""
+        ret = " ".join(line.strip() for line in query.split("\n"))
+        if len(ret) < self.log_max_query_length:
+            return ret
+        return ret[: self.log_max_query_length] + "..."
 
     @property
     def disable_request_pooling(self) -> bool:
