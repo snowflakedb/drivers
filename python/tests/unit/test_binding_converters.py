@@ -13,6 +13,7 @@ import time as time_module
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
+import numpy as np
 import pytest
 
 from snowflake.connector._internal.binding_converters import ClientSideBindingConverter, JsonBindingConverter
@@ -1206,56 +1207,45 @@ class TestInterpolateQuery:
         assert result == "SELECT * FROM t WHERE id = 42 AND name = 'Alice' AND active = TRUE"
 
 
-try:
-    import numpy
-
-    _has_numpy = True
-except ImportError:
-    _has_numpy = False
-
-requires_numpy = pytest.mark.skipif(not _has_numpy, reason="numpy not installed")
-
-
-@requires_numpy
 class TestJsonBindingConverterNumpy:
     """Test that JsonBindingConverter handles numpy types via _is_numeric."""
 
     def test_numpy_int64_type_is_fixed(self):
-        snowflake_type, value = JsonBindingConverter._convert_value(numpy.int64(42))
+        snowflake_type, value = JsonBindingConverter._convert_value(np.int64(42))
         assert snowflake_type == "FIXED"
         assert value == "42"
 
     def test_numpy_int32_type_is_fixed(self):
-        snowflake_type, value = JsonBindingConverter._convert_value(numpy.int32(-7))
+        snowflake_type, value = JsonBindingConverter._convert_value(np.int32(-7))
         assert snowflake_type == "FIXED"
         assert value == "-7"
 
     def test_numpy_uint16_type_is_fixed(self):
-        snowflake_type, value = JsonBindingConverter._convert_value(numpy.uint16(300))
+        snowflake_type, value = JsonBindingConverter._convert_value(np.uint16(300))
         assert snowflake_type == "FIXED"
         assert value == "300"
 
     def test_numpy_float64_type_is_real(self):
-        snowflake_type, value = JsonBindingConverter._convert_value(numpy.float64(3.14))
+        snowflake_type, value = JsonBindingConverter._convert_value(np.float64(3.14))
         assert snowflake_type == "REAL"
         assert value == "3.14"
 
     def test_numpy_float32_type_is_real(self):
-        snowflake_type, _ = JsonBindingConverter._convert_value(numpy.float32(1.5))
+        snowflake_type, _ = JsonBindingConverter._convert_value(np.float32(1.5))
         assert snowflake_type == "REAL"
 
     def test_numpy_bool_type_is_boolean(self):
-        snowflake_type, value = JsonBindingConverter._convert_value(numpy.bool_(True))
+        snowflake_type, value = JsonBindingConverter._convert_value(np.bool_(True))
         assert snowflake_type == "BOOLEAN"
         assert value == "true"
 
     def test_numpy_int_array_binding(self):
-        snowflake_type, values = JsonBindingConverter._convert_array([numpy.int64(1), numpy.int64(2), numpy.int64(3)])
+        snowflake_type, values = JsonBindingConverter._convert_array([np.int64(1), np.int64(2), np.int64(3)])
         assert snowflake_type == "FIXED"
         assert values == ["1", "2", "3"]
 
     def test_numpy_serialize_parameters(self):
-        json_str, length = JsonBindingConverter.serialize_parameters([numpy.int64(42), numpy.float64(3.14)])
+        json_str, length = JsonBindingConverter.serialize_parameters([np.int64(42), np.float64(3.14)])
         assert json_str is not None
         parsed = json.loads(json_str)
         assert parsed["1"]["type"] == "FIXED"
@@ -1264,37 +1254,36 @@ class TestJsonBindingConverterNumpy:
         assert parsed["2"]["value"] == "3.14"
 
 
-@requires_numpy
 class TestClientSideBindingConverterNumpy:
     """Test that ClientSideBindingConverter handles numpy types via _is_numeric."""
 
     def test_numpy_int64_passthrough(self):
-        result = ClientSideBindingConverter.to_snowflake(numpy.int64(42))
-        assert result == numpy.int64(42)
+        result = ClientSideBindingConverter.to_snowflake(np.int64(42))
+        assert result == np.int64(42)
 
     def test_numpy_float64_passthrough(self):
-        result = ClientSideBindingConverter.to_snowflake(numpy.float64(3.14))
-        assert result == numpy.float64(3.14)
+        result = ClientSideBindingConverter.to_snowflake(np.float64(3.14))
+        assert result == np.float64(3.14)
 
     def test_numpy_int64_quoted_as_bare_number(self):
-        result = ClientSideBindingConverter.quote(numpy.int64(42))
+        result = ClientSideBindingConverter.quote(np.int64(42))
         assert result == "42"
         assert "'" not in result
 
     def test_numpy_float64_quoted_as_bare_number(self):
-        result = ClientSideBindingConverter.quote(numpy.float64(3.14))
+        result = ClientSideBindingConverter.quote(np.float64(3.14))
         assert result == "3.14"
         assert "'" not in result
 
     def test_numpy_int64_not_escaped(self):
-        result = ClientSideBindingConverter.escape(numpy.int64(42))
-        assert result == numpy.int64(42)
+        result = ClientSideBindingConverter.escape(np.int64(42))
+        assert result == np.int64(42)
 
     def test_numpy_int64_full_pipeline(self):
-        result = ClientSideBindingConverter.process_single_param(numpy.int64(42))
+        result = ClientSideBindingConverter.process_single_param(np.int64(42))
         assert result == "42"
 
     def test_numpy_float64_interpolation(self):
         query = "SELECT * FROM t WHERE x = %s"
-        result = ClientSideBindingConverter.interpolate_query(query, [numpy.float64(3.14)])
+        result = ClientSideBindingConverter.interpolate_query(query, [np.float64(3.14)])
         assert result == "SELECT * FROM t WHERE x = 3.14"

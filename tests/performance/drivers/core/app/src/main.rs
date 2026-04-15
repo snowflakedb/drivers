@@ -30,8 +30,12 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(EnvFilter::from_default_env()))
+        .with(sf_core::perf_timing::create_perf_layer())
+        .init();
 
     let config = TestConfig::from_env()?;
 

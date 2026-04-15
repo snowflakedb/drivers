@@ -304,7 +304,8 @@ def read_csv_results(csv_path: Path) -> List[Dict]:
         List of dicts, each containing timestamp and metrics for one iteration
     """
     results = []
-    
+    known_columns = {'timestamp_ms', 'query_s', 'fetch_s', 'row_count', 'cpu_time_s', 'peak_rss_mb'}
+
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -319,6 +320,13 @@ def read_csv_results(csv_path: Path) -> List[Dict]:
                 result['cpu_time_s'] = float(row['cpu_time_s'])
             if 'peak_rss_mb' in row:
                 result['peak_rss_mb'] = float(row['peak_rss_mb'])
+
+            for col, val in row.items():
+                if col not in known_columns and val:
+                    try:
+                        result[col] = float(val)
+                    except ValueError:
+                        pass
             
             results.append(result)
     
@@ -598,6 +606,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                     results_by_test[test_name] = results
                     
                     # Upload all iterations from this CSV
+                    known_result_keys = {'timestamp', 'query_s', 'fetch_s', 'cpu_time_s', 'peak_rss_mb'}
                     for idx, result in enumerate(results, 1):
                         metrics = {
                             f"{test_name}_query_s": result['query_s'],
@@ -610,6 +619,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                             metrics[f"{test_name}_cpu_time_s"] = result['cpu_time_s']
                         if 'peak_rss_mb' in result:
                             metrics[f"{test_name}_peak_rss_mb"] = result['peak_rss_mb']
+
+                        for key, val in result.items():
+                            if key not in known_result_keys and isinstance(val, float):
+                                metrics[f"{test_name}_{key}"] = val
                         
                         timestamp = Timestamp()
                         timestamp.FromMilliseconds(result['timestamp'])

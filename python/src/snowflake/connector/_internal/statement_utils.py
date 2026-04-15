@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from .protobuf_gen.database_driver_v1_pb2 import (
+    DatabaseFetchChunkResponse,
     ExecuteResult,
     PrepareResult,
     StatementHandle,
@@ -86,7 +87,7 @@ def extract_sqlstate(result: ExecuteResult | PrepareResult | None) -> str | None
     return None
 
 
-def get_stream_ptr(result: ExecuteResult | PrepareResult | None) -> int:
+def get_stream_ptr(result: DatabaseFetchChunkResponse | ExecuteResult | PrepareResult | None) -> int:
     """Extract a C ArrowArrayStream pointer from an execute result.
 
     The pointer is stored as an 8-byte little-endian value inside

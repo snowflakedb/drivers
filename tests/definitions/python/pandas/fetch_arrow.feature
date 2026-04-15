@@ -92,3 +92,16 @@ Feature: Arrow fetch methods (Python-specific)
     Then More than one batch should be yielded
     And Each element should be a pyarrow.Table
     And The total row count across all batches should be 100000
+
+  # =========================================================================== #
+  #                   result batch pickle + to_arrow                            #
+  # =========================================================================== #
+
+  @python_e2e
+  Scenario: should survive pickle round-trip and convert to arrow
+    Given Snowflake client is logged in
+    When Query "SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => 100000)) v" is executed
+    And get_result_batches is called
+    And The batches are serialized with pickle
+    And The batches are deserialized with pickle
+    Then Fetching all deserialized batches via to_arrow should return 100000 total rows

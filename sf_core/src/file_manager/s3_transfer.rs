@@ -1,7 +1,7 @@
 use super::types::{
-    EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo, UploadStatus,
+    EncryptedFileMetadata, MaterialDescription, PreparedUpload, StageInfo, UploadStatus,
 };
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{Location, ResultExt, Snafu};
 
 // AWS SDK imports
 use aws_config::{BehaviorVersion, Region};
@@ -17,7 +17,7 @@ const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
 /// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
 pub async fn upload_to_s3_or_skip(
-    encryption_result: EncryptionResult,
+    prepared: PreparedUpload,
     stage_info: &StageInfo,
     filename: &str,
     overwrite: bool,
@@ -32,7 +32,7 @@ pub async fn upload_to_s3_or_skip(
     }
 
     // Proceed with upload if the file does not exist or overwrite is true
-    upload_to_s3(encryption_result, &s3_client, stage_info, &s3_key).await?;
+    upload_to_s3(prepared, &s3_client, stage_info, &s3_key).await?;
     Ok(UploadStatus::Uploaded)
 }
 
@@ -65,29 +65,30 @@ async fn check_if_file_exists(
 }
 
 async fn upload_to_s3(
-    encryption_result: EncryptionResult,
+    prepared: PreparedUpload,
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
 ) -> Result<(), UploadFileError> {
-    // Serialize encryption metadata
-    let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)
-        .context(upload_file_error::SerializationSnafu)?;
-
-    let put_object_request = s3_client
+    let mut put_object_request = s3_client
         .put_object()
         .bucket(stage_info.bucket.clone())
         .key(s3_key)
-        .body(ByteStream::from(encryption_result.data))
+        .body(ByteStream::from(prepared.data))
         .content_type(CONTENT_TYPE_OCTET_STREAM)
-        .metadata("sfc-digest", &encryption_result.metadata.digest)
-        .metadata("x-amz-iv", &encryption_result.metadata.iv)
-        .metadata("x-amz-key", &encryption_result.metadata.encrypted_key)
-        .metadata("x-amz-matdesc", mat_desc);
+        .metadata("sfc-digest", &prepared.digest);
+
+    if let Some(ref enc_meta) = prepared.encryption_metadata {
+        let mat_desc = serde_json::to_string(&enc_meta.material_desc)
+            .context(upload_file_error::SerializationSnafu)?;
+        put_object_request = put_object_request
+            .metadata("x-amz-iv", &enc_meta.iv)
+            .metadata("x-amz-key", &enc_meta.encrypted_key)
+            .metadata("x-amz-matdesc", mat_desc);
+    }
 
     tracing::trace!("PUT object request: {:?}", put_object_request);
 
-    // Upload to S3 (with optional encryption metadata)
     let result = put_object_request
         .send()
         .await
@@ -99,14 +100,15 @@ async fn upload_to_s3(
     Ok(())
 }
 
+/// Downloads a file from S3 and returns the data with optional encryption metadata.
+/// For SSE stages the metadata headers will be absent and `None` is returned.
 pub async fn download_from_s3(
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(Vec<u8>, EncryptedFileMetadata), DownloadFileError> {
+) -> Result<(Vec<u8>, Option<String>, Option<EncryptedFileMetadata>), DownloadFileError> {
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await?;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
-    // Download from S3
     let response = s3_client
         .get_object()
         .bucket(stage_info.bucket.clone())
@@ -116,48 +118,35 @@ pub async fn download_from_s3(
         .map_err(aws_sdk_s3::Error::from)
         .context(download_file_error::S3DownloadSnafu)?;
 
-    // Extract metadata from S3 response and construct the metadata structure directly
-    let metadata_map =
-        response
-            .metadata()
-            .context(download_file_error::MissingFileMetadataSnafu {
-                field: "All fields".to_string(),
-            })?;
+    let metadata_map = response.metadata().cloned().unwrap_or_default();
 
-    let mat_desc_str = metadata_map.get("x-amz-matdesc").context(
-        download_file_error::MissingFileMetadataSnafu {
-            field: "x-amz-matdesc".to_string(),
-        },
-    )?;
+    let digest = metadata_map.get("sfc-digest").cloned();
 
-    let material_desc: MaterialDescription =
-        serde_json::from_str(mat_desc_str).context(download_file_error::DeserializationSnafu)?;
+    let mat_desc = metadata_map.get("x-amz-matdesc");
+    let encrypted_key = metadata_map.get("x-amz-key");
+    let iv = metadata_map.get("x-amz-iv");
 
-    // Construct the metadata structure directly without intermediate variables
-    let file_metadata = EncryptedFileMetadata {
-        encrypted_key: metadata_map
-            .get("x-amz-key")
-            .context(download_file_error::MissingFileMetadataSnafu {
-                field: "x-amz-key".to_string(),
-            })?
-            .to_owned(),
-        iv: metadata_map
-            .get("x-amz-iv")
-            .context(download_file_error::MissingFileMetadataSnafu {
-                field: "x-amz-iv".to_string(),
-            })?
-            .to_owned(),
-        material_desc,
-        digest: metadata_map
-            .get("sfc-digest")
-            .context(download_file_error::MissingFileMetadataSnafu {
-                field: "sfc-digest".to_string(),
-            })?
-            .to_owned(),
+    let file_metadata = match (mat_desc, encrypted_key, iv) {
+        (Some(mat_desc_str), Some(key), Some(iv_val)) => {
+            let material_desc: MaterialDescription = serde_json::from_str(mat_desc_str)
+                .context(download_file_error::DeserializationSnafu)?;
+            Some(EncryptedFileMetadata {
+                encrypted_key: key.to_owned(),
+                iv: iv_val.to_owned(),
+                material_desc,
+            })
+        }
+        (None, None, None) => None,
+        _ => {
+            return download_file_error::MissingFileMetadataSnafu {
+                field: "partial encryption headers (x-amz-matdesc, x-amz-key, x-amz-iv)"
+                    .to_string(),
+            }
+            .fail();
+        }
     };
 
-    // Read the encrypted data from the response body
-    let encrypted_data = response
+    let data = response
         .body
         .collect()
         .await
@@ -165,7 +154,7 @@ pub async fn download_from_s3(
         .into_bytes()
         .to_vec();
 
-    Ok((encrypted_data, file_metadata))
+    Ok((data, digest, file_metadata))
 }
 
 async fn create_s3_client(

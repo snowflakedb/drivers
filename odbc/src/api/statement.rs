@@ -45,7 +45,10 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    match &mut stmt.conn.state {
+    // Obtain an independent &mut Connection without tying up a borrow on stmt,
+    // so stmt.apd / stmt.ipd / stmt.stmt_handle remain accessible below.
+    let conn = unsafe { &mut *stmt.conn_ptr() };
+    match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
             conn_handle,
@@ -75,7 +78,7 @@ fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> Odbc
             let response = response?;
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
-            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
+            update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
             let execute_state = create_execute_state(response, false)?;
             let is_zero_dml = matches!(
                 &execute_state,
@@ -181,7 +184,8 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    match &mut stmt.conn.state {
+    let conn = unsafe { &mut *stmt.conn_ptr() };
+    match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
             conn_handle: _,
@@ -213,7 +217,7 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
             stmt.ird.desc_count = schema.fields().len() as sql::SmallInt;
 
             let param_count = result.number_of_binds.max(0) as usize;
-            let max_varchar = stmt.conn.numeric_settings.max_varchar_size;
+            let max_varchar = conn.numeric_settings.max_varchar_size;
             stmt.ipd.records.retain(|&k, _| (k as usize) <= param_count);
             for i in 1..=param_count {
                 stmt.ipd
@@ -253,7 +257,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         _ => false,
     };
 
-    match &mut stmt.conn.state {
+    let conn = unsafe { &mut *stmt.conn_ptr() };
+    match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
             conn_handle,
@@ -273,7 +278,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             })?;
 
             tracing::info!("execute: Successfully executed statement");
-            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings)?;
+            update_numeric_settings(conn_handle, &mut conn.numeric_settings)?;
 
             let query_id = response.result.as_ref().map(|r| r.query_id.clone());
 

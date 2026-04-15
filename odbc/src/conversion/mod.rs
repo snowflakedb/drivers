@@ -24,6 +24,8 @@ mod real;
 #[cfg(test)]
 mod real_tests;
 #[cfg(test)]
+mod semi_structured_tests;
+#[cfg(test)]
 mod test_utils;
 mod time;
 #[cfg(test)]
@@ -259,6 +261,18 @@ impl SnowflakeFieldType {
             "DECFLOAT" => {
                 let precision = get_field_metadata(field, "precision")?;
                 Ok(Self::Decfloat(decfloat::SnowflakeDecfloat { precision }))
+            }
+            "OBJECT" | "ARRAY" | "VARIANT" => {
+                let len = match get_field_metadata(field, "charLength") {
+                    Ok(len) => len,
+                    // charLength is optional; fall back to the server-configured
+                    // max VARCHAR size used elsewhere in ODBC metadata reporting.
+                    Err(ConversionError::MissingFieldMetadata { .. }) => {
+                        numeric_settings.max_varchar_size.min(u32::MAX as u64) as u32
+                    }
+                    Err(e) => return Err(e),
+                };
+                Ok(Self::Varchar(varchar::SnowflakeVarchar { len }))
             }
             lt => IncompatibleFieldMetadataSnafu {
                 logical_type: lt.to_string(),

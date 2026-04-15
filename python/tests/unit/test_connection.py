@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
     ConnectionGetInfoResponse,
@@ -14,9 +15,11 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionIsClosedResponse,
     ConnectionSetOptionsResponse,
     DatabaseHandle,
+    StatementHandle,
     ValidationIssue,
 )
 from snowflake.connector.constants import QueryStatus
+from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
@@ -98,6 +101,58 @@ class TestSetAutocommitValidation:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
                 Connection(user="test_user", account="test_account", autocommit=1)
+
+
+class TestParamstyleSetter:
+    """PEP 249 uses string paramstyle; assignment normalizes once on the connection."""
+
+    @pytest.fixture(autouse=True)
+    def _no_native_stream_ops(self):
+        """Avoid touching real Arrow stream memory when cursor tests run execute()."""
+        with (
+            patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
+            patch("snowflake.connector.cursor._query_result.release_arrow_stream"),
+        ):
+            yield
+
+    def test_assign_string_normalizes(self, connection):
+        connection.paramstyle = "qmark"
+        assert connection.paramstyle == ParamStyle.QMARK
+        assert connection._paramstyle is ParamStyle.QMARK
+        connection.paramstyle = "  QMARK  "
+        assert connection.paramstyle == ParamStyle.QMARK
+
+    def test_assign_via_private_paramstyle_normalizes(self, connection):
+        """Legacy / SnowPy code sets ``conn._paramstyle`` directly; must coerce like ``paramstyle``."""
+        connection._paramstyle = "numeric"
+        assert connection.paramstyle == ParamStyle.NUMERIC
+        assert connection._paramstyle == ParamStyle.NUMERIC
+
+    def test_assign_enum_unchanged(self, connection):
+        connection.paramstyle = ParamStyle.NUMERIC
+        assert connection.paramstyle == ParamStyle.NUMERIC
+
+    def test_assign_invalid_string_raises(self, connection):
+        with pytest.raises(ProgrammingError, match="Invalid paramstyle"):
+            connection.paramstyle = "bogus"
+
+    def test_assign_invalid_type_raises(self, connection):
+        with pytest.raises(ProgrammingError, match="paramstyle must be str or ParamStyle"):
+            connection.paramstyle = 123  # type: ignore[assignment]
+
+    def test_cursor_execute_qmark_after_string_assign(self, connection, mock_db_api):
+        mock_db_api.statement_new.return_value = MagicMock(stmt_handle=StatementHandle(id=1))
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_db_api.statement_execute_query.return_value.result = execute_result
+
+        connection.paramstyle = "qmark"
+        cur = SnowflakeCursor(connection)
+        cur.execute("SELECT ?", (1,))
+        req = mock_db_api.statement_execute_query.call_args[0][0]
+        assert req.HasField("bindings")
 
 
 class TestSetAutocommit:
@@ -665,6 +720,29 @@ class TestConnectionArrowProperties:
 
         connection.arrow_number_to_decimal = 0
         assert connection.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_true_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", arrow_number_to_decimal=True)
+        assert conn.arrow_number_to_decimal is True
+
+    def test_arrow_number_to_decimal_false_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", arrow_number_to_decimal=False)
+        assert conn.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_not_leaked_to_rust_core(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", arrow_number_to_decimal=True)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert "arrow_number_to_decimal" not in request.options
 
 
 class TestGetQueryStatus:

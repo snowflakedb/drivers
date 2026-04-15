@@ -42,19 +42,33 @@ def write_csv_results(results, test_name, driver_type, test_type: TestType = Tes
                     "peak_rss_mb": f"{result['peak_rss_mb']:.1f}",
                 })
         else:
-            writer = csv.DictWriter(f, fieldnames=[
-                "timestamp_ms", "query_s", "fetch_s", "row_count", "cpu_time_s", "peak_rss_mb",
-            ])
+            perf_metric_keys = [
+                "core_batch_wait_s",
+                "core_chunk_download_s",
+                "core_arrow_decode_s",
+                "wrapper_time_s",
+            ]
+            has_perf = any(k in results[0] for k in perf_metric_keys) if results else False
+            base_fields = ["timestamp_ms", "query_s", "fetch_s"]
+            if has_perf:
+                base_fields += perf_metric_keys
+            base_fields += ["row_count", "cpu_time_s", "peak_rss_mb"]
+
+            writer = csv.DictWriter(f, fieldnames=base_fields)
             writer.writeheader()
             for result in results:
-                writer.writerow({
+                row = {
                     "timestamp_ms": result['timestamp'],
                     "query_s": f"{result['query_time_s']:.6f}",
                     "fetch_s": f"{result['fetch_time_s']:.6f}",
                     "row_count": result.get('row_count', 0),
                     "cpu_time_s": f"{result['cpu_time_s']:.6f}",
                     "peak_rss_mb": f"{result['peak_rss_mb']:.1f}",
-                })
+                }
+                if has_perf:
+                    for key in perf_metric_keys:
+                        row[key] = f"{result.get(key, 0.0):.9f}"
+                writer.writerow(row)
     
     return filename
 

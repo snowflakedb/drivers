@@ -1366,6 +1366,57 @@ where
     }
 }
 
+/// Abort a running query by its Snowflake Query ID.
+///
+/// Issues `POST /queries/{query_id}/abort-request` with an empty JSON body.
+/// Returns `Ok(())` when the server acknowledges the abort (`success: true`),
+/// or `RestError::QueryFailed` when `success: false`.
+#[tracing::instrument(skip(client, query_parameters, session_token))]
+pub async fn snowflake_abort_query(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    query_id: &str,
+) -> Result<(), RestError> {
+    let abort_url = format!(
+        "{}/queries/{}/abort-request",
+        query_parameters.server_url, query_id
+    );
+
+    let request = apply_json_content_type(apply_query_headers(
+        client.post(&abort_url),
+        &query_parameters.client_info,
+        session_token,
+    ))
+    .json(&serde_json::json!({}))
+    .build()
+    .context(RequestConstructionSnafu {
+        request: "abort_query",
+    })?;
+
+    let response = client.execute(request).await.context(CommunicationSnafu {
+        context: "Failed to execute abort query request",
+    })?;
+
+    let abort_response = read_response_json::<query_response::AbortQueryResponse>(response)
+        .await
+        .context(InvalidSnowflakeResponseSnafu)?;
+
+    if !abort_response.success {
+        return QueryFailedSnafu {
+            message: abort_response
+                .message
+                .unwrap_or_else(|| "Abort query failed".to_owned()),
+            query_id: query_id.to_owned(),
+            code: Option::<i32>::None,
+            sql_state: Option::<String>::None,
+        }
+        .fail();
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn read_response_json<T>(
     response: reqwest::Response,
 ) -> Result<T, SnowflakeResponseError>

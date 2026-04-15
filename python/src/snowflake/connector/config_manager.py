@@ -18,24 +18,11 @@ from typing import Any, Callable, Literal, NamedTuple, TypeVar
 
 import tomlkit
 
-from snowflake.connector._internal.api_client.client_api import (
-    database_driver_client,
-)
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ConfigGetPathsRequest,
-    ConfigLoadAllSectionsRequest,
-)
-from snowflake.connector._internal.protobuf_gen.proto_exception import (
-    ProtoApplicationException,
-)
-from snowflake.connector.errors import (
-    ConfigManagerError,
-    ConfigSourceError,
-    MissingConfigOptionError,
-)
-from snowflake.connector.errors import (
-    Error as DriverError,
-)
+from ._internal.api_client.client_api import database_driver_client
+from ._internal.protobuf_gen.database_driver_v1_pb2 import ConfigGetPathsRequest, ConfigLoadAllSectionsRequest
+from ._internal.protobuf_gen.proto_exception import ProtoApplicationException
+from .errors import ConfigManagerError, ConfigSourceError, MissingConfigOptionError
+from .errors import Error as DriverError
 
 
 _T = TypeVar("_T")
@@ -90,7 +77,7 @@ def _extract_error_msg(exc: Exception) -> str:
 def _translate_core_error(
     exc: Exception,
     file_path: Path | None = None,
-) -> ConfigManagerError:
+) -> DriverError:
     """Translate a Rust core DriverException into the appropriate Python error.
 
     Maps sf_core error messages to backward-compatible Python exception types.

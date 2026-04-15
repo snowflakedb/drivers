@@ -5,56 +5,86 @@ use crate::api::encoding::{
 };
 use crate::api::error::Required;
 use crate::api::error::{
-    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, InvalidBufferLengthSnafu,
-    InvalidPortSnafu, NullPointerSnafu, OdbcRuntimeSnafu, UnknownAttributeSnafu,
-    UnsupportedAttributeSnafu,
+    AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
+    InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCatalogNameSnafu,
+    InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
+    ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle, types::ConnectionAttribute,
+    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
+    types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
 };
-use crate::conversion::warning::Warnings;
+use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
 
-const SQL_AUTOCOMMIT_ON: sql::ULen = 1;
+const SQL_TXN_READ_COMMITTED: sql::UInteger = 2;
+const SQL_CD_FALSE: sql::UInteger = 0;
+const SQL_CD_TRUE: sql::UInteger = 1;
+const SQL_FALSE: sql::UInteger = 0;
 
 /// Default login timeout in seconds, matching the old driver's S_DEFAULT_LOGIN_TIMEOUT.
 /// Used as the Okta SAML retry budget when neither the connection string nor
 /// SQLSetConnectAttr provides a value.
 const DEFAULT_LOGIN_TIMEOUT_SECS: &str = "300";
 
-/// Maps ODBC connection string parameter names to their sf_core equivalents.
-/// Parameters listed here are forwarded as-is via `connection_set_option_string`.
-/// Parameters that need special handling (type conversion, conditional skipping,
-/// side-effects) are handled separately in `connect_with_params`.
-const PARAM_MAPPINGS: &[(&str, &str)] = &[
-    ("ACCOUNT", "account"),
-    ("SERVER", "host"),
-    ("PWD", "password"),
-    ("UID", "user"),
-    ("PROTOCOL", "protocol"),
-    ("DATABASE", "database"),
-    ("WAREHOUSE", "warehouse"),
-    ("ROLE", "role"),
-    ("SCHEMA", "schema"),
-    ("AUTHENTICATOR", "authenticator"),
-    ("TOKEN", "token"),
-    ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
-    ("DISABLE_SAML_URL_CHECK", "disable_saml_url_check"),
-    ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
-    ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
-    ("CRL_ENABLED", "crl_enabled"),
-    ("PASSCODE", "passcode"),
-    ("PASSCODEINPASSWORD", "passcodeInPassword"),
-    (
-        "CLIENT_STORE_TEMPORARY_CREDENTIAL",
-        "client_store_temporary_credential",
-    ),
-];
+/// Normalizes `CRL_ENABLED` values to the uppercase mode strings `sf_core` accepts for
+/// `crl_check_mode` (see `build_crl_config` in `connection_config.rs`).
+fn normalize_crl_enabled_value(value: &str) -> String {
+    let v = value.trim();
+    if v.eq_ignore_ascii_case("true") || v == "1" {
+        "ENABLED".to_owned()
+    } else if v.eq_ignore_ascii_case("false") || v == "0" {
+        "DISABLED".to_owned()
+    } else {
+        v.to_ascii_uppercase()
+    }
+}
+
+fn normalize_connection_string_options(
+    connection_string_map: HashMap<String, String>,
+) -> HashMap<String, ConfigSetting> {
+    connection_string_map
+        .into_iter()
+        .filter_map(|(key, value)| normalize_connection_string_option(key, value))
+        .collect()
+}
+
+fn normalize_connection_string_option(
+    key: String,
+    value: String,
+) -> Option<(String, ConfigSetting)> {
+    let upper = key.to_ascii_uppercase();
+    if upper == "DRIVER" {
+        return None;
+    }
+
+    match upper.as_str() {
+        "PORT" => Some(("port".to_owned(), value.into())),
+        "CRL_MODE" => Some(("CRL_MODE".to_owned(), value.to_uppercase().into())),
+        "CRL_ENABLED" => Some((
+            "CRL_ENABLED".to_owned(),
+            normalize_crl_enabled_value(&value).into(),
+        )),
+        "CLIENT_STORE_TEMPORARY_CREDENTIAL" => {
+            Some(("client_store_temporary_credential".to_owned(), value.into()))
+        }
+        "LOGIN_TIMEOUT" => Some(("authentication_timeout".to_owned(), value.into())),
+        "PASSCODEINPASSWORD" => Some(("passcodeInPassword".to_owned(), value.into())),
+        "PRIV_KEY_FILE" => Some(("private_key_file".to_owned(), value.into())),
+        "PRIV_KEY_BASE64" => Some(("private_key".to_owned(), value.into())),
+        "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
+            Some(("private_key_password".to_owned(), value.into()))
+        }
+        // Forward other keys (e.g. SERVER, UID) for `sf_core` alias resolution; do not
+        // pre-canonicalize here to avoid duplicate seed keys.
+        _ => Some((upper, value.into())),
+    }
+}
 
 /// Parse connection string into key-value pairs
 fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
@@ -62,7 +92,10 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
     for pair in connection_string.split(';') {
         let parts: Vec<&str> = pair.splitn(2, '=').collect();
         if parts.len() == 2 {
-            map.insert(parts[0].trim().to_uppercase(), parts[1].trim().to_string());
+            map.insert(
+                parts[0].trim().to_ascii_uppercase(),
+                parts[1].trim().to_string(),
+            );
         }
     }
     map
@@ -108,170 +141,79 @@ fn connect_with_params(
         tracing::info!("connect_with_params: params={:?}", redacted_map);
     }
 
-    let connection = conn_from_handle(connection_handle);
-
-    // Check whether attribute-based key options supersede file-based connection string params.
-    // Matches old driver (SFConnection.cpp): if PrivKeyContent or PrivKeyBase64 was set via
-    // SQLSetConnectAttr, PRIV_KEY_FILE from the connection string is not used.
-    let attr_key_set = connection
-        .pre_connection_attrs
-        .contains_key(&ConnectionAttribute::PrivKeyContent)
-        || connection
-            .pre_connection_attrs
-            .contains_key(&ConnectionAttribute::PrivKeyBase64);
-
-    let attr_has_priv_key_password = connection
-        .pre_connection_attrs
-        .contains_key(&ConnectionAttribute::PrivKeyPassword);
-
-    let pre_attrs = connection.pre_connection_attrs.clone();
-
-    let (db_handle, conn_handle) =
-        global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
-            let db_handle = c
-                .database_new(DatabaseNewRequest {})
-                .await?
-                .db_handle
-                .required("Database handle is required")?;
-            let conn_handle = c
-                .connection_new(ConnectionNewRequest {})
-                .await?
-                .conn_handle
-                .required("Connection handle is required")?;
-
-            let mut login_timeout_set = false;
-
-            for (key, value) in params {
-                if key == "DRIVER" {
-                    continue;
-                }
-
-                if let Some(core_key) = PARAM_MAPPINGS
-                    .iter()
-                    .find(|(k, _)| *k == key)
-                    .map(|(_, v)| *v)
-                {
-                    c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: core_key.to_owned(),
-                        value,
-                    })
-                    .await?;
-                    continue;
-                }
-
-                match key.as_str() {
-                    "PORT" => {
-                        let port_int: i64 = value.parse().context(InvalidPortSnafu {
-                            port: value.clone(),
-                        })?;
-                        c.connection_set_option_int(ConnectionSetOptionIntRequest {
-                            conn_handle: Some(conn_handle),
-                            key: "port".to_owned(),
-                            value: port_int,
-                        })
-                        .await?;
-                    }
-                    "CRL_MODE" => {
-                        c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                            conn_handle: Some(conn_handle),
-                            key: "crl_mode".to_owned(),
-                            value: value.to_uppercase(),
-                        })
-                        .await?;
-                    }
-                    "LOGIN_TIMEOUT" => {
-                        login_timeout_set = true;
-                        c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                            conn_handle: Some(conn_handle),
-                            key: "authentication_timeout".to_owned(),
-                            value,
-                        })
-                        .await?;
-                    }
-                    "PRIV_KEY_FILE" => {
-                        if attr_key_set {
-                            tracing::debug!(
-                                "connect_with_params: skipping PRIV_KEY_FILE — attribute-based key takes priority"
-                            );
-                        } else {
-                            c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                                conn_handle: Some(conn_handle),
-                                key: "private_key_file".to_owned(),
-                                value,
-                            })
-                            .await?;
-                        }
-                    }
-                    "PRIV_KEY_BASE64" => {
-                        if attr_key_set {
-                            tracing::debug!(
-                                "connect_with_params: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
-                            );
-                        } else {
-                            c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                                conn_handle: Some(conn_handle),
-                                key: "private_key".to_owned(),
-                                value,
-                            })
-                            .await?;
-                        }
-                    }
-                    "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
-                        if attr_has_priv_key_password {
-                            tracing::debug!(
-                                "connect_with_params: skipping {key} — attribute-based password takes priority"
-                            );
-                        } else {
-                            c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                                conn_handle: Some(conn_handle),
-                                key: "private_key_password".to_owned(),
-                                value,
-                            })
-                            .await?;
-                        }
-                    }
-                    _ => {
-                        tracing::info!(
-                            "connect_with_params: forwarding unrecognized key {key:?} to sf_core"
-                        );
-                        c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                            conn_handle: Some(conn_handle),
-                            key,
-                            value,
-                        })
-                        .await?;
-                    }
-                }
-            }
-
-            let login_timeout_from_attr =
-                apply_pre_connection_attrs_async(c, &pre_attrs, conn_handle).await?;
-
-            if !login_timeout_set && !login_timeout_from_attr {
-                c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                    conn_handle: Some(conn_handle),
-                    key: "authentication_timeout".to_owned(),
-                    value: DEFAULT_LOGIN_TIMEOUT_SECS.to_owned(),
-                })
-                .await?;
-            }
-
-            c.connection_set_option_string(ConnectionSetOptionStringRequest {
-                conn_handle: Some(conn_handle),
-                key: "client_app_id".to_owned(),
-                value: "ODBC".to_owned(),
-            })
-            .await?;
-
-            c.connection_init(ConnectionInitRequest {
-                conn_handle: Some(conn_handle),
-                db_handle: Some(db_handle),
-            })
-            .await?;
-
-            Ok::<_, crate::api::error::OdbcError>((db_handle, conn_handle))
+    let mut options = normalize_connection_string_options(params);
+    if let Some(config_setting::Value::StringValue(raw_port)) = options
+        .get("port")
+        .and_then(|setting| setting.value.as_ref())
+    {
+        let port_int: i64 = raw_port.parse().context(InvalidPortSnafu {
+            port: raw_port.clone(),
         })?;
+        options.insert("port".to_owned(), port_int.into());
+    }
+
+    let connection = conn_from_handle(connection_handle);
+    apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
+
+    // Check before moving `options` into the RPC call below.
+    let login_timeout_in_options = options.contains_key("authentication_timeout");
+    let login_timeout_in_attrs = connection
+        .pre_connection_attrs
+        .contains_key(&ConnectionAttribute::LoginTimeout);
+    let pre_connection_attrs = connection.pre_connection_attrs.clone();
+
+    let (db_handle, conn_handle) = global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        let db_handle = c
+            .database_new(DatabaseNewRequest {})
+            .await?
+            .db_handle
+            .required("Database handle is required")?;
+        let conn_handle = c
+            .connection_new(ConnectionNewRequest {})
+            .await?
+            .conn_handle
+            .required("Connection handle is required")?;
+
+        let response = c
+            .connection_set_options(ConnectionSetOptionsRequest {
+                conn_handle: Some(conn_handle),
+                options,
+            })
+            .await?;
+
+        for warning in &response.warnings {
+            tracing::warn!("connection option warning: {}", warning.message);
+        }
+
+        // Wrapper identity and optional default login timeout (Okta SAML budget) use the
+        // same batch setter RPC as the connection string options.
+        let mut follow_up = HashMap::from([("client_app_id".to_owned(), "ODBC".to_owned().into())]);
+        if !login_timeout_in_options && !login_timeout_in_attrs {
+            follow_up.insert(
+                "authentication_timeout".to_owned(),
+                DEFAULT_LOGIN_TIMEOUT_SECS.to_owned().into(),
+            );
+        }
+        let response = c
+            .connection_set_options(ConnectionSetOptionsRequest {
+                conn_handle: Some(conn_handle),
+                options: follow_up,
+            })
+            .await?;
+        for warning in &response.warnings {
+            tracing::warn!("connection option warning: {}", warning.message);
+        }
+
+        apply_pre_connection_runtime_attrs_async(c, &pre_connection_attrs, conn_handle).await?;
+
+        c.connection_init(ConnectionInitRequest {
+            conn_handle: Some(conn_handle),
+            db_handle: Some(db_handle),
+        })
+        .await?;
+
+        Ok::<_, crate::api::OdbcError>((db_handle, conn_handle))
+    })?;
 
     tracing::info!("connect_with_params: connection_init completed");
 
@@ -280,69 +222,103 @@ fn connect_with_params(
         conn_handle,
     };
 
+    // Fetch the initial catalog value. Failure here is non-fatal: the connection is
+    // already established (state = Connected). Use warn-and-continue rather than `?`
+    // to avoid returning an error after the state was set to Connected.
+    // ConnectionHandle is Copy, so conn_handle is still accessible after the move above.
+    connection.current_catalog = match global().context(OdbcRuntimeSnafu) {
+        Ok(rt) => rt
+            .block_on(async |c| {
+                let info = c
+                    .connection_get_info(ConnectionGetInfoRequest {
+                        conn_handle: Some(conn_handle),
+                        info_codes: vec![],
+                        include_master_token: false,
+                    })
+                    .await?;
+                Ok::<Option<String>, crate::api::OdbcError>(info.database)
+            })
+            .unwrap_or_else(|e| {
+                tracing::warn!("connect_with_params: failed to fetch current catalog: {e:?}");
+                None
+            }),
+        Err(e) => {
+            tracing::warn!(
+                "connect_with_params: runtime unavailable for initial catalog fetch: {e:?}"
+            );
+            None
+        }
+    };
+
     Ok(())
 }
 
-/// Apply pre-connection attributes to sf_core. SQLSetConnectAttr values override
-/// connection string parameters. PrivKeyContent takes priority over PrivKeyBase64.
-/// Returns `true` if LoginTimeout was set via attributes.
-async fn apply_pre_connection_attrs_async(
-    client: &sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient,
+/// Apply SQLSetConnectAttr values as overrides into the canonical options map.
+/// PrivKeyContent or PrivKeyBase64 take priority over private-key settings from
+/// the connection string. PrivKeyPassword overrides private_key_password.
+fn apply_pre_connection_overrides(
     attrs: &HashMap<ConnectionAttribute, String>,
-    conn_handle: ConnectionHandle,
-) -> OdbcResult<bool> {
+    options: &mut HashMap<String, ConfigSetting>,
+) {
+    // PrivKeyContent or PrivKeyBase64 → canonical "private_key"
+    // Suppresses connection-string private key sources.
     if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
         use base64::{Engine as _, engine::general_purpose};
         let encoded = general_purpose::STANDARD.encode(content.as_bytes());
-        client
-            .connection_set_option_string(ConnectionSetOptionStringRequest {
-                conn_handle: Some(conn_handle),
-                key: "private_key".to_owned(),
-                value: encoded,
-            })
-            .await?;
-    } else if let Some(base64_key) = attrs.get(&ConnectionAttribute::PrivKeyBase64) {
-        client
-            .connection_set_option_string(ConnectionSetOptionStringRequest {
-                conn_handle: Some(conn_handle),
-                key: "private_key".to_owned(),
-                value: base64_key.clone(),
-            })
-            .await?;
+        options.insert("private_key".to_owned(), encoded.into());
+        options.remove("private_key_file");
+    } else if let Some(b64) = attrs.get(&ConnectionAttribute::PrivKeyBase64) {
+        options.insert("private_key".to_owned(), b64.clone().into());
+        options.remove("private_key_file");
     }
 
-    if let Some(password) = attrs.get(&ConnectionAttribute::PrivKeyPassword) {
-        client
-            .connection_set_option_string(ConnectionSetOptionStringRequest {
-                conn_handle: Some(conn_handle),
-                key: "private_key_password".to_owned(),
-                value: password.clone(),
-            })
-            .await?;
+    // PrivKeyPassword overrides connection-string password keys.
+    if let Some(pwd) = attrs.get(&ConnectionAttribute::PrivKeyPassword) {
+        options.insert("private_key_password".to_owned(), pwd.clone().into());
     }
 
+    // Application name
     if let Some(app) = attrs.get(&ConnectionAttribute::Application) {
-        client
-            .connection_set_option_string(ConnectionSetOptionStringRequest {
-                conn_handle: Some(conn_handle),
-                key: "application".to_owned(),
-                value: app.clone(),
-            })
-            .await?;
+        options.insert("application".to_owned(), app.clone().into());
     }
 
+    // LoginTimeout -> authentication_timeout (matches old driver: used as Okta SAML budget)
     if let Some(timeout) = attrs.get(&ConnectionAttribute::LoginTimeout) {
-        client
-            .connection_set_option_string(ConnectionSetOptionStringRequest {
-                conn_handle: Some(conn_handle),
-                key: "authentication_timeout".to_owned(),
-                value: timeout.clone(),
-            })
-            .await?;
-        return Ok(true);
+        options.insert("authentication_timeout".to_owned(), timeout.clone().into());
+    }
+}
+
+/// Apply pre-connection attributes that still require dedicated RPCs after
+/// the canonical batch `ConnectionSetOptions` payload has been sent.
+async fn apply_pre_connection_runtime_attrs_async(
+    client: &sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient,
+    attrs: &HashMap<ConnectionAttribute, String>,
+    conn_handle: ConnectionHandle,
+) -> OdbcResult<()> {
+    if let Some(raw) = attrs.get(&ConnectionAttribute::Autocommit) {
+        match raw
+            .parse::<sql::UInteger>()
+            .ok()
+            .and_then(AutocommitValue::from_raw)
+        {
+            Some(val) => {
+                client
+                    .connection_set_autocommit(ConnectionSetAutocommitRequest {
+                        conn_handle: Some(conn_handle),
+                        autocommit: matches!(val, AutocommitValue::On),
+                    })
+                    .await?;
+            }
+            None => {
+                tracing::warn!(
+                    "apply_pre_connection_runtime_attrs_async: invalid cached autocommit value \
+                     {raw:?}; skipping autocommit RPC to avoid silent promotion to ON"
+                );
+            }
+        }
     }
 
-    Ok(false)
+    Ok(())
 }
 
 /// Connect using DSN (SQLConnect / SQLConnectW).
@@ -584,6 +560,19 @@ pub fn native_sql<E: OdbcEncoding>(
     Ok(())
 }
 
+/// Query a session parameter from sf_core's cached session state.
+fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResult<Option<String>> {
+    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+        let resp = c
+            .connection_get_parameter(ConnectionGetParameterRequest {
+                conn_handle: Some(*conn_handle),
+                key: key.to_string(),
+            })
+            .await?;
+        Ok(resp.value)
+    })
+}
+
 /// Set a connection attribute (SQLSetConnectAttr / SQLSetConnectAttrW).
 // TODO: Clear sensitive pre_connection_attrs after apply_pre_connection_attrs.
 pub fn set_connect_attr<E: OdbcEncoding>(
@@ -591,6 +580,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let connection = conn_from_handle(connection_handle);
     tracing::debug!("set_connect_attr: attribute={attribute}");
@@ -607,6 +597,54 @@ pub fn set_connect_attr<E: OdbcEncoding>(
     };
 
     match attr {
+        ConnectionAttribute::AccessMode => {
+            let mode = AccessMode::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+                InvalidAttributeValueSnafu {
+                    attribute: attr.as_raw(),
+                    value: value_ptr as i64,
+                }
+                .build()
+            })?;
+            connection.access_mode = mode;
+            Ok(())
+        }
+        ConnectionAttribute::Autocommit => {
+            let val = AutocommitValue::from_raw(value_ptr as sql::UInteger).ok_or_else(|| {
+                InvalidAttributeValueSnafu {
+                    attribute: attr.as_raw(),
+                    value: value_ptr as i64,
+                }
+                .build()
+            })?;
+            // NOTE: Per ODBC spec, HY011 must be returned if a transaction is currently open.
+            // Transaction state tracking requires server-side awareness — deferred to SNOW-3240589.
+            match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => {
+                    let autocommit_on = matches!(val, AutocommitValue::On);
+                    global().context(OdbcRuntimeSnafu)?.block_on(async |c| {
+                        c.connection_set_autocommit(ConnectionSetAutocommitRequest {
+                            conn_handle: Some(*conn_handle),
+                            autocommit: autocommit_on,
+                        })
+                        .await
+                    })?;
+                    connection.cached_autocommit = val;
+                    // Keep pre_connection_attrs in sync so a reconnect on the same handle
+                    // re-applies the value set while connected rather than the stale pre-connect value.
+                    connection
+                        .pre_connection_attrs
+                        .insert(attr, val.as_raw().to_string());
+                    Ok(())
+                }
+                ConnectionState::Disconnected => {
+                    connection.cached_autocommit = val;
+                    connection
+                        .pre_connection_attrs
+                        .insert(attr, val.as_raw().to_string());
+                    Ok(())
+                }
+            }
+        }
         ConnectionAttribute::LoginTimeout => {
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
@@ -621,17 +659,90 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 .insert(attr, seconds.to_string());
             Ok(())
         }
+        ConnectionAttribute::TxnIsolation => {
+            // Snowflake supports only READ_COMMITTED. Accept it silently; substitute any
+            // other requested level with READ_COMMITTED and return 01S02 per ODBC spec.
+            // NOTE: HY011 when a transaction is open is deferred to SNOW-3240589.
+            if value_ptr as sql::UInteger != SQL_TXN_READ_COMMITTED {
+                warnings.push(Warning::OptionValueChanged);
+            }
+            Ok(())
+        }
+        ConnectionAttribute::CurrentCatalog => {
+            let conn_handle = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => *conn_handle,
+                ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
+            };
+            // Return 24000 if any statement has an open cursor.
+            for (weak, raw_ptr) in &connection.child_statements {
+                // Use strong_count to check liveness without constructing Arc<Statement>
+                // (i.e., &Statement), which would coexist with the outer &mut Connection
+                // and create an aliasing hazard via Statement::conn: *mut Connection.
+                if weak.strong_count() == 0 {
+                    continue;
+                }
+                // SAFETY: strong_count > 0 guarantees the Arc allocation (and the Statement
+                // it points to) is still alive. We project to `state` via addr_of! rather than
+                // forming &Statement to avoid aliasing conn: *mut Connection with &mut Connection.
+                let is_cursor_open = unsafe {
+                    let state_ptr = std::ptr::addr_of!((*(*raw_ptr)).state);
+                    matches!(
+                        (*state_ptr).as_ref(),
+                        StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
+                    )
+                };
+                if is_cursor_open {
+                    return InvalidCursorStateSnafu.fail();
+                }
+            }
+            let catalog = read_string_from_pointer::<E>(value_ptr, string_length)?;
+            let catalog = catalog.trim().to_string();
+            global()
+                .context(OdbcRuntimeSnafu)?
+                .block_on(async |c| {
+                    c.connection_use_database(ConnectionUseDatabaseRequest {
+                        conn_handle: Some(conn_handle),
+                        database: catalog.clone(),
+                    })
+                    .await
+                })
+                .map_err(|e| -> crate::api::OdbcError {
+                    // Map any application-level USE DATABASE error to 3D000 (invalid catalog
+                    // name). Snowflake returns 42000 for a non-existent database, which is not
+                    // a meaningful ODBC state for this context. Transport/protocol errors are
+                    // always propagated as-is.
+                    match &e {
+                        proto_utils::ProtoError::Application(_) => InvalidCatalogNameSnafu {
+                            name: catalog.clone(),
+                        }
+                        .build(),
+                        _ => e.into(),
+                    }
+                })?;
+            connection.current_catalog = Some(catalog);
+            Ok(())
+        }
+        ConnectionAttribute::QuietMode => {
+            connection.quiet_mode = value_ptr;
+            Ok(())
+        }
+        ConnectionAttribute::PacketSize => {
+            if matches!(connection.state, ConnectionState::Connected { .. }) {
+                return AttributeCannotBeSetNowSnafu {
+                    attribute: attr.as_raw(),
+                }
+                .fail();
+            }
+            connection.packet_size = value_ptr as sql::UInteger;
+            Ok(())
+        }
         ConnectionAttribute::ConnectionTimeout => {
             tracing::debug!("set_connect_attr: ConnectionTimeout (ignored)");
             Ok(())
         }
-        ConnectionAttribute::Autocommit => {
-            tracing::debug!("set_connect_attr: Autocommit (ignored)");
-            Ok(())
-        }
-        ConnectionAttribute::CurrentCatalog => {
-            tracing::warn!("set_connect_attr: CurrentCatalog is not yet implemented");
-            crate::api::error::UnsupportedAttributeSnafu {
+        ConnectionAttribute::ConnectionDead | ConnectionAttribute::AutoIpd => {
+            // Read-only attributes — cannot be set
+            ReadOnlyAttributeSnafu {
                 attribute: attr.as_raw(),
             }
             .fail()
@@ -685,34 +796,66 @@ pub fn get_connect_attr<E: OdbcEncoding>(
     };
 
     match attr {
-        ConnectionAttribute::PrivKeyContent
-        | ConnectionAttribute::PrivKeyPassword
-        | ConnectionAttribute::PrivKeyBase64
-        | ConnectionAttribute::Application => {
-            let value = connection
-                .pre_connection_attrs
-                .get(&attr)
-                .map(|s| s.as_str())
-                .unwrap_or("");
-            write_string_bytes_i32::<E>(
-                value,
-                value_ptr as *mut E::Char,
-                buffer_length,
-                string_length_ptr,
-                Some(warnings),
-            );
+        ConnectionAttribute::AccessMode => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = connection.access_mode.as_raw();
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
             Ok(())
         }
         ConnectionAttribute::Autocommit => {
+            // Per spec: query the server for the actual autocommit state when connected;
+            // fall back to the cached value if the RPC fails or the parameter is absent.
+            // The cache is the authoritative source when disconnected.
+            let val: sql::UInteger = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => {
+                    match get_session_parameter(conn_handle, "AUTOCOMMIT") {
+                        Ok(Some(v)) if v.eq_ignore_ascii_case("true") => {
+                            connection.cached_autocommit = AutocommitValue::On;
+                            AutocommitValue::On.as_raw()
+                        }
+                        Ok(Some(_)) => {
+                            connection.cached_autocommit = AutocommitValue::Off;
+                            AutocommitValue::Off.as_raw()
+                        }
+                        Ok(None) => {
+                            tracing::warn!(
+                                "get_connect_attr: AUTOCOMMIT session parameter missing, \
+                                 falling back to cached value"
+                            );
+                            connection.cached_autocommit.as_raw()
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "get_connect_attr: failed to read AUTOCOMMIT session parameter \
+                                 ({e}), falling back to cached value"
+                            );
+                            connection.cached_autocommit.as_raw()
+                        }
+                    }
+                }
+                ConnectionState::Disconnected => connection.cached_autocommit.as_raw(),
+            };
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = SQL_AUTOCOMMIT_ON;
+                    *(value_ptr as *mut sql::UInteger) = val;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
                 }
             }
             Ok(())
         }
         ConnectionAttribute::LoginTimeout => {
-            let timeout: sql::ULen = match connection.pre_connection_attrs.get(&attr) {
+            let timeout: sql::UInteger = match connection.pre_connection_attrs.get(&attr) {
                 Some(s) => s.parse().unwrap_or_else(|_| {
                     tracing::warn!(
                         "get_connect_attr: LoginTimeout value {s:?} is not a valid integer, \
@@ -724,20 +867,25 @@ pub fn get_connect_attr<E: OdbcEncoding>(
             };
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = timeout;
+                    *(value_ptr as *mut sql::UInteger) = timeout;
                 }
             }
             if !string_length_ptr.is_null() {
                 unsafe {
-                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
                 }
             }
             Ok(())
         }
-        ConnectionAttribute::ConnectionTimeout => {
+        ConnectionAttribute::TxnIsolation => {
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = 0;
+                    *(value_ptr as *mut sql::UInteger) = SQL_TXN_READ_COMMITTED;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
                 }
             }
             Ok(())
@@ -749,8 +897,125 @@ pub fn get_connect_attr<E: OdbcEncoding>(
                 }
                 .fail();
             }
+            let database = match &connection.state {
+                ConnectionState::Connected { conn_handle, .. } => {
+                    let conn_handle = *conn_handle;
+                    match global().context(OdbcRuntimeSnafu).and_then(|rt| {
+                        rt.block_on(async |c| {
+                            let info = c
+                                .connection_get_info(ConnectionGetInfoRequest {
+                                    conn_handle: Some(conn_handle),
+                                    info_codes: vec![],
+                                    include_master_token: false,
+                                })
+                                .await?;
+                            Ok::<Option<String>, crate::api::OdbcError>(info.database)
+                        })
+                    }) {
+                        Ok(db) => {
+                            connection.current_catalog = db.clone();
+                            db
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "get_connect_attr: failed to fetch current catalog from server: \
+                                 {e:?}; falling back to cached value"
+                            );
+                            connection.current_catalog.clone()
+                        }
+                    }
+                }
+                // When disconnected, return the cached catalog (or empty string).
+                // Per ODBC spec the catalog is indeterminate before connecting;
+                // returning an error would break applications that probe this attribute
+                // before calling SQLConnect.
+                ConnectionState::Disconnected => connection.current_catalog.clone(),
+            };
+            let database_str = database.as_deref().unwrap_or("");
             write_string_bytes_i32::<E>(
-                "",
+                database_str,
+                value_ptr as *mut E::Char,
+                buffer_length,
+                string_length_ptr,
+                Some(warnings),
+            );
+            Ok(())
+        }
+        ConnectionAttribute::QuietMode => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::Pointer) = connection.quiet_mode;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::PacketSize => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = connection.packet_size;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::ConnectionTimeout => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = 0;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::ConnectionDead => {
+            let dead = match &connection.state {
+                ConnectionState::Connected { .. } => SQL_CD_FALSE,
+                ConnectionState::Disconnected => SQL_CD_TRUE,
+            };
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = dead;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::AutoIpd => {
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::UInteger) = SQL_FALSE;
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<sql::UInteger>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::PrivKeyContent
+        | ConnectionAttribute::PrivKeyPassword
+        | ConnectionAttribute::PrivKeyBase64
+        | ConnectionAttribute::Application => {
+            let value = connection
+                .pre_connection_attrs
+                .get(&attr)
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            write_string_bytes_i32::<E>(
+                value,
                 value_ptr as *mut E::Char,
                 buffer_length,
                 string_length_ptr,
@@ -830,7 +1095,139 @@ pub fn get_info<E: OdbcEncoding>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sf_core::protobuf::generated::database_driver_v1::config_setting;
     use test_case::test_case;
+
+    fn config_string<'a>(
+        options: &'a HashMap<String, ConfigSetting>,
+        key: &str,
+    ) -> Option<&'a str> {
+        match options.get(key)?.value.as_ref()? {
+            config_setting::Value::StringValue(value) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_login_timeout() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "LOGIN_TIMEOUT".to_owned(),
+            "42".to_owned(),
+        )]));
+
+        assert_eq!(
+            config_string(&options, "authentication_timeout"),
+            Some("42")
+        );
+        assert!(!options.contains_key("LOGIN_TIMEOUT"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_is_case_insensitive_for_special_keys() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("login_timeout".to_owned(), "99".to_owned()),
+            ("priv_key_base64".to_owned(), "dsn-key".to_owned()),
+        ]));
+
+        assert_eq!(
+            config_string(&options, "authentication_timeout"),
+            Some("99")
+        );
+        assert_eq!(config_string(&options, "private_key"), Some("dsn-key"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_normalizes_crl_enabled_for_core() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "CRL_ENABLED".to_owned(),
+            "true".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "CRL_ENABLED"), Some("ENABLED"));
+        assert!(!options.contains_key("crl_check_mode"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_crl_enabled_zero_maps_to_disabled() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "CRL_ENABLED".to_owned(),
+            "0".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "CRL_ENABLED"), Some("DISABLED"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_uppercases_crl_mode() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "CRL_MODE".to_owned(),
+            "enabled".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "CRL_MODE"), Some("ENABLED"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_forwards_standard_keys_for_core_aliases() {
+        let options = normalize_connection_string_options(HashMap::from([
+            ("SERVER".to_owned(), "example.com".to_owned()),
+            ("UID".to_owned(), "u".to_owned()),
+        ]));
+
+        assert_eq!(config_string(&options, "SERVER"), Some("example.com"));
+        assert_eq!(config_string(&options, "UID"), Some("u"));
+        assert!(!options.contains_key("host"));
+        assert!(!options.contains_key("user"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_passcodeinpassword() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "PASSCODEINPASSWORD".to_owned(),
+            "true".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "passcodeInPassword"), Some("true"));
+        assert!(!options.contains_key("PASSCODEINPASSWORD"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_maps_client_store_temporary_credential() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "CLIENT_STORE_TEMPORARY_CREDENTIAL".to_owned(),
+            "true".to_owned(),
+        )]));
+
+        assert_eq!(
+            config_string(&options, "client_store_temporary_credential"),
+            Some("true")
+        );
+        assert!(!options.contains_key("CLIENT_STORE_TEMPORARY_CREDENTIAL"));
+    }
+
+    #[test]
+    fn normalize_connection_string_options_preserves_unrecognized_keys() {
+        let options = normalize_connection_string_options(HashMap::from([(
+            "QUERY_TAG".to_owned(),
+            "from-odbc".to_owned(),
+        )]));
+
+        assert_eq!(config_string(&options, "QUERY_TAG"), Some("from-odbc"));
+    }
+
+    #[test]
+    fn apply_pre_connection_overrides_makes_priv_key_base64_authoritative() {
+        let mut options = normalize_connection_string_options(HashMap::from([
+            ("PRIV_KEY_BASE64".to_owned(), "dsn-key".to_owned()),
+            ("PRIV_KEY_FILE".to_owned(), "/tmp/key.p8".to_owned()),
+        ]));
+        let attrs = HashMap::from([(ConnectionAttribute::PrivKeyBase64, "attr-key".to_owned())]);
+
+        apply_pre_connection_overrides(&attrs, &mut options);
+
+        assert_eq!(config_string(&options, "private_key"), Some("attr-key"));
+        assert!(!options.contains_key("private_key_file"));
+    }
 
     #[test_case("UID=admin;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "basic")]
     #[test_case("UID=admin; AUTHENTICATOR=SNOWFLAKE_JWT", &[("UID", "admin"), ("AUTHENTICATOR", "SNOWFLAKE_JWT")] ; "trims keys")]

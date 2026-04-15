@@ -7,6 +7,7 @@ to Snowflake tables via the Parquet stage upload pipeline.
 from __future__ import annotations
 
 import math
+import warnings
 
 from datetime import date, datetime, timezone
 from uuid import uuid4
@@ -15,6 +16,7 @@ import pandas as pd
 import pytest
 
 from snowflake.connector.cursor import DictCursor
+from snowflake.connector.errors import ProgrammingError
 from snowflake.connector.pandas_tools import write_pandas
 from tests.e2e.types.utils import assert_connection_is_open
 
@@ -33,7 +35,6 @@ def _table(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:8]}".upper()
 
 
-@pytest.mark.skip_universal(reason="write_pandas not yet implemented in universal driver")
 class TestWritePandas:
     """Tests for write_pandas function."""
 
@@ -222,3 +223,103 @@ class TestWritePandas:
         assert row0["COL_TS_NTZ"] == ts_ntz
         assert row1["COL_TS_TZ"] == ts_tz
         assert row1["COL_TS_NTZ"] == ts_ntz
+
+
+class TestWritePandasValidation:
+    """Tests for write_pandas input validation and warnings.
+
+    Validation fires before any Snowflake interaction, so these tests
+    use a real connection but never actually write data.
+    """
+
+    def test_should_raise_programming_error_when_database_is_set_without_schema(self, execute_query, connection):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
+        # When write_pandas is called with database but no schema
+        kwargs = {"database": "mydb"}
+
+        # Then ProgrammingError should be raised
+        with pytest.raises(ProgrammingError):
+            write_pandas(connection, SAMPLE_DF, "t", **kwargs)
+
+    def test_should_raise_programming_error_for_invalid_compression(self, execute_query, connection):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
+        # When write_pandas is called with an unsupported compression value
+        kwargs = {"compression": "bzip2"}
+
+        # Then ProgrammingError should be raised
+        with pytest.raises(ProgrammingError):
+            write_pandas(connection, SAMPLE_DF, "t", **kwargs)
+
+    def test_should_raise_value_error_for_invalid_table_type(self, execute_query, connection):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
+        # When write_pandas is called with an invalid table_type
+        kwargs = {"table_type": "bogus"}
+
+        # Then ValueError should be raised
+        with pytest.raises(ValueError):
+            write_pandas(connection, SAMPLE_DF, "t", **kwargs)
+
+    def test_should_emit_user_warning_for_tz_aware_columns_without_use_logical_type(self, execute_query, connection):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
+        # And A DataFrame with a tz-aware datetime column
+        tz_df = pd.DataFrame({"ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)]})
+
+        # When write_pandas is called without use_logical_type=True
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                write_pandas(connection, tz_df, "t")
+            except Exception:
+                pass
+
+        # Then UserWarning about timezone should be emitted
+        assert any(issubclass(w.category, UserWarning) and "timezone" in str(w.message).lower() for w in caught), (
+            f"Expected UserWarning about timezone, got: {[str(w.message) for w in caught]}"
+        )
+
+    def test_should_emit_user_warning_for_non_standard_dataframe_index(self, execute_query, connection):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
+        # And A DataFrame with a string index
+        string_idx_df = pd.DataFrame({"val": [10, 20]}, index=["a", "b"])
+
+        # When write_pandas is called with the non-standard index DataFrame
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                write_pandas(connection, string_idx_df, "t")
+            except Exception:
+                pass
+
+        # Then UserWarning about non-standard index should be emitted
+        assert any(issubclass(w.category, UserWarning) and "index" in str(w.message).lower() for w in caught), (
+            f"Expected UserWarning about index, got: {[str(w.message) for w in caught]}"
+        )
+
+    def test_should_handle_invalid_iceberg_config_keys(self, execute_query, connection, tmp_schema):
+        # Given Snowflake client is logged in
+        assert_connection_is_open(execute_query)
+
+        # When write_pandas is called with iceberg_config containing invalid keys
+        kwargs = {"iceberg_config": {"invalid_key": "value"}}
+
+        # Then ProgrammingError should be raised
+        with pytest.raises(ProgrammingError, match="INVALID_KEY"):
+            write_pandas(
+                connection,
+                SAMPLE_DF,
+                _table("WP_OVERWRITE"),
+                schema=tmp_schema,
+                quote_identifiers=False,
+                auto_create_table=True,
+                **kwargs,
+            )

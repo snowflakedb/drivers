@@ -14,7 +14,7 @@
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("Test decimal to floating point conversion", "[fixed][conversion][c_real]") {
+TEST_CASE("Test decimal to floating point conversion", "[fixed][conversion][c_float]") {
   // Given A Snowflake connection is established
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -42,7 +42,7 @@ TEST_CASE("Test decimal to floating point conversion", "[fixed][conversion][c_re
   }
 }
 
-TEST_CASE("SQL_DECIMAL explicit floating point conversions preserve fraction", "[fixed][conversion][c_real]") {
+TEST_CASE("SQL_DECIMAL explicit floating point conversions preserve fraction", "[fixed][conversion][c_float]") {
   // Given A Snowflake connection is established
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -60,7 +60,7 @@ TEST_CASE("SQL_DECIMAL explicit floating point conversions preserve fraction", "
   CHECK(double_val < 123.790);
 }
 
-TEST_CASE("DECIMAL to floating point precision", "[fixed][conversion][c_real][precision]") {
+TEST_CASE("DECIMAL to floating point precision", "[fixed][conversion][c_float][precision]") {
   // Given A Snowflake connection is established
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -83,7 +83,7 @@ TEST_CASE("DECIMAL to floating point precision", "[fixed][conversion][c_real][pr
   }
 }
 
-TEST_CASE("DECIMAL multiple rows as SQL_C_DOUBLE", "[fixed][conversion][c_real][multirow]") {
+TEST_CASE("DECIMAL multiple rows as SQL_C_DOUBLE", "[fixed][conversion][c_float][multirow]") {
   // Given A Snowflake connection is established
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -105,7 +105,7 @@ TEST_CASE("DECIMAL multiple rows as SQL_C_DOUBLE", "[fixed][conversion][c_real][
   }
 }
 
-TEST_CASE("NUMBER NULL to SQL_C_FLOAT and SQL_C_DOUBLE", "[fixed][conversion][c_real][null]") {
+TEST_CASE("NUMBER NULL to SQL_C_FLOAT and SQL_C_DOUBLE", "[fixed][conversion][c_float][null]") {
   // Given A Snowflake connection is established
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

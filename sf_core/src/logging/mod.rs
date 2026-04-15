@@ -4,6 +4,7 @@ pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_tracer;
+use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
@@ -33,7 +34,7 @@ impl LoggingConfig {
 
 struct EmptyLayer;
 
-impl Layer<Registry> for EmptyLayer {}
+impl<S: Subscriber> Layer<S> for EmptyLayer {}
 
 pub fn init(config: LoggingConfig) -> Result<(), LogError> {
     init_logging::<EmptyLayer>(config, None)
@@ -78,6 +79,11 @@ where
         None
     };
     let subscriber = subscriber.with(stderr_layer);
+
+    #[cfg(feature = "perf_timing")]
+    let subscriber = subscriber.with(Some(crate::perf_timing::create_perf_layer()));
+    #[cfg(not(feature = "perf_timing"))]
+    let subscriber = subscriber.with(None::<EmptyLayer>);
 
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|e| LogError::InitError(e.to_string()))?;

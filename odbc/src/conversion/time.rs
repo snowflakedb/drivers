@@ -7,12 +7,12 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    InvalidArrowValueSnafu, JsonBindingError, ReadArrowError, UnsupportedCDataTypeSnafu,
-    UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    InvalidArrowValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu, ReadArrowError,
+    UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
 use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
-use crate::conversion::warning::Warnings;
+use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeTime {
@@ -91,9 +91,6 @@ impl WriteODBCType for SnowflakeTime {
         get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            // TODO: SQL_C_TYPE_TIME has no fractional-seconds field — sub-second
-            // precision is silently truncated. Consider emitting a truncation
-            // warning (SQLSTATE 01S07) when scale > 0.
             CDataType::Default | CDataType::Time | CDataType::TypeTime => {
                 let time = sql::Time {
                     hour: snowflake_value.hour() as u16,
@@ -101,17 +98,32 @@ impl WriteODBCType for SnowflakeTime {
                     second: snowflake_value.second() as u16,
                 };
                 binding.write_fixed(time);
-                Ok(vec![])
+                if snowflake_value.nanosecond() != 0 {
+                    Ok(vec![Warning::NumericValueTruncated])
+                } else {
+                    Ok(vec![])
+                }
             }
-            // TODO: include fractional seconds in the formatted string when
-            // scale > 0 (e.g. "%H:%M:%S%.f" or a custom formatter that
-            // respects the column's scale).
             CDataType::Char => {
-                let formatted = snowflake_value.format("%H:%M:%S").to_string();
+                if binding.buffer_length > 0 && binding.buffer_length < 9 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_CHAR time (minimum 9 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let formatted = format_time_string(&snowflake_value);
                 Ok(binding.write_char_string(&formatted, get_data_offset))
             }
             CDataType::WChar => {
-                let formatted = snowflake_value.format("%H:%M:%S").to_string();
+                if binding.buffer_length > 0 && binding.buffer_length < 18 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_WCHAR time (minimum 18 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let formatted = format_time_string(&snowflake_value);
                 Ok(binding.write_wchar_string(&formatted, get_data_offset))
             }
             _ => UnsupportedOdbcTypeSnafu {
@@ -119,6 +131,27 @@ impl WriteODBCType for SnowflakeTime {
             }
             .fail(),
         }
+    }
+}
+
+fn format_time_string(time: &NaiveTime) -> String {
+    let nanos = time.nanosecond();
+    if nanos == 0 {
+        format!(
+            "{:02}:{:02}:{:02}",
+            time.hour(),
+            time.minute(),
+            time.second()
+        )
+    } else {
+        let frac = format!("{nanos:09}");
+        let trimmed = frac.trim_end_matches('0');
+        format!(
+            "{:02}:{:02}:{:02}.{trimmed}",
+            time.hour(),
+            time.minute(),
+            time.second()
+        )
     }
 }
 

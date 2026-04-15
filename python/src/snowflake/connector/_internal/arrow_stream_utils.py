@@ -16,12 +16,24 @@ if TYPE_CHECKING:
 
 
 def release_arrow_stream(stream_ptr: int | None) -> None:
-    # Release the Arrow stream pointer to prevent memory leak
-    if stream_ptr:
-        # Create ArrowStreamIterator to take ownership of the stream pointer.
-        # The C++ destructor will handle cleanup when it goes out of scope.
+    """Release an ArrowArrayStream pointer to prevent memory leaks.
+
+    Works by creating a throwaway ArrowStreamIterator whose C++ destructor
+    calls ``stream->release(stream)`` when it goes out of scope.  This is
+    indirect — the C++ from_stream() factory also reads the schema — but it
+    is the only release path currently exposed to Python.
+
+    If the stream is in a bad state (already released, corrupt), the
+    ArrowStreamIterator constructor will fail.  We catch that to avoid
+    propagating errors into callers that are doing best-effort cleanup
+    (e.g. _QueryResult.__del__ or reset()).
+    """
+    if not stream_ptr:
+        return
+    try:
         _ = ArrowStreamIterator(stream_ptr, ArrowConverterContext())
-        # Iterator goes out of scope here, triggering C++ destructor
+    except Exception:
+        pass
 
 
 def create_row_iterator(

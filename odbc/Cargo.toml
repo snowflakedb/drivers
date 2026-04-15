@@ -24,6 +24,11 @@ error_trace = { path = "../error_trace" }
 tokio = { version = "1.50.0", features = ["rt"] }
 tokio-util = "0.7"
 
+# Forwarded to sf_core so that libsfodbc.so includes compiled-in perf spans.
+# Only used by performance tests.
+[features]
+perf_timing = ["sf_core/perf_timing"]
+
 [dev-dependencies]
 test-case = "3.3.1"
 

@@ -58,8 +58,6 @@ EXCLUDED_FROM_PUPR = {
     "build_location_helper",
     "chunk_helper",
     "make_pd_writer",
-    # helper
-    "ResultMetadataV2",
     # internal, but missing "_" prefix - should not be exposed
     "get_query_context",
     "set_query_context",

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from runner.docker_network import DockerNetworkManager
-from runner.modes.common import execute_test, verify_test_results
+from runner.modes.common import execute_test, extract_limit_from_sql, verify_test_results
 from runner.test_types import PerfTestType
 from runner.utils import perf_tests_root
 from wiremock.wiremock_manager import WiremockManager
@@ -574,6 +574,10 @@ def _run_test_with_proxy(
         if expected_row_count is not None:
             logger.info(f"Setting EXPECTED_ROW_COUNT={expected_row_count} for replay validation")
             env_vars["EXPECTED_ROW_COUNT"] = str(expected_row_count)
+    else:
+        expected = extract_limit_from_sql(sql_command)
+        if expected:
+            env_vars["EXPECTED_ROW_COUNT"] = str(expected)
     
     # Export the WireMock CA cert so the driver trusts the dynamically generated
     # MITM certificates. Each Dockerfile appends this to the appropriate CA bundle.
@@ -584,11 +588,10 @@ def _run_test_with_proxy(
             if driver == "odbc" and driver_type == "old":
                 env_vars["WIREMOCK_PROXY_URL"] = proxy_url
         except Exception as e:
-            logger.error(
-                "Failed to export WireMock CA cert; skipping this test execution.",
-                exc_info=True,
-            )
-            return
+            raise RuntimeError(
+                f"Failed to export WireMock CA cert: {e}. "
+                f"The driver container cannot trust WireMock's MITM certificates without it."
+            ) from e
     
     # Execute test with common function
     execute_test(

@@ -17,6 +17,12 @@ Feature: ODBC SQLBindParameter C char/default types to VARCHAR conversion
     Then the result should be the expected string
 
   @odbc_e2e
+  Scenario: should bind SQL_C_WCHAR with SQL_NTS to SQL_VARCHAR.
+    Given Snowflake client is logged in
+    When the C type value is bound with SQL_NTS indicator and SELECT ? is executed
+    Then the result should be the expected string
+
+  @odbc_e2e
   Scenario: should bind SQL_C_DEFAULT to SQL_VARCHAR.
     Given Snowflake client is logged in
     When the C type value is bound as a string SQL type and SELECT ? is executed

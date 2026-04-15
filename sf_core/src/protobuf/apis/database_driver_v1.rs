@@ -1143,6 +1143,46 @@ impl DatabaseDriver for DatabaseDriverImpl {
     }
 
     #[instrument(
+        name = "DatabaseDriverV1::connection_set_autocommit",
+        skip(self, input),
+        fields(conn_handle = tracing::field::Empty, autocommit = tracing::field::Empty)
+    )]
+    async fn connection_set_autocommit(
+        &self,
+        input: ConnectionSetAutocommitRequest,
+    ) -> Result<ConnectionSetAutocommitResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
+        tracing::Span::current().record("autocommit", input.autocommit);
+        self.driver
+            .connection_set_autocommit(conn_handle.into(), input.autocommit)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionSetAutocommitResponse {})
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_use_database",
+        skip(self, input),
+        fields(conn_handle = tracing::field::Empty, database = tracing::field::Empty)
+    )]
+    async fn connection_use_database(
+        &self,
+        input: ConnectionUseDatabaseRequest,
+    ) -> Result<ConnectionUseDatabaseResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        // Record the trimmed form so the span matches what actually executes — the
+        // driver's connection_use_database normalises whitespace before running the SQL.
+        tracing::Span::current().record("conn_handle", tracing::field::debug(&conn_handle));
+        tracing::Span::current().record("database", input.database.trim());
+        self.driver
+            .connection_use_database(conn_handle.into(), &input.database)
+            .await
+            .to_protobuf()?;
+        Ok(ConnectionUseDatabaseResponse {})
+    }
+
+    #[instrument(
         name = "DatabaseDriverV1::connection_set_session_parameters",
         skip(self, input)
     )]
@@ -1238,6 +1278,25 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .to_protobuf()?;
 
         Ok(result.into())
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_abort_query", skip(self, input))]
+    async fn connection_abort_query(
+        &self,
+        input: ConnectionAbortQueryRequest,
+    ) -> Result<ConnectionAbortQueryResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let success = match self
+            .driver
+            .connection_abort_query(conn_handle.into(), input.query_id)
+            .await
+        {
+            Ok(()) => true,
+            Err(_) => false,
+        };
+
+        Ok(ConnectionAbortQueryResponse { success })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_send_http", skip(self, input))]

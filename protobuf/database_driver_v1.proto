@@ -445,6 +445,22 @@ message ConnectionRollbackRequest {
 message ConnectionRollbackResponse {
 }
 
+message ConnectionSetAutocommitRequest {
+  ConnectionHandle conn_handle = 1;
+  bool autocommit = 2;
+}
+
+message ConnectionSetAutocommitResponse {
+}
+
+message ConnectionUseDatabaseRequest {
+  ConnectionHandle conn_handle = 1;
+  string database = 2;
+}
+
+message ConnectionUseDatabaseResponse {
+}
+
 message ConnectionSetSessionParametersRequest {
   ConnectionHandle conn_handle = 1;
   map<string, string> parameters = 2;
@@ -512,6 +528,16 @@ message ConnectionGetQueryResultRequest {
 
 message ConnectionGetQueryResultResponse {
   ExecuteResult result = 1;
+}
+
+// Abort a running query by its Snowflake Query ID.
+message ConnectionAbortQueryRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionAbortQueryResponse {
+  bool success = 1;
 }
 
 // Statement service requests and responses
@@ -821,6 +847,8 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  rpc ConnectionSetAutocommit(ConnectionSetAutocommitRequest) returns (ConnectionSetAutocommitResponse);
+  rpc ConnectionUseDatabase(ConnectionUseDatabaseRequest) returns (ConnectionUseDatabaseResponse);
   // sets initial session parameters connection should be initialized with
   // call before opening the connection
   rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
@@ -832,6 +860,8 @@ service DatabaseDriver {
   // Fetch the result of a previously executed query by Snowflake Query ID
   rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  // Abort a running query by Snowflake Query ID
+  rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
   // Generic HTTP request through sf_core's TLS/OCSP/CRL client
   rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
   // Token request (ISSUE/RENEW) executed with master token in sf_core

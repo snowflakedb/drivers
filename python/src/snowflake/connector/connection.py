@@ -41,6 +41,8 @@ from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.extras import check_dependency
+from ._internal.extras import numpy as np
 from ._internal.logout_config_mapping import (
     LogoutConfig,
     LogoutOptionKeys,
@@ -50,7 +52,7 @@ from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
 from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
-from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
+from .errors import Error, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
@@ -171,9 +173,10 @@ class Connection:
                 is ignored because the passcode flow is selected automatically.
             **kwargs: Additional connection parameters
         """
+        # paramstyle (via setter so str | ParamStyle normalization is single-sourced)
         from snowflake.connector import paramstyle as default_paramstyle
 
-        self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
+        self.paramstyle = paramstyle or default_paramstyle
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
@@ -188,6 +191,10 @@ class Connection:
         else:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
         kwargs["client_app_id"] = self._application
+
+        # Extract Python-only params before processing kwargs for Rust core
+        self._numpy: bool = self._resolve_numpy_option(kwargs)
+        self._arrow_number_to_decimal: bool = bool(kwargs.pop("arrow_number_to_decimal", False))
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
@@ -226,7 +233,6 @@ class Connection:
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
-        self._arrow_number_to_decimal: bool = False
 
         if self.auto_cleanup:
             atexit.register(self._close_at_process_exit)
@@ -236,7 +242,7 @@ class Connection:
 
         After this call, kwargs contains only generic Core options
         suitable for connection_set_options. Special params are stored
-        on self (auto_cleanup, _session_params, logout_config).
+        on self (auto_cleanup, _session_params, _numpy, logout_config).
         """
         # Python-only (pop — never goes to Core)
         self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
@@ -425,28 +431,6 @@ class Connection:
         finally:
             self.close()
 
-    # Optional methods that some databases might support
-    def cancel(self) -> None:
-        """
-        Cancel a long-running operation on the connection.
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("cancel is not implemented")
-
-    def ping(self) -> bool:
-        """
-        Check if the connection to the server is still alive.
-
-        Returns:
-            bool: True if connection is alive, False otherwise
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("ping is not implemented")
-
     @property
     def _autocommit(self) -> bool:
         value = self._get_session_parameter("AUTOCOMMIT")
@@ -520,7 +504,29 @@ class Connection:
         Returns:
             ParamStyle: The paramstyle enum value
         """
-        return self._paramstyle
+        return self.__paramstyle
+
+    @paramstyle.setter
+    def paramstyle(self, value: str | ParamStyle) -> None:
+        """Set binding style from a :class:`ParamStyle` or PEP 249 string (e.g. ``"pyformat"``)."""
+        if isinstance(value, ParamStyle):
+            self.__paramstyle = value
+        elif isinstance(value, str):
+            self.__paramstyle = ParamStyle.from_string(value)
+        else:
+            raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
+
+    @property
+    @backward_compatibility
+    def _paramstyle(self) -> ParamStyle:
+        """Internal binding-style storage (legacy callers assign to ``_paramstyle``)."""
+        return self.__paramstyle
+
+    @_paramstyle.setter
+    @backward_compatibility
+    def _paramstyle(self, value: str | ParamStyle) -> None:
+        """Normalize assignments to ``_paramstyle`` (e.g. SnowPy ``temporary_paramstyle``)."""
+        self.paramstyle = value
 
     def execute_string(
         self,
@@ -837,6 +843,14 @@ class Connection:
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
+
+    @staticmethod
+    def _resolve_numpy_option(kwargs: ConnectionParameters) -> bool:
+        """Pop ``numpy`` from *kwargs* and validate that numpy is installed if requested."""
+        use_numpy = bool(kwargs.pop("numpy", False))
+        if use_numpy:
+            check_dependency(np)
+        return use_numpy
 
     @staticmethod
     def is_still_running(status: QueryStatus) -> bool:

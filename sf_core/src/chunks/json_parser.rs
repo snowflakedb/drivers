@@ -56,6 +56,12 @@ pub fn convert_string_rowset_to_arrow_reader(
 }
 
 impl ParseChunk for JsonChunkParser {
+    #[tracing::instrument(
+        name = "core_arrow_decode",
+        target = "sf_core::perf",
+        level = "trace",
+        skip_all
+    )]
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError> {
         let expected_cols = self.row_types.len();
         if expected_cols == 0 || data.is_empty() {
