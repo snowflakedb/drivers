@@ -1419,10 +1419,7 @@ where
         }
         let body = response_text.unwrap_or("Unknown error".to_string());
         let truncated = if body.len() > 1024 {
-            let mut end = 1024;
-            while !body.is_char_boundary(end) {
-                end -= 1;
-            }
+            let end = body.floor_char_boundary(1024);
             format!("{}… ({} bytes total)", &body[..end], body.len())
         } else {
             body
