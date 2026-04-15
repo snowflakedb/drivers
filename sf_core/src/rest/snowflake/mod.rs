@@ -1,14 +1,12 @@
 #![allow(clippy::result_large_err)]
 pub mod async_exec;
 mod auth;
-mod auth_context;
-pub use auth_context::{AuthContext, RuntimePaths};
 pub mod error;
 pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
-mod spcs_token;
+pub mod spcs_token;
 
 use std::collections::HashMap;
 
@@ -265,10 +263,10 @@ pub async fn auth_request_data(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
-    auth_context: &AuthContext<'_>,
+    token_cache: Option<&dyn TokenCache>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
-    data.spcs_token = spcs_token::read_spcs_token(&auth_context.runtime_paths);
+    data.spcs_token = spcs_token::read_spcs_token();
 
     if let Some(params) = session_parameters {
         let json_params = params
@@ -320,11 +318,7 @@ pub async fn auth_request_data(
                 );
 
                 let cached_mfa_token = if store_temp_cred {
-                    try_get_cached_mfa_token(
-                        &login_parameters.server_url,
-                        &username,
-                        auth_context.token_cache,
-                    )
+                    try_get_cached_mfa_token(&login_parameters.server_url, &username, token_cache)
                 } else {
                     None
                 };
@@ -364,8 +358,7 @@ pub async fn snowflake_login(
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    let auth_context = AuthContext::default();
-    snowflake_login_with_client(&client, login_parameters, session_parameters, &auth_context).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters, None).await
 }
 
 async fn send_login_request(
@@ -420,14 +413,14 @@ async fn send_login_request(
 }
 
 #[tracing::instrument(
-    skip(client, login_parameters, session_parameters, auth_context),
+    skip(client, login_parameters, session_parameters, token_cache),
     fields(account_name, login_name)
 )]
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
-    auth_context: &AuthContext<'_>,
+    token_cache: Option<&dyn TokenCache>,
 ) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
@@ -446,7 +439,7 @@ pub async fn snowflake_login_with_client(
 
     // Build the login request data (handles all auth methods including Okta SAML exchange)
     let login_request_data =
-        auth_request_data(client, login_parameters, session_parameters, auth_context).await?;
+        auth_request_data(client, login_parameters, session_parameters, token_cache).await?;
     tracing::Span::current().record("login_name", &login_request_data.login_name);
     let used_cached_mfa_token = matches!(
         &login_parameters.login_method,
@@ -479,14 +472,10 @@ pub async fn snowflake_login_with_client(
                 code = code,
                 "MFA authentication error detected, removing cached MFA token"
             );
-            remove_mfa_token_from_cache(
-                &login_parameters.server_url,
-                username,
-                auth_context.token_cache,
-            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
             tracing::info!("Retrying login without cached MFA token");
             let retry_data =
-                auth_request_data(client, login_parameters, session_parameters, auth_context)
+                auth_request_data(client, login_parameters, session_parameters, token_cache)
                     .await?;
             let retry_request = AuthRequest { data: retry_data };
             auth_response = send_login_request(client, login_parameters, &retry_request).await?;
@@ -510,11 +499,7 @@ pub async fn snowflake_login_with_client(
                 code = code,
                 "MFA authentication error detected, removing cached MFA token"
             );
-            remove_mfa_token_from_cache(
-                &login_parameters.server_url,
-                username,
-                auth_context.token_cache,
-            );
+            remove_mfa_token_from_cache(&login_parameters.server_url, username, token_cache);
         }
         LoginSnafu { message, code }.fail()?;
     }
@@ -533,7 +518,7 @@ pub async fn snowflake_login_with_client(
             &login_parameters.server_url,
             username,
             mfa_token,
-            auth_context.token_cache,
+            token_cache,
         );
     }
 
@@ -2057,14 +2042,8 @@ mod tests {
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
-        let auth_context = AuthContext::default();
         let data = rt
-            .block_on(auth_request_data(
-                &client,
-                &login_params,
-                None,
-                &auth_context,
-            ))
+            .block_on(auth_request_data(&client, &login_params, None, None))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));
@@ -2093,14 +2072,8 @@ mod tests {
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
-        let auth_context = AuthContext::default();
         let data = rt
-            .block_on(auth_request_data(
-                &client,
-                &login_params,
-                None,
-                &auth_context,
-            ))
+            .block_on(auth_request_data(&client, &login_params, None, None))
             .unwrap();
 
         assert_eq!(data.login_name.as_deref(), Some("testuser"));

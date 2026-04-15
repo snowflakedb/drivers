@@ -20,7 +20,7 @@ use crate::config::resolver;
 use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::{self, AuthContext, RestError, SessionTokens, SnowflakeResponseError};
+use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::token_cache::TokenCache;
@@ -195,21 +195,18 @@ impl DatabaseDriverV1 {
                     }
                 );
 
-                let auth_context = if mfa_caching_requested {
-                    let cache = self.token_cache().context(TokenCacheInitializationSnafu)?;
-                    AuthContext {
-                        token_cache: Some(cache as &dyn TokenCache),
-                        ..Default::default()
-                    }
+                let token_cache = if mfa_caching_requested {
+                    Some(self.token_cache().context(TokenCacheInitializationSnafu)?
+                        as &dyn TokenCache)
                 } else {
-                    AuthContext::default()
+                    None
                 };
 
                 let login_result = crate::rest::snowflake::snowflake_login_with_client(
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
-                    &auth_context,
+                    token_cache,
                 )
                 .await
                 .context(LoginSnafu)?;
