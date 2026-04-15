@@ -17,7 +17,9 @@ use crate::config::ParamStore;
 use crate::config::connection_config::ConnectionConfig;
 use crate::config::param_registry::{ParamKey, ParamScope, param_names};
 use crate::config::resolver;
-use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters, QueryParameters};
+use crate::config::rest_parameters::{
+    ClientInfo, LoginMethod, LoginParameters, QueryParameters, resolve_log_max_query_length,
+};
 use crate::config::retry::RetryPolicy;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
@@ -458,6 +460,9 @@ impl Connection {
 
     /// Server URL + client fingerprint for query and refresh calls (transport snapshot).
     pub(crate) fn query_transport_parameters(&self) -> Result<QueryParameters, ApiError> {
+        let empty = ParamStore::new();
+        let settings = self.resolved_connect.as_ref().unwrap_or(&empty);
+
         Ok(QueryParameters {
             server_url: self
                 .server_url
@@ -467,6 +472,7 @@ impl Connection {
                 .client_info
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
+            log_max_query_length: resolve_log_max_query_length(settings),
         })
     }
 
