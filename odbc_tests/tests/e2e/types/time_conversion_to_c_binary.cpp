@@ -12,7 +12,7 @@
 #include "get_diag_rec.hpp"
 
 TEST_CASE("TIME to SQL_C_BINARY", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver does not support TIME to SQL_C_BINARY conversion");
+  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -31,7 +31,7 @@ TEST_CASE("TIME to SQL_C_BINARY", "[time][conversion][c_binary]") {
 }
 
 TEST_CASE("TIME to SQL_C_BINARY struct field verification", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver does not support TIME to SQL_C_BINARY conversion");
+  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -89,7 +89,7 @@ TEST_CASE("TIME to SQL_C_BINARY struct field verification", "[time][conversion][
 }
 
 TEST_CASE("TIME to SQL_C_BINARY exact buffer fit", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver does not support TIME to SQL_C_BINARY conversion");
+  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -111,7 +111,7 @@ TEST_CASE("TIME to SQL_C_BINARY exact buffer fit", "[time][conversion][c_binary]
 }
 
 TEST_CASE("TIME to SQL_C_BINARY buffer too small", "[time][conversion][c_binary][22003]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver does not support TIME to SQL_C_BINARY conversion");
+  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -129,7 +129,7 @@ TEST_CASE("TIME to SQL_C_BINARY buffer too small", "[time][conversion][c_binary]
 }
 
 TEST_CASE("TIME to SQL_C_BINARY consistent size", "[time][conversion][c_binary]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver does not support TIME to SQL_C_BINARY conversion");
+  SKIP_OLD_DRIVER("BD#43", "old driver does not support TIME to SQL_C_BINARY conversion");
   // Given Snowflake client is logged in
   Connection conn;
 

@@ -92,8 +92,8 @@ TEST_CASE("DATE to SQL_C_CHAR exact buffer fit", "[date][conversion][c_char]") {
   CHECK(std::string(buffer) == "2024-01-15");
 }
 
-TEST_CASE("DATE to SQL_C_CHAR truncation", "[date][conversion][c_char][01004]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver returns error instead of 01004 truncation");
+TEST_CASE("DATE to SQL_C_CHAR buffer too small", "[date][conversion][c_char][22003]") {
+  SKIP_OLD_DRIVER("BD#41", "old driver returns 07006 instead of 22003 for undersized date buffer");
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -103,38 +103,11 @@ TEST_CASE("DATE to SQL_C_CHAR truncation", "[date][conversion][c_char][01004]") 
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(indicator == 10);
+  // Then SQL_ERROR is returned with SQLSTATE 22003
+  CHECK(ret == SQL_ERROR);
   auto records = get_diag_rec(stmt);
   CHECK(!records.empty());
-  CHECK(records[0].sqlState == "01004");
-  CHECK(std::string(buffer) == "2024-01");
-}
-
-TEST_CASE("DATE to SQL_C_CHAR chunked retrieval", "[date][conversion][c_char]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver returns error instead of 01004 truncation");
-  // Given Snowflake client is logged in
-  Connection conn;
-
-  // When A DATE value is fetched via two sequential SQLGetData calls with a 6-byte buffer
-  auto stmt = conn.execute_fetch("SELECT '2024-01-15'::DATE");
-
-  char buf1[6] = {};
-  SQLLEN ind1 = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf1, sizeof(buf1), &ind1);
-
-  // Then The first call returns partial data with 01004 and the second call returns the remainder
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(ind1 == 10);
-  CHECK(std::string(buf1) == "2024-");
-
-  char buf2[6] = {};
-  SQLLEN ind2 = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf2, sizeof(buf2), &ind2);
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(ind2 == 5);
-  CHECK(std::string(buf2) == "01-15");
+  CHECK(records[0].sqlState == "22003");
 }
 
 TEST_CASE("DATE to SQL_C_CHAR far future", "[date][conversion][c_char][edge]") {
@@ -222,45 +195,22 @@ TEST_CASE("DATE to SQL_C_WCHAR exact buffer fit", "[date][conversion][c_wchar]")
   CHECK(std::u16string(buffer) == u"2024-01-15");
 }
 
-TEST_CASE("DATE to SQL_C_WCHAR truncation", "[date][conversion][c_wchar][01004]") {
-  SKIP_OLD_DRIVER("BD#41", "old driver returns error instead of 01004 truncation");
+TEST_CASE("DATE to SQL_C_WCHAR buffer too small", "[date][conversion][c_wchar][22003]") {
+  SKIP_OLD_DRIVER("BD#41", "old driver returns 07006 instead of 22003 for undersized date buffer");
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When A DATE value is fetched into a WCHAR buffer smaller than the date string
+  // When A DATE value is fetched into a WCHAR buffer smaller than 11 characters
   auto stmt = conn.execute_fetch("SELECT '2024-01-15'::DATE");
   char16_t buffer[6] = {};
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
 
-  // Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  // Then SQL_ERROR is returned with SQLSTATE 22003
+  CHECK(ret == SQL_ERROR);
   auto records = get_diag_rec(stmt);
   CHECK(!records.empty());
-  CHECK(records[0].sqlState == "01004");
-}
-
-TEST_CASE("DATE to SQL_C_WCHAR chunked retrieval", "[date][conversion][c_wchar]") {
-  SKIP_OLD_DRIVER("BD#39", "old driver returns error instead of 01004 truncation");
-  // Given Snowflake client is logged in
-  Connection conn;
-
-  // When A DATE value is fetched via two sequential SQLGetData calls with a 6-character WCHAR buffer
-  auto stmt = conn.execute_fetch("SELECT '2024-01-15'::DATE");
-
-  char16_t buf1[6] = {};
-  SQLLEN ind1 = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buf1, sizeof(buf1), &ind1);
-
-  // Then The first call returns partial data with 01004 and the second call returns the remainder
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  CHECK(std::u16string(buf1) == u"2024-");
-
-  char16_t buf2[6] = {};
-  SQLLEN ind2 = 0;
-  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buf2, sizeof(buf2), &ind2);
-  CHECK(ret == SQL_SUCCESS);
-  CHECK(std::u16string(buf2) == u"01-15");
+  CHECK(records[0].sqlState == "22003");
 }
 
 TEST_CASE("DATE NULL to SQL_C_WCHAR", "[date][conversion][c_wchar][null]") {

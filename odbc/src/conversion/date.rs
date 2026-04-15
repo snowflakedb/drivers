@@ -74,6 +74,13 @@ impl WriteODBCType for SnowflakeDate {
                 Ok(vec![])
             }
             CDataType::Char => {
+                if binding.buffer_length > 0 && binding.buffer_length < 11 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_CHAR date (minimum 11 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
                 let formatted = format!(
                     "{:04}-{:02}-{:02}",
                     snowflake_value.year(),
@@ -83,6 +90,13 @@ impl WriteODBCType for SnowflakeDate {
                 Ok(binding.write_char_string(&formatted, get_data_offset))
             }
             CDataType::WChar => {
+                if binding.buffer_length > 0 && binding.buffer_length < 22 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_WCHAR date (minimum 22 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
                 let formatted = format!(
                     "{:04}-{:02}-{:02}",
                     snowflake_value.year(),

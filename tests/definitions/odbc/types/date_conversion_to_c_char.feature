@@ -28,18 +28,11 @@ Feature: ODBC DATE to SQL_C_CHAR and SQL_C_WCHAR conversions
     Then SQL_SUCCESS is returned with indicator 10
 
   @odbc_e2e
-  Scenario: DATE to SQL_C_CHAR truncation
-    # BD#41: Old driver returns error instead of 01004 truncation
+  Scenario: DATE to SQL_C_CHAR buffer too small
+    # BD#41: Old driver returns 07006 instead of 22003 for undersized date buffer
     Given Snowflake client is logged in
     When A DATE value is fetched into a buffer smaller than 11 bytes
-    Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
-
-  @odbc_e2e
-  Scenario: DATE to SQL_C_CHAR chunked retrieval
-    # BD#41: Old driver returns error instead of 01004 truncation
-    Given Snowflake client is logged in
-    When A DATE value is fetched via two sequential SQLGetData calls with a 6-byte buffer
-    Then The first call returns partial data with 01004 and the second call returns the remainder
+    Then SQL_ERROR is returned with SQLSTATE 22003
 
   @odbc_e2e
   Scenario: DATE to SQL_C_CHAR far future
@@ -78,18 +71,11 @@ Feature: ODBC DATE to SQL_C_CHAR and SQL_C_WCHAR conversions
     Then SQL_SUCCESS is returned with the correct wide string
 
   @odbc_e2e
-  Scenario: DATE to SQL_C_WCHAR truncation
-    # BD#41: Old driver returns error instead of 01004 truncation
+  Scenario: DATE to SQL_C_WCHAR buffer too small
+    # BD#41: Old driver returns 07006 instead of 22003 for undersized date buffer
     Given Snowflake client is logged in
-    When A DATE value is fetched into a WCHAR buffer smaller than the date string
-    Then SQL_SUCCESS_WITH_INFO is returned with SQLSTATE 01004
-
-  @odbc_e2e
-  Scenario: DATE to SQL_C_WCHAR chunked retrieval
-    # BD#39: Old driver returns error instead of 01004 truncation
-    Given Snowflake client is logged in
-    When A DATE value is fetched via two sequential SQLGetData calls with a 6-character WCHAR buffer
-    Then The first call returns partial data with 01004 and the second call returns the remainder
+    When A DATE value is fetched into a WCHAR buffer smaller than 11 characters
+    Then SQL_ERROR is returned with SQLSTATE 22003
 
   @odbc_e2e
   Scenario: DATE NULL to SQL_C_WCHAR
