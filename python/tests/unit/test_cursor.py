@@ -2151,3 +2151,20 @@ class TestAbortQuery:
         mock_connection.db_api.connection_abort_query.side_effect = ProgrammingError("Request failed")
         with pytest.raises(ProgrammingError, match="Request failed"):
             cursor.abort_query("bad-qid")
+
+
+class TestCursorFormatQueryForLog:
+    """Unit tests for cursor._format_query_for_log delegation to connection."""
+
+    @pytest.fixture
+    def mock_connection(self):
+        mock_connection = MagicMock()
+        mock_connection.is_closed.return_value = False
+        mock_connection._format_query_for_log.return_value = "formatted"
+        return mock_connection
+
+    def test_delegates_to_connection(self, mock_connection):
+        cursor = SnowflakeCursor(mock_connection)
+        result = cursor._format_query_for_log("SELECT * FROM big_table")
+        mock_connection._format_query_for_log.assert_called_once_with("SELECT * FROM big_table")
+        assert result == "formatted"

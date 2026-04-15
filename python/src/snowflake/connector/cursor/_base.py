@@ -409,6 +409,9 @@ class SnowflakeCursorBase(abc.ABC):
         self.reset()
         return self._execute(operation, parameters, _is_put_get, **kwargs)
 
+    def _format_query_for_log(self, query: str) -> str:
+        return self._connection._format_query_for_log(query)
+
     def _execute(
         self,
         operation: str,
@@ -417,6 +420,9 @@ class SnowflakeCursorBase(abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("query: [%s]", self._format_query_for_log(operation))
+
         query, bindings = self._prepare_query(operation, parameters)
 
         result: ExecuteResult | None = None
