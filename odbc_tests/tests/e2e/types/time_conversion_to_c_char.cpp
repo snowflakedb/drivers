@@ -66,7 +66,7 @@ TEST_CASE("TIME to SQL_C_CHAR exact buffer fit", "[time][conversion][c_char]") {
 }
 
 TEST_CASE("TIME to SQL_C_CHAR chunked retrieval", "[time][conversion][c_char]") {
-  SKIP_OLD_DRIVER("BD#38", "Old driver returns SQL_SUCCESS instead of SQL_ERROR for TIME buffer too small");
+  SKIP_OLD_DRIVER("BD#38", "Old driver returns 22003 instead of 01004 for TIME partial truncation");
   // Given Snowflake client is logged in
   Connection conn;
 

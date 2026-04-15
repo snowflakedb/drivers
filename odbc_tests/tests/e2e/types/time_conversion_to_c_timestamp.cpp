@@ -13,10 +13,19 @@
 
 static void get_local_date(int& year, int& month, int& day) {
   std::time_t now = std::time(nullptr);
-  std::tm* local = std::localtime(&now);
-  year = local->tm_year + 1900;
-  month = local->tm_mon + 1;
-  day = local->tm_mday;
+  std::tm local_time{};
+#ifdef _WIN32
+  localtime_s(&local_time, &now);
+#else
+  localtime_r(&now, &local_time);
+#endif
+  year = local_time.tm_year + 1900;
+  month = local_time.tm_mon + 1;
+  day = local_time.tm_mday;
+}
+
+static bool date_matches(int ts_year, int ts_month, int ts_day, int ref_year, int ref_month, int ref_day) {
+  return ts_year == ref_year && ts_month == ref_month && ts_day == ref_day;
 }
 
 TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP", "[time][conversion][c_timestamp]") {
@@ -24,14 +33,15 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP", "[time][conversion][c_timestamp]") {
   Connection conn;
 
   // When A TIME value is fetched as SQL_C_TYPE_TIMESTAMP
-  int today_y, today_m, today_d;
-  get_local_date(today_y, today_m, today_d);
+  int before_y, before_m, before_d;
+  get_local_date(before_y, before_m, before_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '14:30:45'::TIME"), 1);
+  int after_y, after_m, after_d;
+  get_local_date(after_y, after_m, after_d);
 
   // Then Time fields are populated and date fields are set to current date
-  CHECK(ts.year == today_y);
-  CHECK(ts.month == today_m);
-  CHECK(ts.day == today_d);
+  CHECK((date_matches(ts.year, ts.month, ts.day, before_y, before_m, before_d) ||
+         date_matches(ts.year, ts.month, ts.day, after_y, after_m, after_d)));
   CHECK(ts.hour == 14);
   CHECK(ts.minute == 30);
   CHECK(ts.second == 45);
@@ -43,14 +53,15 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP midnight", "[time][conversion][c_timesta
   Connection conn;
 
   // When Midnight TIME is fetched as SQL_C_TYPE_TIMESTAMP
-  int today_y, today_m, today_d;
-  get_local_date(today_y, today_m, today_d);
+  int before_y, before_m, before_d;
+  get_local_date(before_y, before_m, before_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '00:00:00'::TIME"), 1);
+  int after_y, after_m, after_d;
+  get_local_date(after_y, after_m, after_d);
 
   // Then All time components are zero and date is current date
-  CHECK(ts.year == today_y);
-  CHECK(ts.month == today_m);
-  CHECK(ts.day == today_d);
+  CHECK((date_matches(ts.year, ts.month, ts.day, before_y, before_m, before_d) ||
+         date_matches(ts.year, ts.month, ts.day, after_y, after_m, after_d)));
   CHECK(ts.hour == 0);
   CHECK(ts.minute == 0);
   CHECK(ts.second == 0);
@@ -62,14 +73,15 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP end of day", "[time][conversion][c_times
   Connection conn;
 
   // When End-of-day TIME is fetched as SQL_C_TYPE_TIMESTAMP
-  int today_y, today_m, today_d;
-  get_local_date(today_y, today_m, today_d);
+  int before_y, before_m, before_d;
+  get_local_date(before_y, before_m, before_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '23:59:59'::TIME"), 1);
+  int after_y, after_m, after_d;
+  get_local_date(after_y, after_m, after_d);
 
   // Then Time components match 23:59:59 and date is current date
-  CHECK(ts.year == today_y);
-  CHECK(ts.month == today_m);
-  CHECK(ts.day == today_d);
+  CHECK((date_matches(ts.year, ts.month, ts.day, before_y, before_m, before_d) ||
+         date_matches(ts.year, ts.month, ts.day, after_y, after_m, after_d)));
   CHECK(ts.hour == 23);
   CHECK(ts.minute == 59);
   CHECK(ts.second == 59);
@@ -127,14 +139,15 @@ TEST_CASE("TIME to SQL_C_TYPE_TIMESTAMP single-digit components", "[time][conver
   Connection conn;
 
   // When A TIME with single-digit hour, minute, second is fetched as SQL_C_TYPE_TIMESTAMP
-  int today_y, today_m, today_d;
-  get_local_date(today_y, today_m, today_d);
+  int before_y, before_m, before_d;
+  get_local_date(before_y, before_m, before_d);
   auto ts = check_no_truncation<SQL_C_TYPE_TIMESTAMP>(conn.execute_fetch("SELECT '01:02:03'::TIME"), 1);
+  int after_y, after_m, after_d;
+  get_local_date(after_y, after_m, after_d);
 
   // Then Time components match and date is current date
-  CHECK(ts.year == today_y);
-  CHECK(ts.month == today_m);
-  CHECK(ts.day == today_d);
+  CHECK((date_matches(ts.year, ts.month, ts.day, before_y, before_m, before_d) ||
+         date_matches(ts.year, ts.month, ts.day, after_y, after_m, after_d)));
   CHECK(ts.hour == 1);
   CHECK(ts.minute == 2);
   CHECK(ts.second == 3);
