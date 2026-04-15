@@ -196,8 +196,7 @@ impl DatabaseDriverV1 {
                 );
 
                 let token_cache = if mfa_caching_requested {
-                    Some(self.token_cache().context(TokenCacheInitializationSnafu)?
-                        as &dyn TokenCache)
+                    Some(self.token_cache().context(TokenCacheInitializationSnafu)?)
                 } else {
                     None
                 };
@@ -206,7 +205,7 @@ impl DatabaseDriverV1 {
                     &http_client,
                     &login_parameters,
                     init_params.as_ref(),
-                    token_cache,
+                    token_cache.map(|c| c as &dyn TokenCache),
                 )
                 .await
                 .context(LoginSnafu)?;
