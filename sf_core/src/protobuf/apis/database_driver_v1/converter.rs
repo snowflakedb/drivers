@@ -663,7 +663,30 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::ConnectionLocking { .. } => StatusCode::InternalError,
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
-        ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
+        ApiError::QueryResponseProcessing {
+            source: boxed_error,
+            ..
+        } => {
+            use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
+            use crate::compression_types::CompressionTypeError;
+            use crate::file_manager::FileManagerError;
+
+            match boxed_error.as_ref() {
+                QueryResponseProcessingError::FileUpload { source, .. }
+                | QueryResponseProcessingError::FileDownload { source, .. } => match source {
+                    FileManagerError::NoFilesMatched { .. } => StatusCode::LocalFileNotFound,
+                    FileManagerError::CompressionType {
+                        source: CompressionTypeError::UnsupportedCompressionType { .. },
+                        ..
+                    } => StatusCode::UnsupportedCompression,
+                    _ => StatusCode::InternalError,
+                },
+                QueryResponseProcessingError::RemoteFileNotFound { .. } => {
+                    StatusCode::RemoteFileNotFound
+                }
+                _ => StatusCode::InternalError,
+            }
+        }
         ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
         ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
         ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,

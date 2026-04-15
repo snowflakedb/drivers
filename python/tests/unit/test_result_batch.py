@@ -146,7 +146,9 @@ class TestProperties:
         assert _make_batch().compressed_size is None
 
     def test_compressed_size_from_chunk(self):
-        chunk = ResultChunk(compressed_size=1024)
+        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import RemoteChunk
+
+        chunk = ResultChunk(remote=RemoteChunk(url="http://example.com", compressed_size=1024))
         batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
         assert batch.compressed_size == 1024
 
@@ -154,7 +156,9 @@ class TestProperties:
         assert _make_batch().uncompressed_size is None
 
     def test_uncompressed_size_from_chunk(self):
-        chunk = ResultChunk(uncompressed_size=4096)
+        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import RemoteChunk
+
+        chunk = ResultChunk(remote=RemoteChunk(url="http://example.com", uncompressed_size=4096))
         batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
         assert batch.uncompressed_size == 4096
 

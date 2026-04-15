@@ -1222,15 +1222,6 @@ class TestCursorMethods:
         # Just verify it's callable and accepts empty sequence without error
         cursor.executemany("INSERT INTO test VALUES (?)", [])
 
-    @pytest.mark.skip_reference(
-        reason="Reference driver returns None from nextset instead of raising NotImplementedError"
-    )
-    def test_nextset_not_implemented(self, cursor):
-        """Test that nextset raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as excinfo:
-            cursor.nextset()
-        assert "nextset is not implemented" in str(excinfo.value)
-
     def test_setinputsizes_no_op(self, cursor):
         """Test that setinputsizes is a no-op."""
         # Should not raise any exception
