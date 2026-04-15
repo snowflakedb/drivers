@@ -179,6 +179,7 @@ fn should_not_send_logout_when_connection_was_never_established() {
     //When Connection close is attempted
     let result = client.connection_close_blocking(ConnectionCloseRequest {
         conn_handle: Some(conn_handle),
+        ..Default::default()
     });
 
     //Then Close succeeds without sending HTTP request

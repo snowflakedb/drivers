@@ -114,6 +114,7 @@ pub fn connection_close(conn_handle: impl Into<Handle>) -> Result<(), ApiError> 
     database_driver_client()
         .connection_close_blocking(ConnectionCloseRequest {
             conn_handle: Some(ConnectionHandle::from(conn_handle.into())),
+            ..Default::default()
         })
         .map(|_| ())
         .map_err(|e| {
