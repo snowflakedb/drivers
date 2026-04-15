@@ -15,12 +15,18 @@ public class SkipForJSONResultSetCondition implements ExecutionCondition {
   public ConditionEvaluationResult evaluateExecutionCondition(ExtensionContext context) {
     String resultFormat = System.getenv(ENV_VAR);
     if ("JSON".equalsIgnoreCase(resultFormat)) {
-      String reason =
+      SkipForJSONResultSet annotation =
           context
               .getElement()
               .map(element -> element.getAnnotation(SkipForJSONResultSet.class))
-              .map(SkipForJSONResultSet::value)
-              .orElse("Test requires Arrow format precision");
+              .orElseGet(
+                  () ->
+                      context
+                          .getTestClass()
+                          .map(testClass -> testClass.getAnnotation(SkipForJSONResultSet.class))
+                          .orElse(null));
+      String reason =
+          annotation != null ? annotation.value() : "Test requires Arrow format precision";
       return ConditionEvaluationResult.disabled("Skipped for JSON result format: " + reason);
     }
     return ConditionEvaluationResult.enabled("Not using JSON result format");
