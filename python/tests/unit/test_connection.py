@@ -352,6 +352,74 @@ class TestConnectionSetOptions:
         assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
 
 
+class TestClose:
+    """Unit tests for Connection.close() and handle release."""
+
+    def test_close_releases_handles(self, connection, mock_db_api):
+        """close() should release both connection and database handles on the Rust side."""
+        connection.close()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+
+    def test_close_is_idempotent(self, connection, mock_db_api):
+        """Calling close() multiple times should only release handles once."""
+        connection.close()
+        connection.close()
+        connection.close()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+
+    def test_close_releases_database_even_if_connection_release_fails(self, connection, mock_db_api):
+        """database_release should still be called if connection_release raises."""
+        mock_db_api.connection_release.side_effect = RuntimeError("release failed")
+
+        connection.close()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+
+    def test_close_sets_closed_flag_even_if_release_fails(self, connection, mock_db_api):
+        """The connection should be marked closed even if handle release fails."""
+        mock_db_api.connection_release.side_effect = RuntimeError("boom")
+        mock_db_api.database_release.side_effect = RuntimeError("boom")
+
+        connection.close()
+
+        assert connection._closed is True
+
+    def test_del_releases_handles_if_not_closed(self, mock_db_api):
+        """__del__ should release handles when close() was never called."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="test_user", account="test_account")
+
+        conn.__del__()
+
+        mock_db_api.connection_release.assert_called_once()
+        mock_db_api.database_release.assert_called_once()
+        assert conn._closed is True
+
+    def test_del_is_noop_if_already_closed(self, connection, mock_db_api):
+        """__del__ should not release handles if close() was already called."""
+        connection.close()
+        mock_db_api.reset_mock()
+
+        connection.__del__()
+
+        mock_db_api.connection_release.assert_not_called()
+        mock_db_api.database_release.assert_not_called()
+
+    def test_del_does_not_raise(self, connection, mock_db_api):
+        """__del__ must never propagate exceptions."""
+        mock_db_api.connection_release.side_effect = RuntimeError("boom")
+        mock_db_api.database_release.side_effect = RuntimeError("boom")
+
+        connection.__del__()
+
+
 class TestContextManagerUnit:
     """Unit tests for __exit__ behavior."""
 
