@@ -106,8 +106,8 @@ TEST_CASE("should bind SQL_C_DOUBLE NULL to SQL_BIT.", "[query][bind_parameter][
   auto stmt = conn.createStatement();
   SQLLEN indicator = SQL_NULL_DATA;
   // When SQL_C_DOUBLE with SQL_NULL_DATA is bound as SQL_BIT and SELECT ? is executed
-  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, nullptr, 0,
-                                   &indicator);
+  SQLRETURN ret =
+      SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, nullptr, 0, &indicator);
   REQUIRE_ODBC_SUCCESS(ret, stmt);
   ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
