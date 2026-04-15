@@ -74,13 +74,15 @@ class TestLogoutTokenCleanup:
             conn.close()
 
             # Then Session token in Connection.tokens is null
-            assert not conn.rest.token, (
-                f"session_token must be null after close (keep_alive={server_session_keep_alive})"
+            assert not conn.rest.token, (  # Core returns "" not None — falsy check
+                f"session_token must be null after close (keep_alive={server_session_keep_alive}), "
+                f"got {conn.rest.token!r}"
             )
 
             # And Master token in Connection.tokens is null
             assert not conn.rest.master_token, (
-                f"master_token must be null after close (keep_alive={server_session_keep_alive})"
+                f"master_token must be null after close (keep_alive={server_session_keep_alive}), "
+                f"got {conn.rest.master_token!r}"
             )
 
 

@@ -14,7 +14,7 @@ import warnings
 from collections.abc import Generator, Iterable
 from functools import cached_property
 from io import StringIO
-from typing import Any, Callable, Union, cast
+from typing import Any, Callable, Union
 
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -72,6 +72,28 @@ logger = logging.getLogger(__name__)
 _UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
 
 
+def _pop_bool_kwarg(kwargs: dict[str, Any], key: str, default: bool) -> bool:
+    """Pop a required boolean kwarg with runtime type validation.
+
+    Raises ProgrammingError for non-bool values (e.g. string "false" is truthy).
+    """
+    value = kwargs.pop(key, default)
+    if not isinstance(value, bool):
+        raise ProgrammingError(f"{key} must be bool, got {type(value).__name__}")
+    return value
+
+
+def _pop_optional_bool_kwarg(kwargs: dict[str, Any], key: str) -> bool | None:
+    """Pop an optional boolean kwarg with runtime type validation.
+
+    Returns None if not provided. Raises ProgrammingError for non-bool/non-None values.
+    """
+    value = kwargs.pop(key, None)
+    if value is not None and not isinstance(value, bool):
+        raise ProgrammingError(f"{key} must be bool or None, got {type(value).__name__}")
+    return value
+
+
 def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
     """Pop and parse enable_server_session_keep_alive_auto_detection from kwargs.
 
@@ -92,7 +114,11 @@ def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
             stacklevel=5,
         )
         return True
-    return cast("bool | None", raw)
+    if raw is not None and not isinstance(raw, bool):
+        raise ProgrammingError(
+            f"enable_server_session_keep_alive_auto_detection must be bool or None, got {type(raw).__name__}"
+        )
+    return raw
 
 
 def _build_config_settings(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
@@ -243,7 +269,7 @@ class Connection:
         on self (auto_cleanup, _session_params, _numpy, logout_config).
         """
         # Python-only (pop — never goes to Core)
-        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
+        self.auto_cleanup: bool = _pop_bool_kwarg(kwargs, "auto_cleanup", True)
 
         # Session params use a dedicated RPC (connection_set_session_parameters),
         # not the generic connection_set_options path, so pop them from kwargs.
@@ -268,7 +294,7 @@ class Connection:
 
     def _parse_logout_config(self, kwargs: dict[str, Any]) -> LogoutConfig:
         """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
-        keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
+        keep_alive = _pop_optional_bool_kwarg(kwargs, "server_session_keep_alive")
         auto_detection = _extract_auto_detection_param(kwargs)
         keep_alive = remap_keep_alive_phase2(keep_alive, auto_detection)
         return LogoutConfig(
@@ -322,36 +348,37 @@ class Connection:
         If close() was called successfully, this handler should have been unregistered
         and should NOT run. If it runs for an already-closed connection, that indicates
         a potential bug (unregister failed, race condition, or multiple registrations).
+
+        The entire body is wrapped in try/except because during interpreter shutdown,
+        any call (FFI, logging, warnings) may fail due to torn-down module state.
         """
-        if self.is_closed():
-            # This shouldn't happen! If close() succeeded, handler should be unregistered.
-            logger.debug(
-                "atexit handler ran for already-closed connection. "
-                "This may indicate atexit.unregister() failed or a race condition occurred."
-            )
-            return
-
-        # Connection is leaked (not explicitly closed) — emit FutureWarning.
-        # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
-        # FutureWarning deduplication (once per source line per process) prevents
-        # log spam when multiple connections are leaked. try/except guards against
-        # interpreter shutdown where the warnings module itself may already be None.
         try:
-            warnings.warn(
-                "Connection was not explicitly closed before process exit. "
-                "Auto-cleanup at exit will be disabled by default in a future version. "
-                "Please explicitly call connection.close() or use context manager.",
-                FutureWarning,
-                stacklevel=2,
-            )
-        except Exception:
-            pass  # Interpreter shutting down; warning emission is best-effort
+            if self.is_closed():
+                logger.debug(
+                    "atexit handler ran for already-closed connection. "
+                    "This may indicate atexit.unregister() failed or a race condition occurred."
+                )
+                return
 
-        # Attempt cleanup for leaked connection
-        try:
+            # Connection is leaked (not explicitly closed) — emit FutureWarning.
+            # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
+            try:
+                warnings.warn(
+                    "Connection was not explicitly closed before process exit. "
+                    "Auto-cleanup at exit will be disabled by default in a future version. "
+                    "Please explicitly call connection.close() or use context manager.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+            except Exception:
+                pass  # Interpreter shutting down; warning emission is best-effort
+
             self.close(retry=False)
         except Exception:
-            logger.debug("close() failed during atexit cleanup")
+            try:
+                logger.warning("_close_at_process_exit failed during interpreter shutdown")
+            except Exception:
+                pass  # logger itself may be torn down
 
     @property
     @pep249
