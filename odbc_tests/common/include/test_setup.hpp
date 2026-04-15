@@ -22,6 +22,24 @@ inline int current_pid() { return getpid(); }
 #include "ODBCConfig.hpp"
 #include "utils.hpp"
 
+/**
+ * Macro to skip a test when QUERY_RESULT_FORMAT=JSON is set.
+ * Use this for tests that require Arrow-specific precision that JSON format cannot provide.
+ *
+ * Usage:
+ *   TEST_CASE("test name", "[tag]") {
+ *     SKIP_FOR_JSON_RESULT_SET("JSON format loses precision for Double.MAX boundary values");
+ *     // test code
+ *   }
+ */
+#define SKIP_FOR_JSON_RESULT_SET(reason)                                       \
+  do {                                                                         \
+    const char* result_format = std::getenv("QUERY_RESULT_FORMAT");            \
+    if (result_format != nullptr && std::strcmp(result_format, "JSON") == 0) { \
+      SKIP("Skipped for JSON result format: " reason);                         \
+    }                                                                          \
+  } while (0)
+
 inline picojson::object get_test_parameters(const std::string& connection_name) {
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");
   REQUIRE(parameter_path_env_value != nullptr);

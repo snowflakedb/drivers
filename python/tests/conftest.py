@@ -4,6 +4,8 @@ pytest configuration and fixtures for PEP 249 tests.
 
 from __future__ import annotations
 
+import os
+
 from typing import Any
 from urllib.parse import urlparse
 
@@ -185,3 +187,9 @@ def pytest_runtest_setup(item):
         pytest.skip("Skipping test for universal driver")
     elif not IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_reference"):
         pytest.skip("Skipping test for reference driver")
+    marker = item.get_closest_marker("skip_for_json_result_set")
+    if marker is not None:
+        result_format = os.getenv("QUERY_RESULT_FORMAT")
+        if result_format and result_format.upper() == "JSON":
+            reason = marker.kwargs.get("reason", "Test requires Arrow format precision")
+            pytest.skip(f"Skipped for JSON result format: {reason}")

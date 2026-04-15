@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
+import net.snowflake.client.SkipForJSONResultSet;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -106,6 +107,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
 
   @ParameterizedTest
   @MethodSource("floatCaseBoundaryValues")
+  @SkipForJSONResultSet("JSON format loses precision for Double.MAX_VALUE boundary values")
   public void shouldHandleFloatCaseBoundaryValuesFromLiteralsForFloatAndSynonyms(
       String caseName, String sql) throws Exception {
     // Given Snowflake client is logged in
@@ -309,6 +311,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
   }
 
   @Test
+  @SkipForJSONResultSet("JSON format loses precision for Double.MAX_VALUE boundary values")
   public void shouldHandleFloatBoundaryValuesFromTableForFloatAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();

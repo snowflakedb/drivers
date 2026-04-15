@@ -12,6 +12,7 @@
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
+#include "test_setup.hpp"
 
 // Old driver returns "INFINITY"/"-INFINITY", new driver returns "inf"/"-inf"
 static bool is_positive_infinity_str(const std::string& s) {
@@ -123,6 +124,8 @@ TEST_CASE("should handle special float values from literals for float and synony
 }
 
 TEST_CASE("should handle float case boundary values from literals for float and synonyms", "[float]") {
+  SKIP_FOR_JSON_RESULT_SET("JSON format loses precision for Double.MAX_VALUE boundary values");
+
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -274,6 +277,7 @@ TEST_CASE_METHOD(ConnSchemaFixture, "should handle special float values from tab
 
 TEST_CASE_METHOD(ConnSchemaFixture, "should handle float boundary values from table for float and synonyms",
                  "[float]") {
+  SKIP_FOR_JSON_RESULT_SET("JSON format loses precision for Double.MAX_VALUE boundary values");
   // Given Snowflake client is logged in
 
   // And Table with <type> column exists with boundary values [1.7976931348623157e308, -1.7976931348623157e308,
