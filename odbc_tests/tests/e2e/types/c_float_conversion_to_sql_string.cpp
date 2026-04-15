@@ -26,12 +26,8 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_VARCHAR and read back", "[c_float][co
   REQUIRE_ODBC(ret, stmt);
 
   // Then the string representation contains 3.14
-  auto sel = conn.createStatement();
-  ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t"), SQL_NTS);
-  REQUIRE_ODBC(ret, sel);
-  ret = SQLFetch(sel.getHandle());
-  REQUIRE_ODBC(ret, sel);
-  std::string s = get_data<SQL_C_CHAR>(sel, 1);
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  std::string s = get_data<SQL_C_CHAR>(fetch_stmt, 1);
   CHECK(s.find("3.14") != std::string::npos);
 }
 
@@ -53,12 +49,8 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_VARCHAR and read back", "[c_float][con
   REQUIRE_ODBC(ret, stmt);
 
   // Then the string representation contains 42
-  auto sel = conn.createStatement();
-  ret = SQLExecDirect(sel.getHandle(), sqlchar("SELECT col FROM t"), SQL_NTS);
-  REQUIRE_ODBC(ret, sel);
-  ret = SQLFetch(sel.getHandle());
-  REQUIRE_ODBC(ret, sel);
-  std::string s = get_data<SQL_C_CHAR>(sel, 1);
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  std::string s = get_data<SQL_C_CHAR>(fetch_stmt, 1);
   CHECK(s.find("42") != std::string::npos);
 }
 

@@ -27,9 +27,12 @@ TEST_CASE("should bind SQL_C_TYPE_TIME to SQL_TYPE_TIME and read back", "[c_time
   ret = SQLExecute(stmt.getHandle());
   REQUIRE_ODBC(ret, stmt);
 
-  // Then the value is read back as "14:30:45"
+  // Then the value is read back as 14:30:45
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
-  CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "14:30:45");
+  auto time = get_data<SQL_C_TYPE_TIME>(fetch_stmt, 1);
+  CHECK(time.hour == 14);
+  CHECK(time.minute == 30);
+  CHECK(time.second == 45);
 }
 
 TEST_CASE("should bind SQL_C_TYPE_TIME with NULL indicator to SQL_TYPE_TIME", "[c_time][conversion][sql_time]") {

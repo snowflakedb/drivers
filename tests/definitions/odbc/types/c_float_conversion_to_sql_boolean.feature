@@ -18,3 +18,9 @@ Feature: ODBC C float types to SQL boolean conversions via parameter binding
     Given Snowflake client is logged in
     When SQL_C_FLOAT 1.0 is bound to SQL_BIT and inserted
     Then the value is read back as SQL_C_BIT 1
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_DOUBLE with NULL indicator to SQL_BIT via float
+    Given Snowflake client is logged in
+    When SQL_C_DOUBLE is bound with SQL_NULL_DATA to SQL_BIT and inserted
+    Then the stored value should be NULL

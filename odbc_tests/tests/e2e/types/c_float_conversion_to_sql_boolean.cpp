@@ -71,3 +71,24 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_BIT", "[c_float][conversion][sql_boole
   auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
   CHECK(get_data<SQL_C_BIT>(fetch_stmt, 1) == 1);
 }
+
+TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator to SQL_BIT via float", "[c_float][conversion][sql_boolean]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+  conn.execute("CREATE TABLE t (col BOOLEAN)");
+
+  // When SQL_C_DOUBLE is bound with SQL_NULL_DATA to SQL_BIT and inserted
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), sqlchar("INSERT INTO t VALUES (?)"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  SQLLEN ind = SQL_NULL_DATA;
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, nullptr, 0, &ind);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLExecute(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then the stored value should be NULL
+  auto fetch_stmt = conn.execute_fetch("SELECT col FROM t");
+  CHECK(get_data_optional<SQL_C_BIT>(fetch_stmt, 1) == std::nullopt);
+}
