@@ -132,6 +132,12 @@ impl<D: DownloadChunk, P: ParseChunk> PrefetchChunkReader<D, P> {
 impl<D: DownloadChunk + 'static, P: ParseChunk + 'static> Iterator for PrefetchChunkReader<D, P> {
     type Item = Result<RecordBatch, ArrowError>;
 
+    #[tracing::instrument(
+        name = "core_batch_wait",
+        target = "sf_core::perf",
+        level = "trace",
+        skip_all
+    )]
     fn next(&mut self) -> Option<Self::Item> {
         self.batch_rx.blocking_recv()
     }

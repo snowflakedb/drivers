@@ -1,3 +1,4 @@
+mod azure_transfer;
 mod encryption;
 mod gcs_transfer;
 mod s3_transfer;
@@ -6,15 +7,18 @@ mod path_expansion;
 pub mod types;
 
 pub use self::types::*;
+pub use azure_transfer::download_from_azure;
 pub use gcs_transfer::download_from_gcs;
 
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
-use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
+use azure_transfer::{AzureDownloadError, AzureUploadError, upload_to_azure_or_skip};
+use encryption::{EncryptionError, compute_sha256_digest, decrypt_file_data, encrypt_file_data};
 use gcs_transfer::{GcsDownloadError, GcsUploadError, upload_to_gcs_or_skip};
+use openssl::error::ErrorStack as OpenSslErrorStack;
 use path_expansion::{PathExpansionError, expand_filenames};
 use s3_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -50,11 +54,11 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
     let mut file_buffer = Vec::new();
     input_file.read_to_end(&mut file_buffer).context(IoSnafu)?;
 
-    let (encryption_result, file_metadata) = preprocess_file_before_upload(file_buffer, &data)?;
+    let (prepared, file_metadata) = preprocess_file_before_upload(file_buffer, &data)?;
 
     let status = match data.stage_info.location_type {
         LocationType::S3 => upload_to_s3_or_skip(
-            encryption_result,
+            prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
@@ -62,19 +66,21 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
         .await
         .context(S3UploadSnafu)?,
         LocationType::Gcs => upload_to_gcs_or_skip(
-            encryption_result,
+            prepared,
             &data.stage_info,
             file_metadata.target.as_str(),
             data.overwrite,
         )
         .await
         .context(GcsUploadSnafu)?,
-        LocationType::Azure => {
-            return UnsupportedStorageTypeSnafu {
-                storage_type: "Azure",
-            }
-            .fail();
-        }
+        LocationType::Azure => upload_to_azure_or_skip(
+            prepared,
+            &data.stage_info,
+            file_metadata.target.as_str(),
+            data.overwrite,
+        )
+        .await
+        .context(AzureUploadSnafu)?,
     };
 
     // TODO: Right now empty message is hardcoded, because any error in the upload process will
@@ -98,11 +104,12 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
     })
 }
 
-/// Sets file metadata, compresses the file if needed, and encrypts the data before uploading it to S3.
+/// Sets file metadata, compresses the file if needed, and optionally encrypts the data.
+/// For SSE stages (no encryption material), the data is uploaded without client-side encryption.
 fn preprocess_file_before_upload(
     mut file_buffer: Vec<u8>,
     data: &SingleUploadData,
-) -> Result<(EncryptionResult, UploadMetadata), FileManagerError> {
+) -> Result<(PreparedUpload, UploadMetadata), FileManagerError> {
     let source_size = file_buffer.len() as i64;
 
     let source_compression = get_source_compression(
@@ -115,7 +122,6 @@ fn preprocess_file_before_upload(
     let source = data.filename.clone();
     let mut target = data.filename.clone();
 
-    // Compress the data if needed
     let target_compression = if data.auto_compress && source_compression == CompressionType::None {
         file_buffer = compress_data(file_buffer).context(CompressionSnafu)?;
         target = format!("{}.gz", data.filename);
@@ -124,14 +130,24 @@ fn preprocess_file_before_upload(
         source_compression.clone()
     };
 
-    // Encrypt the data
-    let encryption_result = encrypt_file_data(file_buffer.as_slice(), &data.encryption_material)
-        .context(EncryptionSnafu)?;
+    let prepared = match &data.encryption_material {
+        Some(material) => {
+            encrypt_file_data(file_buffer.as_slice(), material).context(EncryptionSnafu)?
+        }
+        None => {
+            let digest = compute_sha256_digest(&file_buffer).context(DigestComputationSnafu)?;
+            PreparedUpload {
+                data: file_buffer,
+                digest,
+                encryption_metadata: None,
+            }
+        }
+    };
 
-    let target_size = encryption_result.data.len() as i64;
+    let target_size = prepared.data.len() as i64;
 
     Ok((
-        encryption_result,
+        prepared,
         UploadMetadata {
             source,
             target,
@@ -188,49 +204,48 @@ pub async fn download_files(
 pub async fn download_single_file(
     data: SingleDownloadData,
 ) -> Result<DownloadResult, FileManagerError> {
-    // Download encrypted data and metadata from cloud storage
-    let (encrypted_data, file_metadata) = match data.stage_info.location_type {
+    let (raw_data, digest, file_metadata) = match data.stage_info.location_type {
         LocationType::S3 => download_from_s3(&data.stage_info, data.src_location.as_str())
             .await
             .context(S3DownloadSnafu)?,
         LocationType::Gcs => download_from_gcs(&data.stage_info, data.src_location.as_str())
             .await
             .context(GcsDownloadSnafu)?,
-        LocationType::Azure => {
-            return UnsupportedStorageTypeSnafu {
-                storage_type: "Azure",
-            }
-            .fail();
-        }
+        LocationType::Azure => download_from_azure(&data.stage_info, data.src_location.as_str())
+            .await
+            .context(AzureDownloadSnafu)?,
     };
 
-    // Decrypt the data (this gives us the compressed data)
-    let compressed_data =
-        decrypt_file_data(&encrypted_data, &file_metadata, &data.encryption_material)
-            .context(DecryptionSnafu)?;
+    let output_data = match data.encryption_material.as_ref() {
+        Some(enc_material) => {
+            let enc_metadata = file_metadata.context(MissingDecryptionMetadataSnafu {
+                detail: "encryption metadata headers missing from downloaded file",
+            })?;
+            let d = digest.as_deref().context(MissingDecryptionMetadataSnafu {
+                detail: "digest header missing from downloaded file",
+            })?;
+            decrypt_file_data(&raw_data, &enc_metadata, d, enc_material).context(DecryptionSnafu)?
+        }
+        None => raw_data,
+    };
 
-    // Use only the filename (basename) from src_location to match the old connector
-    // behavior, which downloads files flat into the local directory regardless of
-    // any subdirectory structure in the stage.
     let filename = Path::new(&data.src_location)
         .file_name()
         .unwrap_or(std::ffi::OsStr::new(&data.src_location));
     let output_path = Path::new(&data.local_location).join(filename);
 
     let mut output_file = File::create(&output_path).context(IoSnafu)?;
-    output_file.write_all(&compressed_data).context(IoSnafu)?;
+    output_file.write_all(&output_data).context(IoSnafu)?;
 
     tracing::info!(
-        "File successfully downloaded and decrypted, saved to '{}' ({} bytes)",
+        "File downloaded to '{}' ({} bytes)",
         output_path.display(),
-        compressed_data.len()
+        output_data.len()
     );
 
-    // TODO: Right now "DOWNLOADED" is hardcoded, because any error in the download process will result in an error before this point.
-    // We should adjust this after we have more tests in different wrappers to ensure error handling is consistent.
     Ok(DownloadResult {
         file: data.src_location,
-        size: compressed_data.len() as i64,
+        size: output_data.len() as i64,
         status: "DOWNLOADED".to_string(),
         message: "".to_string(),
     })
@@ -263,6 +278,12 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to compute file digest"))]
+    DigestComputation {
+        source: OpenSslErrorStack,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
         source: UploadFileError,
@@ -287,9 +308,15 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Unsupported storage type: {storage_type}"))]
-    UnsupportedStorageType {
-        storage_type: &'static str,
+    #[snafu(display("Failed to upload file to Azure"))]
+    AzureUpload {
+        source: AzureUploadError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to download file from Azure"))]
+    AzureDownload {
+        source: AzureDownloadError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -305,5 +332,11 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
         backtrace: snafu::Backtrace,
+    },
+    #[snafu(display("Missing decryption metadata: {detail}"))]
+    MissingDecryptionMetadata {
+        detail: &'static str,
+        #[snafu(implicit)]
+        location: Location,
     },
 }

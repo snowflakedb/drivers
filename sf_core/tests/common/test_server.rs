@@ -7,7 +7,22 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
+
+const CONNECTION_CLOSE: &str = "Connection: close";
+
+/// Read the full incoming HTTP request bytes from a stream.
+///
+/// Returns the bytes read (up to 4096). Panics if the read fails.
+async fn read_request_bytes(stream: &mut TcpStream) -> Vec<u8> {
+    let mut buf = vec![0u8; 4096];
+    let n = stream
+        .read(&mut buf)
+        .await
+        .expect("server: failed to read request");
+    buf.truncate(n);
+    buf
+}
 
 /// Spawn a test server that responds to HTTP requests.
 ///
@@ -56,8 +71,7 @@ where
             let responder = responder.clone();
 
             // Read the request (we discard it, responder only cares about attempt number)
-            let mut buf = [0u8; 2048];
-            let _ = stream.read(&mut buf).await;
+            drop(read_request_bytes(&mut stream).await);
 
             let response = responder(attempt).await;
             stream.write_all(&response).await.unwrap();
@@ -74,24 +88,28 @@ where
 
 /// Spawn a server that captures the full HTTP request for verification.
 ///
-/// The server reads the full request and returns it, allowing tests to verify
-/// request format, headers, body, etc.
+/// The server handles **one request**, captures its raw bytes, and resolves the
+/// `JoinHandle` to those bytes. Await the handle after the request to retrieve them:
 ///
-/// # Arguments
-/// * `response` - The raw HTTP response bytes to return for all requests
-///
-/// # Returns
-/// * `SocketAddr` - The address the server is listening on
-/// * `Arc<AtomicUsize>` - Counter for number of attempts made
-/// * `JoinHandle<Vec<u8>>` - Handle that resolves to the captured request bytes
-///
-/// # Example
 /// ```ignore
 /// let (addr, attempts, server) = spawn_capture_server().await;
 /// // ... make request to addr ...
-/// let captured_request = server.await.unwrap();
-/// assert!(captured_request.starts_with(b"POST /session"));
+/// let captured_bytes: Vec<u8> = server.await.unwrap();
+/// assert!(captured_bytes.starts_with(b"POST /session"));
 /// ```
+///
+/// **Access model**: this function returns `JoinHandle<Vec<u8>>` — the captured
+/// request is retrieved by awaiting the handle. Contrast with
+/// [`spawn_capture_server_with_response`], which processes the request inside the
+/// closure and returns `JoinHandle<()>` (no bytes returned to the caller).
+///
+/// # Arguments
+/// * No arguments — always responds with `{"success":true}` 200 OK.
+///
+/// # Returns
+/// * `SocketAddr` - The address the server is listening on
+/// * `Arc<AtomicUsize>` - Counter for number of requests handled
+/// * `JoinHandle<Vec<u8>>` - Handle that resolves to the captured request bytes
 pub async fn spawn_capture_server() -> (
     SocketAddr,
     Arc<AtomicUsize>,
@@ -106,19 +124,13 @@ pub async fn spawn_capture_server() -> (
         let (mut stream, _) = listener.accept().await.unwrap();
         attempts_clone.fetch_add(1, Ordering::SeqCst);
 
-        // Read the request
-        let mut buf = vec![0u8; 4096];
-        let n = stream.read(&mut buf).await.unwrap();
-        buf.truncate(n);
+        let buf = read_request_bytes(&mut stream).await;
 
         // Send success response
-        let body = r#"{"success":true}"#;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(response.as_bytes()).await.unwrap();
+        stream
+            .write_all(&json_response(r#"{"success":true}"#))
+            .await
+            .unwrap();
         let _ = stream.shutdown().await;
 
         buf
@@ -129,7 +141,14 @@ pub async fn spawn_capture_server() -> (
 
 /// Spawn a capture server with custom response.
 ///
-/// Like `spawn_capture_server`, but allows specifying the response.
+/// Handles up to `max_attempts` requests. For each request the raw bytes are
+/// decoded as UTF-8 (lossy) and passed to `responder`, which returns the raw
+/// HTTP response bytes to send back.
+///
+/// **Access model**: the captured request is processed *inside* `responder` —
+/// this function returns `JoinHandle<()>` (no bytes returned to the caller).
+/// Contrast with [`spawn_capture_server`], which resolves the handle to the
+/// raw captured bytes.
 ///
 /// # Arguments
 /// * `max_attempts` - Maximum number of requests to handle
@@ -137,11 +156,12 @@ pub async fn spawn_capture_server() -> (
 ///
 /// # Returns
 /// * `SocketAddr` - The address the server is listening on
-/// * `JoinHandle` - Handle to the server task
+/// * `Arc<AtomicUsize>` - Counter for number of requests handled
+/// * `JoinHandle<()>` - Handle to the server task
 pub async fn spawn_capture_server_with_response<F>(
     max_attempts: usize,
     responder: F,
-) -> (SocketAddr, tokio::task::JoinHandle<()>)
+) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
 where
     F: Fn(String) -> Vec<u8> + Send + Sync + 'static,
 {
@@ -149,17 +169,16 @@ where
     let addr = listener.local_addr().unwrap();
     let responder = Arc::new(responder);
     let attempt = Arc::new(AtomicUsize::new(0));
+    let attempt_clone = attempt.clone();
 
     let handle = tokio::spawn(async move {
         loop {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let current = attempt.fetch_add(1, Ordering::SeqCst) + 1;
+            let current = attempt_clone.fetch_add(1, Ordering::SeqCst) + 1;
             let responder = responder.clone();
 
-            // Read request
-            let mut buf = vec![0u8; 4096];
-            let n = stream.read(&mut buf).await.unwrap_or(0);
-            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let raw = read_request_bytes(&mut stream).await;
+            let request = String::from_utf8_lossy(&raw).to_string();
 
             let response = responder(request);
             let _ = stream.write_all(&response).await;
@@ -171,13 +190,13 @@ where
         }
     });
 
-    (addr, handle)
+    (addr, attempt, handle)
 }
 
 /// Helper to create a JSON HTTP 200 response.
 pub fn json_response(body: &str) -> Vec<u8> {
     format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
         body.len(),
         body
     )
@@ -187,7 +206,7 @@ pub fn json_response(body: &str) -> Vec<u8> {
 /// Helper to create a JSON HTTP error response.
 pub fn json_error_response(status: u16, status_text: &str, body: &str) -> Vec<u8> {
     format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
         status,
         status_text,
         body.len(),
@@ -199,7 +218,7 @@ pub fn json_error_response(status: u16, status_text: &str, body: &str) -> Vec<u8
 /// Helper to create a 503 Service Unavailable response with Retry-After header.
 pub fn service_unavailable_response(body: &str, retry_after: u32) -> Vec<u8> {
     format!(
-        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: {}\r\n{CONNECTION_CLOSE}\r\n\r\n{}",
         body.len(),
         retry_after,
         body

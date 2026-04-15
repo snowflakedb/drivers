@@ -1,4 +1,4 @@
-use crate::api::encoding::{OdbcEncoding, write_string_chars};
+use crate::api::encoding::{OdbcEncoding, write_string_bytes, write_string_chars};
 use crate::api::error::{
     ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
     StatementNotExecutedSnafu,
@@ -64,14 +64,16 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
 }
 
 /// Get a column attribute (SQLColAttribute)
-pub fn col_attribute(
+#[allow(clippy::too_many_arguments)]
+pub fn col_attribute<E: OdbcEncoding>(
     statement_handle: sql::Handle,
     column_number: sql::USmallInt,
     field_identifier: sql::USmallInt,
-    _character_attribute_ptr: sql::Pointer,
-    _buffer_length: sql::SmallInt,
-    _string_length_ptr: *mut sql::SmallInt,
+    character_attribute_ptr: *mut E::Char,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
     numeric_attribute_ptr: *mut sql::Len,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!(
         "col_attribute: column_number={}, field_identifier={}",
@@ -106,14 +108,54 @@ pub fn col_attribute(
 
     match desc_field {
         DescField::Type | DescField::ConciseType => {
-            let sql_type =
-                sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            // SAFETY: conn pointer is valid for the statement's lifetime;
+            // no mutable reference to the Connection exists in this scope.
+            let sql_type = sql_type_from_field(field, &unsafe { stmt.conn() }.numeric_settings)
+                .context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
                 unsafe {
                     std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);
                 }
             }
             Ok(())
+        }
+        DescField::TypeName => {
+            let logical_type = field
+                .metadata()
+                .get("logicalType")
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let type_name = match logical_type {
+                "OBJECT" => "STRUCT",
+                "ARRAY" => "ARRAY",
+                "VARIANT" => "VARIANT",
+                _ => "",
+            };
+            match logical_type {
+                "OBJECT" | "ARRAY" | "VARIANT" => {
+                    write_string_bytes::<E>(
+                        type_name,
+                        character_attribute_ptr,
+                        buffer_length,
+                        string_length_ptr,
+                        Some(warnings),
+                    );
+                    Ok(())
+                }
+                _ => {
+                    tracing::warn!(
+                        "col_attribute: SQL_DESC_TYPE_NAME not yet implemented for logicalType={logical_type}"
+                    );
+                    write_string_bytes::<E>(
+                        "",
+                        character_attribute_ptr,
+                        buffer_length,
+                        string_length_ptr,
+                        None,
+                    );
+                    Ok(())
+                }
+            }
         }
         _ => {
             tracing::warn!(
@@ -165,6 +207,9 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     let field = schema.field(col_idx);
+    // SAFETY: conn pointer is valid for the statement's lifetime;
+    // no mutable reference to the Connection exists in this scope.
+    let conn = unsafe { stmt.conn() };
 
     let name = field.name();
     write_string_chars::<E>(
@@ -177,19 +222,19 @@ pub fn describe_col<E: OdbcEncoding>(
 
     if !data_type_ptr.is_null() {
         let sql_type =
-            sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            sql_type_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
     }
 
     if !column_size_ptr.is_null() {
         let col_size =
-            column_size_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+            column_size_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(column_size_ptr, col_size) };
     }
 
     if !decimal_digits_ptr.is_null() {
-        let digits = decimal_digits_from_field(field, &stmt.conn.numeric_settings)
-            .context(ConversionSnafu)?;
+        let digits =
+            decimal_digits_from_field(field, &conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(decimal_digits_ptr, digits) };
     }
 

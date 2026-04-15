@@ -13,7 +13,7 @@
 // Forward declaration for PutGetResult
 struct PutGetResult;
 
-void write_csv_results(const std::vector<TestResult>& results, const std::string& filename);
+void write_csv_results(const std::vector<TestResult>& results, const std::string& filename, bool has_perf);
 void write_csv_results_put_get(const std::vector<PutGetResult>& results, const std::string& filename);
 void write_memory_timeline(const std::vector<MemorySample>& samples, const std::string& test_name,
                            const std::string& driver_type, time_t timestamp);

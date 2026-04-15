@@ -344,6 +344,10 @@ class BuildHook(BuildHookInterface):
         if sys.platform == "win32" and platform.machine() == "ARM64":
             extra_cargo_args = ["--config", "profile.release.strip=false"]
 
+        # Enable compile-time perf instrumentation for local builds.
+        if os.environ.get("SF_PERF_METRICS", "").lower() in ("1", "true"):
+            extra_cargo_args.extend(["--features", "perf_timing"])
+
         # Use a stable target dir when CORE_CARGO_TARGET_DIR is set (enables
         # incremental Rust compilation and CI caching). Otherwise fall back to a
         # temporary directory that is cleaned up after the build.

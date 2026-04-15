@@ -1,6 +1,7 @@
 """Common test execution utilities for performance tests."""
 import logging
 import os
+import re
 from pathlib import Path
 
 from runner.container import create_perf_container, run_container
@@ -8,6 +9,12 @@ from runner.test_types import PerfTestType
 from runner.validation import verify_results
 
 logger = logging.getLogger(__name__)
+
+
+def extract_limit_from_sql(sql: str) -> int | None:
+    """Extract the LIMIT value from a SQL command, if present."""
+    match = re.search(r'\bLIMIT\s+(\d+)', sql, re.IGNORECASE)
+    return int(match.group(1)) if match else None
 
 
 def execute_test(

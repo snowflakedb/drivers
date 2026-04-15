@@ -13,19 +13,14 @@ Use standard mode (Python Decimal) when precision is critical.
 
 from __future__ import annotations
 
-import pytest
+import numpy as np
 
 from .utils import assert_floats_equal, assert_type
-
-
-# NumPy is optional for these tests
-np = pytest.importorskip("numpy")
 
 
 class TestDecfloatNumPy:
     """Test suite for DECFLOAT type NumPy conversion (Python-specific)."""
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_should_cast_decfloat_values_to_numpy_float64(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
@@ -41,7 +36,6 @@ class TestDecfloatNumPy:
         # And Values should match approximately [1.234, 123.456, -789.012] within float64 precision
         assert_floats_equal(result, (1.234, 123.456, -789.012))
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_handles_extreme_exponents_within_float64_range(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass
@@ -57,7 +51,6 @@ class TestDecfloatNumPy:
         # And Values should be approximately correct
         assert_floats_equal(result, (1.23e100, 9.87e-100))
 
-    @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_overflows_extreme_exponents_beyond_float64_range(self, cursor_with_numpy):
         # Given Snowflake client is logged in with NumPy mode enabled
         pass

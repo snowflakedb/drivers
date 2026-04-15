@@ -387,6 +387,9 @@ message ConnectionIsClosedResponse {
 message ConnectionGetInfoRequest {
   ConnectionHandle conn_handle = 1;
   repeated InfoCode info_codes = 2;
+  // Opt-in to include sensitive tokens (e.g. master_token) in the response.
+  // Defaults to false; only set when the caller needs tokens for REST-compat.
+  bool include_master_token = 3;
 }
 
 message ConnectionGetInfoResponse {
@@ -401,6 +404,7 @@ message ConnectionGetInfoResponse {
   optional string database = 9;
   optional string schema = 10;
   optional string warehouse = 11;
+  optional string master_token = 12;
 }
 
 message ConnectionGetObjectsRequest {
@@ -450,6 +454,22 @@ message ConnectionRollbackRequest {
 message ConnectionRollbackResponse {
 }
 
+message ConnectionSetAutocommitRequest {
+  ConnectionHandle conn_handle = 1;
+  bool autocommit = 2;
+}
+
+message ConnectionSetAutocommitResponse {
+}
+
+message ConnectionUseDatabaseRequest {
+  ConnectionHandle conn_handle = 1;
+  string database = 2;
+}
+
+message ConnectionUseDatabaseResponse {
+}
+
 message ConnectionSetSessionParametersRequest {
   ConnectionHandle conn_handle = 1;
   map<string, string> parameters = 2;
@@ -475,6 +495,40 @@ message ConnectionValidateOptionsResponse {
   repeated ValidationIssue issues = 1;
 }
 
+// HTTP request via sf_core (uses connection's TLS/OCSP/CRL client).
+// URL is resolved relative to the connection's server_url.
+// Auth is always the current session token (managed by sf_core).
+message ConnectionSendHttpRequest {
+  ConnectionHandle conn_handle = 1;
+  string method = 2;              // GET, POST, PUT, DELETE, PATCH
+  string url = 3;                 // relative URL path (e.g. "/session/token-request")
+  map<string, string> headers = 4;
+  optional bytes body = 5;
+}
+
+message ConnectionSendHttpResponse {
+  int32 status_code = 1;
+  map<string, string> headers = 2;
+  bytes body = 3;
+}
+
+enum TokenRequestType {
+  TOKEN_REQUEST_TYPE_UNSPECIFIED = 0;
+  TOKEN_REQUEST_TYPE_ISSUE = 1;
+  TOKEN_REQUEST_TYPE_RENEW = 2;
+}
+
+// Token request (ISSUE/RENEW) — executed entirely in sf_core with master token
+message ConnectionTokenRequest {
+  ConnectionHandle conn_handle = 1;
+  TokenRequestType request_type = 2;
+}
+
+message ConnectionTokenResponse {
+  string session_token = 1;
+  optional int64 validity_in_seconds = 2;
+}
+
 // Fetch the result of a previously executed query by its Snowflake Query ID.
 message ConnectionGetQueryResultRequest {
   ConnectionHandle conn_handle = 1;
@@ -483,6 +537,16 @@ message ConnectionGetQueryResultRequest {
 
 message ConnectionGetQueryResultResponse {
   ExecuteResult result = 1;
+}
+
+// Abort a running query by its Snowflake Query ID.
+message ConnectionAbortQueryRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionAbortQueryResponse {
+  bool success = 1;
 }
 
 // Statement service requests and responses
@@ -520,8 +584,11 @@ message StatementSetSubstraitPlanResponse {
 
 message PrepareResult {
   ArrowArrayStreamPtr stream = 1;
+  string query_id = 3;
   repeated ColumnMetadata columns = 4;
   int32 number_of_binds = 5;
+  string query = 6;
+  optional string sql_state = 7;
 }
 
 message StatementPrepareRequest {
@@ -789,6 +856,8 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  rpc ConnectionSetAutocommit(ConnectionSetAutocommitRequest) returns (ConnectionSetAutocommitResponse);
+  rpc ConnectionUseDatabase(ConnectionUseDatabaseRequest) returns (ConnectionUseDatabaseResponse);
   // sets initial session parameters connection should be initialized with
   // call before opening the connection
   rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
@@ -800,6 +869,12 @@ service DatabaseDriver {
   // Fetch the result of a previously executed query by Snowflake Query ID
   rpc ConnectionGetQueryResult(ConnectionGetQueryResultRequest) returns (ConnectionGetQueryResultResponse);
   rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  // Abort a running query by Snowflake Query ID
+  rpc ConnectionAbortQuery(ConnectionAbortQueryRequest) returns (ConnectionAbortQueryResponse);
+  // Generic HTTP request through sf_core's TLS/OCSP/CRL client
+  rpc ConnectionSendHttp(ConnectionSendHttpRequest) returns (ConnectionSendHttpResponse);
+  // Token request (ISSUE/RENEW) executed with master token in sf_core
+  rpc ConnectionRequestToken(ConnectionTokenRequest) returns (ConnectionTokenResponse);
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
   rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);

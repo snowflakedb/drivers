@@ -6,6 +6,13 @@ use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
+/// Response from the `POST /queries/{qid}/abort-request` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct AbortQueryResponse {
+    pub success: bool,
+    pub message: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct Response {
     pub data: Data,
@@ -232,11 +239,12 @@ pub struct StageInfo {
     #[serde(rename = "presignedUrl")]
     presigned_url: Option<String>,
 
+    #[serde(rename = "storageAccount")]
+    storage_account: Option<String>,
+
     // unused fields
     #[serde(rename = "path")]
     _path: Option<String>,
-    #[serde(rename = "storageAccount")]
-    _storage_account: Option<String>,
     #[serde(rename = "isClientSideEncrypted")]
     _is_client_side_encrypted: Option<bool>,
     #[serde(rename = "useS3RegionalUrl")]
@@ -259,13 +267,14 @@ pub struct Credentials {
     #[serde(rename = "GCS_ACCESS_TOKEN")]
     gcs_access_token: Option<String>,
 
+    #[serde(rename = "AZURE_SAS_TOKEN")]
+    azure_sas_token: Option<String>,
+
     // unused fields
     #[serde(rename = "AWS_ID")]
     _aws_id: Option<String>,
     #[serde(rename = "AWS_KEY")]
     _aws_key: Option<String>,
-    #[serde(rename = "AZURE_SAS_TOKEN")]
-    _azure_sas_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,6 +289,7 @@ pub struct EncryptionMaterial {
 
 impl Data {
     /// Copies the fields necessary for file transfer.
+    /// Encryption material is optional — SSE stages omit it from the response.
     pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
             parameter: "source locations",
@@ -307,27 +317,22 @@ impl Data {
             })?
             .try_into()?;
 
-        let encryption_materials: Vec<_> = self
+        let encryption_material: Option<file_manager::EncryptionMaterial> = match &self
             .encryption_material
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .into();
-
-        if encryption_materials.len() != 1 {
-            InvalidFormatSnafu {
-                message: "Expected exactly one encryption material for upload".to_string(),
+        {
+            Some(materials) => {
+                let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                match converted.len() {
+                    0 => None,
+                    1 => converted.into_iter().next(),
+                    _ => InvalidFormatSnafu {
+                        message: "Expected exactly one encryption material for upload".to_string(),
+                    }
+                    .fail()?,
+                }
             }
-            .fail()?;
-        }
-
-        let encryption_material = encryption_materials
-            .first()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .clone();
+            None => None,
+        };
 
         let auto_compress = self.auto_compress.context(MissingParameterSnafu {
             parameter: "auto compress",
@@ -341,8 +346,6 @@ impl Data {
             })?
             .clone();
 
-        // TODO: We should support other names for existing compression types that were supported in Python Connector,
-        // like "BR" and "X-BR" for Brotli etc.
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
             "GZIP" => SourceCompressionParam::Gzip,
@@ -370,6 +373,7 @@ impl Data {
         })
     }
 
+    /// Encryption material is optional — SSE stages omit it from the response.
     pub fn to_file_download_data(&self) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
@@ -394,21 +398,25 @@ impl Data {
             })?
             .try_into()?;
 
-        let encryption_materials: Vec<_> = self
-            .encryption_material
-            .as_ref()
-            .context(MissingParameterSnafu {
-                parameter: "encryption material",
-            })?
-            .into();
-
-        if src_locations.len() != encryption_materials.len() {
-            InvalidFormatSnafu {
-                message: "Number of source locations must match number of encryption materials"
-                    .to_string(),
-            }
-            .fail()?;
-        }
+        let encryption_materials: Vec<Option<file_manager::EncryptionMaterial>> =
+            match &self.encryption_material {
+                Some(materials) => {
+                    let converted: Vec<file_manager::EncryptionMaterial> = materials.into();
+                    if converted.is_empty() {
+                        vec![None; src_locations.len()]
+                    } else if src_locations.len() != converted.len() {
+                        InvalidFormatSnafu {
+                        message:
+                            "Number of source locations must match number of encryption materials"
+                                .to_string(),
+                    }
+                    .fail()?
+                    } else {
+                        converted.into_iter().map(Some).collect()
+                    }
+                }
+                None => vec![None; src_locations.len()],
+            };
 
         let local_location: String = self
             .local_location
@@ -640,12 +648,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
         // Determine location type (default to S3 for backward compatibility)
         let location_type = match value.location_type.as_deref() {
             Some("GCS") => file_manager::LocationType::Gcs,
-            Some("AZURE") => {
-                return UnsupportedStorageTypeSnafu {
-                    storage_type: "Azure",
-                }
-                .fail();
-            }
+            Some("AZURE") => file_manager::LocationType::Azure,
             Some("S3") | None => file_manager::LocationType::S3,
             Some(other) => {
                 return InvalidFormatSnafu {
@@ -719,7 +722,16 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
                     .filter(|t| !t.is_empty())
                     .map(|t| t.clone().into()),
             },
-            file_manager::LocationType::Azure => unreachable!("Azure rejected above"),
+            file_manager::LocationType::Azure => file_manager::CloudCredentials::Azure {
+                sas_token: creds_data
+                    .azure_sas_token
+                    .as_ref()
+                    .context(MissingParameterSnafu {
+                        parameter: "credentials -> AZURE_SAS_TOKEN",
+                    })?
+                    .clone()
+                    .into(),
+            },
         };
 
         let end_point = value
@@ -739,6 +751,24 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             value.use_regional_url.unwrap_or(false) || region.eq_ignore_ascii_case("me-central2");
         let use_virtual_url = value.use_virtual_url.unwrap_or(false);
 
+        let storage_account = match location_type {
+            file_manager::LocationType::Azure => Some(
+                value
+                    .storage_account
+                    .as_ref()
+                    .filter(|sa| !sa.is_empty())
+                    .context(MissingParameterSnafu {
+                        parameter: "stage info -> storageAccount",
+                    })?
+                    .clone(),
+            ),
+            _ => value
+                .storage_account
+                .as_ref()
+                .filter(|sa| !sa.is_empty())
+                .cloned(),
+        };
+
         Ok(file_manager::StageInfo {
             location_type,
             bucket,
@@ -749,6 +779,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             presigned_url,
             use_virtual_url,
             use_regional_url,
+            storage_account,
         })
     }
 }
@@ -799,12 +830,6 @@ pub enum QueryResponseError {
     #[snafu(display("Invalid Snowflake response: {message}"))]
     InvalidFormat {
         message: String,
-        #[snafu(implicit)]
-        location: snafu::Location,
-    },
-    #[snafu(display("Unsupported storage type: {storage_type}"))]
-    UnsupportedStorageType {
-        storage_type: &'static str,
         #[snafu(implicit)]
         location: snafu::Location,
     },
@@ -1023,6 +1048,90 @@ mod tests {
                 nullable: true,
             } if name == "arr_col"
         ));
+    }
+
+    // ---------------------------------------------------------------
+    // Upload encryption material parsing (to_file_upload_data)
+    // ---------------------------------------------------------------
+
+    fn make_upload_json(encryption_material_fragment: &str) -> String {
+        format!(
+            r#"{{
+                "src_locations": ["path/to/file.csv"],
+                "stageInfo": {{
+                    "locationType": "GCS",
+                    "location": "bucket/prefix/",
+                    "creds": {{ "GCS_ACCESS_TOKEN": "fake" }},
+                    "region": "us-central1"
+                }},
+                {encryption_material_fragment}
+                "autoCompress": false,
+                "sourceCompression": "NONE",
+                "overwrite": false
+            }}"#
+        )
+    }
+
+    #[test]
+    fn upload_encryption_material_null_returns_none() {
+        let json = make_upload_json(r#""encryptionMaterial": null,"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_absent_returns_none() {
+        let json = make_upload_json("");
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_empty_array_returns_none() {
+        let json = make_upload_json(r#""encryptionMaterial": [],"#);
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_none());
+    }
+
+    #[test]
+    fn upload_encryption_material_single_returns_some() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42},"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_some());
+    }
+
+    #[test]
+    fn upload_encryption_material_array_of_one_returns_some() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": [{"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 42}],"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let upload = data.to_file_upload_data().unwrap();
+        assert!(upload.encryption_material.is_some());
+    }
+
+    #[test]
+    fn upload_encryption_material_array_of_many_returns_error() {
+        let json = make_upload_json(
+            r#""encryptionMaterial": [
+                {"queryStageMasterKey": "a2V5","queryId": "qid-1","smkId": 1},
+                {"queryStageMasterKey": "b3l6","queryId": "qid-2","smkId": 2}
+            ],"#,
+        );
+        let data: Data = serde_json::from_str(&json).unwrap();
+        let result = data.to_file_upload_data();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Expected exactly one encryption material"),
+            "Error should mention the constraint: {err_msg}"
+        );
     }
 
     #[test]

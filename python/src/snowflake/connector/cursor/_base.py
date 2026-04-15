@@ -12,15 +12,15 @@ import abc
 import ctypes
 import enum
 import functools
+import logging
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast, overload
 
 from .._internal.arrow_stream_utils import (
     collect_arrow_table,
     create_row_iterator,
     create_table_iterator,
-    release_arrow_stream,
 )
 from .._internal.binding_converters import (
     ClientSideBindingConverter,
@@ -32,21 +32,22 @@ from .._internal.errorcode import ER_CURSOR_IS_CLOSED
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
+    ConnectionAbortQueryRequest,
     ConnectionGetQueryResultRequest,
     ExecuteResult,
     PrepareResult,
     QueryBindings,
+    ResultChunk,
     StatementExecuteQueryRequest,
     StatementHandle,
     StatementPrepareRequest,
+    StatementResultChunksRequest,
 )
-from .._internal.statement_utils import (
-    create_statement,
-    extract_rowcount,
-    extract_sqlstate,
-    get_stream_ptr,
-)
+from .._internal.statement_utils import create_statement
 from ..errors import InterfaceError, NotSupportedError, ProgrammingError
+from ..result_batch import ResultBatch
+from ._query_result import _QueryResult
+from ._query_result_waiter import QueryResultWaiter
 from ._result_metadata import QueryResultStats, ResultMetadata
 
 
@@ -54,12 +55,17 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from pyarrow import Table
 
+    from .._internal.arrow_stream_iterator import ArrowStreamIterator
     from ..connection import Connection
+
+logger = logging.getLogger(__name__)
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
+
 F = TypeVar("F", bound=Callable[..., Any])
+T = TypeVar("T", bound=Sequence[Any])
 
 
 class FetchMode(enum.Enum):
@@ -74,12 +80,23 @@ class FetchMode(enum.Enum):
 
 
 def _requires_open(func: F) -> F:
-
     @functools.wraps(func)
     def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
         if self.is_closed():
             raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
 
+        return func(self, *args, **kwargs)
+
+    return cast(F, wrapper)
+
+
+def _with_prefetch_hook(func: F) -> F:
+    """Invoke the cursor's prefetch hook (if set) before entering the wrapped method."""
+
+    @functools.wraps(func)
+    def wrapper(self: SnowflakeCursorBase, *args: Any, **kwargs: Any) -> Any:
+        if self._prefetch_hook is not None:
+            self._prefetch_hook()
         return func(self, *args, **kwargs)
 
     return cast(F, wrapper)
@@ -124,28 +141,29 @@ class SnowflakeCursorBase(abc.ABC):
             connection: Connection object that created this cursor
         """
         # -- Core cursor state (identity, lifecycle, error handling) --
-        self._connection = connection
-        self._closed = False
+        self._connection: Connection = connection
+        self._closed: bool = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
         # -- PEP 249 cursor configuration (persists for cursor lifetime) --
         self._arraysize: int = 1
 
-        # -- Query result metadata (set on execute, preserved across reset) --
-        self._description: list[ResultMetadata] | None = None
-        self._sqlstate: str | None = None
-        self._sfqid: str | None = None
-        self._query: str | None = None
+        # -- Query result state (replaced on execute, mutated on reset/consume) --
+        self._query_result: _QueryResult = _QueryResult()
+
+        # Cursor navigation position — mutable to avoid allocation per fetchone
         self._rownumber: int = -1
 
-        # -- Active result state (cleared on reset) --
-        self._rowcount: int | None = None
-        self._execute_result: ExecuteResult | None = None
-        self._iterator: Iterator[Row | DictRow] | None = None
+        # -- Active iteration state (cleared on reset) --
+        self._result_chunks: list[ResultChunk] | None = None
+        self._iterator: ArrowStreamIterator | None = None
         self._fetch_mode: FetchMode | None = None
-        # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
+
+        # Keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
+        # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
+        self._prefetch_hook: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
@@ -174,7 +192,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         Returns None if no query has been executed or if the query didn't produce a result set.
         """
-        return self._description
+        return self._query_result.description
 
     @property
     @pep249
@@ -186,7 +204,7 @@ class SnowflakeCursorBase(abc.ABC):
         Returns:
             int: Number of rows affected, or None if not determined
         """
-        return self._rowcount
+        return self._query_result.rowcount
 
     @property
     @pep249
@@ -224,29 +242,27 @@ class SnowflakeCursorBase(abc.ABC):
     @property
     def query(self) -> str | None:
         """
-        Read-only attribute containing the SQL text of the last executed query.
+        Read-only attribute containing the SQL text of the last executed or described query.
 
         Returns:
-            str | None: The SQL query string, or None if no query has been executed
+            str | None: The SQL query string, or None if no query has been executed or described
         """
-        return self._query
+        return self._query_result.query
 
     @property
     def sfqid(self) -> str | None:
         """
-        Read-only attribute containing the Snowflake Query ID for the last executed query.
+        Read-only attribute containing the Snowflake Query ID for the last executed or described query.
 
         Returns:
-            str | None: Snowflake Query ID (UUID format), or None if no query has been executed
+            str | None: Snowflake Query ID (UUID format), or None if no query has been executed or described
         """
-        return self._sfqid
+        return self._query_result.sfqid
 
     @property
-    def stats(self) -> QueryResultStats | None:
+    def stats(self) -> QueryResultStats:
         """Returns detailed row-level statistics for DML operations."""
-        if self._execute_result is None or not self._execute_result.HasField("stats"):
-            return QueryResultStats()
-        return QueryResultStats.from_query_stats(self._execute_result.stats)
+        return self._query_result.stats
 
     @property
     @pep249
@@ -257,24 +273,36 @@ class SnowflakeCursorBase(abc.ABC):
     @property
     def sqlstate(self) -> str | None:
         """The SQLSTATE code of the last executed operation."""
-        return self._sqlstate
+        return self._query_result.sqlstate
+
+    @overload
+    def callproc(self, procname: str) -> tuple: ...
+
+    @overload
+    def callproc(self, procname: str, args: T) -> T: ...
 
     @pep249
-    def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> Sequence[Any]:
-        """
-        Call a stored database procedure with the given name.
+    @_requires_open
+    def callproc(self, procname: str, args: Any = None) -> Any:
+        """Call a stored procedure.
 
         Args:
-            procname (str): Name of the procedure to call
-            parameters (sequence): Input parameters for the procedure
+            procname: The stored procedure to be called.
+            args: Parameters to be passed into the stored procedure.
+                  ``None`` is treated as no arguments.
 
         Returns:
-            sequence: The result of the procedure call
-
-        Raises:
-            NotSupportedError: If not implemented
+            The input parameters.
         """
-        raise NotSupportedError("callproc is not implemented")
+        if args is None:
+            args = ()
+        if isinstance(args, (str, bytes)):
+            raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
+        if not isinstance(args, Sequence):
+            raise TypeError(f"callproc args must be a sequence (e.g. list or tuple), not {type(args).__name__}")
+        command = f"CALL {procname}({self._connection.paramstyle.placeholders(len(args))})"
+        self.execute(command, args)
+        return args
 
     @property
     def is_file_transfer(self) -> bool:
@@ -336,7 +364,7 @@ class SnowflakeCursorBase(abc.ABC):
         if parameters is None:
             return operation, None
 
-        paramstyle = self._connection.paramstyle  # Always returns ParamStyle enum
+        paramstyle = self._connection.paramstyle
 
         if paramstyle.is_client_side():
             # format paramstyle only supports positional params (%s), not named params
@@ -394,18 +422,31 @@ class SnowflakeCursorBase(abc.ABC):
         result: ExecuteResult | None = None
         with create_statement(self.connection, query) as stmt_handle:
             result = self._execute_query(stmt_handle, bindings)
+            self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle)
 
-        self._populate_state_from_execute_result(result)
+        self._query_result = _QueryResult.from_execute_result(result)
+        self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
 
         return self
+
+    def _fetch_result_chunk_metadata(self, stmt_handle: StatementHandle) -> list[ResultChunk] | None:
+        """Retrieve chunk metadata while the statement handle is still alive."""
+        try:
+            request = StatementResultChunksRequest(stmt_handle=stmt_handle)
+            response = self._connection.db_api.statement_result_chunks(request)
+            if response.HasField("result"):
+                return list(response.result.chunks)
+            return None
+        except Exception:
+            logger.warning("Failed to fetch result chunk metadata", exc_info=True)
+            return None
 
     def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteResult:
         try:
             request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
             return self._connection.db_api.statement_execute_query(request).result
         except ProgrammingError as exc:
-            self._sqlstate = exc.sqlstate or None
-            self._sfqid = exc.sfqid or None
+            self._query_result = _QueryResult.from_programming_error(exc)
             raise
 
     def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult:
@@ -413,19 +454,8 @@ class SnowflakeCursorBase(abc.ABC):
             request = StatementPrepareRequest(stmt_handle=stmt_handle)
             return self._connection.db_api.statement_prepare(request).result
         except ProgrammingError as exc:
-            self._sqlstate = exc.sqlstate or None
+            self._query_result = _QueryResult.from_programming_error(exc)
             raise
-
-    def _populate_state_from_execute_result(self, result: ExecuteResult | None) -> None:
-        self._description = ResultMetadata.create_description(result)
-        self._rowcount = extract_rowcount(result)
-        self._sqlstate = extract_sqlstate(result)
-        self._sfqid = (result.query_id if result.query_id else None) if result else None
-        self._query = (result.query if result.query else None) if result else None
-        # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
-        self._rownumber = -1
-        # save execute result (holds arrow stream data needed for fetching)
-        self._execute_result = result
 
     @pep249
     @_requires_open
@@ -459,14 +489,14 @@ class SnowflakeCursorBase(abc.ABC):
             unknown_rowcount = False
             for params in seq_of_parameters:
                 self._execute(operation, params)  # no reset between calls
-                rc = self._rowcount
+                rc = self._query_result.rowcount
                 if rc is None or rc == -1:
                     unknown_rowcount = True
                 elif not unknown_rowcount:
                     total_rowcount += rc
-            # Per PEP 249, -1 indicates that the number of rows is unknown
-            # but for backward compatibility we set it to None
-            self._rowcount = None if unknown_rowcount else total_rowcount
+            # Per PEP 249, -1 indicates that the number of rows is unknown,
+            # but for backward compatibility it's set to None.
+            self._query_result.rowcount = None if unknown_rowcount else total_rowcount
             return
 
         # Server-side binding: validate and use array binding
@@ -518,29 +548,23 @@ class SnowflakeCursorBase(abc.ABC):
         self.reset()
         query, bindings = self._prepare_query(operation, parameters)
 
-        result: PrepareResult | None = None
+        prepare_result: PrepareResult | None = None
         with create_statement(self.connection, query) as stmt_handle:
-            result = self._prepare(stmt_handle)
+            prepare_result = self._prepare(stmt_handle)
 
-        # The PrepareResult includes an ArrowArrayStreamPtr that must be released
-        # even though we won't consume any data from it.
-        release_arrow_stream(get_stream_ptr(result))
+        self._query_result = _QueryResult.from_prepare_result(prepare_result)
 
-        result_metadata = ResultMetadata.create_description(result)
-        if result_metadata:
-            self._description = result_metadata  # shallow copy
-            self._rowcount = 0
-            self._sqlstate = None
-            # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
+        if self._query_result.description:
             self._rownumber = -1
 
-        return result_metadata
+        return self._query_result.description
 
     # ------------------------------------------------------------------
     # Fetch – shared implementation
     # ------------------------------------------------------------------
 
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ROW)
     def _fetchone(self) -> Row | DictRow | None:
         """Fetch the next row internally.
@@ -551,7 +575,7 @@ class SnowflakeCursorBase(abc.ABC):
         if not self._iterator:
             self._iterator = self._create_row_iterator()
         try:
-            row = next(self._iterator)
+            row: Row | DictRow = next(self._iterator)
             self._rownumber += 1
             return row
         except StopIteration:
@@ -564,6 +588,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @pep249
     @_requires_open
+    @_requires_fetch_mode(FetchMode.ROW)
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -583,18 +608,18 @@ class SnowflakeCursorBase(abc.ABC):
         if size < 0:
             raise ProgrammingError(f"The number of rows is not zero or positive number: {size}")
 
-        ret = []
-        while size > 0:
-            row = self.fetchone()
-            if row is None:
-                break
-            ret.append(row)
-            size -= 1
+        if size == 0:
+            return []
 
-        return ret
+        if not self._iterator:
+            self._iterator = self._create_row_iterator()
+        rows = self._iterator.fetch_many(size)
+        self._rownumber += len(rows)
+        return rows
 
     @pep249
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ROW)
     def fetchall(self) -> list[Any]:
         """
@@ -605,7 +630,7 @@ class SnowflakeCursorBase(abc.ABC):
         """
         if not self._iterator:
             self._iterator = self._create_row_iterator()
-        rows = list(self._iterator)
+        rows = self._iterator.fetch_all()
         self._rownumber += len(rows)
         return rows
 
@@ -613,13 +638,11 @@ class SnowflakeCursorBase(abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
-    def _create_row_iterator(self) -> Iterator[Row | DictRow]:
-        stream_ptr = get_stream_ptr(self._execute_result)
+    def _create_row_iterator(self) -> ArrowStreamIterator:
         return create_row_iterator(
-            stream_ptr=stream_ptr,
+            stream_ptr=self._query_result.consume_stream(),
             use_dict_result=self._use_dict_result,
-            # TODO: SNOW-2997786, temporarily hardcoded
-            use_numpy=False,
+            use_numpy=self._connection._numpy,
         )
 
     @pep249
@@ -665,9 +688,9 @@ class SnowflakeCursorBase(abc.ABC):
             bool: True if next set is available, False/None otherwise
 
         Raises:
-            NotSupportedError: If not implemented
+            NotImplementedError: If not implemented
         """
-        raise NotSupportedError("nextset is not implemented")
+        raise NotImplementedError("nextset is not implemented")
 
     @pep249
     def setinputsizes(self, sizes: Sequence[Any]) -> None:
@@ -728,12 +751,12 @@ class SnowflakeCursorBase(abc.ABC):
                      see: SNOW-647539: Do not erase the rowcount information when closing the cursor.
                      If False, reset rowcount to None.
         """
-        if not closing:
-            self._rowcount = None
-        self._execute_result = None
+        self._query_result.reset(closing=closing)
+        self._result_chunks = None
         self._iterator = None
         self._fetch_mode = None
         self._binding_data = None
+        self._prefetch_hook = None
 
     @pep249
     def close(self) -> bool | None:
@@ -826,6 +849,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @requires_dependency(pyarrow)
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_batches(
         self,
@@ -833,7 +857,7 @@ class SnowflakeCursorBase(abc.ABC):
     ) -> Iterator[Table]:
         """Fetch Arrow Tables in batches."""
         iterator = create_table_iterator(
-            stream_ptr=get_stream_ptr(self._execute_result),
+            stream_ptr=self._query_result.consume_stream(),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
@@ -842,6 +866,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     @requires_dependency(pyarrow)
     @_requires_open
+    @_with_prefetch_hook
     @_requires_fetch_mode(FetchMode.ARROW)
     def fetch_arrow_all(
         self,
@@ -850,13 +875,13 @@ class SnowflakeCursorBase(abc.ABC):
     ) -> Table | None:
         """Fetch all results as a single Arrow Table."""
         iterator = create_table_iterator(
-            stream_ptr=get_stream_ptr(self._execute_result),
+            stream_ptr=self._query_result.consume_stream(),
             number_to_decimal=self._connection.arrow_number_to_decimal,
             force_microsecond_precision=force_microsecond_precision,
         )
         return collect_arrow_table(
             table_iterator=iterator,
-            columns_metadata=self._description,
+            columns_metadata=self._query_result.description,
             force_return_table=force_return_table,
         )
 
@@ -884,9 +909,10 @@ class SnowflakeCursorBase(abc.ABC):
     # Distributed fetch
     # ------------------------------------------------------------------
 
-    def get_result_batches(self) -> list[Any] | None:
+    @_requires_open
+    def get_result_batches(self) -> list[ResultBatch] | None:
         """Get the previously executed query's ResultBatches if available."""
-        raise NotImplementedError("get_result_batches is not yet implemented")
+        return ResultBatch.from_chunks(self._result_chunks, self._query_result.description, self._connection)
 
     # ------------------------------------------------------------------
     # Async query support
@@ -918,13 +944,43 @@ class SnowflakeCursorBase(abc.ABC):
         )
         response = self._connection.db_api.connection_get_query_result(request)
 
-        self._populate_state_from_execute_result(response.result)
+        self._query_result = _QueryResult.from_execute_result(response.result)
+        self._rownumber = -1
 
         return self
 
+    @_requires_open
     def get_results_from_sfqid(self, sfqid: str) -> None:
-        """Get results from a previously executed async query."""
-        raise NotImplementedError("get_results_from_sfqid is not yet implemented")
+        """Get results from a previously executed query.
+
+        Polls query status until completion, then loads results lazily
+        on first fetch call.
+
+        Before the first fetch triggers the prefetch hook, result-dependent
+        cursor attributes and methods such as ``description``, ``rowcount``,
+        and ``fetch*`` are not populated and MUST NOT be relied upon.
+
+        Args:
+            sfqid: Snowflake Query ID of the target query.
+
+        Raises:
+            ProgrammingError: If the query has already failed at call time,
+                or if it reaches a terminal error status while being polled
+                for completion.
+            DatabaseError: If the server stops returning status information
+                while polling for query completion.
+        """
+        self.reset()
+        self.connection.get_query_status_throw_if_error(sfqid)
+        self._query_result.sfqid = sfqid
+        waiter = QueryResultWaiter(self._connection, sfqid)
+
+        def prefetch_hook() -> None:
+            waiter.wait()
+            self._prefetch_hook = None
+            self.query_result(sfqid)
+
+        self._prefetch_hook = prefetch_hook
 
     def execute_async(
         self,
@@ -936,6 +992,12 @@ class SnowflakeCursorBase(abc.ABC):
         """Execute a query asynchronously without waiting for results."""
         raise NotImplementedError("execute_async is not yet implemented")
 
+    @_requires_open
     def abort_query(self, qid: str) -> bool:
         """Abort a running query."""
-        raise NotImplementedError("abort_query is not yet implemented")
+        request = ConnectionAbortQueryRequest(
+            conn_handle=self._connection.conn_handle,
+            query_id=qid,
+        )
+        response = self._connection.db_api.connection_abort_query(request)
+        return response.success

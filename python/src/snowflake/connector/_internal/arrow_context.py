@@ -15,21 +15,12 @@ from typing import TYPE_CHECKING
 
 import pytz
 
+from .extras import numpy as np
+from .extras import tzlocal, MissingOptionalDependency
 
 if TYPE_CHECKING:
-    from numpy import datetime64, float64, int64, timedelta64  # type: ignore[import-not-found]
+    from numpy import datetime64, float64, int64, timedelta64
 
-
-try:
-    import numpy
-except ImportError:
-    numpy = None
-
-
-try:
-    import tzlocal  # type: ignore[import-not-found]
-except ImportError:
-    tzlocal = None
 
 ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 PARAMETER_TIMEZONE = "TIMEZONE"
@@ -87,7 +78,7 @@ class ArrowConverterContext:
             return pytz.timezone(tz)
         except pytz.exceptions.UnknownTimeZoneError:
             logger.warning("converting to tzinfo failed")
-            if tzlocal is not None:
+            if not isinstance(tzlocal, MissingOptionalDependency):
                 return tzlocal.get_localzone()  # type: ignore[no-any-return]
             else:
                 return timezone.utc
@@ -121,24 +112,24 @@ class ArrowConverterContext:
         return pytz.utc.localize(ts, is_dst=False).astimezone(tzinfo)
 
     def REAL_to_numpy_float64(self, py_double: float) -> float64:
-        return numpy.float64(py_double)
+        return np.float64(py_double)  # type: ignore[no-any-return]
 
     def FIXED_to_numpy_int64(self, py_long: int) -> int64:
-        return numpy.int64(py_long)
+        return np.int64(py_long)  # type: ignore[no-any-return]
 
     def FIXED_to_numpy_float64(self, py_long: int, scale: int) -> float64:
-        return numpy.float64(decimal.Decimal(py_long).scaleb(-scale))
+        return np.float64(decimal.Decimal(py_long).scaleb(-scale))  # type: ignore[no-any-return]
 
     def DATE_to_numpy_datetime64(self, py_days: int) -> datetime64:
-        return numpy.datetime64(py_days, "D")
+        return np.datetime64(py_days, "D")  # type: ignore[no-any-return]
 
     def TIMESTAMP_NTZ_ONE_FIELD_to_numpy_datetime64(self, value: int, scale: int) -> datetime64:
         nanoseconds = int(decimal.Decimal(value).scaleb(9 - scale))
-        return numpy.datetime64(nanoseconds, "ns")
+        return np.datetime64(nanoseconds, "ns")  # type: ignore[no-any-return]
 
     def TIMESTAMP_NTZ_TWO_FIELD_to_numpy_datetime64(self, epoch: int, fraction: int) -> datetime64:
         nanoseconds = int(decimal.Decimal(epoch).scaleb(9) + decimal.Decimal(fraction))
-        return numpy.datetime64(nanoseconds, "ns")
+        return np.datetime64(nanoseconds, "ns")  # type: ignore[no-any-return]
 
     def DECIMAL128_to_decimal_or_int(self, int128_bytes: bytes, scale: int) -> decimal.Decimal | int:
         """When scale=0 (integer), returns Python int. When scale>0 (decimal), returns Python Decimal.
@@ -158,16 +149,16 @@ class ArrowConverterContext:
         return decimal.Decimal(significand_int).scaleb(exponent)
 
     def DECFLOAT_to_numpy_float64(self, exponent: int, significand: bytes) -> float64:
-        return numpy.float64(self.DECFLOAT_to_decimal(exponent, significand))
+        return np.float64(self.DECFLOAT_to_decimal(exponent, significand))  # type: ignore[no-any-return]
 
     def INTERVAL_YEAR_MONTH_to_str(self, months: int) -> str:
         return interval_year_month_to_string(months)
 
     def INTERVAL_YEAR_MONTH_to_numpy_timedelta(self, months: int) -> timedelta64:
-        return numpy.timedelta64(months, "M")
+        return np.timedelta64(months, "M")  # type: ignore[no-any-return]
 
     def INTERVAL_DAY_TIME_int_to_numpy_timedelta(self, nanos: int) -> timedelta64:
-        return numpy.timedelta64(nanos, "ns")
+        return np.timedelta64(nanos, "ns")  # type: ignore[no-any-return]
 
     def INTERVAL_DAY_TIME_int_to_timedelta(self, nanos: int) -> timedelta:
         # Python timedelta only supports microsecond precision. We receive value in
@@ -188,7 +179,7 @@ class ArrowConverterContext:
         #   = 86399999999999999999999 nanoseconds
         #   = 86399999999999999 milliseconds
         # math.log2(86399999999999999) = 56.3 < 64
-        return numpy.timedelta64(nanos // 1_000_000, "ms")
+        return np.timedelta64(nanos // 1_000_000, "ms")  # type: ignore[no-any-return]
 
     def INTERVAL_DAY_TIME_decimal_to_timedelta(self, value: bytes) -> timedelta:
         # Snowflake supports up to 9 digits leading field precision for the day-time

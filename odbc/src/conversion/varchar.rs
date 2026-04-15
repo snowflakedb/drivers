@@ -9,13 +9,15 @@ use snafu::ResultExt;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
+use crate::conversion::binary::hex_encode_lowercase;
 use crate::conversion::error::JsonBindingError;
 use crate::conversion::error::{
     InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
     RustParsingSnafu, UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
-    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+    buffer_data_len, format_numeric_value, read_char_str, read_numeric_struct, read_unaligned,
+    read_wchar_str,
 };
 use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
@@ -438,40 +440,15 @@ impl ReadODBC for SnowflakeVarchar {
                 format!("{:02}:{:02}:{:02}", t.hour, t.minute, t.second)
             }
             CDataType::Numeric => {
-                let n = read_unaligned::<sql::Numeric>(binding);
-                let magnitude = u128::from_le_bytes(n.val);
-                let abs_str = magnitude.to_string();
-                let scaled = if n.scale > 0 {
-                    let s = n.scale as usize;
-                    if abs_str.len() <= s {
-                        let padded = format!("{:0>width$}", abs_str, width = s + 1);
-                        let (whole, frac) = padded.split_at(padded.len() - s);
-                        format!("{}.{}", whole, frac)
-                    } else {
-                        let (whole, frac) = abs_str.split_at(abs_str.len() - s);
-                        format!("{}.{}", whole, frac)
-                    }
-                } else if n.scale < 0 {
-                    let zeros = (-(i16::from(n.scale))) as usize;
-                    format!("{}{}", abs_str, "0".repeat(zeros))
-                } else {
-                    abs_str
-                };
-                if n.sign == 0 && magnitude != 0 {
-                    format!("-{}", scaled)
-                } else {
-                    scaled
-                }
+                let (mantissa, scale) = read_numeric_struct(binding)?;
+                format_numeric_value(mantissa, scale)
             }
             CDataType::Binary => {
                 let len = buffer_data_len(binding);
                 let bytes = unsafe {
                     std::slice::from_raw_parts(binding.parameter_value_ptr as *const u8, len)
                 };
-                bytes
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>()
+                hex_encode_lowercase(bytes)
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

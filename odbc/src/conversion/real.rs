@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{
+    JsonBindingError, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
@@ -13,7 +15,9 @@ use crate::conversion::numeric_helpers::{
     reject_multi_field_interval, whole_digits_len, write_numeric_as_binary,
     write_single_field_interval,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    format_numeric_value, read_char_str, read_numeric_struct, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
@@ -353,24 +357,61 @@ impl ReadODBC for SnowflakeReal {
     ) -> Result<Self::Representation<'a>, JsonBindingError> {
         let value = match binding.value_type {
             CDataType::Float => read_unaligned::<f32>(binding) as f64,
-            CDataType::Double => read_unaligned::<f64>(binding),
-            CDataType::Char => {
-                let s = read_char_str(binding)?;
-                s.trim().parse::<f64>().map_err(|_| {
+            CDataType::Default | CDataType::Double => read_unaligned::<f64>(binding),
+            CDataType::Long | CDataType::SLong => read_unaligned::<i32>(binding) as f64,
+            CDataType::Short | CDataType::SShort => read_unaligned::<i16>(binding) as f64,
+            CDataType::SBigInt => read_unaligned::<i64>(binding) as f64,
+            CDataType::ULong => read_unaligned::<u32>(binding) as f64,
+            CDataType::UShort => read_unaligned::<u16>(binding) as f64,
+            CDataType::UBigInt => read_unaligned::<u64>(binding) as f64,
+            CDataType::TinyInt | CDataType::STinyInt => read_unaligned::<i8>(binding) as f64,
+            CDataType::UTinyInt => read_unaligned::<u8>(binding) as f64,
+            CDataType::Bit => read_unaligned::<u8>(binding) as f64,
+            CDataType::Numeric => {
+                let (mantissa, scale) = read_numeric_struct(binding)?;
+                let s = format_numeric_value(mantissa, scale);
+                s.parse::<f64>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
                         c_type: binding.value_type,
                     }
                     .build()
                 })?
             }
-            CDataType::WChar => {
-                let s = read_wchar_str(binding)?;
-                s.trim().parse::<f64>().map_err(|_| {
+            CDataType::Char => {
+                let s = read_char_str(binding)?;
+                let v = s.trim().parse::<f64>().map_err(|_| {
                     UnsupportedCDataTypeSnafu {
                         c_type: binding.value_type,
                     }
                     .build()
-                })?
+                })?;
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!(
+                            "non-finite f64 value {v} cannot be bound to real SQL type"
+                        ),
+                    }
+                    .fail();
+                }
+                v
+            }
+            CDataType::WChar => {
+                let s = read_wchar_str(binding)?;
+                let v = s.trim().parse::<f64>().map_err(|_| {
+                    UnsupportedCDataTypeSnafu {
+                        c_type: binding.value_type,
+                    }
+                    .build()
+                })?;
+                if !v.is_finite() {
+                    return NumericMagnitudeOverflowSnafu {
+                        reason: format!(
+                            "non-finite f64 value {v} cannot be bound to real SQL type"
+                        ),
+                    }
+                    .fail();
+                }
+                v
             }
             _ => {
                 return UnsupportedCDataTypeSnafu {

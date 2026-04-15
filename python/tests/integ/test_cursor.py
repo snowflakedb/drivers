@@ -7,7 +7,8 @@ from decimal import Decimal
 import pytest
 
 from snowflake.connector.cursor import QueryResultStats, SnowflakeCursor
-from snowflake.connector.errors import InterfaceError, NotSupportedError, ProgrammingError
+from snowflake.connector.errors import InterfaceError, ProgrammingError
+from tests.conftest import with_paramstyle
 from tests.e2e.types.utils import assert_sequential_values
 
 
@@ -1063,14 +1064,158 @@ class TestCursorMethods:
         cursor.close()
         assert cursor.is_closed()
 
+    def test_callproc(self, cursor):
+        """Test that callproc calls a stored procedure and returns the input parameters."""
+        proc_name = "test_callproc_echo"
+        message = "hello_from_callproc"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(msg VARCHAR)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN msg;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, (message,))
+        assert ret == (message,)
+        assert cursor.fetchall() == [(message,)]
+
+    def test_callproc_no_args(self, cursor):
+        """Test callproc with a procedure that takes no arguments."""
+        proc_name = "test_callproc_no_args"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}()
+            RETURNS BOOLEAN
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN TRUE;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name)
+        assert ret == ()
+        assert cursor.fetchall() == [(True,)]
+
+    @pytest.mark.skip_reference(reason="Reference driver raises TypeError when args=None")
+    def test_callproc_none_args(self, cursor):
+        """Test callproc treats None args the same as no arguments."""
+        proc_name = "test_callproc_none_args"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}()
+            RETURNS BOOLEAN
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN TRUE;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, None)
+        assert ret == ()
+        assert cursor.fetchall() == [(True,)]
+
     @pytest.mark.skip_reference(
-        reason="Reference driver forwards callproc to server instead of raising NotSupportedError"
+        reason="Reference driver raises AttributeError instead of InterfaceError on closed cursor"
     )
-    def test_callproc_not_implemented(self, cursor):
-        """Test that callproc raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.callproc("test_proc", [1, 2, 3])
-        assert "callproc is not implemented" in str(excinfo.value)
+    def test_callproc_on_closed_cursor_raises(self, cursor):
+        """Test that callproc raises InterfaceError on a closed cursor."""
+        cursor.close()
+        with pytest.raises(InterfaceError):
+            cursor.callproc("any_proc")
+
+    @pytest.mark.skip_reference(reason="Reference driver does not validate args type")
+    def test_callproc_rejects_string_args(self, cursor):
+        """Test that callproc rejects a string as args (would be treated as sequence of chars)."""
+        with pytest.raises(TypeError, match="must be a sequence"):
+            cursor.callproc("any_proc", "abc")
+
+    @pytest.mark.skip_reference(reason="Reference driver does not validate args type")
+    def test_callproc_rejects_non_sequence_args(self, cursor):
+        """Test that callproc rejects non-sequence types like int."""
+        with pytest.raises(TypeError, match="must be a sequence"):
+            cursor.callproc("any_proc", 42)
+
+    @with_paramstyle("qmark")
+    def test_callproc_qmark_paramstyle(self, cursor):
+        """Test callproc with qmark paramstyle uses ? placeholders."""
+        proc_name = "test_callproc_qmark"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
+
+    @with_paramstyle("numeric")
+    def test_callproc_numeric_paramstyle(self, cursor):
+        """Test callproc with numeric paramstyle uses :1, :2 placeholders."""
+        proc_name = "test_callproc_numeric"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
+
+    @with_paramstyle("pyformat")
+    def test_callproc_pyformat_paramstyle(self, cursor):
+        """Test callproc with pyformat paramstyle uses %s placeholders."""
+        proc_name = "test_callproc_pyformat"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
+
+    @with_paramstyle("format")
+    def test_callproc_format_paramstyle(self, cursor):
+        """Test callproc with format paramstyle uses %s placeholders."""
+        proc_name = "test_callproc_format"
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE TEMPORARY PROCEDURE {proc_name}(p1 VARCHAR, p2 INT)
+            RETURNS VARCHAR NOT NULL
+            LANGUAGE SQL
+            AS
+            BEGIN
+              RETURN p1 || '_' || p2::VARCHAR;
+            END;
+            """
+        )
+        ret = cursor.callproc(proc_name, ("hello", 42))
+        assert ret == ("hello", 42)
+        assert cursor.fetchall() == [("hello_42",)]
 
     def test_executemany_is_callable(self, cursor):
         """Test that executemany is callable (basic smoke test)."""
@@ -1078,11 +1223,11 @@ class TestCursorMethods:
         cursor.executemany("INSERT INTO test VALUES (?)", [])
 
     @pytest.mark.skip_reference(
-        reason="Reference driver returns None from nextset instead of raising NotSupportedError"
+        reason="Reference driver returns None from nextset instead of raising NotImplementedError"
     )
     def test_nextset_not_implemented(self, cursor):
-        """Test that nextset raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
+        """Test that nextset raises NotImplementedError."""
+        with pytest.raises(NotImplementedError) as excinfo:
             cursor.nextset()
         assert "nextset is not implemented" in str(excinfo.value)
 
@@ -1896,15 +2041,10 @@ class TestDictCursorMultipleQueries:
 class TestCursorDescribe:
     """Integration tests for Cursor.describe method."""
 
-    def test_describe_returns_column_metadata(self, cursor):
-        """describe() returns ResultMetadata with correct names, types, and structure."""
-        result = cursor.describe("""
-            SELECT
-                1::INTEGER AS int_col,
-                'hello'::VARCHAR AS str_col,
-                3.14::FLOAT AS float_col,
-                TRUE::BOOLEAN AS bool_col
-        """)
+    def test_describe_returns_result_metadata(self, cursor):
+        """describe() returns ResultMetadata with correct column information."""
+        sql = "SELECT 1 AS int_col, 'hello'::VARCHAR AS str_col, 3.14::FLOAT AS float_col, TRUE::BOOLEAN AS bool_col"
+        result = cursor.describe(sql)
 
         assert result is not None
         assert len(result) == 4
@@ -1919,13 +2059,15 @@ class TestCursorDescribe:
         assert result[3].type_code == 13  # BOOLEAN
         assert cursor.description == result
 
-    def test_describe_side_effects(self, cursor):
-        """describe() sets description and row count but not sqlstate."""
-        cursor.describe("SELECT 1 AS col1")
+    def test_describe_sets_cursor_state(self, cursor):
+        """describe() sets sfqid, query, rowcount, and rownumber on the cursor."""
+        sql = "SELECT 1 AS int_col, 'hello'::VARCHAR AS str_col"
+        cursor.describe(sql)
 
-        assert cursor.description is not None
         assert cursor.rowcount == 0
         assert cursor.sqlstate is None
+        assert cursor.sfqid is not None
+        assert cursor.query == sql
         assert cursor.rownumber is None
 
     def test_describe_matches_execute_description(self, cursor):
@@ -1981,3 +2123,78 @@ class TestCursorQueryResult:
             assert cur2.description[0].name == "ID"
             assert cur2.description[1].name == "LABEL"
             assert cur2.fetchall() == original_rows
+
+
+class TestGetResultsFromSfqid:
+    """Integration tests for Cursor.get_results_from_sfqid."""
+
+    def test_get_results_from_sfqid_retrieves_completed_query(self, connection):
+        """get_results_from_sfqid loads results from an already-completed query."""
+        with connection.cursor() as cur1:
+            cur1.execute("SELECT 1 AS a, 'hello' AS b")
+            qid = cur1.sfqid
+            expected_rows = cur1.fetchall()
+
+        with connection.cursor() as cur2:
+            cur2.get_results_from_sfqid(qid)
+
+            assert cur2.sfqid == qid
+            rows = cur2.fetchall()
+            assert rows == expected_rows
+            assert cur2.description is not None
+            assert cur2.description[0].name == "A"
+            assert cur2.description[1].name == "B"
+
+    @pytest.mark.skip_universal(reason="execute_async not yet implemented")
+    def test_get_results_from_sfqid_waits_for_async_query(self, connection):
+        """get_results_from_sfqid polls until an async query completes."""
+        with connection.cursor() as cur1:
+            cur1.execute_async("CALL SYSTEM$WAIT(3, 'SECONDS')")
+            qid = cur1.sfqid
+
+        with connection.cursor() as cur2:
+            cur2.get_results_from_sfqid(qid)
+
+            rows = cur2.fetchall()
+            assert len(rows) == 1
+
+    def test_get_results_from_sfqid_raises_on_failed_query(self, connection):
+        """get_results_from_sfqid raises when the query failed on the server."""
+        with connection.cursor() as cur1:
+            with pytest.raises(ProgrammingError):
+                cur1.execute("SELECT * FROM nonexistent_table_that_does_not_exist_42")
+            qid = cur1.sfqid
+
+        with connection.cursor() as cur2:
+            with pytest.raises(ProgrammingError):
+                cur2.get_results_from_sfqid(qid)
+
+
+class TestCursorAbortQuery:
+    """Integration tests for Cursor.abort_query method."""
+
+    def test_abort_query_returns_false_for_completed_query(self, cursor):
+        """abort_query returns False for a query that has already completed."""
+        cursor.execute("SELECT 1")
+        qid = cursor.sfqid
+
+        result = cursor.abort_query(qid)
+        assert result is False
+
+    @pytest.mark.skip_universal(reason="[SNOW-2872511] execute_async not yet implemented")
+    def test_abort_query_returns_true_for_running_query(self, connection):
+        """abort_query returns True when aborting a currently running query."""
+        long_running_query = "SELECT SYSTEM$WAIT(30, 'SECONDS')"
+        cur_query = connection.cursor()
+
+        cur_query.execute_async(long_running_query)
+        sfqid = cur_query.sfqid
+
+        result = connection.cursor().abort_query(sfqid)
+        assert result is True
+
+        try:
+            connection.cursor().query_result(sfqid)
+        except ProgrammingError as e:
+            assert "57014" in e.msg
+            assert "canceled" in e.msg

@@ -2,7 +2,7 @@
 import logging
 from pathlib import Path
 
-from runner.modes.common import execute_test, verify_test_results
+from runner.modes.common import execute_test, extract_limit_from_sql, verify_test_results
 from runner.test_types import PerfTestType
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,11 @@ def run_performance_test(
     
     logger.info(f"Running {test_name} ({driver_label}): {iterations} iterations [type={test_type}]")
     
+    env_vars = {}
+    expected = extract_limit_from_sql(sql_command)
+    if expected:
+        env_vars["EXPECTED_ROW_COUNT"] = str(expected)
+    
     execute_test(
         test_name=test_name,
         sql_command=sql_command,
@@ -64,6 +69,7 @@ def run_performance_test(
         test_type=test_type,
         use_local_binary=use_local_binary,
         s3_files_dir=s3_files_dir,
+        env_vars=env_vars,
     )
     
     return verify_test_results(

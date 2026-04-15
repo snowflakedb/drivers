@@ -119,6 +119,21 @@ class WiremockClient:
             if response.status_code not in (200, 201):
                 raise RuntimeError(f"Failed to add mapping: {response.status_code} {response.text}")
 
+    def get_requests(self) -> list:
+        """Query admin API for all captured requests."""
+        response = requests.get(f"{self.http_url()}/__admin/requests")
+        return response.json().get("requests", [])
+
+    def get_logout_requests(self) -> list:
+        """Filter captured requests to logout requests (POST /session?delete=true)."""
+        return [
+            r
+            for r in self.get_requests()
+            if r.get("request", {}).get("method") == "POST"
+            and "/session" in r.get("request", {}).get("url", "")
+            and "delete=true" in r.get("request", {}).get("url", "")
+        ]
+
     def stop(self) -> None:
         """Stop the Wiremock process.
 

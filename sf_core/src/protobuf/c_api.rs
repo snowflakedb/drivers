@@ -1,4 +1,4 @@
-use std::os::raw::c_char;
+use std::ffi::c_char;
 use std::sync::LazyLock;
 
 use crate::protobuf::apis::RustTransport;

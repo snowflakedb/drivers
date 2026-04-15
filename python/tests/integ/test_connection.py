@@ -10,7 +10,6 @@ from unittest.mock import Mock
 import pytest
 
 from snowflake.connector.cursor import DictCursor
-from snowflake.connector.errors import NotSupportedError
 
 
 class TestConnectionInfo:
@@ -94,20 +93,6 @@ class TestConnectionMethods:
 
 class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
-
-    @pytest.mark.skip_reference(reason="Reference driver has no cancel method")
-    def test_cancel_not_implemented(self, connection):
-        """Test that cancel raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.cancel()
-        assert "cancel is not implemented" in str(excinfo.value)
-
-    @pytest.mark.skip_reference(reason="Reference driver has no ping method")
-    def test_ping_not_implemented(self, connection):
-        """Test that ping raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.ping()
-        assert "ping is not implemented" in str(excinfo.value)
 
     @pytest.mark.skip_reference(reason="Reference driver has no set_autocommit method")
     def test_set_autocommit(self, connection):

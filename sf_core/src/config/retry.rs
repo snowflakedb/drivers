@@ -15,8 +15,8 @@ pub struct RetryPolicy {
     /// Maximum total duration spent on the operation before we stop retrying.
     pub max_elapsed: Duration,
     /// Optional per-request socket timeout. If Some, each HTTP request gets
-    /// timeout = min(this, remaining_budget). If None, no per-request timeout
-    /// is applied (only max_elapsed budget enforcement, like login/query operations).
+    /// timeout = min(this, remaining_budget). If None, each request gets the
+    /// remaining budget as its timeout (so max_elapsed is still enforced).
     pub per_request_timeout: Option<Duration>,
     /// Additional HTTP status codes to treat as retryable beyond the built-in set
     /// (408, 429, 307, 308, and 5xx).

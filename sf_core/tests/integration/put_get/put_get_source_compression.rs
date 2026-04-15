@@ -40,12 +40,17 @@ fn should_return_error_for_unsupported_compression_type() {
     );
 
     // Then Unsupported compression error is thrown
-    let result = client.execute_query_no_unwrap(&put_sql);
-    assert!(
-        matches!(
-            &result,
-            Err(e) if e.contains("Unsupported compression type")
-        ),
-        "Expected unsupported compression error, got: {result:?}"
-    );
+    match client
+        .execute_query_no_unwrap(&put_sql)
+        .expect_err("Expected unsupported compression error")
+    {
+        proto_utils::ProtoError::Application(exc) => {
+            assert!(
+                exc.message.contains("Unsupported compression type"),
+                "Expected unsupported compression error, got: {}",
+                exc.message,
+            );
+        }
+        other => panic!("Expected application error, got: {other:?}"),
+    }
 }

@@ -165,6 +165,10 @@ pub enum SqlState {
     /// 2H000 - Invalid collation name
     InvalidCollationName,
 
+    // Invalid catalog name class (3D)
+    /// 3D000 - Invalid catalog name
+    InvalidCatalogName,
+
     // Syntax error or access rule violation class (42)
     /// 42000 - Syntax error or access rule violation
     SyntaxErrorOrAccessRuleViolation,
@@ -368,6 +372,7 @@ impl SqlState {
             SqlState::ReadingSqlDataNotPermitted => "2F004",
             SqlState::FunctionExecutedNoReturnStatement => "2F005",
             SqlState::InvalidCollationName => "2H000",
+            SqlState::InvalidCatalogName => "3D000",
             SqlState::SyntaxErrorOrAccessRuleViolation => "42000",
             SqlState::BaseTableOrViewAlreadyExists => "42S01",
             SqlState::BaseTableOrViewNotFound => "42S02",
@@ -542,6 +547,7 @@ impl FromStr for SqlState {
             "2F004" => SqlState::ReadingSqlDataNotPermitted,
             "2F005" => SqlState::FunctionExecutedNoReturnStatement,
             "2H000" => SqlState::InvalidCollationName,
+            "3D000" => SqlState::InvalidCatalogName,
             "42000" => SqlState::SyntaxErrorOrAccessRuleViolation,
             "42S01" => SqlState::BaseTableOrViewAlreadyExists,
             "42S02" => SqlState::BaseTableOrViewNotFound,

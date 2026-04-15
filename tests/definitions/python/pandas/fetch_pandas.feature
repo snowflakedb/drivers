@@ -85,3 +85,16 @@ Feature: Pandas fetch methods (Python-specific)
     Then More than one DataFrame should be yielded
     And Each element should be a pandas.DataFrame
     And The total row count across all DataFrames should be 100000
+
+  # =========================================================================== #
+  #                   result batch pickle + to_pandas                           #
+  # =========================================================================== #
+
+  @python_e2e
+  Scenario: should survive pickle round-trip and convert to pandas
+    Given Snowflake client is logged in
+    When Query "SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => 100000)) v" is executed
+    And get_result_batches is called
+    And The batches are serialized with pickle
+    And The batches are deserialized with pickle
+    Then Fetching all deserialized batches via to_pandas should return 100000 total rows

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.binding_converters import ParamStyle
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
     ConnectionGetInfoResponse,
@@ -14,9 +15,11 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionIsClosedResponse,
     ConnectionSetOptionsResponse,
     DatabaseHandle,
+    StatementHandle,
     ValidationIssue,
 )
 from snowflake.connector.constants import QueryStatus
+from snowflake.connector.cursor import SnowflakeCursor
 from snowflake.connector.errors import InterfaceError, ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
@@ -98,6 +101,58 @@ class TestSetAutocommitValidation:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             with pytest.raises(ProgrammingError, match="Invalid autocommit parameter"):
                 Connection(user="test_user", account="test_account", autocommit=1)
+
+
+class TestParamstyleSetter:
+    """PEP 249 uses string paramstyle; assignment normalizes once on the connection."""
+
+    @pytest.fixture(autouse=True)
+    def _no_native_stream_ops(self):
+        """Avoid touching real Arrow stream memory when cursor tests run execute()."""
+        with (
+            patch("snowflake.connector.cursor._query_result.get_stream_ptr", return_value=0),
+            patch("snowflake.connector.cursor._query_result.release_arrow_stream"),
+        ):
+            yield
+
+    def test_assign_string_normalizes(self, connection):
+        connection.paramstyle = "qmark"
+        assert connection.paramstyle == ParamStyle.QMARK
+        assert connection._paramstyle is ParamStyle.QMARK
+        connection.paramstyle = "  QMARK  "
+        assert connection.paramstyle == ParamStyle.QMARK
+
+    def test_assign_via_private_paramstyle_normalizes(self, connection):
+        """Legacy / SnowPy code sets ``conn._paramstyle`` directly; must coerce like ``paramstyle``."""
+        connection._paramstyle = "numeric"
+        assert connection.paramstyle == ParamStyle.NUMERIC
+        assert connection._paramstyle == ParamStyle.NUMERIC
+
+    def test_assign_enum_unchanged(self, connection):
+        connection.paramstyle = ParamStyle.NUMERIC
+        assert connection.paramstyle == ParamStyle.NUMERIC
+
+    def test_assign_invalid_string_raises(self, connection):
+        with pytest.raises(ProgrammingError, match="Invalid paramstyle"):
+            connection.paramstyle = "bogus"
+
+    def test_assign_invalid_type_raises(self, connection):
+        with pytest.raises(ProgrammingError, match="paramstyle must be str or ParamStyle"):
+            connection.paramstyle = 123  # type: ignore[assignment]
+
+    def test_cursor_execute_qmark_after_string_assign(self, connection, mock_db_api):
+        mock_db_api.statement_new.return_value = MagicMock(stmt_handle=StatementHandle(id=1))
+        execute_result = MagicMock()
+        execute_result.columns = []
+        execute_result.HasField = MagicMock(return_value=False)
+        execute_result.sql_state = "00000"
+        mock_db_api.statement_execute_query.return_value.result = execute_result
+
+        connection.paramstyle = "qmark"
+        cur = SnowflakeCursor(connection)
+        cur.execute("SELECT ?", (1,))
+        req = mock_db_api.statement_execute_query.call_args[0][0]
+        assert req.HasField("bindings")
 
 
 class TestSetAutocommit:
@@ -206,7 +261,7 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="alice", account="acme")
 
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["user"] == ConfigSetting(string_value="alice")
         assert request.options["account"] == ConfigSetting(string_value="acme")
 
@@ -217,7 +272,7 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", port=8080)
 
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["port"] == ConfigSetting(int_value=8080)
 
     def test_bool_options_use_bool_value_not_int(self, mock_db_api):
@@ -227,7 +282,7 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", insecure_mode=True)
 
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         setting = request.options["insecure_mode"]
         assert setting == ConfigSetting(bool_value=True)
         assert setting.WhichOneof("value") == "bool_value"
@@ -239,7 +294,7 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", timeout=30.5)
 
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["timeout"] == ConfigSetting(double_value=30.5)
 
     def test_bytes_options_use_bytes_value(self, mock_db_api):
@@ -250,7 +305,7 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", token=token)
 
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["token"] == ConfigSetting(bytes_value=token)
 
     def test_all_options_batched_into_single_rpc(self, mock_db_api):
@@ -260,8 +315,9 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", port=443, insecure_mode=False, timeout=1.5)
 
-        assert mock_db_api.connection_set_options.call_count == 1
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        # 2 calls: (1) generic kwargs, (2) logout config via _send_logout_config
+        assert mock_db_api.connection_set_options.call_count == 2
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout", "client_app_id"}
 
     def test_validation_warnings_forwarded_via_warnings_warn(self, mock_db_api):
@@ -282,9 +338,11 @@ class TestConnectionSetOptions:
                 warnings.simplefilter("always")
                 Connection(user="u", account="a")
 
-        assert len(caught) == 2
-        assert "param 'x' is deprecated" in str(caught[0].message)
-        assert "param 'y' has no effect" in str(caught[1].message)
+        # Filter out FutureWarning from _extract_auto_detection_param
+        validation_warnings = [w for w in caught if w.category is not FutureWarning]
+        assert len(validation_warnings) == 2
+        assert "param 'x' is deprecated" in str(validation_warnings[0].message)
+        assert "param 'y' has no effect" in str(validation_warnings[1].message)
 
     def test_no_user_options_sends_only_client_app_id(self, mock_db_api):
         """When there are no user-supplied kwargs, only the injected client_app_id is sent."""
@@ -293,8 +351,9 @@ class TestConnectionSetOptions:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(session_parameters={"AUTOCOMMIT": "true"})
 
-        assert mock_db_api.connection_set_options.call_count == 1
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        # 2 calls: (1) generic kwargs, (2) logout config via _send_logout_config
+        assert mock_db_api.connection_set_options.call_count == 2
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert set(request.options.keys()) == {"client_app_id"}
         assert request.options["client_app_id"] == ConfigSetting(string_value="PythonConnector")
 
@@ -525,6 +584,42 @@ class TestIsAnError:
         assert Connection.is_an_error(status) == expected
 
 
+class TestSnowflakeVersionProperty:
+    """Unit tests for the Connection.snowflake_version cached property."""
+
+    def test_returns_version_string(self, connection):
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = {"VERSION": "8.46.1"}
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        assert connection.snowflake_version == "8.46.1"
+        mock_cursor.execute.assert_called_once_with("SELECT CURRENT_VERSION() AS version")
+
+    def test_strips_suffix_after_space(self, connection):
+        """The legacy driver splits on space and takes the first part."""
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = {"VERSION": "8.46.1 some extra info"}
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        assert connection.snowflake_version == "8.46.1"
+
+    def test_result_is_cached(self, connection):
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = {"VERSION": "8.46.1"}
+        connection.cursor = MagicMock(return_value=mock_cursor)
+
+        _ = connection.snowflake_version
+        _ = connection.snowflake_version
+
+        mock_cursor.execute.assert_called_once()
+
+
 class TestApplicationProperty:
     """Unit tests for the Connection.application property."""
 
@@ -545,7 +640,7 @@ class TestApplicationProperty:
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", application="CustomApp")
 
-        request = mock_db_api.connection_set_options.call_args[0][0]
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
         assert request.options["client_app_id"] == ConfigSetting(string_value="CustomApp")
         assert "application" not in request.options
 
@@ -563,6 +658,14 @@ class TestApplicationProperty:
             conn = Connection(user="u", account="a", application="")
         assert conn.application == "PythonConnector"
 
+    def test_application_accepts_dotted_name(self, mock_db_api):
+        """Snow CLI passes dotted names like 'SNOWCLI.STAGE.COPY'."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", application="SNOWCLI.STAGE.COPY")
+        assert conn.application == "SNOWCLI.STAGE.COPY"
+
     def test_application_rejects_non_string(self, mock_db_api):
         from snowflake.connector.connection import Connection
 
@@ -570,20 +673,21 @@ class TestApplicationProperty:
             with pytest.raises(ProgrammingError, match="Invalid application parameter"):
                 Connection(user="u", account="a", application=123)
 
-    def test_application_rejects_invalid_characters(self, mock_db_api):
+    def test_application_rejects_name_starting_with_non_word_char(self, mock_db_api):
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             with pytest.raises(ProgrammingError, match="Invalid application name"):
-                Connection(user="u", account="a", application="My App!")
+                Connection(user="u", account="a", application="!invalid")
 
-    def test_application_not_in_stored_kwargs(self, mock_db_api):
-        """application should be popped from kwargs so it doesn't leak into stored kwargs."""
+    def test_application_not_in_options(self, mock_db_api):
+        """application should be popped from kwargs, not sent to Core as a generic option."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            conn = Connection(user="u", account="a", application="MyApp")
-        assert "application" not in conn.kwargs
+            Connection(user="u", account="a", application="MyApp")
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert "application" not in request.options
 
 
 class TestConnectionArrowProperties:
@@ -621,6 +725,29 @@ class TestConnectionArrowProperties:
 
         connection.arrow_number_to_decimal = 0
         assert connection.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_true_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", arrow_number_to_decimal=True)
+        assert conn.arrow_number_to_decimal is True
+
+    def test_arrow_number_to_decimal_false_from_kwargs(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", arrow_number_to_decimal=False)
+        assert conn.arrow_number_to_decimal is False
+
+    def test_arrow_number_to_decimal_not_leaked_to_rust_core(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", arrow_number_to_decimal=True)
+
+        request = mock_db_api.connection_set_options.call_args_list[0][0][0]
+        assert "arrow_number_to_decimal" not in request.options
 
 
 class TestGetQueryStatus:

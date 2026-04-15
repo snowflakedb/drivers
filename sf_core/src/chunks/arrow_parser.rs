@@ -10,6 +10,12 @@ use super::prefetch::ParseChunk;
 pub struct ArrowChunkParser;
 
 impl ParseChunk for ArrowChunkParser {
+    #[tracing::instrument(
+        name = "core_arrow_decode",
+        target = "sf_core::perf",
+        level = "trace",
+        skip_all
+    )]
     fn parse_chunk(&self, data: Vec<u8>) -> Result<Vec<RecordBatch>, ArrowError> {
         let cursor = io::Cursor::new(data);
         let reader = StreamReader::try_new(cursor, None)?;

@@ -9,12 +9,12 @@ from __future__ import annotations
 import atexit
 import logging
 import re
-import threading
 import warnings
 
 from collections.abc import Generator, Iterable
+from functools import cached_property
 from io import StringIO
-from typing import Any, Callable, Union, cast
+from typing import Any, Callable, Union
 
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -30,10 +30,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
-    ConnectionSetOptionBoolRequest,
-    ConnectionSetOptionIntRequest,
     ConnectionSetOptionsRequest,
-    ConnectionSetOptionStringRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
@@ -43,21 +40,26 @@ from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
 from ._internal.decorators import backward_compatibility, internal_api, pep249
+from ._internal.extras import check_dependency
+from ._internal.extras import numpy as np
 from ._internal.logout_config_mapping import (
     LogoutConfig,
-    LogoutOptionKeys,
     remap_keep_alive_phase2,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
 from ._internal.text_utils import split_statements
 from .constants import QueryStatus
-from .cursor import CursorInstance, CursorType, SnowflakeCursor
-from .errors import Error, InterfaceError, NotSupportedError, ProgrammingError
+from .cursor import CursorInstance, CursorType, DictCursor, SnowflakeCursor
+from .errors import Error, InterfaceError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
 CLIENT_NAME = "PythonConnector"
-APPLICATION_RE = re.compile(r"^[\w\d_]+$")
+# The old connector used re.match(r"[\w\d_]+") without anchors, so any string
+# starting with a word character was accepted (dots, hyphens, etc. in the tail
+# were silently ignored).  We keep a start-anchored pattern without $ so that
+# callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
+APPLICATION_RE = re.compile(r"^[\w\d_]+")
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -68,6 +70,28 @@ logger = logging.getLogger(__name__)
 
 
 _UNSET = object()  # Sentinel to distinguish "not provided" from explicit values
+
+
+def _pop_bool_kwarg(kwargs: dict[str, Any], key: str, default: bool) -> bool:
+    """Pop a required boolean kwarg with runtime type validation.
+
+    Raises ProgrammingError for non-bool values (e.g. string "false" is truthy).
+    """
+    value = kwargs.pop(key, default)
+    if not isinstance(value, bool):
+        raise ProgrammingError(f"{key} must be bool, got {type(value).__name__}")
+    return value
+
+
+def _pop_optional_bool_kwarg(kwargs: dict[str, Any], key: str) -> bool | None:
+    """Pop an optional boolean kwarg with runtime type validation.
+
+    Returns None if not provided. Raises ProgrammingError for non-bool/non-None values.
+    """
+    value = kwargs.pop(key, None)
+    if value is not None and not isinstance(value, bool):
+        raise ProgrammingError(f"{key} must be bool or None, got {type(value).__name__}")
+    return value
 
 
 def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
@@ -90,7 +114,11 @@ def _extract_auto_detection_param(kwargs: dict[str, Any]) -> bool | None:
             stacklevel=5,
         )
         return True
-    return cast("bool | None", raw)
+    if raw is not None and not isinstance(raw, bool):
+        raise ProgrammingError(
+            f"enable_server_session_keep_alive_auto_detection must be bool or None, got {type(raw).__name__}"
+        )
+    return raw
 
 
 def _build_config_settings(kwargs: dict[str, Any]) -> dict[str, ConfigSetting]:
@@ -169,9 +197,10 @@ class Connection:
                 is ignored because the passcode flow is selected automatically.
             **kwargs: Additional connection parameters
         """
+        # paramstyle (via setter so str | ParamStyle normalization is single-sourced)
         from snowflake.connector import paramstyle as default_paramstyle
 
-        self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
+        self.paramstyle = paramstyle or default_paramstyle
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
@@ -186,6 +215,10 @@ class Connection:
         else:
             raise ProgrammingError(f"Invalid application parameter (must be a non-empty string): {application!r}")
         kwargs["client_app_id"] = self._application
+
+        # Extract Python-only params before processing kwargs for Rust core
+        self._numpy: bool = self._resolve_numpy_option(kwargs)
+        self._arrow_number_to_decimal: bool = bool(kwargs.pop("arrow_number_to_decimal", False))
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
@@ -224,7 +257,6 @@ class Connection:
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
-        self._arrow_number_to_decimal: bool = False
 
         if self.auto_cleanup:
             atexit.register(self._close_at_process_exit)
@@ -234,10 +266,10 @@ class Connection:
 
         After this call, kwargs contains only generic Core options
         suitable for connection_set_options. Special params are stored
-        on self (auto_cleanup, _session_params, logout_config).
+        on self (auto_cleanup, _session_params, _numpy, logout_config).
         """
         # Python-only (pop — never goes to Core)
-        self.auto_cleanup: bool = cast(bool, kwargs.pop("auto_cleanup", True))
+        self.auto_cleanup: bool = _pop_bool_kwarg(kwargs, "auto_cleanup", True)
 
         # Session params use a dedicated RPC (connection_set_session_parameters),
         # not the generic connection_set_options path, so pop them from kwargs.
@@ -262,7 +294,7 @@ class Connection:
 
     def _parse_logout_config(self, kwargs: dict[str, Any]) -> LogoutConfig:
         """Pop logout params from kwargs, apply defaults and backward-compat mapping."""
-        keep_alive: bool | None = cast("bool | None", kwargs.pop("server_session_keep_alive", None))
+        keep_alive = _pop_optional_bool_kwarg(kwargs, "server_session_keep_alive")
         auto_detection = _extract_auto_detection_param(kwargs)
         keep_alive = remap_keep_alive_phase2(keep_alive, auto_detection)
         return LogoutConfig(
@@ -271,61 +303,18 @@ class Connection:
         )
 
     def _send_logout_config(self, logout_config: LogoutConfig) -> None:
-        """Send resolved LogoutConfig to Core via typed ConnectionSetOption* RPCs.
+        """Send resolved LogoutConfig to Core via batch connection_set_options RPC.
 
         Called at init time, before connection_init. Writes values to Core's
         connection_seed. Config is frozen at init; close-time overrides use
         ConnectionCloseRequest fields (not connection_seed mutation).
         """
-        if logout_config.server_session_keep_alive is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
+        options = _build_config_settings(logout_config.to_option_dict())
+        if options:
+            self.db_api.connection_set_options(
+                ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.SERVER_SESSION_KEEP_ALIVE,
-                    value=logout_config.server_session_keep_alive,
-                )
-            )
-
-        if logout_config.enable_server_session_keep_alive_auto_detection is not None:
-            self.db_api.connection_set_option_bool(
-                ConnectionSetOptionBoolRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION,
-                    value=logout_config.enable_server_session_keep_alive_auto_detection,
-                )
-            )
-
-        self.db_api.connection_set_option_string(
-            ConnectionSetOptionStringRequest(
-                conn_handle=self.conn_handle,
-                key=LogoutOptionKeys.LOGOUT_ERROR_STRATEGY,
-                value=logout_config.error_strategy,
-            )
-        )
-
-        self.db_api.connection_set_option_int(
-            ConnectionSetOptionIntRequest(
-                conn_handle=self.conn_handle,
-                key=LogoutOptionKeys.LOGOUT_TOTAL_TIMEOUT_SECONDS,
-                value=logout_config.logout_total_timeout_seconds,
-            )
-        )
-
-        if logout_config.max_attempts is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS,
-                    value=logout_config.max_attempts,
-                )
-            )
-
-        if logout_config.logout_request_timeout_seconds is not None:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_REQUEST_TIMEOUT_SECONDS,
-                    value=logout_config.logout_request_timeout_seconds,
+                    options=options,
                 )
             )
 
@@ -358,36 +347,37 @@ class Connection:
         If close() was called successfully, this handler should have been unregistered
         and should NOT run. If it runs for an already-closed connection, that indicates
         a potential bug (unregister failed, race condition, or multiple registrations).
+
+        The entire body is wrapped in try/except because during interpreter shutdown,
+        any call (FFI, logging, warnings) may fail due to torn-down module state.
         """
-        if self.is_closed():
-            # This shouldn't happen! If close() succeeded, handler should be unregistered.
-            logger.debug(
-                "atexit handler ran for already-closed connection. "
-                "This may indicate atexit.unregister() failed or a race condition occurred."
-            )
-            return
-
-        # Connection is leaked (not explicitly closed) — emit FutureWarning.
-        # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
-        # FutureWarning deduplication (once per source line per process) prevents
-        # log spam when multiple connections are leaked. try/except guards against
-        # interpreter shutdown where the warnings module itself may already be None.
         try:
-            warnings.warn(
-                "Connection was not explicitly closed before process exit. "
-                "Auto-cleanup at exit will be disabled by default in a future version. "
-                "Please explicitly call connection.close() or use context manager.",
-                FutureWarning,
-                stacklevel=2,
-            )
-        except Exception:
-            pass  # Interpreter shutting down; warning emission is best-effort
+            if self.is_closed():
+                logger.debug(
+                    "atexit handler ran for already-closed connection. "
+                    "This may indicate atexit.unregister() failed or a race condition occurred."
+                )
+                return
 
-        # Attempt cleanup for leaked connection
-        try:
+            # Connection is leaked (not explicitly closed) — emit FutureWarning.
+            # Auto-cleanup will be disabled by default in a future version (SNOW-2314152).
+            try:
+                warnings.warn(
+                    "Connection was not explicitly closed before process exit. "
+                    "Auto-cleanup at exit will be disabled by default in a future version. "
+                    "Please explicitly call connection.close() or use context manager.",
+                    FutureWarning,
+                    stacklevel=2,
+                )
+            except Exception:
+                pass  # Interpreter shutting down; warning emission is best-effort
+
             self.close(retry=False)
         except Exception:
-            pass  # Suppress errors during exit cleanup
+            try:
+                logger.warning("_close_at_process_exit failed during interpreter shutdown")
+            except Exception:
+                pass  # logger itself may be torn down
 
     @property
     @pep249
@@ -459,28 +449,6 @@ class Connection:
                         logger.warning("Rollback failed during exception handling", exc_info=True)
         finally:
             self.close()
-
-    # Optional methods that some databases might support
-    def cancel(self) -> None:
-        """
-        Cancel a long-running operation on the connection.
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("cancel is not implemented")
-
-    def ping(self) -> bool:
-        """
-        Check if the connection to the server is still alive.
-
-        Returns:
-            bool: True if connection is alive, False otherwise
-
-        Raises:
-            NotSupportedError: If not implemented
-        """
-        raise NotSupportedError("ping is not implemented")
 
     @property
     def _autocommit(self) -> bool:
@@ -555,7 +523,29 @@ class Connection:
         Returns:
             ParamStyle: The paramstyle enum value
         """
-        return self._paramstyle
+        return self.__paramstyle
+
+    @paramstyle.setter
+    def paramstyle(self, value: str | ParamStyle) -> None:
+        """Set binding style from a :class:`ParamStyle` or PEP 249 string (e.g. ``"pyformat"``)."""
+        if isinstance(value, ParamStyle):
+            self.__paramstyle = value
+        elif isinstance(value, str):
+            self.__paramstyle = ParamStyle.from_string(value)
+        else:
+            raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
+
+    @property
+    @backward_compatibility
+    def _paramstyle(self) -> ParamStyle:
+        """Internal binding-style storage (legacy callers assign to ``_paramstyle``)."""
+        return self.__paramstyle
+
+    @_paramstyle.setter
+    @backward_compatibility
+    def _paramstyle(self, value: str | ParamStyle) -> None:
+        """Normalize assignments to ``_paramstyle`` (e.g. SnowPy ``temporary_paramstyle``)."""
+        self.paramstyle = value
 
     def execute_string(
         self,
@@ -597,9 +587,14 @@ class Connection:
         return SnowflakeRestful(connection=self)
 
     @internal_api
-    def _get_connection_info(self) -> ConnectionGetInfoResponse:
+    def _get_connection_info(self, include_master_token: bool = False) -> ConnectionGetInfoResponse:
         """Refresh connection details for connection"""
-        return self.db_api.connection_get_info(ConnectionGetInfoRequest(conn_handle=self.conn_handle))
+        return self.db_api.connection_get_info(
+            ConnectionGetInfoRequest(
+                conn_handle=self.conn_handle,
+                include_master_token=include_master_token,
+            )
+        )
 
     @internal_api
     @backward_compatibility
@@ -834,10 +829,13 @@ class Connection:
         """Whether to cache the IdP token for browser-based SSO authentication."""
         raise NotImplementedError("consent_cache_id_token is not yet implemented")
 
-    @property
+    @cached_property
     def snowflake_version(self) -> str:
         """The current Snowflake server version string."""
-        raise NotImplementedError("snowflake_version is not yet implemented")
+        with self.cursor(DictCursor) as cur:
+            cur.execute("SELECT CURRENT_VERSION() AS version")
+            row: dict[str, Any] = cur.fetchone()  # type: ignore[assignment]
+        return str(row["VERSION"]).split(" ")[0]
 
     def get_query_status(self, sf_qid: str) -> QueryStatus:
         """Retrieve the status of query with sf_qid."""
@@ -864,6 +862,14 @@ class Connection:
             logger.warning("Unknown query status %r; treating as NO_DATA", response.status_name)
             status = QueryStatus.NO_DATA
         return status, response
+
+    @staticmethod
+    def _resolve_numpy_option(kwargs: ConnectionParameters) -> bool:
+        """Pop ``numpy`` from *kwargs* and validate that numpy is installed if requested."""
+        use_numpy = bool(kwargs.pop("numpy", False))
+        if use_numpy:
+            check_dependency(np)
+        return use_numpy
 
     @staticmethod
     def is_still_running(status: QueryStatus) -> bool:

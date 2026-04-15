@@ -175,26 +175,18 @@ mod tests {
     }
 
     #[test]
-    fn write_char_buffer_too_small_truncates() {
-        use crate::conversion::warning::Warning;
+    fn write_char_buffer_too_small_returns_error() {
         let sn = time(0);
         let mut buffer = vec![0u8; 4];
         let mut str_len: sql::Len = 0;
         let binding = binding_for_char_buffer(CDataType::Char, &mut buffer, &mut str_len);
         let input = NaiveTime::from_hms_opt(12, 34, 56).unwrap();
-        let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
-        assert!(
-            warnings
-                .iter()
-                .any(|w| matches!(w, Warning::StringDataTruncated))
-        );
+        let result = sn.write_odbc_type(input, &binding, &mut None);
+        assert!(result.is_err());
     }
 
-    // TODO: these tests document current behavior where fractional seconds
-    // are dropped in string output. Once fractional-second formatting is
-    // implemented, update these to verify the fractional part is included.
     #[test]
-    fn write_char_scale_3_drops_fractional() {
+    fn write_char_scale_3_includes_fractional() {
         let sn = time(3);
         let mut buffer = vec![0u8; 32];
         let mut str_len: sql::Len = 0;
@@ -202,12 +194,12 @@ mod tests {
         let input = NaiveTime::from_hms_milli_opt(12, 34, 56, 789).unwrap();
         let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        assert_eq!(str_len, 8);
-        assert_eq!(&buffer[..8], b"12:34:56");
+        assert_eq!(str_len, 12);
+        assert_eq!(&buffer[..12], b"12:34:56.789");
     }
 
     #[test]
-    fn write_wchar_scale_9_drops_fractional() {
+    fn write_wchar_scale_9_includes_fractional() {
         let sn = time(9);
         let mut buffer = vec![0u16; 32];
         let mut str_len: sql::Len = 0;
@@ -215,7 +207,7 @@ mod tests {
         let input = NaiveTime::from_hms_nano_opt(12, 34, 56, 123_456_789).unwrap();
         let warnings = sn.write_odbc_type(input, &binding, &mut None).unwrap();
         assert!(warnings.is_empty());
-        let expected: Vec<u16> = "12:34:56".encode_utf16().collect();
+        let expected: Vec<u16> = "12:34:56.123456789".encode_utf16().collect();
         assert_eq!(&buffer[..expected.len()], &expected[..]);
     }
 

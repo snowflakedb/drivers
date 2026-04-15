@@ -38,6 +38,19 @@ class CArrowStreamIterator {
    */
   ReturnVal next();
 
+  /**
+   * Fetch up to `size` rows as a Python list in a single C++ call.
+   * @param size Number of rows to fetch (must be >= 0).
+   * @return New reference to a Python list, or nullptr with Python exception set on error.
+   */
+  PyObject* nextN(int64_t size);
+
+  /**
+   * Fetch all remaining rows as a Python list in a single C++ call.
+   * @return New reference to a Python list, or nullptr with Python exception set on error.
+   */
+  PyObject* nextAll();
+
  private:
   /**
    * Private constructor - use from_stream() factory method instead.
@@ -59,14 +72,11 @@ class CArrowStreamIterator {
   void initColumnConverters();
 
   /**
-   * Create Python tuple object for current row
+   * Build a Python tuple or dict for the current row, returning a new reference.
+   * Callers decide whether to store the result in m_latestReturnedRow or use it directly.
+   * @return New reference to the row object, or nullptr with Python exception set on error.
    */
-  void createRowPyObject();
-
-  /**
-   * Create Python dict object for current row
-   */
-  void createDictRowPyObject();
+  PyObject* buildRowObject();
 
   /** The Arrow stream we're reading from (owned by this iterator) */
   std::unique_ptr<ArrowArrayStream, void (*)(ArrowArrayStream*)> m_stream;

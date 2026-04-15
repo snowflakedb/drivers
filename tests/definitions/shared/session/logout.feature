@@ -9,7 +9,7 @@ Feature: Session Logout
   #                          Token Cleanup
   # ===========================================================================
 
-  @core_e2e
+  @core_e2e @python_e2e
   Scenario Outline: should cleanup all tokens on close regardless of whether logout was sent
     # Tests that tokens are cleared regardless of logout decision
     Given Snowflake client is logged in

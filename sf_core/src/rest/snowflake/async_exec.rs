@@ -1,15 +1,13 @@
 use crate::chunks::ChunkDownloadData;
 use crate::config::rest_parameters::{ClientInfo, QueryParameters};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
-use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
-use crate::rest::snowflake::error::SfError;
+use crate::http::retry::{HttpContext, execute_with_retry};
+use crate::rest::snowflake::error::{SfError, current_location, map_http_error};
 use crate::rest::snowflake::{
     QUERY_REQUEST_PATH, QueryInput, apply_json_content_type, apply_query_headers, query_request,
     query_response,
 };
 use reqwest::{Method, StatusCode};
-use snafu::Location;
-use std::panic::Location as StdLocation;
 use std::time::{Duration, Instant};
 use tracing::debug;
 use url::Url;
@@ -324,47 +322,6 @@ pub async fn execute_blocking_with_async<'a>(
 
     metrics.emit();
     Ok(response)
-}
-
-#[track_caller]
-fn current_location() -> Location {
-    let caller = StdLocation::caller();
-    Location::new(caller.file(), caller.line(), caller.column())
-}
-
-#[track_caller]
-fn map_http_error(err: HttpError) -> SfError {
-    let location = current_location();
-    match err {
-        HttpError::Transport { source, .. } => SfError::Transport { source, location },
-        HttpError::DeadlineExceeded {
-            configured,
-            elapsed,
-            ..
-        } => SfError::DeadlineExceeded {
-            configured,
-            elapsed,
-            location,
-        },
-        HttpError::MaxAttempts {
-            attempts,
-            last_status,
-            ..
-        } => SfError::RetryAttemptsExhausted {
-            attempts,
-            last_status,
-            location,
-        },
-        HttpError::RetryAfterExceeded {
-            retry_after,
-            remaining,
-            ..
-        } => SfError::RetryBudgetExceeded {
-            retry_after,
-            remaining,
-            location,
-        },
-    }
 }
 
 #[track_caller]

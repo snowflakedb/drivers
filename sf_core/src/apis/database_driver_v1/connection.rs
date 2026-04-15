@@ -29,6 +29,107 @@ use crate::tls::client::create_tls_client_with_config;
 use crate::token_cache::TokenCache;
 
 impl DatabaseDriverV1 {
+    /// Set autocommit on the given connection.
+    ///
+    /// Pre-connect: stores `AUTOCOMMIT` in `init_session_parameters` so it is applied
+    /// at login time — no SQL execution required.
+    /// Post-connect: executes `ALTER SESSION SET AUTOCOMMIT = TRUE/FALSE`.
+    pub async fn connection_set_autocommit(
+        &self,
+        conn_handle: Handle,
+        autocommit: bool,
+    ) -> Result<(), ApiError> {
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().await;
+                if conn.is_post_connect() {
+                    // The guard is intentionally dropped before calling execute_session_sql,
+                    // which internally re-acquires the lock, to avoid a deadlock on the same
+                    // mutex. A TOCTOU gap exists between the check and the SQL execution, but
+                    // this is safe in the ODBC single-threaded connection model where state
+                    // transitions (connect/disconnect) are serialised at the handle level.
+                    drop(conn);
+                    let sql = if autocommit {
+                        "ALTER SESSION SET AUTOCOMMIT = TRUE"
+                    } else {
+                        "ALTER SESSION SET AUTOCOMMIT = FALSE"
+                    };
+                    self.execute_session_sql(conn_handle, sql).await
+                } else {
+                    let value = if autocommit { "true" } else { "false" }.to_string();
+                    conn.init_session_parameters
+                        .get_or_insert_with(HashMap::new)
+                        .insert("AUTOCOMMIT".to_string(), value);
+                    Ok(())
+                }
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    /// Execute `USE DATABASE "<name>"` on the given connection.
+    /// The database name is escaped (internal `"` doubled).
+    /// Must only be called after the connection is initialised (`is_post_connect()`).
+    pub async fn connection_use_database(
+        &self,
+        conn_handle: Handle,
+        database: &str,
+    ) -> Result<(), ApiError> {
+        let db = database.trim();
+        if db.is_empty() {
+            return InvalidArgumentSnafu {
+                argument: "database name must not be empty".to_string(),
+            }
+            .fail();
+        }
+        match self.connections.get_obj(conn_handle) {
+            Some(conn_ptr) => {
+                let conn = conn_ptr.lock().await;
+                if !conn.is_post_connect() {
+                    return InvalidArgumentSnafu {
+                        argument: "connection_use_database called before connection is open"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                // The guard is intentionally dropped before calling execute_session_sql,
+                // which internally re-acquires the lock, to avoid a deadlock on the same
+                // mutex. A TOCTOU gap exists between the check and the SQL execution, but
+                // this is safe in the ODBC single-threaded connection model where state
+                // transitions (connect/disconnect) are serialised at the handle level.
+                drop(conn);
+            }
+            None => {
+                return InvalidArgumentSnafu {
+                    argument: "Connection handle not found".to_string(),
+                }
+                .fail();
+            }
+        }
+        let escaped = db.replace('"', "\"\"");
+        self.execute_session_sql(conn_handle, &format!("USE DATABASE \"{escaped}\""))
+            .await
+    }
+
+    /// Execute a session-scoped SQL command using a temporary statement.
+    /// Allocates a statement, executes, then releases it regardless of outcome.
+    async fn execute_session_sql(&self, conn_handle: Handle, sql: &str) -> Result<(), ApiError> {
+        let stmt_handle = self.statement_new(conn_handle)?;
+        let result = async {
+            self.statement_set_sql_query(stmt_handle, sql.to_string())
+                .await?;
+            self.statement_execute_query(stmt_handle, None).await
+        }
+        .await;
+        if let Err(e) = self.statement_release(stmt_handle) {
+            tracing::warn!("execute_session_sql: failed to release statement: {e:?}");
+        }
+        result.map(|_| ())
+    }
+
     pub async fn connection_init(
         &self,
         conn_handle: Handle,
@@ -503,14 +604,7 @@ where
     Fut: Future<Output = Result<T, RestError>>,
 {
     let mut ctx = RefreshContext::from_arc(conn).await?;
-    let mut last_error: Option<RestError> = None;
-    loop {
-        let token = ctx.refresh_token(last_error).await?;
-        match f(token).await {
-            Ok(result) => return Ok(result),
-            Err(e) => last_error = Some(e),
-        }
-    }
+    ctx.execute_with_refresh(f).await
 }
 
 /// Context for automatic session token refresh.
@@ -683,6 +777,26 @@ impl RefreshContext {
             },
         }
     }
+
+    /// Execute an async operation with automatic token refresh on session expiry.
+    ///
+    /// Canonical implementation of the refresh-retry loop. On `SessionExpired`,
+    /// refreshes the session token via master token and retries exactly once.
+    /// Named to parallel [`execute_with_retry`](crate::http::retry::execute_with_retry).
+    pub async fn execute_with_refresh<F, Fut, T>(&mut self, f: F) -> Result<T, ApiError>
+    where
+        F: Fn(SensitiveString) -> Fut,
+        Fut: Future<Output = Result<T, RestError>>,
+    {
+        let mut last_error: Option<RestError> = None;
+        loop {
+            let token = self.refresh_token(last_error).await?;
+            match f(token).await {
+                Ok(result) => return Ok(result),
+                Err(e) => last_error = Some(e),
+            }
+        }
+    }
 }
 
 /// Server-echoed final names from query responses (e.g. after USE DATABASE).
@@ -692,6 +806,14 @@ pub struct FinalSessionNames {
     pub schema: Option<String>,
     pub warehouse: Option<String>,
     pub role: Option<String>,
+}
+
+/// HTTP response returned by connection_send_http_request
+#[derive(Debug, Clone)]
+pub struct HttpResponse {
+    pub status_code: i32,
+    pub headers: HashMap<String, String>,
+    pub body: Vec<u8>,
 }
 
 /// Connection information returned by connection_get_info
@@ -719,6 +841,8 @@ pub struct ConnectionInfo {
     pub schema: Option<String>,
     /// The current warehouse
     pub warehouse: Option<String>,
+    /// The master token for session renewal (redacted in Debug output)
+    pub master_token: Option<SensitiveString>,
 }
 
 fn setting_as_display_string(setting: &Setting) -> Option<String> {
@@ -794,13 +918,15 @@ impl DatabaseDriverV1 {
 
                 let server_url = conn.server_url.clone();
 
-                let (session_token, session_id) = {
+                let (session_token, session_id, master_token) = {
                     let tokens_guard = conn.tokens.read().await;
                     match tokens_guard.as_ref() {
-                        Some(tokens) => {
-                            (Some(tokens.session_token.clone()), Some(tokens.session_id))
-                        }
-                        None => (None, None),
+                        Some(tokens) => (
+                            Some(tokens.session_token.clone()),
+                            Some(tokens.session_id),
+                            Some(tokens.master_token.clone()),
+                        ),
+                        None => (None, None, None),
                     }
                 };
 
@@ -849,6 +975,7 @@ impl DatabaseDriverV1 {
                     database,
                     schema,
                     warehouse,
+                    master_token,
                 })
             }
             None => InvalidArgumentSnafu {
@@ -968,6 +1095,224 @@ impl DatabaseDriverV1 {
             }
             .fail(),
         }
+    }
+
+    /// Send an HTTP request through the connection's TLS-configured client.
+    ///
+    /// The `url` must be a relative path (e.g. `/session/token-request`).
+    /// It is resolved against the connection's `server_url`. Absolute URLs
+    /// are rejected to prevent SSRF / token leakage to arbitrary hosts.
+    /// Auth is always the current session token managed by sf_core.
+    pub async fn connection_send_http_request(
+        &self,
+        conn_handle: Handle,
+        method: String,
+        url: String,
+        headers: HashMap<String, String>,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpResponse, ApiError> {
+        if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("//") {
+            return InvalidArgumentSnafu {
+                argument: format!(
+                    "Absolute URLs are not allowed; pass a relative path instead: {url}"
+                ),
+            }
+            .fail();
+        }
+        if reqwest::Url::parse(&url).is_ok() {
+            return InvalidArgumentSnafu {
+                argument: format!(
+                    "Absolute URLs are not allowed; pass a relative path instead: {url}"
+                ),
+            }
+            .fail();
+        }
+
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        // Extract needed fields under the lock, then release before network I/O
+        let (http_client, server_url, token) = {
+            let conn = conn_ptr.lock().await;
+
+            let http_client = conn
+                .http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?;
+
+            let server_url = conn
+                .server_url
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?;
+
+            let tokens_guard = conn.tokens.read().await;
+            let token = tokens_guard
+                .as_ref()
+                .context(ConnectionNotInitializedSnafu)?
+                .session_token
+                .reveal()
+                .to_string();
+
+            (http_client, server_url, token)
+        };
+
+        let full_url = reqwest::Url::parse(&server_url)
+            .and_then(|base| base.join(&url))
+            .map(|u| u.to_string())
+            .map_err(|_| {
+                InvalidArgumentSnafu {
+                    argument: format!("Failed to resolve URL '{url}' against '{server_url}'"),
+                }
+                .build()
+            })?;
+
+        let method = method.to_uppercase();
+        let reqwest_method = match method.as_str() {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
+            "PATCH" => reqwest::Method::PATCH,
+            other => {
+                return InvalidArgumentSnafu {
+                    argument: format!("Unsupported HTTP method: {other}"),
+                }
+                .fail();
+            }
+        };
+
+        let auth_value =
+            reqwest::header::HeaderValue::from_str(&format!("Snowflake Token=\"{token}\""))
+                .map_err(|_| {
+                    InvalidArgumentSnafu {
+                        argument: "Session token contains invalid header characters".to_string(),
+                    }
+                    .build()
+                })?;
+
+        let mut builder = http_client
+            .request(reqwest_method, &full_url)
+            .header(reqwest::header::AUTHORIZATION, auth_value);
+
+        for (key, value) in &headers {
+            let header_name =
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()).map_err(|_| {
+                    InvalidArgumentSnafu {
+                        argument: format!("Invalid header name: {key}"),
+                    }
+                    .build()
+                })?;
+            if header_name == reqwest::header::AUTHORIZATION || header_name == reqwest::header::HOST
+            {
+                tracing::warn!(
+                    header = %header_name,
+                    "Ignoring caller-supplied security-sensitive header; managed by sf_core"
+                );
+                continue;
+            }
+            let header_value = reqwest::header::HeaderValue::from_str(value).map_err(|_| {
+                InvalidArgumentSnafu {
+                    argument: format!("Invalid header value for '{key}'"),
+                }
+                .build()
+            })?;
+            builder = builder.header(header_name, header_value);
+        }
+
+        if let Some(body_bytes) = body {
+            builder = builder.body(body_bytes);
+        }
+
+        let response = builder.send().await.context(HttpRequestSnafu {
+            context: format!("Failed to send {method} {full_url}"),
+        })?;
+
+        let status_code = response.status().as_u16() as i32;
+        let response_headers: HashMap<String, String> = response
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                let value = match v.to_str() {
+                    Ok(s) => s.to_string(),
+                    Err(_) => String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                };
+                (k.to_string(), value)
+            })
+            .collect();
+        let response_body = response.bytes().await.context(HttpRequestSnafu {
+            context: "Failed to read response body".to_string(),
+        })?;
+
+        Ok(HttpResponse {
+            status_code,
+            headers: response_headers,
+            body: response_body.to_vec(),
+        })
+    }
+
+    /// Execute a token request (ISSUE/RENEW) using the connection's master token.
+    pub async fn connection_token_request(
+        &self,
+        conn_handle: Handle,
+        request_type: String,
+    ) -> Result<snowflake::TokenRequestResult, ApiError> {
+        if request_type != "ISSUE" && request_type != "RENEW" {
+            return InvalidArgumentSnafu {
+                argument: format!(
+                    "Invalid request_type '{request_type}', must be 'ISSUE' or 'RENEW'"
+                ),
+            }
+            .fail();
+        }
+
+        let conn_ptr = self
+            .connections
+            .get_obj(conn_handle)
+            .context(InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            })?;
+
+        // Extract needed fields under the lock, then release before network I/O
+        let (http_client, server_url, client_info, tokens) = {
+            let conn = conn_ptr.lock().await;
+
+            let http_client = conn
+                .http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?;
+
+            let server_url = conn
+                .server_url
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?;
+
+            let client_info = conn
+                .client_info
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?;
+
+            let tokens_guard = conn.tokens.read().await;
+            let tokens = tokens_guard
+                .as_ref()
+                .context(ConnectionNotInitializedSnafu)?
+                .clone();
+
+            (http_client, server_url, client_info, tokens)
+        };
+
+        snowflake::token_request(
+            &http_client,
+            &server_url,
+            &client_info,
+            &tokens,
+            &request_type,
+        )
+        .await
+        .context(TokenRequestSnafu)
     }
 }
 
@@ -1425,5 +1770,181 @@ mod tests {
         let names = conn.final_session_names.read().unwrap();
         assert_eq!(names.database, Some("new_db".into()));
         assert_eq!(names.schema, Some("new_schema".into()));
+    }
+
+    async fn setup_connection_for_http_tests(ds: &DatabaseDriverV1) -> Handle {
+        let handle = ds.connection_new();
+        if let Some(c) = ds.connections.get_obj(handle) {
+            let mut conn = c.lock().await;
+            conn.http_client = Some(
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_millis(100))
+                    .build()
+                    .unwrap(),
+            );
+            conn.server_url = Some("https://192.0.2.1:9".into());
+            let tokens = SessionTokens {
+                session_token: "test-session-token".into(),
+                master_token: "test-master-token".into(),
+                session_id: 1,
+                session_expires_at: None,
+                master_expires_at: None,
+            };
+            *conn.tokens.write().await = Some(tokens);
+        }
+        handle
+    }
+
+    #[tokio::test]
+    async fn send_http_rejects_absolute_https_url() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        let err = ds
+            .connection_send_http_request(
+                handle,
+                "GET".into(),
+                "https://evil.com/steal".into(),
+                HashMap::new(),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Absolute URLs are not allowed"),
+            "unexpected error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_rejects_absolute_http_url() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        let err = ds
+            .connection_send_http_request(
+                handle,
+                "GET".into(),
+                "http://evil.com/steal".into(),
+                HashMap::new(),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Absolute URLs are not allowed"),
+            "unexpected error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_rejects_scheme_relative_url() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        let err = ds
+            .connection_send_http_request(
+                handle,
+                "GET".into(),
+                "//evil.com/path".into(),
+                HashMap::new(),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Absolute URLs are not allowed"),
+            "unexpected error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_rejects_unsupported_method() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        let err = ds
+            .connection_send_http_request(
+                handle,
+                "TRACE".into(),
+                "/session/token-request".into(),
+                HashMap::new(),
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Unsupported HTTP method"),
+            "unexpected error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_strips_authorization_header() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".into(), "Bearer evil-token".into());
+        headers.insert("Content-Type".into(), "application/json".into());
+
+        // The call will fail at the network level (no real server), but it should
+        // get past the header validation without error -- the Authorization header
+        // is silently stripped, not rejected.
+        let result = ds
+            .connection_send_http_request(
+                handle,
+                "POST".into(),
+                "/session/token-request".into(),
+                headers,
+                None,
+            )
+            .await;
+
+        // We expect a network error (connection refused / DNS), not an InvalidArgument
+        assert!(
+            result.is_err(),
+            "expected network error from non-existent server"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            !err.to_string().contains("Authorization"),
+            "Authorization header should be silently stripped, not cause an error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn send_http_rejects_invalid_header_name() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+
+        let mut headers = HashMap::new();
+        headers.insert("Invalid Header\nName".into(), "value".into());
+
+        let err = ds
+            .connection_send_http_request(handle, "GET".into(), "/api/test".into(), headers, None)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid header name"),
+            "unexpected error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
+    }
+
+    #[tokio::test]
+    async fn token_request_rejects_invalid_request_type() {
+        let ds = DatabaseDriverV1::new();
+        let handle = setup_connection_for_http_tests(&ds).await;
+        let err = ds
+            .connection_token_request(handle, "INVALID".into())
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("must be 'ISSUE' or 'RENEW'"),
+            "unexpected error: {err}"
+        );
+        ds.connection_release(handle).unwrap();
     }
 }

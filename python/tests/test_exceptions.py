@@ -24,7 +24,6 @@ from snowflake.connector._internal.status_codes import (
     STATUS_CODE_MISSING_PARAMETER,
     STATUS_CODE_NOT_FOUND,
     STATUS_CODE_NOT_IMPLEMENTED,
-    STATUS_CODE_TIMEOUT,
     STATUS_TO_EXCEPTION,
 )
 from snowflake.connector.errors import (
@@ -144,9 +143,6 @@ class TestStatusCodeMapping:
 
     def test_login_error_maps_to_database_error(self):
         assert STATUS_TO_EXCEPTION[STATUS_CODE_LOGIN_ERROR] is DatabaseError
-
-    def test_timeout_maps_to_operational(self):
-        assert STATUS_TO_EXCEPTION[STATUS_CODE_TIMEOUT] is OperationalError
 
     def test_not_implemented_maps_to_not_supported(self):
         assert STATUS_TO_EXCEPTION[STATUS_CODE_NOT_IMPLEMENTED] is NotSupportedError

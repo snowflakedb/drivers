@@ -6,18 +6,16 @@
 
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
-use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
-use crate::rest::snowflake::error::SfError;
+use crate::http::retry::{HttpContext, execute_with_retry};
+use crate::rest::snowflake::error::map_http_error;
 use crate::rest::snowflake::{
-    AsyncQuerySnafu, LogoutFailedSnafu, RestError, SnowflakeResponseError, UrlJoinSnafu,
+    AsyncQuerySnafu, LogoutFailedSnafu, RestError, SESSION_GONE, SESSION_TOKEN_EXPIRED,
+    SnowflakeResponseError, UrlJoinSnafu, build_user_agent,
 };
+use crate::sensitive::SensitiveString;
 use reqwest::{Method, header};
 use snafu::ResultExt;
 use url::Url;
-
-/// Error codes from Snowflake GS
-const SESSION_GONE: i32 = 390111;
-const SESSION_TOKEN_EXPIRED: i32 = 390112;
 
 /// Response from the logout endpoint
 #[derive(Debug, serde::Deserialize)]
@@ -44,7 +42,7 @@ struct LogoutResponse {
 pub async fn logout_session(
     client: &reqwest::Client,
     server_url: &str,
-    session_token: &str,
+    session_token: &SensitiveString,
     client_info: &ClientInfo,
     retry_policy: &RetryPolicy,
 ) -> Result<(), RestError> {
@@ -65,7 +63,7 @@ pub async fn logout_session(
     );
 
     let user_agent = build_user_agent(client_info);
-    let auth_header = format!("Snowflake Token=\"{}\"", session_token);
+    let auth_header = format!("Snowflake Token=\"{}\"", session_token.reveal());
 
     // Logout is POST but idempotent server-side (safe to retry)
     let ctx = HttpContext::new(Method::POST, "/session")
@@ -126,6 +124,8 @@ pub async fn logout_session(
                 Ok(())
             } else {
                 // Non-2xx with non-JSON body (e.g. proxy error page)
+                // Log only body length — do not log the body content to avoid
+                // leaking proxy HTML, WAF block pages, or internal server details.
                 tracing::warn!(
                     status = %status,
                     body_len = body_text.len(),
@@ -134,7 +134,7 @@ pub async fn logout_session(
                 Err(RestError::InvalidSnowflakeResponse {
                     source: SnowflakeResponseError::ResponseStatus {
                         status,
-                        message: body_text.chars().take(500).collect::<String>(),
+                        message: "Unexpected server response during logout".to_string(),
                         location: snafu::Location::default(),
                     },
                     location: snafu::Location::default(),
@@ -186,53 +186,6 @@ fn handle_logout_response(response: LogoutResponse) -> Result<(), RestError> {
     // Other Snowflake errors
     tracing::warn!(code, %message, "Logout failed with error");
     LogoutFailedSnafu { message, code }.fail()
-}
-
-/// Map HttpError to SfError (same pattern as async_exec.rs:map_http_error)
-fn map_http_error(err: HttpError) -> SfError {
-    match err {
-        HttpError::Transport { source, .. } => SfError::Transport {
-            source,
-            location: snafu::Location::default(),
-        },
-        HttpError::DeadlineExceeded {
-            configured,
-            elapsed,
-            ..
-        } => SfError::DeadlineExceeded {
-            configured,
-            elapsed,
-            location: snafu::Location::default(),
-        },
-        HttpError::MaxAttempts {
-            attempts,
-            last_status,
-            ..
-        } => SfError::RetryAttemptsExhausted {
-            attempts,
-            last_status,
-            location: snafu::Location::default(),
-        },
-        HttpError::RetryAfterExceeded {
-            retry_after,
-            remaining,
-            ..
-        } => SfError::RetryBudgetExceeded {
-            retry_after,
-            remaining,
-            location: snafu::Location::default(),
-        },
-    }
-}
-
-/// Build User-Agent header per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
-fn build_user_agent(client_info: &ClientInfo) -> String {
-    let ud_version = env!("CARGO_PKG_VERSION");
-    let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
-    format!(
-        "{}/{} ({}) UD/{} Rust/{}",
-        &client_info.application, &client_info.version, &client_info.os, ud_version, rust_version
-    )
 }
 
 #[cfg(test)]

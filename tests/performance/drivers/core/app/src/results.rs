@@ -14,16 +14,19 @@ pub fn write_csv_results(results: &[IterationResult], test_name: &str) -> Result
     write_csv_file(test_name, |file| {
         writeln!(
             file,
-            "timestamp_ms,query_s,fetch_s,row_count,cpu_time_s,peak_rss_mb"
+            "timestamp_ms,query_s,fetch_s,core_batch_wait_s,core_chunk_download_s,core_arrow_decode_s,row_count,cpu_time_s,peak_rss_mb"
         )
         .map_err(|e| format!("Failed to write: {e:?}"))?;
         for r in results {
             writeln!(
                 file,
-                "{},{:.6},{:.6},{},{:.6},{:.1}",
+                "{},{:.6},{:.6},{:.9},{:.9},{:.9},{},{:.6},{:.1}",
                 r.timestamp,
                 r.query_time_s,
                 r.fetch_time_s,
+                r.core_batch_wait_s,
+                r.core_chunk_download_s,
+                r.core_arrow_decode_s,
                 r.row_count,
                 r.cpu_time_s,
                 r.peak_rss_mb
