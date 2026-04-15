@@ -12,8 +12,9 @@
 #include "get_diag_rec.hpp"
 
 static picojson::value parse_json(const std::string& text) {
+  auto sanitized = sanitize_json(text);
   picojson::value v;
-  REQUIRE(picojson::parse(v, text).empty());
+  REQUIRE(picojson::parse(v, sanitized).empty());
   return v;
 }
 

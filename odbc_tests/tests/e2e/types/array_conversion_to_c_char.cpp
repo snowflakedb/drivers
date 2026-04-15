@@ -11,18 +11,6 @@
 #include "conversion_checks.hpp"
 #include "get_diag_rec.hpp"
 
-// Snowflake may serialize null values as "undefined" in semi-structured types,
-// which is not valid JSON. Replace with "null" before parsing.
-static std::string sanitize_json(const std::string& text) {
-  std::string result = text;
-  size_t pos = 0;
-  while ((pos = result.find("undefined", pos)) != std::string::npos) {
-    result.replace(pos, 9, "null");
-    pos += 4;
-  }
-  return result;
-}
-
 static picojson::value parse_json(const std::string& text) {
   auto sanitized = sanitize_json(text);
   picojson::value v;

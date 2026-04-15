@@ -10,16 +10,6 @@
 #include "Connection.hpp"
 #include "conversion_checks.hpp"
 
-static std::string sanitize_json(const std::string& text) {
-  std::string result = text;
-  size_t pos = 0;
-  while ((pos = result.find("undefined", pos)) != std::string::npos) {
-    result.replace(pos, 9, "null");
-    pos += 4;
-  }
-  return result;
-}
-
 TEST_CASE("ARRAY to SQL_C_DEFAULT", "[array][conversion][c_default]") {
   // Given Snowflake client is logged in
   Connection conn;

@@ -115,6 +115,21 @@ inline void check_null_via_get_data(const StatementHandleWrapper& stmt, SQLUSMAL
   CHECK(indicator == SQL_NULL_DATA);
 }
 
+// Snowflake may serialize null values as the bare token "undefined" in
+// semi-structured types (ARRAY, OBJECT, VARIANT).  This is not valid JSON,
+// so we replace it with "null" before parsing.  The token only appears in
+// value positions (never inside quoted strings), so a simple find-replace
+// is safe for the known Snowflake output format.
+inline std::string sanitize_json(const std::string& text) {
+  std::string result = text;
+  size_t pos = 0;
+  while ((pos = result.find("undefined", pos)) != std::string::npos) {
+    result.replace(pos, 9, "null");
+    pos += 4;
+  }
+  return result;
+}
+
 inline std::string check_char_success(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   char buffer[8192];
   SQLLEN indicator = -999;
