@@ -49,6 +49,47 @@ TEST_CASE("TIME to SQL_C_CHAR", "[time][conversion][c_char]") {
   }
 }
 
+TEST_CASE("TIME to SQL_C_CHAR exact buffer fit", "[time][conversion][c_char]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A TIME value is fetched into a 9-byte buffer
+  auto stmt = conn.execute_fetch("SELECT '14:30:45'::TIME");
+  char buffer[9] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+
+  // Then SQL_SUCCESS is returned with indicator 8
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(indicator == 8);
+  CHECK(std::string(buffer) == "14:30:45");
+}
+
+TEST_CASE("TIME to SQL_C_CHAR chunked retrieval", "[time][conversion][c_char]") {
+  SKIP_OLD_DRIVER("BD#38", "Old driver returns 22003 instead of 01004 for TIME partial truncation");
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A TIME with fractional seconds is fetched via two sequential SQLGetData calls with a 10-byte buffer
+  auto stmt = conn.execute_fetch("SELECT '10:30:00.123456789'::TIME");
+
+  char buf1[10] = {};
+  SQLLEN ind1 = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf1, sizeof(buf1), &ind1);
+
+  // Then The first call returns partial data with 01004 and the second call returns the remainder
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(ind1 == 18);
+  CHECK(std::string(buf1) == "10:30:00.");
+
+  char buf2[10] = {};
+  SQLLEN ind2 = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buf2, sizeof(buf2), &ind2);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(ind2 == 9);
+  CHECK(std::string(buf2) == "123456789");
+}
+
 TEST_CASE("TIME to SQL_C_CHAR fractional truncation", "[time][conversion][c_char][01004]") {
   SKIP_OLD_DRIVER("BD#38", "Old driver returns 22003 instead of 01004 for TIME partial truncation");
   // Given Snowflake client is logged in
@@ -129,6 +170,21 @@ TEST_CASE("TIME to SQL_C_WCHAR", "[time][conversion][c_wchar]") {
     // Then Wide string representation is all zeros
     CHECK(result == u"00:00:00");
   }
+}
+
+TEST_CASE("TIME to SQL_C_WCHAR exact buffer fit", "[time][conversion][c_wchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When A TIME value is fetched into a WCHAR buffer of exactly 9 characters
+  auto stmt = conn.execute_fetch("SELECT '14:30:45'::TIME");
+  char16_t buffer[9] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+
+  // Then SQL_SUCCESS is returned with the correct wide string
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(std::u16string(buffer) == u"14:30:45");
 }
 
 TEST_CASE("TIME to SQL_C_WCHAR fractional truncation", "[time][conversion][c_wchar][01004]") {
