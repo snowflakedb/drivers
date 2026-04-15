@@ -38,6 +38,7 @@ from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     PrepareResult,
     QueryBindings,
     ResultChunk,
+    StatementExecuteAsyncRequest,
     StatementExecuteQueryRequest,
     StatementHandle,
     StatementPrepareRequest,
@@ -988,15 +989,51 @@ class SnowflakeCursorBase(abc.ABC):
 
         self._prefetch_hook = prefetch_hook
 
+    @_requires_open
     def execute_async(
         self,
         command: str,
         params: Sequence[Any] | dict[str, Any] | None = None,
-        timeout: int | None = None,
         **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Execute a query asynchronously without waiting for results."""
-        raise NotImplementedError("execute_async is not yet implemented")
+    ) -> dict[str, str | None]:
+        """Submit a query for async execution and return immediately with the query ID.
+
+        This is the first step in the async query lifecycle::
+
+            # 1. Submit the query
+            result = cursor.execute_async("SELECT ...")
+            query_id = result["queryId"]
+
+            # 2. Poll until complete
+            status = connection.get_query_status(query_id)
+
+            # 3. Retrieve results
+            cursor.get_results_from_sfqid(query_id)
+
+        Args:
+            command: SQL statement to execute.
+            params: Parameters for the operation (sequence or dict).
+            **kwargs: Unused, accepted for backward compatibility.
+
+        Returns:
+            dict with a ``queryId`` key containing the Snowflake Query ID.
+        """
+        # TODO: deprecate returning the dict, return just the sfqid itself
+        self.reset()
+        return self._execute_async(command, params)
+
+    def _execute_async(self, command: str, params: Sequence[Any] | dict[str, Any] | None) -> dict[str, str | None]:
+        query, bindings = self._prepare_query(command, params)
+
+        response = None
+        with create_statement(self._connection, query) as stmt_handle:
+            request = StatementExecuteAsyncRequest(stmt_handle=stmt_handle, bindings=bindings)
+            response = self._connection.db_api.statement_execute_async(request)
+
+        query_id = (response.query_id if response.query_id else None) if response else None
+        self._query_result = _QueryResult(sfqid=query_id)
+
+        return {"queryId": query_id}
 
     @_requires_open
     def abort_query(self, qid: str) -> bool:

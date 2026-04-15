@@ -2171,7 +2171,6 @@ class TestGetResultsFromSfqid:
             assert cur2.description[0].name == "A"
             assert cur2.description[1].name == "B"
 
-    @pytest.mark.skip_universal(reason="execute_async not yet implemented")
     def test_get_results_from_sfqid_waits_for_async_query(self, connection):
         """get_results_from_sfqid polls until an async query completes."""
         with connection.cursor() as cur1:
@@ -2207,7 +2206,6 @@ class TestCursorAbortQuery:
         result = cursor.abort_query(qid)
         assert result is False
 
-    @pytest.mark.skip_universal(reason="[SNOW-2872511] execute_async not yet implemented")
     def test_abort_query_returns_true_for_running_query(self, connection):
         """abort_query returns True when aborting a currently running query."""
         long_running_query = "SELECT SYSTEM$WAIT(30, 'SECONDS')"

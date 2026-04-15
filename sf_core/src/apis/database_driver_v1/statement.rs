@@ -20,12 +20,14 @@ use crate::rest::snowflake::{
     snowflake_query_with_client,
 };
 
+use crate::config::rest_parameters::QueryParameters;
+use crate::config::retry::RetryPolicy;
+use crate::rest::snowflake::async_exec::submit_statement_async;
+#[cfg(test)]
+use crate::rest::snowflake::query_request;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use serde_json::value::RawValue;
 use std::{collections::HashMap, sync::Arc};
-
-#[cfg(test)]
-use crate::rest::snowflake::query_request;
 
 /// Pointer to raw bytes in memory - used by query bindings
 #[derive(Debug)]
@@ -73,6 +75,11 @@ pub enum BindingType<'a> {
     Json(DataPtr<'a>),
     /// CSV bindings - pointer to raw CSV data bytes for bulk upload.
     Csv(DataPtr<'a>),
+}
+
+/// Result returned from async query submission (non-blocking).
+pub struct AsyncExecuteResult {
+    pub query_id: String,
 }
 
 /// Column names whose values are summed to compute DML rows-affected (exact match).
@@ -330,44 +337,11 @@ impl DatabaseDriverV1 {
         })?;
 
         let mut stmt = stmt_ptr.lock().await;
-        let query = stmt.query.clone().ok_or_else(|| {
-            InvalidArgumentSnafu {
-                argument: "Query not found".to_string(),
-            }
-            .build()
-        })?;
 
-        let (query_parameters, http_client, retry_policy) = {
-            let conn = stmt.conn.lock().await;
-            (
-                conn.query_transport_parameters()?,
-                conn.http_client
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.retry_policy.clone(),
-            )
-        };
-
+        let query = extract_query(&stmt)?;
+        let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
         let execution_mode = stmt.execution_mode(Some(&query));
-
-        // Get bindings from request.
-        // JSON path: zero-copy — borrows directly from wrapper memory.
-        let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
-            match &binding_type {
-                BindingType::Json(data_ptr) => {
-                    Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
-                }
-                BindingType::Csv(_csv_ptr) => {
-                    return Err(InvalidArgumentSnafu {
-                        argument: "CSV bindings are not yet implemented".to_string(),
-                    }
-                    .build());
-                }
-            }
-        } else {
-            None
-        };
-
+        let query_bindings = resolve_query_bindings(&bindings)?;
         let query_input = QueryInput {
             sql: query.clone(),
             bindings: query_bindings,
@@ -424,6 +398,69 @@ impl DatabaseDriverV1 {
         Ok(result)
     }
 
+    /// Execute query asynchronously (non-blocking) — returns immediately with query_id.
+    pub async fn statement_execute_async<'a>(
+        &self,
+        stmt_handle: Handle,
+        bindings: Option<BindingType<'a>>,
+    ) -> Result<AsyncExecuteResult, ApiError> {
+        let stmt_ptr = self.statements.get_obj(stmt_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Statement handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        let mut stmt = stmt_ptr.lock().await;
+
+        let query = extract_query(&stmt)?;
+        let (query_parameters, http_client, retry_policy) = query_context(&stmt.conn).await?;
+        let query_bindings = resolve_query_bindings(&bindings)?;
+        let query_input = QueryInput {
+            sql: query.clone(),
+            bindings: query_bindings,
+            describe_only: None,
+        };
+        let request_id = uuid::Uuid::new_v4();
+
+        let result = {
+            let mut ctx = RefreshContext::from_arc(&stmt.conn).await?;
+            let mut last_error = None;
+            loop {
+                let session_token = ctx.refresh_token(last_error).await?;
+                match submit_statement_async(
+                    &http_client,
+                    &query_parameters,
+                    session_token.reveal(),
+                    &query_input,
+                    request_id,
+                    &retry_policy,
+                )
+                .await
+                {
+                    Ok(submit_result) => break Ok(submit_result),
+                    Err(e) => {
+                        last_error = Some(RestError::AsyncQuery {
+                            source: e,
+                            location: snafu::Location::new(file!(), line!(), 0),
+                        });
+                    }
+                }
+            }
+        }?;
+
+        let query_id = result.query_id.ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "No query_id returned from async submission".to_string(),
+            }
+            .build()
+        })?;
+
+        stmt.state = StatementState::Executed;
+
+        Ok(AsyncExecuteResult { query_id })
+    }
+
     pub async fn statement_result_chunks(
         &self,
         stmt_handle: Handle,
@@ -462,16 +499,7 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let (query_parameters, http_client, retry_policy) = {
-            let conn = conn_ptr.lock().await;
-            (
-                conn.query_transport_parameters()?,
-                conn.http_client
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-                conn.retry_policy.clone(),
-            )
-        };
+        let (query_parameters, http_client, retry_policy) = query_context(&conn_ptr).await?;
 
         let response = {
             let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
@@ -523,15 +551,7 @@ impl DatabaseDriverV1 {
             .build()
         })?;
 
-        let (query_parameters, http_client) = {
-            let conn = conn_ptr.lock().await;
-            (
-                conn.query_transport_parameters()?,
-                conn.http_client
-                    .clone()
-                    .context(ConnectionNotInitializedSnafu)?,
-            )
-        };
+        let (query_parameters, http_client, _) = query_context(&conn_ptr).await?;
 
         {
             let mut ctx = RefreshContext::from_arc(&conn_ptr).await?;
@@ -552,6 +572,31 @@ impl DatabaseDriverV1 {
             }
         }
     }
+}
+
+/// Lock the connection and extract the transport parameters, HTTP client, and retry policy
+/// needed to issue a query.
+async fn query_context(
+    conn: &Arc<Mutex<Connection>>,
+) -> Result<(QueryParameters, reqwest::Client, RetryPolicy), ApiError> {
+    let conn = conn.lock().await;
+    Ok((
+        conn.query_transport_parameters()?,
+        conn.http_client
+            .clone()
+            .context(ConnectionNotInitializedSnafu)?,
+        conn.retry_policy.clone(),
+    ))
+}
+
+/// Return the SQL text attached to a statement, or an error if none has been set.
+fn extract_query(stmt: &Statement) -> Result<String, ApiError> {
+    stmt.query.clone().ok_or_else(|| {
+        InvalidArgumentSnafu {
+            argument: "Query not found".to_string(),
+        }
+        .build()
+    })
 }
 
 /// Convert a Snowflake query response into an `ExecuteResult` by processing
@@ -783,6 +828,24 @@ pub(crate) fn parse_json_bindings<'a>(
     })?;
 
     Ok(raw)
+}
+
+/// Resolve `BindingType` into a borrowed `&RawValue` suitable for query submission.
+///
+/// Zero-copy for JSON bindings; returns `Err` for unsupported CSV bindings.
+fn resolve_query_bindings<'a>(
+    bindings: &'a Option<BindingType<'a>>,
+) -> Result<Option<&'a RawValue>, ApiError> {
+    match bindings {
+        Some(BindingType::Json(data_ptr)) => {
+            Ok(Some(parse_json_bindings(data_ptr).context(StatementSnafu)?))
+        }
+        Some(BindingType::Csv(_)) => Err(InvalidArgumentSnafu {
+            argument: "CSV bindings are not yet implemented".to_string(),
+        }
+        .build()),
+        None => Ok(None),
+    }
 }
 
 #[cfg(test)]
@@ -1320,5 +1383,59 @@ mod tests {
             }"#,
         );
         assert_eq!(calculate_rows_affected(&data), Some(42));
+    }
+
+    #[test]
+    fn extract_query_returns_sql_when_set() {
+        let conn = Arc::new(Mutex::new(Connection::new()));
+        let mut stmt = Statement::new(conn);
+        stmt.query = Some("SELECT 1".to_string());
+
+        let result = extract_query(&stmt).unwrap();
+        assert_eq!(result, "SELECT 1");
+    }
+
+    #[test]
+    fn extract_query_errors_when_no_query() {
+        let conn = Arc::new(Mutex::new(Connection::new()));
+        let stmt = Statement::new(conn);
+
+        let err = extract_query(&stmt).unwrap_err();
+        assert!(
+            err.to_string().contains("Query not found"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_context_returns_transport_fields() {
+        let mut conn = Connection::new();
+        conn.server_url = Some("https://account.snowflakecomputing.com".to_string());
+        conn.client_info = Some(crate::config::rest_parameters::ClientInfo {
+            application: "test".to_string(),
+            version: "1.0".to_string(),
+            os: "TestOS".to_string(),
+            os_version: "1.0".to_string(),
+            ocsp_mode: None,
+            crl_config: crate::crl::config::CrlConfig::default(),
+            tls_config: crate::tls::config::TlsConfig::default(),
+        });
+        conn.http_client = Some(reqwest::Client::new());
+        conn.retry_policy = RetryPolicy::default();
+        let conn = Arc::new(Mutex::new(conn));
+
+        let (params, _client, _retry) = query_context(&conn).await.unwrap();
+        assert_eq!(params.server_url, "https://account.snowflakecomputing.com");
+    }
+
+    #[tokio::test]
+    async fn query_context_errors_when_not_initialized() {
+        let conn = Arc::new(Mutex::new(Connection::new()));
+
+        let err = query_context(&conn).await.err().unwrap();
+        assert!(
+            err.to_string().contains("not initialized"),
+            "unexpected: {err}"
+        );
     }
 }

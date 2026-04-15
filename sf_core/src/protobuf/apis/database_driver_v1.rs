@@ -1285,6 +1285,29 @@ impl DatabaseDriver for DatabaseDriverImpl {
         })
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_execute_async", skip(self, input))]
+    async fn statement_execute_async(
+        &self,
+        input: StatementExecuteAsyncRequest,
+    ) -> Result<StatementExecuteAsyncResponse, DriverException> {
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+
+        let bindings_opt = input
+            .bindings
+            .and_then(|b| b.binding_type)
+            .map(BindingType::from);
+
+        let result = self
+            .driver
+            .statement_execute_async(stmt_handle.into(), bindings_opt)
+            .await
+            .to_protobuf()?;
+
+        Ok(StatementExecuteAsyncResponse {
+            query_id: result.query_id,
+        })
+    }
+
     #[instrument(
         name = "DatabaseDriverV1::statement_execute_partitions",
         skip(self, _input)

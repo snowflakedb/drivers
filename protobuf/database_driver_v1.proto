@@ -497,6 +497,16 @@ message StatementExecuteQueryResponse {
   ExecuteResult result = 1;
 }
 
+// Async query execution: submit and return immediately with query_id
+message StatementExecuteAsyncRequest {
+  StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;
+}
+
+message StatementExecuteAsyncResponse {
+  string query_id = 1;
+}
+
 message StatementExecutePartitionsRequest {
   StatementHandle stmt_handle = 1;
 }
@@ -713,6 +723,7 @@ service DatabaseDriver {
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
   rpc StatementResultChunks(StatementResultChunksRequest) returns (StatementResultChunksResponse);
+  rpc StatementExecuteAsync(StatementExecuteAsyncRequest) returns (StatementExecuteAsyncResponse);
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
