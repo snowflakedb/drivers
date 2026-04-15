@@ -413,6 +413,18 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set
 });
 
+fn sql_state_from_server_message(message: &str) -> SqlState {
+    if message.contains("SQL compilation error") {
+        SqlState::SyntaxErrorOrAccessRuleViolation
+    } else if message.contains("out of representable range") {
+        SqlState::NumericValueOutOfRange
+    } else if message.contains("too long and would be truncated") {
+        SqlState::StringDataRightTruncation
+    } else {
+        SqlState::GeneralError
+    }
+}
+
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
@@ -578,14 +590,8 @@ impl OdbcError {
                     }
                     match error.as_ref() {
                         ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
-                        ErrorType::GenericError(_) => {
-                            if message.contains("SQL compilation error") {
-                                SqlState::SyntaxErrorOrAccessRuleViolation
-                            } else if message.contains("out of representable range") {
-                                SqlState::NumericValueOutOfRange
-                            } else {
-                                SqlState::GeneralError
-                            }
+                        ErrorType::GenericError(_) | ErrorType::InternalError(_) => {
+                            sql_state_from_server_message(message)
                         }
                         ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
                             parameter,
@@ -602,15 +608,6 @@ impl OdbcError {
                                 SqlState::InvalidAuthorizationSpecification
                             } else {
                                 SqlState::InvalidConnectionStringAttribute
-                            }
-                        }
-                        ErrorType::InternalError(_) => {
-                            if message.contains("SQL compilation error") {
-                                SqlState::SyntaxErrorOrAccessRuleViolation
-                            } else if message.contains("out of representable range") {
-                                SqlState::NumericValueOutOfRange
-                            } else {
-                                SqlState::GeneralError
                             }
                         }
                         ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
@@ -785,6 +782,24 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn server_truncation_error_maps_to_22001() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "String 'hello world' is too long and would be truncated".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::StringDataRightTruncation);
     }
 
     #[test]
