@@ -34,6 +34,12 @@ Feature: ODBC SQLBindParameter C float/double types to SQL_BIT conversion
     Then the result should be FALSE
 
   @odbc_e2e
+  Scenario: should bind SQL_C_DOUBLE NULL to SQL_BIT.
+    Given Snowflake client is logged in
+    When SQL_C_DOUBLE with SQL_NULL_DATA is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be NULL
+
+  @odbc_e2e
   Scenario: should reject SQL_C_DOUBLE NaN to SQL_BIT.
     Given Snowflake client is logged in
     When SQL_C_DOUBLE NaN is bound as SQL_BIT and SELECT ? is executed

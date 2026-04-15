@@ -100,6 +100,23 @@ TEST_CASE("should bind SQL_C_FLOAT zero to SQL_BIT.", "[query][bind_parameter][c
   CHECK(get_data<SQL_C_BIT>(stmt, 1) == 0);
 }
 
+TEST_CASE("should bind SQL_C_DOUBLE NULL to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLLEN indicator = SQL_NULL_DATA;
+  // When SQL_C_DOUBLE with SQL_NULL_DATA is bound as SQL_BIT and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_DOUBLE, SQL_BIT, 1, 0, nullptr, 0,
+                                   &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be NULL
+  CHECK(get_data_optional<SQL_C_BIT>(stmt, 1) == std::nullopt);
+}
+
 TEST_CASE("should reject SQL_C_DOUBLE NaN to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
   SKIP_OLD_DRIVER("BD-35", "Old driver silently converts NaN to false instead of SQL_ERROR");
   // Given Snowflake client is logged in
