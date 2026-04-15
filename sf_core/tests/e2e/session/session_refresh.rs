@@ -6,7 +6,7 @@ use crate::common::private_key_helper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
 use sf_core::crl::config::CrlConfig;
-use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
+use sf_core::rest::snowflake::{AuthContext, refresh_session, snowflake_login_with_client};
 use sf_core::sensitive::SensitiveString;
 use sf_core::tls::client::create_tls_client_with_config;
 use sf_core::tls::config::TlsConfig;
@@ -111,9 +111,11 @@ fn should_refresh_session_proactively() {
             .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
-        let login_result = snowflake_login_with_client(&http_client, &login_parameters, None, None)
-            .await
-            .expect("Login should succeed");
+        let auth_context = AuthContext::default();
+        let login_result =
+            snowflake_login_with_client(&http_client, &login_parameters, None, &auth_context)
+                .await
+                .expect("Login should succeed");
 
         let original_session_token = login_result.tokens.session_token.clone();
 
