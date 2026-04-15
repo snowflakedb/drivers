@@ -126,7 +126,13 @@ class WiremockClient:
 
     def get_logout_requests(self) -> list:
         """Filter captured requests to logout requests (POST /session?delete=true)."""
-        return [r for r in self.get_requests() if "delete=true" in r.get("request", {}).get("url", "")]
+        return [
+            r
+            for r in self.get_requests()
+            if r.get("request", {}).get("method") == "POST"
+            and "/session" in r.get("request", {}).get("url", "")
+            and "delete=true" in r.get("request", {}).get("url", "")
+        ]
 
     def stop(self) -> None:
         """Stop the Wiremock process.
