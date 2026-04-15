@@ -30,7 +30,6 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
-    ConnectionSetOptionIntRequest,
     ConnectionSetOptionsRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
@@ -45,7 +44,6 @@ from ._internal.extras import check_dependency
 from ._internal.extras import numpy as np
 from ._internal.logout_config_mapping import (
     LogoutConfig,
-    LogoutOptionKeys,
     remap_keep_alive_phase2,
 )
 from ._internal.snowflake_restful import SnowflakeRestful
@@ -302,23 +300,15 @@ class Connection:
         then cleans up resources.
 
         Args:
-            retry: If False, overrides max_attempts to 1 (no retries) before closing.
-                   If True (default), uses init-time configuration.
+            retry: If False, passes max_attempts=1 (no retries) atomically in the close
+                   request. If True (default), uses init-time configuration.
         """
         atexit.unregister(self._close_at_process_exit)
-
-        if not retry:
-            self.db_api.connection_set_option_int(
-                ConnectionSetOptionIntRequest(
-                    conn_handle=self.conn_handle,
-                    key=LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS,
-                    value=1,
-                )
-            )
 
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
+                max_attempts=1 if not retry else None,
             )
         )
 

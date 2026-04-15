@@ -15,6 +15,7 @@ use crate::apis::database_driver_v1::{
     ValidationSeverity as CoreValidationSeverity,
 };
 use crate::config::config_manager;
+use crate::config::logout::ErrorStrategy;
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::rest::snowflake::error::SfError;
@@ -1066,8 +1067,28 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<ConnectionCloseResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
+        // Parse optional error_strategy string override to domain enum
+        let error_strategy = input
+            .error_strategy
+            .as_deref()
+            .map(|s| s.parse::<ErrorStrategy>())
+            .transpose()
+            .map_err(|e| DriverException {
+                message: format!("Invalid error_strategy: {e}"),
+                status_code: StatusCode::InvalidArgument as i32,
+                ..Default::default()
+            })?;
+
         self.driver
-            .connection_close(conn_handle.into())
+            .connection_close(
+                conn_handle.into(),
+                input.server_session_keep_alive,
+                input.enable_server_session_keep_alive_auto_detection,
+                error_strategy,
+                input.logout_total_timeout_seconds,
+                input.max_attempts,
+                input.logout_request_timeout_seconds,
+            )
             .await
             .to_protobuf()?;
         Ok(ConnectionCloseResponse {})

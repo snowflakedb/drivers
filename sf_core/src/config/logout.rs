@@ -12,6 +12,22 @@ use std::time::Duration;
 
 use super::{ConfigError, InvalidParameterValueSnafu};
 
+/// Validate that a seconds value is strictly positive and return as `Duration`.
+///
+/// Shared by both `from_settings()` (init-time) and `merge_with_request()` (close-time)
+/// to ensure consistent validation of timeout fields.
+fn validate_positive_seconds(param: &str, value: i64) -> Result<Duration, ConfigError> {
+    if value <= 0 {
+        return InvalidParameterValueSnafu {
+            parameter: param,
+            value: value.to_string(),
+            explanation: "Must be positive (greater than zero)",
+        }
+        .fail();
+    }
+    Ok(Duration::from_secs(value as u64))
+}
+
 /// INTERNAL configuration for logout behavior during connection close.
 ///
 /// This struct is constructed from Connection fields, not passed by users.
@@ -71,6 +87,64 @@ impl Default for LogoutConfig {
 }
 
 impl LogoutConfig {
+    /// Create a new `LogoutConfig` by merging close-time override values into `self`.
+    ///
+    /// Hierarchy: override parameter > `self` (connection-wide init-time value) > Core default.
+    /// Any `None` override means "keep `self`'s value unchanged".
+    ///
+    /// `max_attempts` uses total-attempt semantics (1-based): 1 = no retry, 3 = 2 retries.
+    #[allow(clippy::too_many_arguments)]
+    pub fn merge_with_request(
+        &self,
+        server_session_keep_alive: Option<bool>,
+        enable_server_session_keep_alive_auto_detection: Option<bool>,
+        error_strategy: Option<ErrorStrategy>,
+        logout_total_timeout_seconds: Option<i32>,
+        max_attempts: Option<i32>,
+        logout_request_timeout_seconds: Option<i32>,
+    ) -> Result<Self, ConfigError> {
+        let logout_total_timeout = match logout_total_timeout_seconds {
+            Some(seconds) => {
+                validate_positive_seconds("logout_total_timeout_seconds", seconds as i64)?
+            }
+            None => self.logout_total_timeout,
+        };
+
+        let max_attempts = match max_attempts {
+            Some(attempts) => {
+                if attempts <= 0 {
+                    return InvalidParameterValueSnafu {
+                        parameter: "max_attempts",
+                        value: attempts.to_string(),
+                        explanation: "Must be positive (minimum 1 attempt required)",
+                    }
+                    .fail();
+                }
+                Some(attempts as u32)
+            }
+            None => self.max_attempts,
+        };
+
+        let logout_request_timeout = match logout_request_timeout_seconds {
+            Some(seconds) => Some(validate_positive_seconds(
+                "logout_request_timeout_seconds",
+                seconds as i64,
+            )?),
+            None => self.logout_request_timeout,
+        };
+
+        Ok(Self {
+            server_session_keep_alive: server_session_keep_alive.or(self.server_session_keep_alive),
+            enable_server_session_keep_alive_auto_detection:
+                enable_server_session_keep_alive_auto_detection
+                    .or(self.enable_server_session_keep_alive_auto_detection),
+            error_strategy: error_strategy.unwrap_or(self.error_strategy),
+            logout_total_timeout,
+            max_attempts,
+            logout_request_timeout,
+        })
+    }
+
     /// Parse logout configuration from connection settings.
     ///
     /// All validation happens here, once, at connection_init time.
@@ -83,15 +157,8 @@ impl LogoutConfig {
         }
 
         if let Some(v) = settings.get_int("logout_total_timeout_seconds") {
-            if v <= 0 {
-                return InvalidParameterValueSnafu {
-                    parameter: "logout_total_timeout_seconds",
-                    value: v.to_string(),
-                    explanation: "Must be positive (greater than zero)",
-                }
-                .fail();
-            }
-            config.logout_total_timeout = Duration::from_secs(v as u64);
+            config.logout_total_timeout =
+                validate_positive_seconds("logout_total_timeout_seconds", v)?;
         }
 
         if let Some(v) = settings.get_int("logout_max_attempts") {
@@ -115,15 +182,10 @@ impl LogoutConfig {
         }
 
         if let Some(v) = settings.get_int("logout_request_timeout_seconds") {
-            if v <= 0 {
-                return InvalidParameterValueSnafu {
-                    parameter: "logout_request_timeout_seconds",
-                    value: v.to_string(),
-                    explanation: "Must be positive (greater than zero)",
-                }
-                .fail();
-            }
-            config.logout_request_timeout = Some(Duration::from_secs(v as u64));
+            config.logout_request_timeout = Some(validate_positive_seconds(
+                "logout_request_timeout_seconds",
+                v,
+            )?);
         }
 
         config.server_session_keep_alive = settings.get_bool("server_session_keep_alive");
@@ -399,5 +461,97 @@ mod tests {
             Setting::String("bad".to_string()),
         )]);
         assert!(LogoutConfig::from_settings(&settings).is_err());
+    }
+
+    // --- merge_with_request() tests ---
+
+    #[test]
+    fn test_merge_with_request_override_wins() {
+        let base = LogoutConfig {
+            server_session_keep_alive: Some(true),
+            enable_server_session_keep_alive_auto_detection: Some(false),
+            error_strategy: ErrorStrategy::Strict,
+            logout_total_timeout: Duration::from_secs(5),
+            max_attempts: Some(3),
+            logout_request_timeout: Some(Duration::from_secs(2)),
+        };
+
+        let merged = base
+            .merge_with_request(
+                Some(false),
+                Some(true),
+                Some(ErrorStrategy::BestEffort),
+                Some(10),
+                Some(1), // 1 total attempt = no retries
+                Some(4),
+            )
+            .unwrap();
+
+        assert_eq!(merged.server_session_keep_alive, Some(false));
+        assert_eq!(
+            merged.enable_server_session_keep_alive_auto_detection,
+            Some(true)
+        );
+        assert_eq!(merged.error_strategy, ErrorStrategy::BestEffort);
+        assert_eq!(merged.logout_total_timeout, Duration::from_secs(10));
+        assert_eq!(merged.max_attempts, Some(1));
+        assert_eq!(merged.logout_request_timeout, Some(Duration::from_secs(4)));
+    }
+
+    #[test]
+    fn test_merge_with_request_none_preserves_self() {
+        let base = LogoutConfig {
+            server_session_keep_alive: Some(true),
+            enable_server_session_keep_alive_auto_detection: Some(true),
+            error_strategy: ErrorStrategy::BestEffort,
+            logout_total_timeout: Duration::from_secs(7),
+            max_attempts: Some(5),
+            logout_request_timeout: Some(Duration::from_secs(3)),
+        };
+
+        let merged = base
+            .merge_with_request(None, None, None, None, None, None)
+            .unwrap();
+
+        assert_eq!(merged, base);
+    }
+
+    #[test]
+    fn test_merge_rejects_non_positive_max_attempts() {
+        let base = LogoutConfig::default();
+        assert!(
+            base.merge_with_request(None, None, None, None, Some(0), None)
+                .is_err()
+        );
+        assert!(
+            base.merge_with_request(None, None, None, None, Some(-1), None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_merge_rejects_non_positive_total_timeout() {
+        let base = LogoutConfig::default();
+        assert!(
+            base.merge_with_request(None, None, None, Some(0), None, None)
+                .is_err()
+        );
+        assert!(
+            base.merge_with_request(None, None, None, Some(-5), None, None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_merge_rejects_non_positive_request_timeout() {
+        let base = LogoutConfig::default();
+        assert!(
+            base.merge_with_request(None, None, None, None, None, Some(0))
+                .is_err()
+        );
+        assert!(
+            base.merge_with_request(None, None, None, None, None, Some(-1))
+                .is_err()
+        );
     }
 }
