@@ -151,3 +151,37 @@ TEST_CASE("should bind SQL_C_WCHAR with SQL_NTS to SQL_BIT.", "[query][bind_para
   // Then the result should be TRUE
   CHECK(get_data<SQL_C_BIT>(stmt, 1) == 1);
 }
+
+TEST_CASE("should bind SQL_C_CHAR NULL to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLLEN indicator = SQL_NULL_DATA;
+  // When SQL_C_CHAR with SQL_NULL_DATA is bound as SQL_BIT and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_BIT, 1, 0, nullptr, 0,
+                                   &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be NULL
+  CHECK(get_data_optional<SQL_C_BIT>(stmt, 1) == std::nullopt);
+}
+
+TEST_CASE("should bind SQL_C_WCHAR NULL to SQL_BIT.", "[query][bind_parameter][c_char_to_boolean]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+  SQLLEN indicator = SQL_NULL_DATA;
+  // When SQL_C_WCHAR with SQL_NULL_DATA is bound as SQL_BIT and SELECT ? is executed
+  SQLRETURN ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_BIT, 1, 0, nullptr, 0,
+                                   &indicator);
+  REQUIRE_ODBC_SUCCESS(ret, stmt);
+  ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT ? AS val"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  // Then the result should be NULL
+  CHECK(get_data_optional<SQL_C_BIT>(stmt, 1) == std::nullopt);
+}
