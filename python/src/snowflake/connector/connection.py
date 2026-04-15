@@ -254,8 +254,8 @@ class Connection:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
 
         # Logout params (pop + resolve defaults + build config).
-        # Init-time snapshot only; Core re-derives at close() time from connection_seed,
-        # so post-init overrides like close(retry=False) won't be reflected here.
+        # Init-time base config; Core merges close-time overrides (e.g. retry=False
+        # → max_attempts=1 in ConnectionCloseRequest) via merge_with_request().
         self.logout_config = self._parse_logout_config(kwargs)
 
     @staticmethod
@@ -279,8 +279,10 @@ class Connection:
     def _send_logout_config(self, logout_config: LogoutConfig) -> None:
         """Send resolved LogoutConfig to Core via batch connection_set_options RPC.
 
-        Called at init time, before connection_init. Core re-derives LogoutConfig
-        from connection_seed at close() time, so post-init overrides take effect.
+        Called at init time, before connection_init. Sets the BASE config that
+        Core stores as conn.logout_config. At close() time, Core merges any
+        close-time overrides (from ConnectionCloseRequest fields) into this base
+        via merge_with_request().
         """
         options = _build_config_settings(logout_config.to_option_dict())
         if options:
@@ -296,12 +298,13 @@ class Connection:
         """
         Close the connection now.
 
-        Sends logout request to server based on configuration set at connection initialization,
-        then cleans up resources.
+        Sends logout request to server. Uses init-time configuration as the base,
+        with optional close-time overrides passed via ConnectionCloseRequest fields.
 
         Args:
-            retry: If False, passes max_attempts=1 (no retries) atomically in the close
-                   request. If True (default), uses init-time configuration.
+            retry: If False, passes max_attempts=1 (no retries) in the close request,
+                   overriding the init-time default. If True (default), init-time
+                   max_attempts is used (typically 3 for Python).
         """
         atexit.unregister(self._close_at_process_exit)
 

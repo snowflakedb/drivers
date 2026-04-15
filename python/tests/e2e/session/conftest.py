@@ -64,6 +64,27 @@ class CoreIntrospector:
                     options[key] = getattr(setting, field)
         return options
 
+    def get_close_overrides(self) -> dict[str, Any]:
+        """Extract close-time override params from ConnectionCloseRequest.
+
+        These are the optional fields passed at close() time that Core merges
+        into the init-time base config via merge_with_request().
+        """
+        overrides: dict[str, Any] = {}
+        for call in self.db_api.connection_close.call_args_list:
+            req = call.args[0]
+            for field in [
+                "server_session_keep_alive",
+                "enable_server_session_keep_alive_auto_detection",
+                "error_strategy",
+                "logout_total_timeout_seconds",
+                "max_attempts",
+                "logout_request_timeout_seconds",
+            ]:
+                if req.HasField(field):
+                    overrides[field] = getattr(req, field)
+        return overrides
+
 
 @pytest.fixture
 def db_api_mock() -> MagicMock:
