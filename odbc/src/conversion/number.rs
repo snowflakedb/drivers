@@ -467,7 +467,15 @@ impl ReadODBC for SnowflakeNumber {
                     sql::SqlDataType::INTEGER => 4,
                     sql::SqlDataType::SMALLINT => 2,
                     sql::SqlDataType::EXT_TINY_INT => 1,
-                    _ => 4,
+                    _ => {
+                        return BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "SQL_C_BINARY is not supported for {:?} in integer context",
+                                binding.sql_data_type
+                            ),
+                        }
+                        .fail();
+                    }
                 };
                 if len != expected {
                     return BindingNumericOutOfRangeSnafu {
