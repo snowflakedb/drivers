@@ -23,7 +23,7 @@ use super::{
 use super::{FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu, IrregularFileTypeSnafu};
 
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
-const DEFAULT_RETRY_COUNT: u32 = 5;
+const DEFAULT_RETRY_COUNT: u32 = 20;
 const DEFAULT_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Serialize, Deserialize)]
