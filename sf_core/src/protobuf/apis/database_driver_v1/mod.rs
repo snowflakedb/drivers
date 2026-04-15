@@ -748,12 +748,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let mut chunks = Vec::new();
 
         if let Some(base64_data) = chunk_info.initial_chunk_base64 {
+            // Calculate inline chunk row count: total from descriptor minus remote chunks
+            let remote_rows: i32 = chunk_info.chunks.iter().map(|c| c.row_count).sum();
+            let inline_row_count = chunk_info
+                .descriptor
+                .rows_affected
+                .map(|total| (total as i32).saturating_sub(remote_rows))
+                .unwrap_or(0);
+
             chunks.push(ResultChunk {
                 format: ChunkFormat::ArrowIpc as i32,
                 data: Some(result_chunk::Data::Inline(base64_data)),
-                row_count: 0,
-                compressed_size: None,
-                uncompressed_size: None,
+                row_count: inline_row_count,
             });
         }
 
@@ -763,10 +769,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 data: Some(result_chunk::Data::Remote(RemoteChunk {
                     url: c.url.clone(),
                     headers: c.headers.clone(),
+                    compressed_size: c.compressed_size,
+                    uncompressed_size: c.uncompressed_size,
                 })),
                 row_count: c.row_count,
-                compressed_size: Some(c.compressed_size),
-                uncompressed_size: Some(c.uncompressed_size),
             });
         }
 

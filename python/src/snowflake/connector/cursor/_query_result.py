@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from .._internal.arrow_stream_utils import release_arrow_stream
-from .._internal.protobuf_gen.database_driver_v1_pb2 import ExecuteResult, PrepareResult
-from .._internal.statement_utils import extract_rowcount, extract_sqlstate, get_stream_ptr
+from .._internal.protobuf_gen.database_driver_v1_pb2 import (
+    PrepareResult,
+    ResultSetDescriptor,
+    ResultSetResponse,
+)
+from .._internal.statement_utils import (
+    extract_rowcount_from_descriptor,
+    extract_sqlstate,
+    extract_sqlstate_from_descriptor,
+    get_stream_ptr,
+)
 from ..errors import ProgrammingError
 from ._result_metadata import QueryResultStats, ResultMetadata
 
@@ -75,22 +84,6 @@ class _QueryResult:
             self.rowcount = None
 
     @staticmethod
-    def from_execute_result(result: ExecuteResult | None) -> _QueryResult:
-        return _QueryResult(
-            description=ResultMetadata.create_description(result),
-            sqlstate=extract_sqlstate(result),
-            sfqid=(result.query_id if result.query_id else None) if result else None,
-            query=(result.query if result.query else None) if result else None,
-            rowcount=extract_rowcount(result),
-            _stream_ptr=get_stream_ptr(result),
-            stats=(
-                QueryResultStats.from_query_stats(result.stats)
-                if (result and result.HasField("stats"))
-                else QueryResultStats()
-            ),
-        )
-
-    @staticmethod
     def from_prepare_result(result: PrepareResult | None) -> _QueryResult:
         stream_ptr = get_stream_ptr(result)
         release_arrow_stream(stream_ptr)
@@ -110,4 +103,37 @@ class _QueryResult:
             sqlstate=exc.sqlstate or None,
             sfqid=exc.sfqid or None,
             query=exc.query or None,
+        )
+
+    @staticmethod
+    def from_result_set_response(
+        response: ResultSetResponse,
+        descriptor: ResultSetDescriptor | None = None,
+        query: str | None = None,
+    ) -> _QueryResult:
+        """Create _QueryResult from ResultSetResponse (used for multistatement children).
+
+        Args:
+            response: ResultSetResponse from StatementGetResultSet or ConnectionGetResultSet.
+            descriptor: Optional descriptor (if already extracted from response).
+            query: Optional query text (not available in proto, must be passed separately).
+
+        Returns:
+            _QueryResult instance.
+        """
+        if descriptor is None:
+            descriptor = response.result_descriptor
+
+        return _QueryResult(
+            description=ResultMetadata.create_description_from_descriptor(descriptor),
+            sqlstate=extract_sqlstate_from_descriptor(descriptor),
+            sfqid=descriptor.query_id if descriptor.query_id else None,
+            query=query,  # Query text passed from caller
+            rowcount=extract_rowcount_from_descriptor(descriptor),
+            _stream_ptr=get_stream_ptr(response),
+            stats=(
+                QueryResultStats.from_query_stats(descriptor.stats)
+                if descriptor.HasField("stats")
+                else QueryResultStats()
+            ),
         )

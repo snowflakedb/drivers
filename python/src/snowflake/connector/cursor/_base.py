@@ -32,17 +32,22 @@ from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
+    ConfigSetting,
     ConnectionAbortQueryRequest,
     ConnectionGetQueryResultRequest,
-    ExecuteResult,
+    ConnectionGetResultSetRequest,
+    ExecuteQueryResponse,
     PrepareResult,
     QueryBindings,
     ResultChunk,
+    ResultSetResponse,
     StatementExecuteAsyncRequest,
     StatementExecuteQueryRequest,
+    StatementGetResultSetRequest,
     StatementHandle,
     StatementPrepareRequest,
     StatementResultChunksRequest,
+    StatementSetOptionsRequest,
 )
 from .._internal.statement_utils import create_statement
 from ..errors import InterfaceError, NotSupportedError, ProgrammingError
@@ -161,6 +166,14 @@ class SnowflakeCursorBase(abc.ABC):
         self._iterator: ArrowStreamIterator | None = None
         self._fetch_mode: FetchMode | None = None
 
+        # -- Multi-statement state (cleared on execute/reset) --
+        self._multi_statement_query_ids: list[str] = []
+        self._multi_statement_current_index: int = 0
+        self._multi_statement_parent_qid: str | None = None
+
+        # -- Statement parameters (persists until explicitly changed) --
+        self._statement_parameters: dict[str, Any] = {}
+
         # Keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
         # Deferred result loading (set by get_results_from_sfqid, invoked on first fetch)
@@ -276,6 +289,26 @@ class SnowflakeCursorBase(abc.ABC):
         """The SQLSTATE code of the last executed operation."""
         return self._query_result.sqlstate
 
+    @property
+    def multi_statement_parent_sfqid(self) -> str | None:
+        """
+        Read-only attribute containing the parent Snowflake Query ID for multi-statement queries.
+
+        Returns:
+            str | None: Parent query ID for multi-statement, or None for single statements.
+        """
+        return self._multi_statement_parent_qid
+
+    @property
+    def multi_statement_savedIds(self) -> list[str]:
+        """
+        Read-only attribute containing child query IDs for multi-statement queries.
+
+        Returns:
+            list[str]: List of child query IDs (empty list for single statements).
+        """
+        return self._multi_statement_query_ids
+
     @overload
     def callproc(self, procname: str) -> tuple: ...
 
@@ -304,6 +337,28 @@ class SnowflakeCursorBase(abc.ABC):
         command = f"CALL {procname}({self._connection.paramstyle.placeholders(len(args))})"
         self.execute(command, args)
         return args
+
+    def set_statement_parameter(self, key: str, value: Any) -> None:
+        """Set a statement-level parameter (e.g., MULTI_STATEMENT_COUNT).
+
+        This must be called before execute() to take effect.
+
+        Args:
+            key: Parameter name (e.g., "MULTI_STATEMENT_COUNT").
+            value: Parameter value.
+
+        Raises:
+            InterfaceError: If cursor is closed.
+
+        Example:
+            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+            cursor.execute("SELECT 1; SELECT 2; SELECT 3")
+        """
+        if self.is_closed():
+            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+
+        # Store in cursor for application in _execute
+        self._statement_parameters[key] = value
 
     @property
     def is_file_transfer(self) -> bool:
@@ -394,6 +449,7 @@ class SnowflakeCursorBase(abc.ABC):
         operation: str,
         parameters: Sequence[Any] | dict[str, Any] | None = None,
         _is_put_get: bool | None = None,
+        num_statements: int | None = None,
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """
@@ -406,7 +462,11 @@ class SnowflakeCursorBase(abc.ABC):
                 For qmark/numeric paramstyle: sequence of values
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
+            num_statements (int, optional): Number of statements in a multistatement query.
         """
+        if num_statements is not None:
+            self.set_statement_parameter("MULTI_STATEMENT_COUNT", num_statements)
+
         self.reset()
         return self._execute(operation, parameters, _is_put_get, **kwargs)
 
@@ -426,35 +486,156 @@ class SnowflakeCursorBase(abc.ABC):
 
         query, bindings = self._prepare_query(operation, parameters)
 
-        result: ExecuteResult | None = None
         with create_statement(self.connection, query) as stmt_handle:
-            result = self._execute_query(stmt_handle, bindings)
-            self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle)
+            # Apply statement parameters if set
+            if self._statement_parameters:
+                self._apply_statement_parameters(stmt_handle)
 
-        self._query_result = _QueryResult.from_execute_result(result)
+            response = self._execute_query(stmt_handle, bindings)
+
+            # Dispatch based on response type
+            if response.HasField("multi"):
+                self._handle_multi_statement_response(response, stmt_handle, query)
+            else:
+                self._handle_single_statement_response(response, stmt_handle, query)
+
         self._rownumber = -1  # reset the rownumber (rownumber is not reset in reset() for backward compatibility)
-
         return self
 
-    def _fetch_result_chunk_metadata(self, stmt_handle: StatementHandle) -> list[ResultChunk] | None:
-        """Retrieve chunk metadata while the statement handle is still alive."""
+    def _fetch_result_chunk_metadata(
+        self, stmt_handle: StatementHandle, query_id: str | None = None
+    ) -> list[ResultChunk] | None:
+        """Retrieve chunk metadata for a specific query ID while the statement handle is alive.
+
+        For single-statement queries, query_id should be None (server infers from statement handle).
+        For multi-statement queries, query_id must specify which child query's chunks to return.
+        """
         try:
-            request = StatementResultChunksRequest(stmt_handle=stmt_handle)
+            # Only include query_id in request if explicitly provided (for multistatement)
+            if query_id is not None:
+                logger.debug(f"Fetching chunk metadata WITH query_id={query_id}")
+                request = StatementResultChunksRequest(stmt_handle=stmt_handle, query_id=query_id)
+            else:
+                logger.debug("Fetching chunk metadata WITHOUT query_id")
+                request = StatementResultChunksRequest(stmt_handle=stmt_handle)
             response = self._connection.db_api.statement_result_chunks(request)
             if response.HasField("result"):
                 return list(response.result.chunks)
+            logger.warning("No result field in response")
             return None
         except Exception:
-            logger.warning("Failed to fetch result chunk metadata", exc_info=True)
+            logger.warning(f"Failed to fetch result chunk metadata for query_id={query_id}", exc_info=True)
             return None
 
-    def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteResult:
+    def _execute_query(self, stmt_handle: StatementHandle, bindings: QueryBindings | None) -> ExecuteQueryResponse:
+        """Execute query and return ExecuteQueryResponse (single or multi)."""
         try:
             request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
-            return self._connection.db_api.statement_execute_query(request).result
+            return self._connection.db_api.statement_execute_query(request)
         except ProgrammingError as exc:
             self._query_result = _QueryResult.from_programming_error(exc)
             raise
+
+    def _fetch_result_set(self, stmt_handle: StatementHandle, query_id: str) -> ResultSetResponse:
+        """Fetch a result set by query ID via StatementGetResultSet RPC.
+
+        Args:
+            stmt_handle: Active statement handle.
+            query_id: Query ID to fetch.
+
+        Returns:
+            ResultSetResponse containing descriptor and arrow stream.
+
+        Raises:
+            ProgrammingError: If the fetch fails.
+        """
+        try:
+            request = StatementGetResultSetRequest(
+                stmt_handle=stmt_handle,
+                query_id=query_id,
+            )
+            return self._connection.db_api.statement_get_result_set(request)
+        except Exception as exc:
+            # Wrap non-ProgrammingError exceptions for consistency
+            if isinstance(exc, ProgrammingError):
+                raise
+            raise ProgrammingError(f"Failed to fetch result set for query_id={query_id}: {exc}") from exc
+
+    def _handle_single_statement_response(
+        self, response: ExecuteQueryResponse, stmt_handle: StatementHandle, query: str
+    ) -> None:
+        """Handle single-statement execution response."""
+        # Clear any previous multistatement state
+        self._multi_statement_query_ids = []
+        self._multi_statement_current_index = 0
+        self._multi_statement_parent_qid = None
+
+        descriptor = response.single
+
+        # Fetch the result set (metadata + arrow stream)
+        result_set_response = self._fetch_result_set(stmt_handle, descriptor.query_id)
+        self._query_result = _QueryResult.from_result_set_response(result_set_response, descriptor, query)
+        # For single-statement, pass the query_id to chunks request
+        self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle, query_id=descriptor.query_id)
+
+    def _handle_multi_statement_response(
+        self, response: ExecuteQueryResponse, stmt_handle: StatementHandle, query: str
+    ) -> None:
+        """Handle multi-statement execution response."""
+        multi_result = response.multi
+
+        # Store parent query ID and child IDs
+        parent = multi_result.parent
+        self._multi_statement_parent_qid = parent.query_id if parent.query_id else None
+        self._multi_statement_query_ids = list(multi_result.query_ids)
+        self._multi_statement_current_index = 0
+
+        # Edge case: empty multi-statement result
+        if not self._multi_statement_query_ids:
+            self._query_result = _QueryResult(query=query)
+            self._result_chunks = None
+            self._multi_statement_parent_qid = None  # Clear parent QID for consistency
+            return
+
+        # Immediately fetch and apply the first child result
+        first_qid = self._multi_statement_query_ids[0]
+        result_set_response = self._fetch_result_set(stmt_handle, first_qid)
+        descriptor = result_set_response.result_descriptor
+
+        # For first result in multistatement, pass the full query
+        self._query_result = _QueryResult.from_result_set_response(result_set_response, descriptor, query)
+        self._result_chunks = self._fetch_result_chunk_metadata(stmt_handle, first_qid)
+        self._multi_statement_current_index = 1
+
+    def _apply_statement_parameters(self, stmt_handle: StatementHandle) -> None:
+        """Apply stored statement parameters to the statement handle via SetOptions RPC."""
+        if not self._statement_parameters:
+            return
+
+        # Build options map with ConfigSetting values
+        options = {}
+        for key, value in self._statement_parameters.items():
+            config_setting = ConfigSetting()
+            if isinstance(value, int):
+                config_setting.int_value = value
+            elif isinstance(value, str):
+                config_setting.string_value = value
+            elif isinstance(value, bool):
+                config_setting.bool_value = value
+            elif isinstance(value, float):
+                config_setting.double_value = value
+            elif isinstance(value, bytes):
+                config_setting.bytes_value = value
+            else:
+                raise TypeError(
+                    f"Unsupported parameter type for key '{key}': {type(value).__name__}. "
+                    f"Supported types: int, str, bool, float, bytes"
+                )
+            options[key] = config_setting
+
+        # Send single RPC with all options
+        request = StatementSetOptionsRequest(stmt_handle=stmt_handle, options=options)
+        self._connection.db_api.statement_set_options(request)
 
     def _prepare(self, stmt_handle: StatementHandle) -> PrepareResult:
         try:
@@ -687,17 +868,67 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @pep249
-    def nextset(self) -> None:
+    def nextset(self) -> SnowflakeCursorBase | None:
         """
-        Skip to the next available set, discarding any remaining rows from current set.
+        Skip to the next available result set, discarding remaining rows from current set.
+
+        This method is used for multi-statement queries where a single execute() produces
+        multiple result sets. Call nextset() to advance to the next query's results.
 
         Returns:
-            bool: True if next set is available, False/None otherwise
+            SnowflakeCursorBase: Self if next set is available.
+            None: If no more result sets are available.
 
         Raises:
-            NotImplementedError: If not implemented
+            InterfaceError: If cursor is closed.
+
+        Example:
+            cursor.set_statement_parameter("MULTI_STATEMENT_COUNT", 3)
+            cursor.execute("SELECT 1; SELECT 2; SELECT 3")
+            print(cursor.fetchone())  # (1,)
+            cursor.nextset()
+            print(cursor.fetchone())  # (2,)
+            cursor.nextset()
+            print(cursor.fetchone())  # (3,)
+            result = cursor.nextset()  # None - no more results
         """
-        raise NotImplementedError("nextset is not implemented")
+        if self.is_closed():
+            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+
+        # Check if there are more child results to fetch
+        if self._multi_statement_current_index >= len(self._multi_statement_query_ids):
+            return None
+
+        # Save multistatement state before reset (reset clears it)
+        query_ids = self._multi_statement_query_ids
+        current_idx = self._multi_statement_current_index
+        parent_qid = self._multi_statement_parent_qid
+
+        # Reset cursor state for new result set
+        self.reset()
+
+        # Restore multistatement state
+        self._multi_statement_query_ids = query_ids
+        self._multi_statement_current_index = current_idx + 1
+        self._multi_statement_parent_qid = parent_qid
+
+        # Fetch the next child result
+        query_id = query_ids[current_idx]
+
+        # Use connection-level GetResultSet since statement handle is no longer available
+        request = ConnectionGetResultSetRequest(
+            conn_handle=self._connection.conn_handle,
+            query_id=query_id,
+        )
+        result_set_response = self._connection.db_api.connection_get_result_set(request)
+        descriptor = result_set_response.result_descriptor
+
+        self._query_result = _QueryResult.from_result_set_response(result_set_response, descriptor)
+        self._rownumber = -1
+        # Note: chunk metadata not available for child results without statement handle
+        self._result_chunks = None
+
+        return self
 
     @pep249
     def setinputsizes(self, sizes: Sequence[Any]) -> None:
@@ -753,6 +984,8 @@ class SnowflakeCursorBase(abc.ABC):
         preserving metadata that the old driver also keeps across resets:
         ``description``, ``rownumber``, ``sfqid``, ``query``, and ``sqlstate``.
 
+        Multi-statement state is also cleared: query IDs, current index, and parent query ID.
+
         Args:
             closing: If True, do not reset rowcount,
                      see: SNOW-647539: Do not erase the rowcount information when closing the cursor.
@@ -764,6 +997,10 @@ class SnowflakeCursorBase(abc.ABC):
         self._fetch_mode = None
         self._binding_data = None
         self._prefetch_hook = None
+        # Clear multistatement state
+        self._multi_statement_query_ids = []
+        self._multi_statement_current_index = 0
+        self._multi_statement_parent_qid = None
 
     @pep249
     def close(self) -> bool | None:
@@ -951,7 +1188,30 @@ class SnowflakeCursorBase(abc.ABC):
         )
         response = self._connection.db_api.connection_get_query_result(request)
 
-        self._query_result = _QueryResult.from_execute_result(response.result)
+        # Handle single or multi-statement response
+        if response.HasField("multi"):
+            # For async, we only support fetching the first result of multi-statement
+            multi_result = response.multi
+            if multi_result.query_ids:
+                first_qid = multi_result.query_ids[0]
+                result_request = ConnectionGetResultSetRequest(
+                    conn_handle=self._connection.conn_handle,
+                    query_id=first_qid,
+                )
+                result_set = self._connection.db_api.connection_get_result_set(result_request)
+                self._query_result = _QueryResult.from_result_set_response(result_set)
+            else:
+                self._query_result = _QueryResult()
+        else:
+            # Single statement
+            descriptor = response.single
+            result_request = ConnectionGetResultSetRequest(
+                conn_handle=self._connection.conn_handle,
+                query_id=descriptor.query_id,
+            )
+            result_set = self._connection.db_api.connection_get_result_set(result_request)
+            self._query_result = _QueryResult.from_result_set_response(result_set, descriptor)
+
         self._rownumber = -1
 
         return self

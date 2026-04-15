@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING
 
 from .protobuf_gen.database_driver_v1_pb2 import (
     DatabaseFetchChunkResponse,
-    ExecuteResult,
     PrepareResult,
+    ResultSetDescriptor,
+    ResultSetResponse,
     StatementHandle,
     StatementNewRequest,
     StatementReleaseRequest,
@@ -48,25 +49,7 @@ def create_statement(connection: Connection, query: str) -> Generator[StatementH
         connection.db_api.statement_release(release_request)
 
 
-def extract_rowcount(result: ExecuteResult | None) -> int:
-    """Return the number of rows affected by the executed statement.
-
-    If the result is falsy or the ``rows_affected`` field is not present
-    (e.g. for SELECT queries), returns ``-1`` following the DB-API 2.0
-    convention for an indeterminate row count.
-
-    Args:
-        result: The protobuf response returned by ``statement_execute``.
-
-    Returns:
-        Non-negative row count, or ``-1`` when the count is unavailable.
-    """
-    if result and result.HasField("rows_affected"):
-        return result.rows_affected
-    return -1
-
-
-def extract_sqlstate(result: ExecuteResult | PrepareResult | None) -> str | None:
+def extract_sqlstate(result: PrepareResult | None) -> str | None:
     """Return the SQLSTATE code from an execute result, if meaningful.
 
     SQLSTATE ``"00000"`` (successful completion) is normalised to ``None``
@@ -87,7 +70,7 @@ def extract_sqlstate(result: ExecuteResult | PrepareResult | None) -> str | None
     return None
 
 
-def get_stream_ptr(result: DatabaseFetchChunkResponse | ExecuteResult | PrepareResult | None) -> int:
+def get_stream_ptr(result: DatabaseFetchChunkResponse | PrepareResult | ResultSetResponse | None) -> int:
     """Extract a C ArrowArrayStream pointer from an execute result.
 
     The pointer is stored as an 8-byte little-endian value inside
@@ -130,3 +113,42 @@ def get_stream_ptr(result: DatabaseFetchChunkResponse | ExecuteResult | PrepareR
         raise RuntimeError("Stream pointer is null")
 
     return stream_ptr
+
+
+def extract_rowcount_from_descriptor(descriptor: ResultSetDescriptor | None) -> int:
+    """Return the number of rows affected from a ResultSetDescriptor.
+
+    Returns the rows_affected value from the server if present, otherwise -1.
+
+    Args:
+        descriptor: The ResultSetDescriptor from a proto response.
+
+    Returns:
+        Row count from server, or ``-1`` when unavailable.
+    """
+    if not descriptor:
+        return -1
+
+    # Return rows_affected if present (for SELECT, DML, and DDL)
+    if descriptor.HasField("rows_affected"):
+        return descriptor.rows_affected
+
+    return -1
+
+
+def extract_sqlstate_from_descriptor(descriptor: ResultSetDescriptor | None) -> str | None:
+    """Return the SQLSTATE code from a descriptor, if meaningful.
+
+    SQLSTATE ``"00000"`` (successful completion) is normalised to ``None``
+    for backwards compatibility.
+
+    Args:
+        descriptor: The ResultSetDescriptor from a proto response.
+
+    Returns:
+        A five-character SQLSTATE string for warnings/errors, or ``None`` on success.
+    """
+    sql_state = descriptor.sql_state if descriptor else None
+    if sql_state and sql_state != "00000":
+        return sql_state
+    return None
