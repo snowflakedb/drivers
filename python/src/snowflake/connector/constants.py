@@ -21,3 +21,7 @@ class QueryStatus(Enum):
     RESTARTED = 10
     BLOCKED = 11
     NO_DATA = 12
+
+
+# backward compatibility constant
+UTF8 = "utf-8"
