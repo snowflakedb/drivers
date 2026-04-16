@@ -71,6 +71,7 @@ jobs:
           mode: restore
           shared-key: "format-validator"
           target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
 
       - name: Run tests format validator
         run: |
@@ -83,6 +84,7 @@ jobs:
           mode: save
           shared-key: "format-validator"
           target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
 
   test-coverage-report:
     needs: detect-changes
@@ -97,8 +99,9 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: restore
-          shared-key: "coverage-report"
+          shared-key: "format-validator"
           target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -117,8 +120,9 @@ jobs:
         uses: ./.github/actions/cargo-cache
         with:
           mode: save
-          shared-key: "coverage-report"
+          shared-key: "format-validator"
           target-dir: tests/tests_format_validator/target
+          lockfiles: tests/tests_format_validator/Cargo.lock
 
       - name: Upload coverage report
         if: success()
@@ -129,7 +133,7 @@ jobs:
           retention-days: 30
 
   validations-status:
-    needs: [detect-changes, test-data, tests-format-validator]
+    needs: [detect-changes, test-data, tests-format-validator, test-coverage-report]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -139,17 +143,20 @@ jobs:
           
           # Check if all validations were skipped (docs-only)
           if [[ "${{ needs.test-data.result }}" == "skipped" ]] && \
-             [[ "${{ needs.tests-format-validator.result }}" == "skipped" ]]; then
+             [[ "${{ needs.tests-format-validator.result }}" == "skipped" ]] && \
+             [[ "${{ needs.test-coverage-report.result }}" == "skipped" ]]; then
             echo "✓ Validations were SKIPPED (documentation-only changes)"
             exit 0
           fi
           
           # Check if any validation failed or was cancelled
           if [[ "${{ needs.test-data.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.test-coverage-report.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Validations were RUN and FAILED or CANCELLED"
             echo "  - test-data: ${{ needs.test-data.result }}"
             echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
+            echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
             exit 1
           fi
           
@@ -157,4 +164,5 @@ jobs:
           echo "✓ Validations were RUN and PASSED"
           echo "  - test-data: ${{ needs.test-data.result }}"
           echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
+          echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
           exit 0

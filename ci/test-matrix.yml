@@ -497,6 +497,8 @@ shared_fallback_paths:
   - "proto_utils/**"
   - "proto_generator/**"
   - ".github/workflows/**"
+  - "scripts/decode_secrets.*"
+  - "scripts/parameters.json"
   - "scripts/shared/**"
   - "ci/**"
   - "tests/definitions/shared/**"

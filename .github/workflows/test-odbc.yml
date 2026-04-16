@@ -406,10 +406,11 @@ jobs:
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
 
-          # Ensure OpenSSL DLLs are on PATH for the pre-built ODBC driver at runtime
-          if (Test-Path "C:\Program Files\OpenSSL\bin") {
-            echo "C:\Program Files\OpenSSL\bin" >> $env:GITHUB_PATH
+          # The pre-built ODBC driver links OpenSSL dynamically — ensure DLLs are available at runtime
+          if (!(Test-Path "C:\Program Files\OpenSSL\lib\VC\x64\MD")) {
+            Invoke-Checked "choco install openssl" { choco install openssl -y --no-progress }
           }
+          echo "C:\Program Files\OpenSSL\bin" >> $env:GITHUB_PATH
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}

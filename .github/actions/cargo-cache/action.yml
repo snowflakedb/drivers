@@ -14,6 +14,9 @@ inputs:
   target-dir:
     description: Path to the Rust target directory
     default: target
+  lockfiles:
+    description: Glob pattern for Cargo.lock files to include in cache key
+    default: "**/Cargo.lock"
 
 outputs:
   rustc-hash:
@@ -39,7 +42,7 @@ runs:
       id: keys
       shell: bash
       run: |
-        LOCK_HASH="${{ hashFiles('**/Cargo.lock') }}"
+        LOCK_HASH="${{ hashFiles(inputs.lockfiles) }}"
         echo "registry=${{ runner.os }}-cargo-registry-${LOCK_HASH}" >> $GITHUB_OUTPUT
         echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
 
