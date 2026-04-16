@@ -83,6 +83,7 @@ TEST_CASE("should bind SQL_C_DOUBLE negative to SQL_BIT.", "[query][bind_paramet
 }
 
 TEST_CASE("should bind SQL_C_FLOAT zero to SQL_BIT.", "[query][bind_parameter][c_real_to_boolean]") {
+  SKIP_OLD_DRIVER("BD-35", "Old driver has limited SQL_C_FLOAT/DOUBLE support for SQL_BIT");
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
