@@ -368,15 +368,21 @@ behavior_differences:
       SQL_C_BINARY as a valid source type for SQL_VARCHAR.
       https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
   35:
-    name: "Negative integer to SQL_BIT rejected during parameter binding"
+    name: "Limited cross-type conversion support for SQL_BIT parameter binding"
     description: |
-      OLD driver: Returns SQL_ERROR with SQLSTATE 22003 (numeric value out
-      of range) when binding a negative integer (e.g., -1) to SQL_BIT.
-      NEW driver: Treats any nonzero value as true (1) per the C boolean
-      convention, consistent with how boolean conversions work in the fetch
-      direction.
-      Impact: Applications binding negative integers to BOOLEAN columns will
-      succeed on the new driver instead of failing.
+      OLD driver: Has restricted value ranges for SQL_BIT parameter binding.
+      Integer and SQL_C_DOUBLE types only accept 0 and 1; other values
+      (negative, >1) fail with 22003. SQL_C_CHAR only accepts "0"/"1";
+      string literals like "true"/"false" and numeric strings are rejected.
+      SQL_C_FLOAT is not supported at all. SQL_C_DOUBLE NaN is silently
+      converted to false instead of failing.
+      NEW driver: Supports all numeric and string C types for SQL_BIT
+      binding. Any nonzero value is true, zero is false. Boolean string
+      literals ("true"/"false") and numeric strings are accepted.
+      Non-finite float/double values (NaN/inf) are rejected with SQLSTATE
+      22018 (invalid character value for cast).
+      Impact: Applications using cross-type conversions to BOOLEAN columns
+      will succeed on the new driver where the old driver returned errors.
   36:
     name: "Subnormal double (DBL_MIN) stored as zero during parameter binding"
     description: |
@@ -411,3 +417,72 @@ behavior_differences:
       too small (< 9 bytes for CHAR, < 18 bytes for WCHAR), and returns
       SQL_SUCCESS_WITH_INFO with SQLSTATE 01004 when the buffer can hold
       the base time but truncates fractional seconds, per the ODBC spec.
+  39:
+    name: "SQL_C_WCHAR decimal string to SQL_DECIMAL conversion (Linux only)"
+    type: "Bug Fix"
+    description: |
+      OLD driver (Linux): Rejects SQL_C_WCHAR bound to SQL_DECIMAL with
+      error 40610 "Invalid data for conversion". The old Windows driver
+      already handles this conversion correctly.
+      Per the ODBC spec, character C types (SQL_C_CHAR and SQL_C_WCHAR)
+      should both support conversion to SQL_DECIMAL.
+      NEW driver: Correctly converts SQL_C_WCHAR decimal strings to
+      SQL_DECIMAL values on all platforms, matching the ODBC spec.
+  40:
+    name: "SQLSTATE for string data exceeding column size"
+    type: "Bug Fix"
+    description: |
+      OLD driver: Returns SQLSTATE 22000 (Data exception, generic class)
+      when inserted string data exceeds the target VARCHAR column size.
+      NEW driver: Returns SQLSTATE 22001 (String data, right truncation)
+      per the ODBC spec (SQLExecute diagnostics table).
+  41:
+    name: "DATE to SQL_C_CHAR/WCHAR undersized buffer returns 07006 instead of 22003"
+    type: "Bug Fix"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_CHAR or SQL_C_WCHAR on
+      a DATE column and the buffer is too small to hold the full "YYYY-MM-DD"
+      string (< 11 bytes for CHAR, < 22 bytes for WCHAR), the old driver
+      returns SQL_ERROR with SQLSTATE 07006 (Restricted data type attribute
+      violation).
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out of
+      range) per the ODBC specification, which states that for SQL_TYPE_DATE
+      to SQL_C_CHAR the character data length must be >= 11.
+  42:
+    name: "TIME to SQL_C_TYPE_TIMESTAMP does not report fractional truncation"
+    type: "Bug Fix"
+    description: |
+      OLD driver: When TIME with fractional seconds (e.g. '14:30:45.123') is
+      converted to SQL_C_TYPE_TIMESTAMP, the old driver returns SQL_SUCCESS
+      and places the fractional seconds into the timestamp fraction field.
+      It does not report SQLSTATE 01S07 (Fractional truncation).
+      NEW driver: Per the ODBC specification, when SQL_TYPE_TIME is converted
+      to SQL_C_TYPE_TIMESTAMP the fraction field is set to zero. If the
+      original TIME value had fractional seconds, SQL_SUCCESS_WITH_INFO is
+      returned with SQLSTATE 01S07 (Fractional truncation).
+      Spec reference: "Converting Data from SQL to C Data Types" — SQL_TIME
+      to SQL_C_TYPE_TIMESTAMP: "The timestamp fraction field is set to zero."
+  43:
+    name: "TIME to SQL_C_BINARY conversion not supported"
+    type: "New Feature"
+    description: |
+      OLD driver: Returns SQL_ERROR when SQLGetData is called with
+      SQL_C_BINARY on a TIME column. The old driver does not support
+      converting TIME values to their binary SQL_TIME_STRUCT representation.
+      NEW driver: Returns SQL_SUCCESS with a 6-byte SQL_TIME_STRUCT
+      containing the hour, minute, and second fields. The indicator is
+      set to sizeof(SQL_TIME_STRUCT). Per the ODBC specification, SQL_C_BINARY
+      is a valid target type for SQL_TYPE_TIME — the data is transferred
+      as-is when the byte length fits the buffer, or SQLSTATE 22003 is
+      returned when the buffer is too small.
+  44:
+    name: "DATE to SQL_C_BINARY with undersized buffer does not return 22003"
+    type: "Bug Fix"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_BINARY on a DATE
+      column and the buffer is smaller than sizeof(SQL_DATE_STRUCT), the
+      old driver does not return SQL_ERROR with SQLSTATE 22003.
+      NEW driver: Returns SQL_ERROR with SQLSTATE 22003 (Numeric value out
+      of range) per the ODBC specification, which states that when the byte
+      length of the data exceeds BufferLength for SQL_C_BINARY, the result
+      is undefined and SQLSTATE 22003 must be returned.

@@ -14,6 +14,18 @@ Feature: ODBC TIME to SQL_C_CHAR and SQL_C_WCHAR conversions
     Then String representation matches
 
   @odbc_e2e
+  Scenario: TIME to SQL_C_CHAR exact buffer fit
+    Given Snowflake client is logged in
+    When A TIME value is fetched into a 9-byte buffer
+    Then SQL_SUCCESS is returned with indicator 8
+
+  @odbc_e2e
+  Scenario: TIME to SQL_C_CHAR chunked retrieval
+    Given Snowflake client is logged in
+    When A TIME with fractional seconds is fetched via two sequential SQLGetData calls with a 10-byte buffer
+    Then The first call returns partial data with 01004 and the second call returns the remainder
+
+  @odbc_e2e
   Scenario: TIME to SQL_C_CHAR fractional truncation
     Given Snowflake client is logged in
     When A TIME with fractional seconds is fetched into a 9-byte buffer
@@ -40,6 +52,12 @@ Feature: ODBC TIME to SQL_C_CHAR and SQL_C_WCHAR conversions
     Then Wide string includes fractional seconds
     When Midnight TIME is fetched as SQL_C_WCHAR
     Then Wide string representation is all zeros
+
+  @odbc_e2e
+  Scenario: TIME to SQL_C_WCHAR exact buffer fit
+    Given Snowflake client is logged in
+    When A TIME value is fetched into a WCHAR buffer of exactly 9 characters
+    Then SQL_SUCCESS is returned with the correct wide string
 
   @odbc_e2e
   Scenario: TIME to SQL_C_WCHAR fractional truncation

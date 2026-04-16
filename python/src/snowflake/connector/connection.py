@@ -54,6 +54,7 @@ CLIENT_NAME = "PythonConnector"
 # were silently ignored).  We keep a start-anchored pattern without $ so that
 # callers like Snow CLI can pass dotted names such as "SNOWCLI.STAGE.COPY".
 APPLICATION_RE = re.compile(r"^[\w\d_]+")
+LOG_MAX_QUERY_LENGTH = 80
 
 SessionParameters = dict[str, Any]
 ConnectionParamValue = Union[int, str, float, bytes, bool, SessionParameters]
@@ -113,6 +114,8 @@ class Connection:
 
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
+
+        self._log_max_query_length: int = kwargs.pop("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
 
         application = kwargs.pop("application", None)
         if application is None or (isinstance(application, str) and not application):
@@ -324,17 +327,29 @@ class Connection:
         Returns:
             ParamStyle: The paramstyle enum value
         """
-        return self._paramstyle
+        return self.__paramstyle
 
     @paramstyle.setter
     def paramstyle(self, value: str | ParamStyle) -> None:
         """Set binding style from a :class:`ParamStyle` or PEP 249 string (e.g. ``"pyformat"``)."""
         if isinstance(value, ParamStyle):
-            self._paramstyle = value
+            self.__paramstyle = value
         elif isinstance(value, str):
-            self._paramstyle = ParamStyle.from_string(value)
+            self.__paramstyle = ParamStyle.from_string(value)
         else:
             raise ProgrammingError(f"paramstyle must be str or ParamStyle, got {type(value).__name__}")
+
+    @property
+    @backward_compatibility
+    def _paramstyle(self) -> ParamStyle:
+        """Internal binding-style storage (legacy callers assign to ``_paramstyle``)."""
+        return self.__paramstyle
+
+    @_paramstyle.setter
+    @backward_compatibility
+    def _paramstyle(self, value: str | ParamStyle) -> None:
+        """Normalize assignments to ``_paramstyle`` (e.g. SnowPy ``temporary_paramstyle``)."""
+        self.paramstyle = value
 
     def execute_string(
         self,
@@ -568,7 +583,14 @@ class Connection:
     @property
     def log_max_query_length(self) -> int:
         """Maximum number of characters of a query string to log."""
-        raise NotImplementedError("log_max_query_length is not yet implemented")
+        return self._log_max_query_length
+
+    def _format_query_for_log(self, query: str) -> str:
+        """Collapse whitespace and truncate a query string for safe debug logging."""
+        ret = " ".join(line.strip() for line in query.split("\n"))
+        if len(ret) < self.log_max_query_length:
+            return ret
+        return ret[: self.log_max_query_length] + "..."
 
     @property
     def disable_request_pooling(self) -> bool:

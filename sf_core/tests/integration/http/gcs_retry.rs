@@ -19,6 +19,7 @@ fn gcs_stage_with_presigned_url(presigned_url: &str) -> StageInfo {
         presigned_url: Some(presigned_url.to_string()),
         use_virtual_url: false,
         use_regional_url: false,
+        storage_account: None,
     }
 }
 
@@ -36,6 +37,7 @@ fn gcs_stage_with_token(endpoint: &str) -> StageInfo {
         presigned_url: None,
         use_virtual_url: false,
         use_regional_url: false,
+        storage_account: None,
     }
 }
 

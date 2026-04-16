@@ -123,6 +123,8 @@ pub struct StageInfo {
     pub use_virtual_url: bool,
     /// Whether to use regional GCS endpoints.
     pub use_regional_url: bool,
+    /// Azure storage account name (required for Azure Blob Storage).
+    pub storage_account: Option<String>,
 }
 
 /// Cloud storage credentials.
@@ -139,6 +141,8 @@ pub enum CloudCredentials {
     Gcs {
         gcs_access_token: Option<SensitiveString>,
     },
+    /// Azure Blob Storage credentials (SAS token).
+    Azure { sas_token: SensitiveString },
 }
 
 /// Encryption material for file transfer.
@@ -178,4 +182,62 @@ pub struct MaterialDescription {
     pub smk_id: String,
     #[serde(rename = "keySize")]
     pub key_size: String,
+}
+
+/// Encryption metadata envelope returned by cloud storage providers.
+/// Matches the JSON format produced by `build_encryption_metadata_json`.
+#[derive(Debug, Deserialize)]
+pub(super) struct EncryptionData {
+    #[serde(rename = "WrappedContentKey")]
+    pub wrapped_content_key: WrappedContentKey,
+    #[serde(rename = "ContentEncryptionIV")]
+    pub content_encryption_iv: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WrappedContentKey {
+    #[serde(rename = "EncryptedKey")]
+    pub encrypted_key: String,
+}
+
+/// Builds the Snowflake encryption metadata JSON envelope (shared across all cloud providers).
+/// Matches the format used by JDBC/Python/ODBC drivers.
+pub(super) fn build_encryption_metadata_json(
+    metadata: &EncryptedFileMetadata,
+) -> serde_json::Value {
+    serde_json::json!({
+        "EncryptionMode": "FullBlob",
+        "WrappedContentKey": {
+            "KeyId": "symmKey1",
+            "EncryptedKey": metadata.encrypted_key,
+            "Algorithm": "AES_CBC_256"
+        },
+        "EncryptionAgent": {
+            "Protocol": "1.0",
+            "EncryptionAlgorithm": "AES_CBC_256"
+        },
+        "ContentEncryptionIV": metadata.iv,
+        "KeyWrappingMetadata": {
+            "EncryptionLibrary": "Rust(OpenSSL)"
+        }
+    })
+}
+
+/// Percent-encode a URL path, preserving `/` separators.
+/// Matches Python `urllib.parse.quote()` / ODBC `encodeUrlName()` behavior:
+/// unreserved chars (RFC 3986) and `/` pass through, everything else is encoded.
+pub(super) fn percent_encode_path(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                encoded.push(byte as char)
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(encoded, "%{byte:02X}");
+            }
+        }
+    }
+    encoded
 }

@@ -596,6 +596,81 @@ TEST_CASE("should report SQL_DESC_TYPE_NAME for semi-structured columns", "[semi
   }
 }
 
+// ============================================================================
+// MULTI-ROW TABLE OPERATIONS (ODBC-specific)
+// ============================================================================
+
+TEST_CASE("should select multi-row table with all semi-structured columns", "[semi_structured]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with VARIANT, OBJECT, and ARRAY columns exists with multiple rows including NULLs
+  conn.execute("CREATE OR REPLACE TABLE semi_multi (id INT, v VARIANT, o OBJECT, a ARRAY)");
+  conn.execute(
+      "INSERT INTO semi_multi "
+      "SELECT 1, PARSE_JSON('{\"x\":1}'), OBJECT_CONSTRUCT('k','v1'), ARRAY_CONSTRUCT(1,2)");
+  conn.execute(
+      "INSERT INTO semi_multi "
+      "SELECT 2, PARSE_JSON('[10,20]'), OBJECT_CONSTRUCT('a',1,'b',2), ARRAY_CONSTRUCT('x','y','z')");
+  conn.execute(
+      "INSERT INTO semi_multi "
+      "SELECT 3, NULL, NULL, NULL");
+
+  // When Query "SELECT v, o, a FROM <table> ORDER BY id" is executed
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT v, o, a FROM semi_multi ORDER BY id"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then Each row should contain the expected semi-structured values including NULLs
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"({"x":1})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 2), R"({"k":"v1"})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"([1,2])");
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"([10,20])");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 2), R"({"a":1,"b":2})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"(["x","y","z"])");
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
+  CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 2).has_value());
+  CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 3).has_value());
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+// ============================================================================
+// STRUCTURED TYPES (ODBC-specific)
+// ============================================================================
+
+TEST_CASE("should handle structured types", "[semi_structured][structured_types]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Structured type expressions (typed array, typed object, typed map) are fetched as SQL_C_CHAR
+  auto arr_stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)::ARRAY(INT)");
+
+  // Then Each structured type returns valid JSON data
+  check_json_equals(get_data<SQL_C_CHAR>(arr_stmt, 1), R"([1,2,3])");
+
+  auto obj_stmt =
+      conn.execute_fetch("SELECT OBJECT_CONSTRUCT('a', 1, 'b', 'two', 'c', 3)::OBJECT(a INT, b VARCHAR, c INT)");
+  auto obj_json = parse_json_text(get_data<SQL_C_CHAR>(obj_stmt, 1));
+  REQUIRE(obj_json.is<picojson::object>());
+  CHECK(obj_json.get<picojson::object>().size() == 3);
+
+  auto map_stmt = conn.execute_fetch("SELECT OBJECT_CONSTRUCT('x', 'foo', 'y', 'bar')::MAP(VARCHAR, VARCHAR)");
+  auto map_json = parse_json_text(get_data<SQL_C_CHAR>(map_stmt, 1));
+  REQUIRE(map_json.is<picojson::object>());
+  CHECK(map_json.get<picojson::object>().size() == 2);
+}
+
 static picojson::value parse_json_text(const std::string& json_text) {
   picojson::value json;
   const auto error = picojson::parse(json, json_text);

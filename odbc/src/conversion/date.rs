@@ -9,7 +9,9 @@ use crate::api::ParameterBinding;
 use crate::conversion::error::{
     BindingNumericOutOfRangeSnafu, JsonBindingError, UnsupportedCDataTypeSnafu,
 };
-use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::error::{
+    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+};
 use crate::conversion::param_binding::{
     buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
 };
@@ -63,7 +65,7 @@ impl WriteODBCType for SnowflakeDate {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-        _get_data_offset: &mut Option<usize>,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
             CDataType::Default | CDataType::Date | CDataType::TypeDate => {
@@ -73,6 +75,75 @@ impl WriteODBCType for SnowflakeDate {
                     day: snowflake_value.day() as u16,
                 };
                 binding.write_fixed(date);
+                Ok(vec![])
+            }
+            CDataType::Char => {
+                if binding.buffer_length > 0 && binding.buffer_length < 11 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_CHAR date (minimum 11 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let formatted = format!(
+                    "{:04}-{:02}-{:02}",
+                    snowflake_value.year(),
+                    snowflake_value.month(),
+                    snowflake_value.day()
+                );
+                Ok(binding.write_char_string(&formatted, get_data_offset))
+            }
+            CDataType::WChar => {
+                if binding.buffer_length > 0 && binding.buffer_length < 22 {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_WCHAR date (minimum 22 bytes)"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+                let formatted = format!(
+                    "{:04}-{:02}-{:02}",
+                    snowflake_value.year(),
+                    snowflake_value.month(),
+                    snowflake_value.day()
+                );
+                Ok(binding.write_wchar_string(&formatted, get_data_offset))
+            }
+            CDataType::Binary => {
+                let date = sql::Date {
+                    year: snowflake_value.year() as i16,
+                    month: snowflake_value.month() as u16,
+                    day: snowflake_value.day() as u16,
+                };
+                let mut bytes = [0u8; std::mem::size_of::<sql::Date>()];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        &date as *const sql::Date as *const u8,
+                        bytes.as_mut_ptr(),
+                        bytes.len(),
+                    );
+                }
+                if binding.buffer_length > 0
+                    && (binding.buffer_length as usize) < std::mem::size_of::<sql::Date>()
+                {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_BINARY date".to_string(),
+                    }
+                    .fail();
+                }
+                Ok(binding.write_binary(&bytes, get_data_offset))
+            }
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let ts = sql::Timestamp {
+                    year: snowflake_value.year() as i16,
+                    month: snowflake_value.month() as u16,
+                    day: snowflake_value.day() as u16,
+                    hour: 0,
+                    minute: 0,
+                    second: 0,
+                    fraction: 0,
+                };
+                binding.write_fixed(ts);
                 Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu {

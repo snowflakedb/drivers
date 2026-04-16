@@ -413,15 +413,51 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set
 });
 
+fn sql_state_from_server_message(message: &str) -> SqlState {
+    if message.contains("SQL compilation error") {
+        SqlState::SyntaxErrorOrAccessRuleViolation
+    } else if message.contains("out of representable range") {
+        SqlState::NumericValueOutOfRange
+    } else if message.contains("too long and would be truncated") {
+        SqlState::StringDataRightTruncation
+    } else {
+        SqlState::GeneralError
+    }
+}
+
 impl OdbcError {
     pub fn message_text(&self) -> String {
         let trace = self.error_trace();
-        let error_message = trace
-            .last()
-            .map(|entry| entry.message.clone())
-            .unwrap_or_default();
+        let error_message = self.structured_message().unwrap_or_else(|| {
+            trace
+                .last()
+                .map(|entry| entry.message.clone())
+                .unwrap_or_default()
+        });
         let trace_text = format_error_trace(&trace);
         format!("{}\nTrace:\n{}", error_message, trace_text)
+    }
+
+    /// Extract a user-facing message from structured protobuf error fields
+    /// when available; returns `None` to fall back to the generic trace-based
+    /// message.
+    fn structured_message(&self) -> Option<String> {
+        match self {
+            OdbcError::CoreError { source, .. } => match source.as_ref() {
+                CoreProtobufError::Application { error, .. } => match error.as_ref() {
+                    ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
+                        explanation: Some(explanation),
+                        ..
+                    }) => Some(explanation.clone()),
+                    ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
+                        Some(format!("Missing required parameter: {parameter}"))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
@@ -514,9 +550,6 @@ impl OdbcError {
                 JsonBindingError::InvalidBooleanValue { .. } => {
                     SqlState::InvalidCharacterValueForCast
                 }
-                JsonBindingError::BindingNumericOutOfRange { .. } => {
-                    SqlState::NumericValueOutOfRange
-                }
                 _ => SqlState::GeneralError,
             },
             OdbcError::CoreError { source, .. } => match source.as_ref() {
@@ -554,14 +587,8 @@ impl OdbcError {
                     }
                     match error.as_ref() {
                         ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
-                        ErrorType::GenericError(_) => {
-                            if message.contains("SQL compilation error") {
-                                SqlState::SyntaxErrorOrAccessRuleViolation
-                            } else if message.contains("out of representable range") {
-                                SqlState::NumericValueOutOfRange
-                            } else {
-                                SqlState::GeneralError
-                            }
+                        ErrorType::GenericError(_) | ErrorType::InternalError(_) => {
+                            sql_state_from_server_message(message)
                         }
                         ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
                             parameter,
@@ -578,15 +605,6 @@ impl OdbcError {
                                 SqlState::InvalidAuthorizationSpecification
                             } else {
                                 SqlState::InvalidConnectionStringAttribute
-                            }
-                        }
-                        ErrorType::InternalError(_) => {
-                            if message.contains("SQL compilation error") {
-                                SqlState::SyntaxErrorOrAccessRuleViolation
-                            } else if message.contains("out of representable range") {
-                                SqlState::NumericValueOutOfRange
-                            } else {
-                                SqlState::GeneralError
                             }
                         }
                         ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
@@ -709,7 +727,9 @@ impl ErrorTrace for CoreProtobufError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversion::error::{NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu};
+    use crate::conversion::error::{
+        InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+    };
 
     #[test]
     fn numeric_magnitude_overflow_maps_to_22003() {
@@ -761,6 +781,40 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::GeneralError);
+    }
+
+    #[test]
+    fn invalid_boolean_value_maps_to_22018() {
+        let json_err = InvalidBooleanValueSnafu {
+            value: "hello".to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(
+            odbc_err.to_sql_state(),
+            SqlState::InvalidCharacterValueForCast
+        );
+    }
+
+    #[test]
+    fn server_truncation_error_maps_to_22001() {
+        let odbc_err = OdbcError::CoreError {
+            source: Box::new(CoreProtobufError::Application {
+                error: Box::new(ErrorType::GenericError(
+                    sf_core::protobuf::generated::database_driver_v1::GenericError {},
+                )),
+                message: "String 'hello world' is too long and would be truncated".to_string(),
+                status_code: 0,
+                error_trace: vec![],
+                sql_state: None,
+                location: snafu::Location::new("test", 0, 0),
+            }),
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::StringDataRightTruncation);
     }
 
     #[test]

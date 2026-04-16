@@ -238,6 +238,18 @@ jobs:
             name: Windows x64
             driver_lib: sfodbc.dll
             cloud_provider: gcp
+          - os: ubuntu-latest
+            name: Linux x64
+            driver_lib: libsfodbc.so
+            cloud_provider: azure
+          - os: macos-latest
+            name: macOS ARM64
+            driver_lib: libsfodbc.dylib
+            cloud_provider: azure
+          - os: windows-latest
+            name: Windows x64
+            driver_lib: sfodbc.dll
+            cloud_provider: azure
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }}, ${{ matrix.cloud_provider }})
     steps:
