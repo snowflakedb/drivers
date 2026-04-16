@@ -113,7 +113,6 @@ jobs:
               - '.github/workflows/**'
               - '.buildkite/**'
               - 'scripts/decode_secrets.*'
-              - 'scripts/parameters.json'
               - 'scripts/shared/**'
               - 'ci/**'
             docs_only:

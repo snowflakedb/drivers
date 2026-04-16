@@ -2,7 +2,7 @@ name: Cargo Cache
 description: >
   Restore or save Cargo registry and target directory.
   Use mode=restore after checkout, mode=save at end of job.
-  Save only runs on main branch to prevent PRs from evicting main's caches.
+  All branches save to cache. GitHub scopes caches per branch automatically.
 
 inputs:
   mode:

@@ -268,17 +268,17 @@ jobs:
 
       - name: Build ODBC driver (Linux)
         if: runner.os == 'Linux'
-        run: cargo build
+        run: cargo build --package odbc
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
 
       - name: Build ODBC driver (macOS)
         if: runner.os == 'macOS'
-        run: cargo build
+        run: cargo build --package odbc
 
       - name: Build ODBC driver (Windows)
         if: runner.os == 'Windows'
-        run: cargo build
+        run: cargo build --package odbc
         env:
           RUSTFLAGS: "-C linker=rust-lld"
 

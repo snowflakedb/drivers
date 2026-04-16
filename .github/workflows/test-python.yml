@@ -82,14 +82,14 @@ jobs:
 
       - name: Build sf_core (Linux)
         if: runner.os == 'Linux'
-        run: cargo build --release --package sf_core
+        run: cargo build --release --package sf_core --config profile.release.opt-level=2
 
       - name: Build sf_core (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
-          cargo build --release --package sf_core --config profile.release.strip=false
+          cargo build --release --package sf_core --config profile.release.strip=false --config profile.release.opt-level=2
 
       - name: Save Rust cache
         if: always()
