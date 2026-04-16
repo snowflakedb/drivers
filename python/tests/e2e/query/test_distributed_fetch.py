@@ -22,7 +22,7 @@ class TestDistributedFetch:
     """Tests for cursor.get_result_batches()."""
 
     def test_should_fetch_all_rows_when_batches_are_pickled_and_fetched_in_parallel_threads(
-        self, execute_query, cursor, connection_factory
+        self, execute_query, cursor, connection
     ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
@@ -53,12 +53,11 @@ class TestDistributedFetch:
 
         # And A thread pool is started with up to 4 workers
         all_ids: list[int] = []
-        with ThreadPoolExecutor(max_workers=min(4, len(pickled_batches))) as pool:
+        with ThreadPoolExecutor(max_workers=4) as pool:
             # And Each thread deserializes its batch, opens a fresh connection, and iterates rows
             def _fetch_batch_rows(pickled_batch: bytes) -> list[int]:
                 restored_batch = pickle.loads(pickled_batch)
-                with connection_factory() as conn:
-                    return [row[0] for row in restored_batch.create_iter(connection=conn)]
+                return [row[0] for row in restored_batch.create_iter(connection=connection)]
 
             futures = [pool.submit(_fetch_batch_rows, pb) for pb in pickled_batches]
             for future in as_completed(futures):

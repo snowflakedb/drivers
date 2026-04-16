@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 
 from collections.abc import Generator, Iterable
 from functools import cached_property
@@ -17,6 +18,8 @@ from typing import Any, Callable, Union
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConfigSetting,
+    ConnectionHandle,
+    DatabaseHandle,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
@@ -143,9 +146,9 @@ class Connection:
         self._arrow_number_to_decimal: bool = bool(kwargs.pop("arrow_number_to_decimal", False))
 
         self.db_api = database_driver_client()
-        self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
+        self.db_handle: DatabaseHandle | None = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
-        self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+        self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
@@ -197,32 +200,43 @@ class Connection:
         _sensitive_keys = {"password", "private_key", "passcode", "private_key_password", "private_key_file_pwd"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
+        self._close_lock = threading.Lock()
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
     @pep249
     def close(self) -> None:
-        """Close the connection now."""
-        if self.is_closed():
-            return
-        if self.conn_handle:
-            self._release_connection_handle()
-        if self.db_handle:
-            self._release_database_handle()
-        self._closed = True
+        """Close the connection now.
 
-    def _release_connection_handle(self) -> None:
+        Thread-safety: the lock is held only for the flag flip and handle swap
+        (no I/O, no risk of deadlock).  The actual Rust-side release happens
+        outside the lock so concurrent ``close()`` calls are idempotent and
+        in-flight operations see the connection as closed immediately.
+        """
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            conn_handle, self.conn_handle = self.conn_handle, None
+            db_handle, self.db_handle = self.db_handle, None
+
+        if conn_handle:
+            self._release_connection_handle(conn_handle)
+        if db_handle:
+            self._release_database_handle(db_handle)
+
+    def _release_connection_handle(self, conn_handle: ConnectionHandle) -> None:
         """Release the Rust-side connection handle."""
         try:
-            connection_release_request = ConnectionReleaseRequest(conn_handle=self.conn_handle)
+            connection_release_request = ConnectionReleaseRequest(conn_handle=conn_handle)
             self.db_api.connection_release(connection_release_request)
         except Exception:
             logger.warning("Failed to release connection handle", exc_info=True)
 
-    def _release_database_handle(self) -> None:
+    def _release_database_handle(self, db_handle: DatabaseHandle) -> None:
         """Release the Rust-side database handle."""
         try:
-            database_release_request = DatabaseReleaseRequest(db_handle=self.db_handle)
+            database_release_request = DatabaseReleaseRequest(db_handle=db_handle)
             self.db_api.database_release(database_release_request)
         except Exception:
             logger.warning("Failed to release database handle", exc_info=True)
