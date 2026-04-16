@@ -56,6 +56,8 @@ class PatSetup {
     if (bk && bk[0] != '\0') return "BK_" + sanitize(bk);
     const char* jnk = std::getenv("BUILD_NUMBER");
     if (jnk && jnk[0] != '\0') return "JNK_" + sanitize(jnk);
+    const char* gha = std::getenv("GITHUB_RUN_NUMBER");
+    if (gha && gha[0] != '\0') return "GHA_" + sanitize(gha);
     return "LOCAL_0";
   }
 

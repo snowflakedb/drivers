@@ -19,6 +19,9 @@ def _ci_build_tag() -> str:
     jnk = os.environ.get("BUILD_NUMBER")
     if jnk:
         return f"JNK_{_sanitize(jnk)}"
+    gha = os.environ.get("GITHUB_RUN_NUMBER")
+    if gha:
+        return f"GHA_{_sanitize(gha)}"
     return "LOCAL_0"
 
 

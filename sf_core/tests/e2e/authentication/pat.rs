@@ -122,6 +122,11 @@ fn ci_build_tag() -> String {
     {
         return format!("JNK_{}", sanitize(&build));
     }
+    if let Ok(build) = std::env::var("GITHUB_RUN_NUMBER")
+        && !build.is_empty()
+    {
+        return format!("GHA_{}", sanitize(&build));
+    }
     "LOCAL_0".to_string()
 }
 
