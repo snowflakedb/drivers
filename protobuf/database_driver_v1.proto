@@ -51,12 +51,6 @@ enum InfoCode {
   INFO_CODE_DRIVER_ADBC_VERSION = 204;
 }
 
-enum ErrorStrategy {
-  ERROR_STRATEGY_UNSPECIFIED = 0;  // Defaults to STRICT
-  ERROR_STRATEGY_BEST_EFFORT = 1;  // Log errors, always succeed
-  ERROR_STRATEGY_STRICT = 2;       // Raise errors (except SESSION_GONE)
-}
-
 // Error detail message
 message ErrorDetail {
   string key = 1;
