@@ -1,6 +1,6 @@
 use arrow::array::{Array, PrimitiveArray};
 use arrow::datatypes::Int64Type;
-use chrono::{NaiveTime, Timelike};
+use chrono::{Datelike, NaiveTime, Timelike};
 use odbc_sys as sql;
 use serde_json::Value;
 
@@ -125,6 +125,48 @@ impl WriteODBCType for SnowflakeTime {
                 }
                 let formatted = format_time_string(&snowflake_value);
                 Ok(binding.write_wchar_string(&formatted, get_data_offset))
+            }
+            CDataType::Binary => {
+                let time = sql::Time {
+                    hour: snowflake_value.hour() as u16,
+                    minute: snowflake_value.minute() as u16,
+                    second: snowflake_value.second() as u16,
+                };
+                let mut bytes = [0u8; std::mem::size_of::<sql::Time>()];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        &time as *const sql::Time as *const u8,
+                        bytes.as_mut_ptr(),
+                        bytes.len(),
+                    );
+                }
+                if binding.buffer_length > 0
+                    && (binding.buffer_length as usize) < std::mem::size_of::<sql::Time>()
+                {
+                    return NumericValueOutOfRangeSnafu {
+                        reason: "Buffer too small for SQL_C_BINARY time".to_string(),
+                    }
+                    .fail();
+                }
+                Ok(binding.write_binary(&bytes, get_data_offset))
+            }
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                let today = chrono::Local::now().date_naive();
+                let ts = sql::Timestamp {
+                    year: today.year() as i16,
+                    month: today.month() as u16,
+                    day: today.day() as u16,
+                    hour: snowflake_value.hour() as u16,
+                    minute: snowflake_value.minute() as u16,
+                    second: snowflake_value.second() as u16,
+                    fraction: 0,
+                };
+                binding.write_fixed(ts);
+                if snowflake_value.nanosecond() != 0 {
+                    Ok(vec![Warning::NumericValueTruncated])
+                } else {
+                    Ok(vec![])
+                }
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,

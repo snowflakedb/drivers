@@ -28,7 +28,7 @@ from .._internal.binding_converters import (
     ParamStyle,
 )
 from .._internal.decorators import pep249
-from .._internal.errorcode import ER_CURSOR_IS_CLOSED
+from .._internal.errorcode import ER_CURSOR_IS_CLOSED, ER_INVALID_VALUE
 from .._internal.extras import check_dependency, pandas, pyarrow, requires_dependency
 from .._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
@@ -409,6 +409,9 @@ class SnowflakeCursorBase(abc.ABC):
         self.reset()
         return self._execute(operation, parameters, _is_put_get, **kwargs)
 
+    def _format_query_for_log(self, query: str) -> str:
+        return self._connection._format_query_for_log(query)
+
     def _execute(
         self,
         operation: str,
@@ -417,6 +420,9 @@ class SnowflakeCursorBase(abc.ABC):
         **kwargs: Any,
     ) -> SnowflakeCursorBase:
         """Execute query logic."""
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("query: [%s]", self._format_query_for_log(operation))
+
         query, bindings = self._prepare_query(operation, parameters)
 
         result: ExecuteResult | None = None
@@ -472,7 +478,7 @@ class SnowflakeCursorBase(abc.ABC):
             seq_of_parameters (sequence): Sequence of parameter sequences or dicts
 
         Raises:
-            ProgrammingError: If parameter sequences have inconsistent lengths
+            InterfaceError: If parameter sequences have inconsistent lengths
         """
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
@@ -508,8 +514,8 @@ class SnowflakeCursorBase(abc.ABC):
         for params in rows:
             if len(params) != first_len:
                 raise InterfaceError(
-                    f"251007: Bulk data size don't match. expected: {first_len}, "
-                    f"got: {len(params)}, command: {operation}"
+                    f"Bulk data size don't match. expected: {first_len}, got: {len(params)}, command: {operation}",
+                    errno=ER_INVALID_VALUE,
                 )
 
         # Transpose from row-major to column-major format

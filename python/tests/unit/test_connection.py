@@ -690,6 +690,88 @@ class TestApplicationProperty:
         assert "application" not in request.options
 
 
+class TestLogMaxQueryLength:
+    """Unit tests for Connection.log_max_query_length and _format_query_for_log."""
+
+    def test_default_value_is_80(self, connection):
+        assert connection.log_max_query_length == 80
+
+    def test_custom_value_at_connect_time(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", log_max_query_length=200)
+        assert conn.log_max_query_length == 200
+
+    def test_format_short_query_unchanged(self, connection):
+        query = "SELECT 1"
+        assert connection._format_query_for_log(query) == "SELECT 1"
+
+    def test_format_long_query_truncated(self, connection):
+        query = "x" * 100
+        result = connection._format_query_for_log(query)
+        assert result == "x" * 80 + "..."
+        assert len(result) == 83
+
+    def test_format_query_one_below_boundary(self, connection):
+        query = "x" * 79
+        assert connection._format_query_for_log(query) == "x" * 79
+
+    def test_format_collapses_newlines(self, connection):
+        query = "SELECT\n    col1,\n    col2\nFROM\n    my_table"
+        result = connection._format_query_for_log(query)
+        assert "\n" not in result
+        assert result == "SELECT col1, col2 FROM my_table"
+
+    def test_format_strips_leading_trailing_whitespace_per_line(self, connection):
+        query = "  SELECT 1  \n  FROM dual  "
+        result = connection._format_query_for_log(query)
+        assert result == "SELECT 1 FROM dual"
+
+    def test_format_collapses_then_truncates(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", log_max_query_length=20)
+
+        query = "SELECT\n    very_long_column_name\nFROM\n    my_table"
+        result = conn._format_query_for_log(query)
+        assert len(result) == 23  # 20 + "..."
+        assert result.endswith("...")
+
+    def test_custom_zero_truncates_everything(self, mock_db_api):
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", log_max_query_length=0)
+
+        assert conn._format_query_for_log("SELECT 1") == "..."
+
+    def test_not_sent_to_sf_core(self, mock_db_api):
+        """log_max_query_length is a client-side concern and must not be forwarded to sf_core."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", log_max_query_length=200)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert "log_max_query_length" not in request.options
+
+    def test_not_in_stored_kwargs(self, mock_db_api):
+        """log_max_query_length should be popped from kwargs so it doesn't leak."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            conn = Connection(user="u", account="a", log_max_query_length=200)
+        assert "log_max_query_length" not in conn.kwargs
+
+    def test_format_query_at_exact_boundary(self, connection):
+        """Legacy uses strict less-than: a query of exactly log_max_query_length chars IS truncated."""
+        query = "x" * 80
+        result = connection._format_query_for_log(query)
+        assert result == "x" * 80 + "..."
+
+
 class TestConnectionArrowProperties:
     """Unit tests for Connection properties (getters/setters)."""
 

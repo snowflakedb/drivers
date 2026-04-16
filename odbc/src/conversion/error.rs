@@ -220,13 +220,6 @@ pub enum JsonBindingError {
         location: Location,
     },
 
-    #[snafu(display("Numeric value out of range: {reason}"))]
-    BindingNumericOutOfRange {
-        reason: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("Failed to serialize bindings to JSON: {source}"))]
     Serialization {
         source: serde_json::Error,
