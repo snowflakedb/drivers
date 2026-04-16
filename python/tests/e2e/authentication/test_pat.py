@@ -1,10 +1,25 @@
 import logging
+import os
 import random
 
 import pytest
 
 from ...config import get_test_parameters
 from .auth_helpers import verify_login_error, verify_simple_query_execution
+
+
+def _sanitize(s: str) -> str:
+    return "".join(c for c in s if c.isalnum())
+
+
+def _ci_build_tag() -> str:
+    bk = os.environ.get("BUILDKITE_BUILD_NUMBER")
+    if bk:
+        return f"BK_{_sanitize(bk)}"
+    jnk = os.environ.get("BUILD_NUMBER")
+    if jnk:
+        return f"JNK_{_sanitize(jnk)}"
+    return "LOCAL_0"
 
 
 @pytest.fixture(scope="class")
@@ -61,7 +76,7 @@ class PAT:
         self._token_secret = None
 
     def acquire_token(self) -> str:
-        token_name = f"pat_{random.randint(0, 2**32 - 1):x}"
+        token_name = f"UD_PYTHON_{_ci_build_tag()}_{random.randint(0, 2**32 - 1):08x}"
         test_params = get_test_parameters()
         user = test_params.get("SNOWFLAKE_TEST_USER")
         role = test_params.get("SNOWFLAKE_TEST_ROLE")

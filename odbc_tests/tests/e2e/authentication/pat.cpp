@@ -3,7 +3,11 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <iomanip>
+#include <iterator>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -41,6 +45,20 @@ class PatSetup {
 
   ~PatSetup() { cleanup(); }
 
+  static std::string sanitize(const std::string& s) {
+    std::string result;
+    std::copy_if(s.begin(), s.end(), std::back_inserter(result), ::isalnum);
+    return result;
+  }
+
+  static std::string ci_build_tag() {
+    const char* bk = std::getenv("BUILDKITE_BUILD_NUMBER");
+    if (bk && bk[0] != '\0') return "BK_" + sanitize(bk);
+    const char* jnk = std::getenv("BUILD_NUMBER");
+    if (jnk && jnk[0] != '\0') return "JNK_" + sanitize(jnk);
+    return "LOCAL_0";
+  }
+
   PatResult acquire() {
     PatResult result;
 
@@ -49,7 +67,7 @@ class PatSetup {
     std::uniform_int_distribution<uint32_t> dis;
     uint32_t random_number = dis(gen);
     std::stringstream ss;
-    ss << "pat_" << std::hex << std::setw(8) << std::setfill('0') << random_number;
+    ss << "UD_ODBC_" << ci_build_tag() << "_" << std::hex << std::setw(8) << std::setfill('0') << random_number;
     token_name = ss.str();
     result.token_name = token_name;
 

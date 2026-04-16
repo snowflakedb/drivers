@@ -66,7 +66,7 @@ struct Pat {
 
 impl Pat {
     fn acquire() -> Self {
-        let name = format!("pat_{:x}", rand::random::<u32>());
+        let name = format!("UD_RUST_{}_{:08x}", ci_build_tag(), rand::random::<u32>());
         let client = SnowflakeTestClient::connect_with_default_auth();
         let user = client.parameters.user.clone().unwrap();
         let role = client.parameters.role.clone().unwrap();
@@ -109,4 +109,22 @@ fn set_pat_token(client: &SnowflakeTestClient, token_secret: &str) {
 
 fn set_invalid_pat_token(client: &SnowflakeTestClient) {
     client.set_connection_option("token", "invalid_token_12345");
+}
+
+fn ci_build_tag() -> String {
+    if let Ok(build) = std::env::var("BUILDKITE_BUILD_NUMBER")
+        && !build.is_empty()
+    {
+        return format!("BK_{}", sanitize(&build));
+    }
+    if let Ok(build) = std::env::var("BUILD_NUMBER")
+        && !build.is_empty()
+    {
+        return format!("JNK_{}", sanitize(&build));
+    }
+    "LOCAL_0".to_string()
+}
+
+fn sanitize(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
 }
