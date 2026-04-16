@@ -129,7 +129,7 @@ class TestFloatLiteral:
         BOUNDARY_LITERAL_CASES,
         ids=["max", "min"],
     )
-    @pytest.mark.skip_for_json_result_set(reason="JSON format loses precision for Float.MAX_VALUE boundary values")
+    @pytest.mark.skip_for_json_result_set(reason="JSON format loses precision for Double.MAX_VALUE boundary values")
     def test_should_handle_float_case_boundary_values_from_literals_for_float_and_synonyms(
         self, execute_query, float_type, select_values, expected
     ):
@@ -245,7 +245,7 @@ class TestFloatTable:
         assert_type(values, float)
 
     @float_type_parametrize
-    @pytest.mark.skip_for_json_result_set(reason="JSON format loses precision for Float.MAX_VALUE boundary values")
+    @pytest.mark.skip_for_json_result_set(reason="JSON format loses precision for 64-bit FLOAT max boundary values")
     def test_should_handle_float_boundary_values_from_table_for_float_and_synonyms(
         self, execute_query, tmp_schema, float_type
     ):
