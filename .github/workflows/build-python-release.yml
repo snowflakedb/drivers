@@ -208,9 +208,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Delete sf-core artifacts
-        uses: geekyeggo/delete-artifact@v5
-        with:
-          name: sf-core-*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts \
+            --paginate -q '.artifacts[] | select(.name | startswith("sf-core-")) | .id' \
+          | while read id; do
+              echo "Deleting artifact $id"
+              gh api -X DELETE repos/${{ github.repository }}/actions/artifacts/$id
+            done
 
   # ── Status gate ────────────────────────────────────────────────────
   release-status:
