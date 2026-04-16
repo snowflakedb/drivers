@@ -178,14 +178,17 @@ def main():
     if not build_tag:
         bk = os.environ.get("BUILDKITE_BUILD_NUMBER")
         jnk = os.environ.get("BUILD_NUMBER")
+        gha = os.environ.get("GITHUB_RUN_NUMBER")
         if bk:
             build_tag = f"BK_{_sanitize(bk)}"
         elif jnk:
             build_tag = f"JNK_{_sanitize(jnk)}"
+        elif gha:
+            build_tag = f"GHA_{_sanitize(gha)}"
         else:
             log.error(
                 "Cannot determine build tag. Provide --build-tag or set "
-                "BUILD_NUMBER / BUILDKITE_BUILD_NUMBER."
+                "BUILD_NUMBER / BUILDKITE_BUILD_NUMBER / GITHUB_RUN_NUMBER."
             )
             sys.exit(1)
 
