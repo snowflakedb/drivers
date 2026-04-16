@@ -1,38 +1,64 @@
 @odbc
-Feature: ODBC C char types to SQL boolean conversions via parameter binding
+Feature: ODBC SQLBindParameter C char types to SQL_BIT conversion
+  # Tests for binding SQL_C_CHAR and SQL_C_WCHAR string values to SQL_BIT
+  # (boolean) parameters.
 
   @odbc_e2e
-  Scenario: should bind SQL_C_CHAR true string to SQL_BIT
+  Scenario: should bind SQL_C_CHAR '1' to SQL_BIT.
     Given Snowflake client is logged in
-    When SQL_C_CHAR "1" is bound to SQL_BIT and inserted
-    Then the value is read back as SQL_C_BIT 1
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
 
   @odbc_e2e
-  Scenario: should bind SQL_C_CHAR false string to SQL_BIT
+  Scenario: should bind SQL_C_CHAR '0' to SQL_BIT.
     Given Snowflake client is logged in
-    When SQL_C_CHAR "0" is bound to SQL_BIT and inserted
-    Then the value is read back as SQL_C_BIT 0
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be FALSE
 
   @odbc_e2e
-  Scenario: should bind SQL_C_WCHAR true string to SQL_BIT
+  Scenario: should bind SQL_C_WCHAR '1' to SQL_BIT.
     Given Snowflake client is logged in
-    When SQL_C_WCHAR "1" is bound to SQL_BIT and inserted
-    Then the value is read back as SQL_C_BIT 1
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
 
   @odbc_e2e
-  Scenario: should bind SQL_C_WCHAR false string to SQL_BIT
+  Scenario: should bind SQL_C_WCHAR '0' to SQL_BIT.
     Given Snowflake client is logged in
-    When SQL_C_WCHAR "0" is bound to SQL_BIT and inserted
-    Then the value is read back as SQL_C_BIT 0
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be FALSE
 
   @odbc_e2e
-  Scenario: should bind SQL_C_CHAR with NULL indicator to SQL_BIT
+  Scenario: should bind SQL_C_CHAR 'true' to SQL_BIT.
     Given Snowflake client is logged in
-    When SQL_C_CHAR is bound with SQL_NULL_DATA to SQL_BIT and inserted
-    Then the stored value should be NULL
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE
 
   @odbc_e2e
-  Scenario: should bind SQL_C_WCHAR with NULL indicator to SQL_BIT
+  Scenario: should bind SQL_C_CHAR 'false' to SQL_BIT.
     Given Snowflake client is logged in
-    When SQL_C_WCHAR is bound with SQL_NULL_DATA to SQL_BIT and inserted
-    Then the stored value should be NULL
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be FALSE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_CHAR numeric '42' to SQL_BIT.
+    Given Snowflake client is logged in
+    When the C type value is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be TRUE (nonzero numeric string)
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_WCHAR with SQL_NTS to SQL_BIT.
+    Given Snowflake client is logged in
+    When SQL_C_WCHAR is bound with SQL_NTS indicator as SQL_BIT
+    Then the result should be TRUE
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_CHAR NULL to SQL_BIT.
+    Given Snowflake client is logged in
+    When SQL_C_CHAR with SQL_NULL_DATA is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be NULL
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_WCHAR NULL to SQL_BIT.
+    Given Snowflake client is logged in
+    When SQL_C_WCHAR with SQL_NULL_DATA is bound as SQL_BIT and SELECT ? is executed
+    Then the result should be NULL

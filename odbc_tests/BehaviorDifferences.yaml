@@ -368,15 +368,21 @@ behavior_differences:
       SQL_C_BINARY as a valid source type for SQL_VARCHAR.
       https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/converting-data-from-c-to-sql-data-types
   35:
-    name: "Negative integer to SQL_BIT rejected during parameter binding"
+    name: "Limited cross-type conversion support for SQL_BIT parameter binding"
     description: |
-      OLD driver: Returns SQL_ERROR with SQLSTATE 22003 (numeric value out
-      of range) when binding a negative integer (e.g., -1) to SQL_BIT.
-      NEW driver: Treats any nonzero value as true (1) per the C boolean
-      convention, consistent with how boolean conversions work in the fetch
-      direction.
-      Impact: Applications binding negative integers to BOOLEAN columns will
-      succeed on the new driver instead of failing.
+      OLD driver: Has restricted value ranges for SQL_BIT parameter binding.
+      Integer and SQL_C_DOUBLE types only accept 0 and 1; other values
+      (negative, >1) fail with 22003. SQL_C_CHAR only accepts "0"/"1";
+      string literals like "true"/"false" and numeric strings are rejected.
+      SQL_C_FLOAT is not supported at all. SQL_C_DOUBLE NaN is silently
+      converted to false instead of failing.
+      NEW driver: Supports all numeric and string C types for SQL_BIT
+      binding. Any nonzero value is true, zero is false. Boolean string
+      literals ("true"/"false") and numeric strings are accepted.
+      Non-finite float/double values (NaN/inf) are rejected with SQLSTATE
+      22018 (invalid character value for cast).
+      Impact: Applications using cross-type conversions to BOOLEAN columns
+      will succeed on the new driver where the old driver returned errors.
   36:
     name: "Subnormal double (DBL_MIN) stored as zero during parameter binding"
     description: |

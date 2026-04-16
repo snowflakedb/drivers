@@ -14,6 +14,18 @@ Feature: ODBC C integer types to SQL boolean conversions via parameter binding
     Then the value is read back as SQL_C_BIT 0
 
   @odbc_e2e
+  Scenario: should bind SQL_C_SLONG nonzero >1 to SQL_BIT via integer
+    Given Snowflake client is logged in
+    When SQL_C_SLONG 42 is bound to SQL_BIT and inserted
+    Then the value is read back as SQL_C_BIT 1
+
+  @odbc_e2e
+  Scenario: should bind SQL_C_SLONG negative to SQL_BIT via integer
+    Given Snowflake client is logged in
+    When SQL_C_SLONG -99 is bound to SQL_BIT and inserted
+    Then the value is read back as SQL_C_BIT 1
+
+  @odbc_e2e
   Scenario: should bind SQL_C_SBIGINT to SQL_BIT
     Given Snowflake client is logged in
     When SQL_C_SBIGINT 1 is bound to SQL_BIT and inserted
