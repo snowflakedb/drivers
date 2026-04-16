@@ -60,47 +60,45 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "format-validator"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: tests/tests_format_validator -> target
+          target-dir: tests/tests_format_validator/target
 
       - name: Run tests format validator
         run: |
           ./tests/tests_format_validator/run_validator.sh
 
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "format-validator"
+          target-dir: tests/tests_format_validator/target
+
   test-coverage-report:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "coverage-report"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: tests/tests_format_validator -> target
+          target-dir: tests/tests_format_validator/target
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -113,6 +111,14 @@ jobs:
             --workspace . \
             --format html \
             --output test_coverage_report.html
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "coverage-report"
+          target-dir: tests/tests_format_validator/target
 
       - name: Upload coverage report
         if: success()

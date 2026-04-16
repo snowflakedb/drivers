@@ -37,21 +37,16 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "clippy"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install clippy
         run: rustup component add clippy
@@ -59,28 +54,37 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "clippy"
+
   build-without-protobuf:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "no-protobuf"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build sf_core without protobuf feature
         run: cargo build --package sf_core --no-default-features --features fips
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "no-protobuf"
 
   test:
     needs: detect-changes
@@ -103,13 +107,14 @@ jobs:
           go-version: 'stable'
           cache: false
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "core-test"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Capture rustc version for cache key
+      - name: Capture rustc version for tarpaulin cache key
         id: rustc-version
         run: echo "version=$(rustc --version | awk '{print $2}')" >> $GITHUB_OUTPUT
 
@@ -156,6 +161,13 @@ jobs:
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
           mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "core-test"
+
   # Non-FIPS ARM64 build and test.
   # On windows-11-arm, --all-features fails for aarch64-pc-windows-msvc with:
   #   library machine type 'x64' conflicts with target machine type 'ARM64'
@@ -175,20 +187,16 @@ jobs:
     name: test (Windows ARM64, non-FIPS)
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "arm64-nonfips"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Capture vcpkg version for cache key
         id: vcpkg-ver
@@ -276,6 +284,13 @@ jobs:
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           set PARAMETER_PATH=${{ github.workspace }}\parameters.json
           cargo test --package sf_core --target aarch64-pc-windows-msvc -- --nocapture
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "arm64-nonfips"
 
   rust-core-status:
     needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64_nonfips]

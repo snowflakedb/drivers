@@ -29,15 +29,9 @@ jobs:
         os: [ubuntu-latest]
         java-version: ['8']
     runs-on: ${{ matrix.os }}
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Set up Java ${{ matrix.java-version }}
         uses: actions/setup-java@v4
@@ -45,11 +39,12 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "jdbc"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Restore Gradle cache
         uses: actions/cache/restore@v5
@@ -85,6 +80,13 @@ jobs:
         env:
           # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "jdbc"
 
       - name: Save Gradle cache
         if: always() && github.ref == 'refs/heads/main'

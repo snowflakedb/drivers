@@ -28,21 +28,16 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     runs-on: ubuntu-latest
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "odbc-unit"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: |
@@ -65,6 +60,13 @@ jobs:
         run: cargo test --package odbc
         env:
           RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "odbc-unit"
 
   odbc_tests_reference:
     strategy:
@@ -233,21 +235,16 @@ jobs:
             driver_lib: sfodbc.dll
     runs-on: ${{ matrix.os }}
     name: build_odbc_driver (${{ matrix.name }})
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "odbc-build"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -284,6 +281,13 @@ jobs:
         run: cargo build
         env:
           RUSTFLAGS: "-C linker=rust-lld"
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "odbc-build"
 
       - name: Upload ODBC driver
         uses: actions/upload-artifact@v4

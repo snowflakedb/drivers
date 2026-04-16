@@ -48,21 +48,16 @@ jobs:
             lib_name: sf_core.dll
     runs-on: ${{ matrix.os }}
     name: build_sf_core (${{ matrix.os }})
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "sf-core-release"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Restore vcpkg cache
         if: matrix.os == 'windows-11-arm'
@@ -104,6 +99,13 @@ jobs:
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           cargo build --release --package sf_core --config profile.release.strip=false
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "sf-core-release"
 
       - name: Upload sf_core library
         uses: actions/upload-artifact@v4
@@ -275,14 +277,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
+          mode: restore
           shared-key: "packaging"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-directories: |
-            core-target
-            proto-target
+
+      - name: Restore core-target cache
+        uses: actions/cache/restore@v5
+        with:
+          path: core-target
+          key: ${{ runner.os }}-rust-packaging-core-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-core-target-
+
+      - name: Restore proto-target cache
+        uses: actions/cache/restore@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-rust-packaging-proto-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-rust-packaging-proto-target-
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
@@ -301,6 +315,27 @@ jobs:
         env:
           CORE_CARGO_TARGET_DIR: ${{ github.workspace }}/core-target
           PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}/proto-target
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "packaging"
+
+      - name: Save core-target cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: core-target
+          key: ${{ runner.os }}-rust-packaging-core-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Save proto-target cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-rust-packaging-proto-target-${{ hashFiles('**/Cargo.lock') }}
 
   # Combined unit + integration tests with universal connector
   python_tests:

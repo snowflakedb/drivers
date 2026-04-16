@@ -1,0 +1,84 @@
+name: Cargo Cache
+description: >
+  Restore or save Cargo registry and target directory.
+  Use mode=restore after checkout, mode=save at end of job.
+  Save only runs on main branch to prevent PRs from evicting main's caches.
+
+inputs:
+  mode:
+    description: '"restore" to restore caches, "save" to save them'
+    required: true
+  shared-key:
+    description: Unique key prefix for this job's target directory cache
+    required: true
+  target-dir:
+    description: Path to the Rust target directory
+    default: target
+
+outputs:
+  rustc-hash:
+    description: Short hash of the rustc version (included in target cache key)
+    value: ${{ steps.rustc.outputs.hash }}
+  registry-cache-key:
+    description: Exact cache key used for Cargo registry (pass to save step)
+    value: ${{ steps.keys.outputs.registry }}
+  target-cache-key:
+    description: Exact cache key used for target directory (pass to save step)
+    value: ${{ steps.keys.outputs.target }}
+
+runs:
+  using: composite
+  steps:
+    # ── Shared: compute keys (runs in both modes) ──
+    - name: Hash rustc version
+      id: rustc
+      shell: bash
+      run: echo "hash=$(rustc -vV | (sha256sum 2>/dev/null || shasum -a 256) | cut -d' ' -f1 | head -c 16)" >> $GITHUB_OUTPUT
+
+    - name: Compute cache keys
+      id: keys
+      shell: bash
+      run: |
+        LOCK_HASH="${{ hashFiles('**/Cargo.lock') }}"
+        echo "registry=${{ runner.os }}-cargo-registry-${LOCK_HASH}" >> $GITHUB_OUTPUT
+        echo "target=${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-${LOCK_HASH}" >> $GITHUB_OUTPUT
+
+    # ── Restore mode ──
+    - name: Restore Cargo registry cache
+      if: inputs.mode == 'restore'
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: ${{ steps.keys.outputs.registry }}
+        restore-keys: ${{ runner.os }}-cargo-registry-
+
+    - name: Restore Rust target cache
+      if: inputs.mode == 'restore'
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ inputs.target-dir }}
+        key: ${{ steps.keys.outputs.target }}
+        restore-keys: |
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-
+          ${{ runner.os }}-rust-${{ inputs.shared-key }}-
+
+    # ── Save mode (main branch only) ──
+    - name: Save Cargo registry cache
+      if: inputs.mode == 'save' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: ${{ steps.keys.outputs.registry }}
+
+    - name: Save Rust target cache
+      if: inputs.mode == 'save' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ inputs.target-dir }}
+        key: ${{ steps.keys.outputs.target }}
