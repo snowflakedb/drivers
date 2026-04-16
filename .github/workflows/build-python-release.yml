@@ -1,6 +1,8 @@
 name: Python Release Build
 
 on:
+  # temporarly for testing
+  pull_request:
   workflow_dispatch:
 
 env:
