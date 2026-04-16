@@ -202,14 +202,14 @@ jobs:
           DRIVER_TYPE: OLD
 
       - name: Save test dependencies cache
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
           key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
       - name: Save ccache
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -459,14 +459,14 @@ jobs:
           DRIVER_TYPE: NEW
 
       - name: Save test dependencies cache
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
           key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
       - name: Save ccache
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         uses: actions/cache/save@v5
         with:
           path: .ccache
@@ -531,14 +531,12 @@ jobs:
             bash -c "cargo build --release --package odbc --target ${{ matrix.target }} && ./scripts/odbc/rpm/package.sh"
 
       - name: Save Cargo registry cache (RPM build)
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: .cargo-cache
           key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-rpm-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save Rust target cache (RPM build)
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: .cargo-target-rpm

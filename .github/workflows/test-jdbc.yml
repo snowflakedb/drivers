@@ -89,7 +89,7 @@ jobs:
           shared-key: "jdbc"
 
       - name: Save Gradle cache
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         uses: actions/cache/save@v5
         with:
           path: |
@@ -160,7 +160,7 @@ jobs:
             --allow-missing
 
       - name: Save Gradle cache
-        if: always() && github.ref == 'refs/heads/main'
+        if: always()
         uses: actions/cache/save@v5
         with:
           path: |

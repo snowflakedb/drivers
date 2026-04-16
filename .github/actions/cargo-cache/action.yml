@@ -68,9 +68,9 @@ runs:
           ${{ runner.os }}-rust-${{ inputs.shared-key }}-${{ steps.rustc.outputs.hash }}-
           ${{ runner.os }}-rust-${{ inputs.shared-key }}-
 
-    # ── Save mode (main branch only) ──
+    # ── Save mode ──
     - name: Save Cargo registry cache
-      if: inputs.mode == 'save' && github.ref == 'refs/heads/main'
+      if: inputs.mode == 'save'
       uses: actions/cache/save@v5
       with:
         path: |
@@ -80,7 +80,7 @@ runs:
         key: ${{ steps.keys.outputs.registry }}
 
     - name: Save Rust target cache
-      if: inputs.mode == 'save' && github.ref == 'refs/heads/main'
+      if: inputs.mode == 'save'
       uses: actions/cache/save@v5
       with:
         path: ${{ inputs.target-dir }}

@@ -68,7 +68,6 @@ jobs:
         run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Save pre-commit hooks cache
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: ~/.cache/pre-commit

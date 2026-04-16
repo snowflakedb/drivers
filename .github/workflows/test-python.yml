@@ -25,15 +25,6 @@ jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml
 
-  # For backcompat
-  build_rust_core:
-    needs: detect-changes
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dummy step
-        run: echo 'Dummy step to pass required check'
-
   # Build sf_core once per platform and share via artifact.
   build_sf_core:
     needs: detect-changes
@@ -75,7 +66,7 @@ jobs:
           vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg cache
-        if: matrix.os == 'windows-11-arm' && github.ref == 'refs/heads/main' && steps.vcpkg-cache-sf-core.outputs.cache-hit != 'true'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-sf-core.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed
@@ -220,7 +211,7 @@ jobs:
           vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm' && github.ref == 'refs/heads/main' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -256,7 +247,6 @@ jobs:
         run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
 
       - name: Save proto generator target cache
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: proto-target
@@ -324,14 +314,12 @@ jobs:
           shared-key: "packaging"
 
       - name: Save core-target cache
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: core-target
           key: ${{ runner.os }}-rust-packaging-core-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save proto-target cache
-        if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v5
         with:
           path: proto-target
@@ -475,7 +463,7 @@ jobs:
           vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm' && github.ref == 'refs/heads/main' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -567,14 +555,14 @@ jobs:
           path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
       - name: Save uv cache (Linux)
-        if: always() && runner.os == 'Linux' && github.ref == 'refs/heads/main'
+        if: always() && runner.os == 'Linux'
         uses: actions/cache/save@v5
         with:
           path: /tmp/.uv-cache
           key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
       - name: Save uv cache (Windows)
-        if: always() && runner.os == 'Windows' && github.ref == 'refs/heads/main'
+        if: always() && runner.os == 'Windows'
         uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
