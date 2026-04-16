@@ -111,15 +111,18 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
     # Apply overrides
     connection_params.update(override_params)
 
-    # Read QUERY_RESULT_FORMAT from environment
+    # Read QUERY_RESULT_FORMAT from environment and normalize to uppercase
     result_format = os.getenv("QUERY_RESULT_FORMAT")
     if result_format:
-        # Initialize session_parameters if not already provided
-        if "session_parameters" not in connection_params:
-            connection_params["session_parameters"] = {}
-        # Don't override if already set in override_params
-        if "PYTHON_CONNECTOR_QUERY_RESULT_FORMAT" not in connection_params["session_parameters"]:
-            connection_params["session_parameters"]["PYTHON_CONNECTOR_QUERY_RESULT_FORMAT"] = result_format
+        # Normalize to canonical uppercase values (JSON or ARROW)
+        result_format_upper = result_format.upper()
+        if result_format_upper in ("JSON", "ARROW"):
+            # Initialize session_parameters if not already provided
+            if "session_parameters" not in connection_params:
+                connection_params["session_parameters"] = {}
+            # Don't override if already set in override_params
+            if "PYTHON_CONNECTOR_QUERY_RESULT_FORMAT" not in connection_params["session_parameters"]:
+                connection_params["session_parameters"]["PYTHON_CONNECTOR_QUERY_RESULT_FORMAT"] = result_format_upper
 
     return adapter.connect(**connection_params)
 

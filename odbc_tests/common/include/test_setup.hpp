@@ -3,11 +3,16 @@
 
 #include <picojson.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <set>
 #include <sstream>
+#include <string>
 
 #ifdef _WIN32
 #include <process.h>
