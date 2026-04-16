@@ -20,7 +20,10 @@ use crate::config::resolver;
 use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::handle_manager::Handle;
-use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
+use crate::rest::snowflake::{
+    self, QueryExecutionMode, QueryInput, RestError, SessionTokens, SnowflakeResponseError,
+    snowflake_query_with_client,
+};
 use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use crate::token_cache::TokenCache;
@@ -40,23 +43,16 @@ impl DatabaseDriverV1 {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().await;
                 if conn.is_post_connect() {
-                    // The guard is intentionally dropped before calling execute_session_sql,
-                    // which internally re-acquires the lock, to avoid a deadlock on the same
-                    // mutex. A TOCTOU gap exists between the check and the SQL execution, but
-                    // this is safe in the ODBC single-threaded connection model where state
-                    // transitions (connect/disconnect) are serialised at the handle level.
-                    drop(conn);
                     let sql = if autocommit {
                         "ALTER SESSION SET AUTOCOMMIT = TRUE"
                     } else {
                         "ALTER SESSION SET AUTOCOMMIT = FALSE"
                     };
-                    self.execute_session_sql(conn_handle, sql).await
+                    self.execute_session_sql(&conn, sql).await
                 } else {
-                    let value = if autocommit { "true" } else { "false" }.to_string();
                     conn.init_session_parameters
                         .get_or_insert_with(HashMap::new)
-                        .insert("AUTOCOMMIT".to_string(), value);
+                        .insert("AUTOCOMMIT".to_string(), autocommit.to_string());
                     Ok(())
                 }
             }
@@ -82,6 +78,10 @@ impl DatabaseDriverV1 {
             }
             .fail();
         }
+        // TODO: ensure that this is correct escaping
+        let escaped = db.replace('"', "\"\"");
+        let sql = format!("USE DATABASE \"{escaped}\"");
+
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let conn = conn_ptr.lock().await;
@@ -92,39 +92,63 @@ impl DatabaseDriverV1 {
                     }
                     .fail();
                 }
-                // The guard is intentionally dropped before calling execute_session_sql,
-                // which internally re-acquires the lock, to avoid a deadlock on the same
-                // mutex. A TOCTOU gap exists between the check and the SQL execution, but
-                // this is safe in the ODBC single-threaded connection model where state
-                // transitions (connect/disconnect) are serialised at the handle level.
-                drop(conn);
+                self.execute_session_sql(&conn, &sql).await
             }
-            None => {
-                return InvalidArgumentSnafu {
-                    argument: "Connection handle not found".to_string(),
-                }
-                .fail();
+            None => InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
             }
+            .fail(),
         }
-        let escaped = db.replace('"', "\"\"");
-        self.execute_session_sql(conn_handle, &format!("USE DATABASE \"{escaped}\""))
-            .await
     }
 
-    /// Execute a session-scoped SQL command using a temporary statement.
-    /// Allocates a statement, executes, then releases it regardless of outcome.
-    async fn execute_session_sql(&self, conn_handle: Handle, sql: &str) -> Result<(), ApiError> {
-        let stmt_handle = self.statement_new(conn_handle)?;
-        let result = async {
-            self.statement_set_sql_query(stmt_handle, sql.to_string())
-                .await?;
-            self.statement_execute_query(stmt_handle, None).await
-        }
-        .await;
-        if let Err(e) = self.statement_release(stmt_handle) {
-            tracing::warn!("execute_session_sql: failed to release statement: {e:?}");
-        }
-        result.map(|_| ())
+    /// Execute a session-scoped SQL command without creating a statement.
+    async fn execute_session_sql(&self, conn: &Connection, sql: &str) -> Result<(), ApiError> {
+        let query_input = QueryInput {
+            sql: sql.to_string(),
+            bindings: None,
+            describe_only: None,
+        };
+        let query_parameters = conn.query_transport_parameters()?;
+        let http_client = conn
+            .http_client
+            .clone()
+            .context(ConnectionNotInitializedSnafu)?;
+        let retry_policy = conn.retry_policy.clone();
+
+        let mut ctx = RefreshContext::new(conn)?;
+        let mut last_error = None;
+        let response = loop {
+            let session_token = ctx.refresh_token(last_error).await?;
+            match snowflake_query_with_client(
+                &http_client,
+                query_parameters.clone(),
+                session_token.reveal(),
+                query_input.clone(),
+                &retry_policy,
+                QueryExecutionMode::Blocking,
+            )
+            .await
+            {
+                Ok(result) => break Ok(result),
+                Err(e) => last_error = Some(e),
+            }
+        }?;
+
+        if response.success {
+            conn.update_session_params_cache(
+                sql,
+                response.data.parameters.as_ref(),
+                &FinalSessionNames {
+                    database: response.data.final_database_name.clone(),
+                    schema: response.data.final_schema_name.clone(),
+                    warehouse: response.data.final_warehouse_name.clone(),
+                    role: response.data.final_role_name.clone(),
+                },
+            )
+            .await;
+        };
+
+        Ok(())
     }
 
     pub async fn connection_init(
