@@ -50,6 +50,7 @@ def okta_params():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip_reference(reason="Bug in reference connector: SNOW-3388171")
 class TestNativeOktaAuthentication:
     def test_should_authenticate_using_native_okta(self, connection_factory, okta_params):
         # Given Okta authentication is configured with valid credentials
