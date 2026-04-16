@@ -26,7 +26,7 @@ use reqwest::{self, Method, header};
 use serde_json;
 use serde_json::value::RawValue;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
 
@@ -369,12 +369,7 @@ async fn send_login_request(
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
 
-    let user_agent = format!(
-        "{}/{} ({}) CPython/3.11.6",
-        login_parameters.client_info.application,
-        login_parameters.client_info.version.clone(),
-        login_parameters.client_info.os.clone()
-    );
+    let user_agent = user_agent(&login_parameters.client_info);
 
     let build_request = || {
         client
@@ -401,6 +396,7 @@ async fn send_login_request(
             .header("accept", "application/snowflake")
             .header("User-Agent", &user_agent)
             .header("Authorization", "Snowflake Token=\"None\"")
+            .timeout(Duration::from_secs(30))
     };
 
     let ctx = HttpContext::new(Method::POST, "/session/v1/login-request").allow_post_retry();
@@ -2129,6 +2125,7 @@ mod tests {
                         }))
                     }
                 })
+                .expect(3)
                 .mount(&server)
                 .await;
 
@@ -2159,9 +2156,10 @@ mod tests {
             let result = send_login_request(&client, &params, &auth_req).await;
 
             assert!(result.is_ok(), "Expected retry to succeed, got: {result:?}");
-            assert!(
-                attempt.load(Ordering::SeqCst) >= 3,
-                "Expected at least 3 attempts (2 failures + 1 success), got {}",
+            assert_eq!(
+                attempt.load(Ordering::SeqCst),
+                3,
+                "Expected exactly 3 attempts (2 failures + 1 success), got {}",
                 attempt.load(Ordering::SeqCst)
             );
         }
