@@ -300,3 +300,41 @@ steps:
             ' || DOCKER_EXIT=$$?
 
           ci/upload_test_results.sh jdbc "JDBC" "$$DOCKER_EXIT" "junit-results/jdbc-junit.xml"
+
+  # ==========================================================================
+  # PAT Cleanup (safety net for aborted/timed-out builds)
+  # ==========================================================================
+  - label: ":broom: Cleanup test PATs"
+    key: "pat-cleanup"
+    depends_on:
+      - step: "rust-core"
+        allow_failure: true
+      - step: "python"
+        allow_failure: true
+      - step: "odbc"
+        allow_failure: true
+      - step: "jdbc"
+        allow_failure: true
+    soft_fail: true
+    agents:
+      queue: "discovery"
+      repo: "snowflakedb/universal-driver"
+    plugins:
+      - ${GLOBAL_PLUGIN}/vault_secrets:
+          secrets:
+            - path: "secret/jenkins/rt-tests/driver_validation_parameters_secret"
+              env_name: "PARAMETERS_SECRET"
+    command: |
+      set -euo pipefail
+      docker run --rm \
+        -v "$$PWD:/workdir" \
+        -w /workdir \
+        -e PARAMETERS_SECRET \
+        -e BUILDKITE_BUILD_NUMBER \
+        "$$DOCKER_IMAGE" \
+        bash -c '
+          ./scripts/decode_secrets.sh
+          pip3 install snowflake-connector-python -q
+          python3 scripts/cleanup_test_pats.py \
+            --parameter-path /workdir/parameters.json
+        '
