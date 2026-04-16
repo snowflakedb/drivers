@@ -83,22 +83,11 @@ jobs:
       - name: Run tests
         working-directory: python
         run: |
-          mkdir -p reports
           hatch run ${{ matrix.hatch_env }}.py${{ matrix.py }}:cov \
-            --json-report --json-report-file=reports/release-${{ env.MATRIX_KEY }}.json \
-            --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml \
-            --cov-report=xml:reports/coverage-${{ env.MATRIX_KEY }}.xml \
-            --cov-report=html:reports/coverage-${{ env.MATRIX_KEY }}-html
+            --junitxml=reports/release-${{ env.MATRIX_KEY }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: results-release-${{ env.MATRIX_KEY }}
-          path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
   # ── Build sdist ────────────────────────────────────────────────────
   build_sdist:
@@ -201,23 +190,27 @@ jobs:
         run: hatch run ${{ matrix.hatch_env }}.py${{ env.SDIST_PYTHON_VERSION }}:install-wheel
         env:
           WHEEL_PATH: dist/*.tar.gz
+          SKIP_CORE_BUILD: "false"
 
       - name: Run tests
         working-directory: python
         run: |
-          mkdir -p reports
           hatch run ${{ matrix.hatch_env }}.py${{ env.SDIST_PYTHON_VERSION }}:cov \
             --junitxml=reports/sdist-${{ matrix.hatch_env }}.xml
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
 
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
+  # ── Clean up intermediate artifacts ─────────────────────────────────
+  cleanup:
+    needs: [build_wheels, test_wheels]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete sf-core artifacts
+        uses: geekyeggo/delete-artifact@v5
         with:
-          name: results-sdist-${{ matrix.hatch_env }}
-          path: python/reports/sdist-${{ matrix.hatch_env }}.*
+          name: sf-core-*
 
   # ── Status gate ────────────────────────────────────────────────────
   release-status:
