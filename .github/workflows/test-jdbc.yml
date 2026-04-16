@@ -29,9 +29,15 @@ jobs:
         os: [ubuntu-latest]
         java-version: ['8']
     runs-on: ${{ matrix.os }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Set up Java ${{ matrix.java-version }}
         uses: actions/setup-java@v4
@@ -39,28 +45,14 @@ jobs:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
+          shared-key: "jdbc"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Rust target
-        uses: actions/cache@v5
-        with:
-
-          path: target
-          key: ${{ runner.os }}-rust-jdbc-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-jdbc-target-
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v5
+      - name: Restore Gradle cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.gradle/caches
@@ -94,6 +86,15 @@ jobs:
           # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
+      - name: Save Gradle cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
+
   jdbc_tests_reference:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
@@ -109,8 +110,8 @@ jobs:
           java-version: '8'
           distribution: 'temurin'
 
-      - name: Cache Gradle packages
-        uses: actions/cache@v5
+      - name: Restore Gradle cache
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.gradle/caches
@@ -155,6 +156,15 @@ jobs:
             --label "OLD JDBC reference" \
             --summary "$GITHUB_STEP_SUMMARY" \
             --allow-missing
+
+      - name: Save Gradle cache
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-jdbc-reference-${{ hashFiles('jdbc/**/*.gradle*', 'jdbc/**/gradle-wrapper.properties') }}
 
   jdbc-status:
     needs: [detect-changes, jdbc_tests, jdbc_tests_reference]

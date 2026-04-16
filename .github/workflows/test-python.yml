@@ -48,41 +48,43 @@ jobs:
             lib_name: sf_core.dll
     runs-on: ${{ matrix.os }}
     name: build_sf_core (${{ matrix.os }})
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
 
-      - name: Cache Rust target
-        uses: actions/cache@v5
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: target
-          key: ${{ runner.os }}-rust-sf-core-release-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-sf-core-release-target-
+          shared-key: "sf-core-release"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Cache vcpkg packages
+      - name: Restore vcpkg cache
         if: matrix.os == 'windows-11-arm'
-        uses: actions/cache@v5
+        id: vcpkg-cache-sf-core
+        uses: actions/cache/restore@v5
         with:
           path: C:\vcpkg\installed
           key: vcpkg-arm64-windows-static-md-openssl
 
       - name: Install ARM64 OpenSSL (static) via vcpkg
-        if: matrix.os == 'windows-11-arm'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-sf-core.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           vcpkg install openssl:arm64-windows-static-md
+
+      - name: Save vcpkg cache
+        if: matrix.os == 'windows-11-arm' && github.ref == 'refs/heads/main' && steps.vcpkg-cache-sf-core.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-arm64-windows-static-md-openssl
 
       - name: Configure ARM64 OpenSSL (static)
         if: matrix.os == 'windows-11-arm'
@@ -164,8 +166,8 @@ jobs:
         # explicitly as uv suggests: cpython-X.Y-windows-aarch64-none
         run: uv python install ${{ matrix.os == 'windows-11-arm' && format('cpython-{0}-windows-aarch64-none', matrix.py) || matrix.py }}
 
-      - name: Cache proto generator target
-        uses: actions/cache@v5
+      - name: Restore proto generator target cache
+        uses: actions/cache/restore@v5
         with:
           path: proto-target
           key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
@@ -199,11 +201,11 @@ jobs:
           if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
           echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
 
-      # Cache vcpkg OpenSSL: avoids rebuilding from C source (~7 min per run).
-      - name: Cache vcpkg ARM64 static OpenSSL (Windows ARM64)
+      # Restore vcpkg OpenSSL: avoids rebuilding from C source (~7 min per run).
+      - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         id: vcpkg-cache-build
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
@@ -214,6 +216,13 @@ jobs:
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           vcpkg install openssl:arm64-windows-static-md
+
+      - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
+        if: matrix.os == 'windows-11-arm' && github.ref == 'refs/heads/main' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Configure ARM64 OpenSSL (static)
         if: matrix.os == 'windows-11-arm'
@@ -244,6 +253,13 @@ jobs:
         shell: pwsh
         run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
 
+      - name: Save proto generator target cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: proto-target
+          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Upload Python wheel
         uses: actions/upload-artifact@v4
         with:
@@ -259,31 +275,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Rust core target
-        uses: actions/cache@v5
-        with:
-          path: core-target
-          key: ${{ runner.os }}-rust-sf-core-packaging-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-sf-core-packaging-target-
-
-      - name: Cache proto generator target
-        uses: actions/cache@v5
-        with:
-          path: proto-target
-          key: ${{ runner.os }}-proto-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-proto-target-
+          shared-key: "packaging"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-directories: |
+            core-target
+            proto-target
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
@@ -371,7 +370,7 @@ jobs:
 
       - name: Restore uv cache (Linux)
         if: runner.os == 'Linux'
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: /tmp/.uv-cache
           key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -382,7 +381,7 @@ jobs:
 
       - name: Restore uv cache (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
           key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
@@ -425,10 +424,10 @@ jobs:
           echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
 
       # Share the vcpkg cache with build_wheel so OpenSSL is not rebuilt here either.
-      - name: Cache vcpkg ARM64 static OpenSSL (Windows ARM64)
+      - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
         id: vcpkg-cache-test
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
           key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
@@ -439,6 +438,13 @@ jobs:
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           vcpkg install openssl:arm64-windows-static-md
+
+      - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
+        if: matrix.os == 'windows-11-arm' && github.ref == 'refs/heads/main' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows-static-md
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Configure ARM64 build environment
         if: matrix.os == 'windows-11-arm'
@@ -525,6 +531,20 @@ jobs:
           name: results-universal-${{ env.MATRIX_KEY }}
           path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
+      - name: Save uv cache (Linux)
+        if: always() && runner.os == 'Linux' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: /tmp/.uv-cache
+          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+
+      - name: Save uv cache (Windows)
+        if: always() && runner.os == 'Windows' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}\.uv-cache
+          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
     needs: [detect-changes, build_wheel]
@@ -548,7 +568,7 @@ jobs:
           version: "0.9.28"
 
       - name: Restore uv cache
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: /tmp/.uv-cache
           # Key uses REFERENCE_OS_VERSION (= "ubuntu-latest") to match the matrix.os-based

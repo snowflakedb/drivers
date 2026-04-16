@@ -200,6 +200,7 @@ core:
     - "sf_core/Cargo.toml"
     - "sf_core/build.rs"
     - "sf_core/tests/common/**"
+    - "tests/definitions/core/**"
 
 
 # =============================================================================
@@ -293,6 +294,9 @@ odbc:
     - "odbc/Cargo.toml"
     - "odbc_tests/CMakeLists.txt"
     - "odbc_tests/common/**"
+    - "tests/definitions/odbc/**"
+    - "scripts/odbc/**"
+    - "scripts/old_odbc/**"
 
 
 # =============================================================================
@@ -409,6 +413,8 @@ python:
     - "python/src/snowflake/connector/compat.py"
     - "python/pyproject.toml"
     - "python/hatch_build.py"
+    - "tests/definitions/python/**"
+    - "scripts/old_python/**"
 
 
 # =============================================================================
@@ -471,6 +477,7 @@ java:
     - "jdbc/src/main/java/net/snowflake/client/api/**"
     - "jdbc/src/main/java/net/snowflake/client/jdbc/**"
     - "jdbc/src/main/resources/**"
+    - "tests/definitions/jdbc/**"
 
 
 # =============================================================================
@@ -490,6 +497,6 @@ shared_fallback_paths:
   - "proto_utils/**"
   - "proto_generator/**"
   - ".github/workflows/**"
-  - "scripts/**"
+  - "scripts/shared/**"
   - "ci/**"
-  - "tests/definitions/**"
+  - "tests/definitions/shared/**"

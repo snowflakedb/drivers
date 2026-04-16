@@ -37,29 +37,21 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Rust target
-        uses: actions/cache@v5
-        with:
-
-          path: target
-          key: ${{ runner.os }}-rust-clippy-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-clippy-target-
+          shared-key: "clippy"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install clippy
         run: rustup component add clippy
@@ -71,29 +63,21 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Rust target
-        uses: actions/cache@v5
-        with:
-
-          path: target
-          key: ${{ runner.os }}-rust-no-protobuf-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-no-protobuf-target-
+          shared-key: "no-protobuf"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build sf_core without protobuf feature
         run: cargo build --package sf_core --no-default-features --features fips
@@ -119,37 +103,33 @@ jobs:
           go-version: 'stable'
           cache: false
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
+          shared-key: "core-test"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+      - name: Capture rustc version for cache key
+        id: rustc-version
+        run: echo "version=$(rustc --version | awk '{print $2}')" >> $GITHUB_OUTPUT
 
-      - name: Cache Rust target
-        uses: actions/cache@v5
-        with:
-
-          path: target
-          key: ${{ runner.os }}-rust-core-test-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-core-test-target-
-
-      - name: Cache tarpaulin
-        uses: actions/cache@v5
+      - name: Restore tarpaulin cache
+        id: tarpaulin-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
-          key: tarpaulin-${{ runner.os }}
+          key: tarpaulin-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
 
       - name: Install tarpaulin
-        run: |
-          if ! command -v cargo-tarpaulin &> /dev/null; then
-            cargo install cargo-tarpaulin
-          fi
+        if: steps.tarpaulin-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-tarpaulin
+
+      - name: Save tarpaulin cache
+        if: github.ref == 'refs/heads/main' && steps.tarpaulin-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.cargo/bin/cargo-tarpaulin
+          key: tarpaulin-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -195,29 +175,20 @@ jobs:
     name: test (Windows ARM64, non-FIPS)
     env:
       E2E_TLS_SERVER: https://snowflakecomputing.com
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Cargo registry
-        uses: actions/cache@v5
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Rust target
-        uses: actions/cache@v5
-        with:
-
-          path: target
-          key: ${{ runner.os }}-rust-arm64-nonfips-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-arm64-nonfips-target-
+          shared-key: "arm64-nonfips"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Capture vcpkg version for cache key
         id: vcpkg-ver
@@ -230,9 +201,9 @@ jobs:
           if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
           echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
 
-      - name: Cache vcpkg ARM64 OpenSSL
+      - name: Restore vcpkg ARM64 OpenSSL cache
         id: vcpkg-cache
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: C:\vcpkg\installed\arm64-windows
           key: windows-11-arm-vcpkg-openssl-${{ env.VCPKG_VER }}
@@ -245,6 +216,13 @@ jobs:
           :: x64-only (no static libs, DLLs cause error 193 at runtime).
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" arm64
           vcpkg install openssl:arm64-windows
+
+      - name: Save vcpkg ARM64 OpenSSL cache
+        if: github.ref == 'refs/heads/main' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: C:\vcpkg\installed\arm64-windows
+          key: windows-11-arm-vcpkg-openssl-${{ env.VCPKG_VER }}
 
       - name: Configure OpenSSL
         shell: pwsh
