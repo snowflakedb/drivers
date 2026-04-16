@@ -118,9 +118,9 @@ jobs:
         id: rustc-version
         run: echo "version=$(rustc --version | awk '{print $2}')" >> $GITHUB_OUTPUT
 
-      - name: Restore tarpaulin cache
+      - name: Cache tarpaulin binary
         id: tarpaulin-cache
-        uses: actions/cache/restore@v5
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
           key: tarpaulin-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
@@ -128,13 +128,6 @@ jobs:
       - name: Install tarpaulin
         if: steps.tarpaulin-cache.outputs.cache-hit != 'true'
         run: cargo install cargo-tarpaulin
-
-      - name: Save tarpaulin cache
-        if: github.ref == 'refs/heads/main' && steps.tarpaulin-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: ~/.cargo/bin/cargo-tarpaulin
-          key: tarpaulin-${{ runner.os }}-${{ steps.rustc-version.outputs.version }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
