@@ -57,6 +57,7 @@ jobs:
           pip install pre-commit hatch "virtualenv<21.0.0"
 
       - name: Restore pre-commit hooks cache
+        id: pre-commit-cache
         uses: actions/cache/restore@v5
         with:
           path: ~/.cache/pre-commit

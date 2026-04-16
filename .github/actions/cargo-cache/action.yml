@@ -59,6 +59,7 @@ runs:
         restore-keys: ${{ runner.os }}-cargo-registry-
 
     - name: Restore Rust target cache
+      id: restore-target
       if: inputs.mode == 'restore'
       uses: actions/cache/restore@v5
       with:

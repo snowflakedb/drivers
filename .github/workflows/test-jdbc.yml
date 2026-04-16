@@ -47,6 +47,7 @@ jobs:
           shared-key: "jdbc"
 
       - name: Restore Gradle cache
+        id: gradle-cache
         uses: actions/cache/restore@v5
         with:
           path: |
@@ -113,6 +114,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Restore Gradle cache
+        id: gradle-cache-ref
         uses: actions/cache/restore@v5
         with:
           path: |
