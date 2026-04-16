@@ -100,9 +100,9 @@ struct RefreshSessionResponse {
 #[derive(Debug, serde::Deserialize)]
 struct RefreshSessionData {
     #[serde(rename = "sessionToken")]
-    session_token: String,
+    session_token: SensitiveString,
     #[serde(rename = "masterToken")]
-    master_token: String,
+    master_token: SensitiveString,
     #[serde(rename = "sessionId")]
     session_id: i64,
     #[serde(
@@ -133,7 +133,7 @@ struct TokenRequestResponse {
 #[derive(Debug, serde::Deserialize)]
 struct TokenRequestData {
     #[serde(rename = "sessionToken")]
-    session_token: String,
+    session_token: SensitiveString,
     #[serde(
         rename = "validityInSecondsST",
         deserialize_with = "auth::deserialize_seconds_as_duration",
@@ -515,7 +515,7 @@ pub async fn snowflake_login_with_client(
         store_mfa_token_in_cache(
             &login_parameters.server_url,
             username,
-            mfa_token,
+            mfa_token.reveal(),
             token_cache,
         );
     }
@@ -594,8 +594,8 @@ pub async fn snowflake_login_with_client(
     );
     Ok(LoginResult {
         tokens: SessionTokens {
-            session_token: session_token.into(),
-            master_token: master_token.into(),
+            session_token,
+            master_token,
             session_id,
             session_expires_at,
             master_expires_at,
@@ -699,8 +699,8 @@ pub async fn refresh_session(
     );
 
     Ok(SessionTokens {
-        session_token: data.session_token.into(),
-        master_token: data.master_token.into(),
+        session_token: data.session_token,
+        master_token: data.master_token,
         session_id: data.session_id,
         session_expires_at,
         master_expires_at,
@@ -807,7 +807,7 @@ pub async fn token_request(
     })?;
 
     Ok(TokenRequestResult {
-        session_token: data.session_token.into(),
+        session_token: data.session_token,
         validity_in_seconds: data.validity.and_then(|d| i64::try_from(d.as_secs()).ok()),
     })
 }
@@ -1417,16 +1417,26 @@ where
         if response_status == reqwest::StatusCode::UNAUTHORIZED {
             return SessionExpiredSnafu.fail();
         }
+        let body = response_text.unwrap_or("Unknown error".to_string());
+        let truncated = if body.len() > 1024 {
+            let mut end = 1024;
+            while !body.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}… ({} bytes total)", &body[..end], body.len())
+        } else {
+            body
+        };
         return ResponseStatusSnafu {
             status: response_status,
-            message: response_text.unwrap_or("Unknown error".to_string()),
+            message: truncated,
         }
         .fail();
     }
 
     let response_text = response_text.context(ResponseTextSnafu)?;
 
-    tracing::debug!("Response text: {response_text}");
+    tracing::debug!(response_len = response_text.len(), "Received HTTP response");
     let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
     Ok(response_data)
