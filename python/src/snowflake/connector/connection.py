@@ -26,10 +26,12 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetQueryStatusResponse,
     ConnectionInitRequest,
     ConnectionNewRequest,
+    ConnectionReleaseRequest,
     ConnectionSetOptionsRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
+    DatabaseReleaseRequest,
 )
 from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 
@@ -144,6 +146,7 @@ class Connection:
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
         if autocommit is not None:
@@ -200,7 +203,36 @@ class Connection:
     @pep249
     def close(self) -> None:
         """Close the connection now."""
+        if self.is_closed():
+            return
+        if self.conn_handle:
+            self._release_connection_handle()
+        if self.db_handle:
+            self._release_database_handle()
         self._closed = True
+
+    def _release_connection_handle(self) -> None:
+        """Release the Rust-side connection handle."""
+        try:
+            connection_release_request = ConnectionReleaseRequest(conn_handle=self.conn_handle)
+            self.db_api.connection_release(connection_release_request)
+        except Exception:
+            logger.warning("Failed to release connection handle", exc_info=True)
+
+    def _release_database_handle(self) -> None:
+        """Release the Rust-side database handle."""
+        try:
+            database_release_request = DatabaseReleaseRequest(db_handle=self.db_handle)
+            self.db_api.database_release(database_release_request)
+        except Exception:
+            logger.warning("Failed to release database handle", exc_info=True)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            logger.warning("Failed to close.", exc_info=True)
+            pass
 
     @property
     @pep249
@@ -246,7 +278,7 @@ class Connection:
         return cursor_class(self)
 
     def _check_not_closed(self) -> None:
-        if self._closed:
+        if self.is_closed():
             raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
 
     # Context manager support
@@ -262,7 +294,7 @@ class Connection:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the runtime context. Commit on success / rollback on exception if autocommit is OFF."""
         try:
-            if not self._autocommit and not self._closed:
+            if not self.is_closed() and not self._autocommit:
                 if exc_type is None:
                     self.commit()
                 else:
