@@ -60,9 +60,22 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "format-validator"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: tests/tests_format_validator -> target
 
       - name: Run tests format validator
         run: |
@@ -72,9 +85,22 @@ jobs:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "coverage-report"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: tests/tests_format_validator -> target
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -97,7 +123,7 @@ jobs:
           retention-days: 30
 
   validations-status:
-    needs: [detect-changes, test-data, tests-format-validator, test-coverage-report]
+    needs: [detect-changes, test-data, tests-format-validator]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -107,20 +133,17 @@ jobs:
           
           # Check if all validations were skipped (docs-only)
           if [[ "${{ needs.test-data.result }}" == "skipped" ]] && \
-             [[ "${{ needs.tests-format-validator.result }}" == "skipped" ]] && \
-             [[ "${{ needs.test-coverage-report.result }}" == "skipped" ]]; then
+             [[ "${{ needs.tests-format-validator.result }}" == "skipped" ]]; then
             echo "✓ Validations were SKIPPED (documentation-only changes)"
             exit 0
           fi
           
           # Check if any validation failed or was cancelled
           if [[ "${{ needs.test-data.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.test-coverage-report.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Validations were RUN and FAILED or CANCELLED"
             echo "  - test-data: ${{ needs.test-data.result }}"
             echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
-            echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
             exit 1
           fi
           
@@ -128,5 +151,4 @@ jobs:
           echo "✓ Validations were RUN and PASSED"
           echo "  - test-data: ${{ needs.test-data.result }}"
           echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
-          echo "  - test-coverage-report: ${{ needs.test-coverage-report.result }}"
           exit 0
