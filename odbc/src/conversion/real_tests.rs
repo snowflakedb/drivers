@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::OdbcOutputPointer;
     use crate::conversion::WriteODBCType;
     use crate::conversion::real::SnowflakeReal;
     use crate::conversion::test_utils::helpers::{
@@ -17,10 +18,10 @@ mod tests {
     ) -> Binding {
         Binding {
             target_type,
-            target_value_ptr: value as *mut T as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::from_ref(value).erase_type(),
             buffer_length: 0,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(str_len),
+            indicator_ptr: OdbcOutputPointer::new(str_len),
             ..Default::default()
         }
     }
@@ -32,10 +33,10 @@ mod tests {
     ) -> Binding {
         Binding {
             target_type,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(str_len),
+            indicator_ptr: OdbcOutputPointer::new(str_len),
             ..Default::default()
         }
     }
@@ -47,10 +48,10 @@ mod tests {
     ) -> Binding {
         Binding {
             target_type,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: (buffer.len() * 2) as sql::Len,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(str_len),
+            indicator_ptr: OdbcOutputPointer::new(str_len),
             ..Default::default()
         }
     }
@@ -63,10 +64,10 @@ mod tests {
     ) -> Binding {
         Binding {
             target_type: CDataType::Numeric,
-            target_value_ptr: value as *mut sql::Numeric as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::from_ref(value).erase_type(),
             buffer_length: 0,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(str_len),
+            indicator_ptr: OdbcOutputPointer::new(str_len),
             precision,
             scale,
             datetime_interval_precision: None,
@@ -76,10 +77,10 @@ mod tests {
     fn binding_for_binary(buffer: &mut [u8], str_len: &mut sql::Len) -> Binding {
         Binding {
             target_type: CDataType::Binary,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(str_len),
+            indicator_ptr: OdbcOutputPointer::new(str_len),
             ..Default::default()
         }
     }

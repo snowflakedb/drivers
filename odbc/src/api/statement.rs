@@ -2,15 +2,15 @@ use crate::api::CDataType;
 use crate::api::encoding::OdbcEncoding;
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, CursorAlreadyOpenSnafu, DisconnectedSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
-    InvalidParameterNumberSnafu, InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu,
-    NullPointerSnafu, OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required,
-    StatementNotExecutedSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidParameterNumberSnafu,
+    InvalidPrecisionOrScaleSnafu, JsonBindingSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, Required, StatementNotExecutedSnafu,
 };
 use crate::api::runtime::global;
+use crate::api::types::OdbcOutputPointer;
 use crate::api::{
     ApdRecord, ConnectionState, FreeStmtOption, IpdRecord, OdbcResult, ParamDirection, SqlType,
-    Statement, StatementState, stmt_from_handle,
+    Statement, StatementState,
 };
 use crate::conversion::Binding;
 use crate::conversion::param_binding::odbc_bindings_to_json;
@@ -28,26 +28,28 @@ use tracing;
 
 /// Execute a SQL statement directly (SQLExecDirect / SQLExecDirectW).
 pub fn exec_direct<E: OdbcEncoding>(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     statement_text: *const E::Char,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
     let query = E::read_string(statement_text, text_length)?;
-    exec_direct_impl(statement_handle, &query)
+    exec_direct_impl(stmt, &query)
 }
 
-fn exec_direct_impl(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
-    let stmt = stmt_from_handle(statement_handle);
-    tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
+fn exec_direct_impl(stmt: &mut Statement, statement_text: &str) -> OdbcResult<()> {
+    tracing::debug!("exec_direct");
 
     if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("exec_direct: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    // Obtain an independent &mut Connection without tying up a borrow on stmt,
-    // so stmt.apd / stmt.ipd / stmt.stmt_handle remain accessible below.
-    let conn = unsafe { &mut *stmt.conn_ptr() };
+    let conn_arc = stmt
+        .conn_weak()
+        .upgrade()
+        .ok_or_else(|| DisconnectedSnafu.build())?;
+    let mut conn_guard = conn_arc.lock().unwrap();
+    let conn = &mut *conn_guard;
     match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -153,12 +155,12 @@ fn update_numeric_settings(
 
 /// Prepare a SQL statement (SQLPrepare / SQLPrepareW).
 pub fn prepare<E: OdbcEncoding>(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     statement_text: *const E::Char,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
     let query = E::read_string(statement_text, text_length)?;
-    prepare_impl(statement_handle, &query)
+    prepare_impl(stmt, &query)
 }
 
 fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowArrayStreamReader> {
@@ -169,22 +171,23 @@ fn reader_from_protobuf_stream(stream: ArrowArrayStreamPtr) -> OdbcResult<ArrowA
     Ok(reader)
 }
 
-fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
-    if statement_handle.is_null() {
-        return InvalidHandleSnafu.fail();
-    }
+fn prepare_impl(stmt: &mut Statement, query: &str) -> OdbcResult<()> {
     if query.is_empty() {
         return InvalidBufferLengthSnafu { length: 0i64 }.fail();
     }
-    tracing::debug!("prepare: statement_handle={:?}", statement_handle);
-    let stmt = stmt_from_handle(statement_handle);
+    tracing::debug!("prepare");
 
     if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("prepare: cursor is already open");
         return CursorAlreadyOpenSnafu.fail();
     }
 
-    let conn = unsafe { &mut *stmt.conn_ptr() };
+    let conn_arc = stmt
+        .conn_weak()
+        .upgrade()
+        .ok_or_else(|| DisconnectedSnafu.build())?;
+    let mut conn_guard = conn_arc.lock().unwrap();
+    let conn = &mut *conn_guard;
     match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -241,9 +244,8 @@ fn prepare_impl(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
 }
 
 /// Execute a prepared statement
-pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
-    tracing::debug!("execute: statement_handle={:?}", statement_handle);
-    let stmt = stmt_from_handle(statement_handle);
+pub fn execute(stmt: &mut Statement) -> OdbcResult<()> {
+    tracing::debug!("execute");
 
     if stmt.state.as_ref().has_open_cursor() {
         tracing::error!("execute: cursor is already open");
@@ -257,7 +259,12 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         _ => false,
     };
 
-    let conn = unsafe { &mut *stmt.conn_ptr() };
+    let conn_arc = stmt
+        .conn_weak()
+        .upgrade()
+        .ok_or_else(|| DisconnectedSnafu.build())?;
+    let mut conn_guard = conn_arc.lock().unwrap();
+    let conn = &mut *conn_guard;
     match &mut conn.state {
         ConnectionState::Connected {
             db_handle: _,
@@ -358,7 +365,7 @@ fn create_execute_state(
         }
     }
     Ok(StatementState::QueryExecuted {
-        reader,
+        reader: reader.into(),
         rows_affected,
         prepared,
     })
@@ -434,7 +441,7 @@ fn apply_parameter_bindings(
 /// Bind a parameter to a prepared statement
 #[allow(clippy::too_many_arguments)]
 pub fn bind_parameter(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     parameter_number: sql::USmallInt,
     raw_input_output_type: sql::SmallInt,
     raw_value_type: sql::SmallInt,
@@ -452,10 +459,6 @@ pub fn bind_parameter(
         raw_value_type,
         raw_parameter_type
     );
-
-    if statement_handle.is_null() {
-        return InvalidHandleSnafu.fail();
-    }
 
     if parameter_number == 0 {
         tracing::error!("bind_parameter: parameter_number cannot be 0");
@@ -496,15 +499,13 @@ pub fn bind_parameter(
     // TODO: validate that (value_type, sql_type) is a supported conversion,
     // returning UnsupportedFeatureSnafu (HYC00) if not.
 
-    let stmt = stmt_from_handle(statement_handle);
-
     stmt.apd.records.insert(
         parameter_number,
         ApdRecord {
             value_type,
-            data_ptr: parameter_value_ptr,
+            data_ptr: OdbcOutputPointer::new(parameter_value_ptr),
             buffer_length,
-            str_len_or_ind_ptr,
+            str_len_or_ind_ptr: OdbcOutputPointer::new(str_len_or_ind_ptr),
         },
     );
 
@@ -527,13 +528,8 @@ pub fn bind_parameter(
 }
 
 /// Free statement resources based on the option
-pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcResult<()> {
-    tracing::debug!("free_stmt: statement_handle={statement_handle:?}, option={option:?}");
-
-    if statement_handle.is_null() {
-        return InvalidHandleSnafu.fail();
-    }
-    let stmt = stmt_from_handle(statement_handle);
+pub fn free_stmt(stmt: &mut Statement, option: FreeStmtOption) -> OdbcResult<()> {
+    tracing::debug!("free_stmt: option={option:?}");
 
     match option {
         FreeStmtOption::Close => {
@@ -600,29 +596,22 @@ pub fn free_stmt(statement_handle: sql::Handle, option: FreeStmtOption) -> OdbcR
 /// Close the cursor on a statement, returning SQLSTATE 24000 if no cursor is open.
 /// Unlike `free_stmt(SQL_CLOSE)`, which silently no-ops when no cursor is open,
 /// this function errors per the ODBC spec for `SQLCloseCursor`.
-pub fn close_cursor(statement_handle: sql::Handle) -> OdbcResult<()> {
-    tracing::debug!("close_cursor: statement_handle={statement_handle:?}");
-
-    let stmt = stmt_from_handle(statement_handle);
+pub fn close_cursor(stmt: &mut Statement) -> OdbcResult<()> {
+    tracing::debug!("close_cursor");
 
     if !stmt.state.as_ref().has_open_cursor() {
         return InvalidCursorStateSnafu.fail();
     }
 
-    free_stmt(statement_handle, FreeStmtOption::Close)
+    free_stmt(stmt, FreeStmtOption::Close)
 }
 
 /// Return the number of parameters in the statement via the IPD descriptor.
 ///
 /// After `SQLPrepare`, auto-IPD populates the IPD with one record per `?`
 /// marker, so this works even without prior `SQLBindParameter` calls.
-pub fn num_params(
-    statement_handle: sql::Handle,
-    param_count_ptr: *mut sql::SmallInt,
-) -> OdbcResult<()> {
-    tracing::debug!("num_params: statement_handle={:?}", statement_handle);
-
-    let stmt = stmt_from_handle(statement_handle);
+pub fn num_params(stmt: &mut Statement, param_count_ptr: *mut sql::SmallInt) -> OdbcResult<()> {
+    tracing::debug!("num_params");
 
     if matches!(stmt.state.as_ref(), StatementState::Created) {
         return StatementNotExecutedSnafu.fail();
@@ -645,24 +634,18 @@ pub fn num_params(
 /// Works for both explicitly bound parameters and auto-IPD markers
 /// populated during `SQLPrepare`.
 pub fn describe_param(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     parameter_number: sql::USmallInt,
     data_type_ptr: *mut sql::SmallInt,
     parameter_size_ptr: *mut sql::ULen,
     decimal_digits_ptr: *mut sql::SmallInt,
     nullable_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::debug!(
-        "describe_param: statement_handle={:?}, parameter_number={}",
-        statement_handle,
-        parameter_number
-    );
+    tracing::debug!("describe_param: parameter_number={}", parameter_number);
 
     if parameter_number == 0 {
         return InvalidParameterNumberSnafu.fail();
     }
-
-    let stmt = stmt_from_handle(statement_handle);
 
     let allowed = matches!(
         stmt.state.as_ref(),
@@ -716,7 +699,7 @@ pub fn describe_param(
 
 /// Bind a column to a statement
 pub fn bind_col(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     column_number: sql::USmallInt,
     target_type: CDataType,
     target_value_ptr: sql::Pointer,
@@ -724,13 +707,10 @@ pub fn bind_col(
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> OdbcResult<()> {
     tracing::debug!(
-        "bind_col: statement_handle={:?}, column_number={}, target_type={:?}",
-        statement_handle,
+        "bind_col: column_number={}, target_type={:?}",
         column_number,
         target_type
     );
-
-    let stmt = stmt_from_handle(statement_handle);
 
     // Per ODBC specification, if target_value_ptr is null, unbind the column
     if target_value_ptr.is_null() {
@@ -741,10 +721,10 @@ pub fn bind_col(
             column_number,
             Binding {
                 target_type,
-                target_value_ptr,
+                target_value_ptr: OdbcOutputPointer::new(target_value_ptr),
                 buffer_length,
-                octet_length_ptr: str_len_or_ind_ptr,
-                indicator_ptr: str_len_or_ind_ptr,
+                octet_length_ptr: OdbcOutputPointer::new(str_len_or_ind_ptr),
+                indicator_ptr: OdbcOutputPointer::new(str_len_or_ind_ptr),
                 precision: None,
                 scale: None,
                 datetime_interval_precision: None,
@@ -756,7 +736,7 @@ pub fn bind_col(
 
 /// Set a statement attribute value
 pub fn set_stmt_attr(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     _string_length: sql::Integer,
@@ -766,14 +746,12 @@ pub fn set_stmt_attr(
     use crate::conversion::warning::Warning;
 
     tracing::debug!(
-        "set_stmt_attr: statement_handle={:?}, attribute={}, value_ptr={:?}",
-        statement_handle,
+        "set_stmt_attr: attribute={}, value_ptr={:?}",
         attribute,
         value_ptr
     );
 
     let attr = StmtAttr::try_from(attribute)?;
-    let stmt = stmt_from_handle(statement_handle);
 
     match attr {
         StmtAttr::CursorType => {
@@ -813,13 +791,13 @@ pub fn set_stmt_attr(
         StmtAttr::RowStatusPtr => {
             let ptr = value_ptr as *mut u16;
             tracing::debug!("set_stmt_attr: RowStatusPtr = {:?}", ptr);
-            stmt.ird.array_status_ptr = ptr;
+            stmt.ird.array_status_ptr = OdbcOutputPointer::new(ptr);
             Ok(())
         }
         StmtAttr::RowsFetchedPtr => {
             let ptr = value_ptr as *mut sql::ULen;
             tracing::debug!("set_stmt_attr: RowsFetchedPtr = {:?}", ptr);
-            stmt.ird.rows_processed_ptr = ptr;
+            stmt.ird.rows_processed_ptr = OdbcOutputPointer::new(ptr);
             Ok(())
         }
         StmtAttr::RowBindType => {
@@ -831,7 +809,7 @@ pub fn set_stmt_attr(
         StmtAttr::RowBindOffsetPtr => {
             let ptr = value_ptr as *mut sql::Len;
             tracing::debug!("set_stmt_attr: RowBindOffsetPtr = {:?}", ptr);
-            stmt.ard.bind_offset_ptr = ptr;
+            stmt.ard.bind_offset_ptr = OdbcOutputPointer::new(ptr);
             Ok(())
         }
         StmtAttr::SnowflakeLastQueryId => {
@@ -847,7 +825,7 @@ pub fn set_stmt_attr(
 
 /// Get a statement attribute value
 pub fn get_stmt_attr<E: OdbcEncoding>(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
@@ -859,7 +837,6 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
     tracing::debug!("get_stmt_attr: attribute={}", attribute);
 
     let attr = StmtAttr::try_from(attribute)?;
-    let stmt = stmt_from_handle(statement_handle);
 
     match attr {
         StmtAttr::CursorType => {
@@ -925,13 +902,13 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         }
         StmtAttr::RowStatusPtr => {
             unsafe {
-                *(value_ptr as *mut *mut u16) = stmt.ird.array_status_ptr;
+                *(value_ptr as *mut *mut u16) = stmt.ird.array_status_ptr.as_raw();
             }
             Ok(())
         }
         StmtAttr::RowsFetchedPtr => {
             unsafe {
-                *(value_ptr as *mut *mut sql::ULen) = stmt.ird.rows_processed_ptr;
+                *(value_ptr as *mut *mut sql::ULen) = stmt.ird.rows_processed_ptr.as_raw();
             }
             Ok(())
         }
@@ -946,7 +923,7 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
         }
         StmtAttr::RowBindOffsetPtr => {
             unsafe {
-                *(value_ptr as *mut *mut sql::Len) = stmt.ard.bind_offset_ptr;
+                *(value_ptr as *mut *mut sql::Len) = stmt.ard.bind_offset_ptr.as_raw();
             }
             Ok(())
         }
@@ -981,12 +958,12 @@ pub fn get_stmt_attr<E: OdbcEncoding>(
 /// different thread. Per ODBC 3.5 spec, cross-thread `SQLCancel` does
 /// not clear or post diagnostic records.
 ///
-/// NOTE: Cross-thread calls create `&mut Statement` via `stmt_from_handle`
+/// NOTE: Cross-thread calls create `&mut Statement` via the handle extraction
 /// concurrently with the executing thread — the same pre-existing aliasing
 /// pattern used by every C API entry point. A future handle manager will
 /// introduce proper interior mutability to eliminate this UB.
-pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
-    tracing::debug!("cancel: statement_handle={:?}", statement_handle);
+pub fn cancel(stmt: &mut Statement) -> OdbcResult<()> {
+    tracing::debug!("cancel");
 
     // TODO(SNOW-3258918): Cancel async execution.
     // Blocked by: SQLSetStmtAttr does not support SQL_ATTR_ASYNC_ENABLE.
@@ -999,7 +976,6 @@ pub fn cancel(statement_handle: sql::Handle) -> OdbcResult<()> {
     // cancelling the token resolves the cancelled() future observed
     // by the executing thread's tokio::select!, aborting the in-flight RPC.
 
-    let stmt = stmt_from_handle(statement_handle);
     stmt.cancel_token.cancel();
     Ok(())
 }

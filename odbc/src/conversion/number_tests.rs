@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::OdbcOutputPointer;
     use crate::conversion::WriteODBCType;
     use crate::conversion::number::{NumericSettings, NumericSqlType, SnowflakeNumber};
     use crate::conversion::test_utils::helpers::{
@@ -1425,7 +1426,7 @@ mod tests {
             let mut value: i32 = 42;
             let binding = Binding {
                 target_type: CDataType::SLong,
-                target_value_ptr: &mut value as *mut i32 as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::from_ref(&mut value).erase_type(),
                 ..Default::default()
             };
 
@@ -1446,7 +1447,7 @@ mod tests {
             let mut value: i32 = 0;
             let binding = Binding {
                 target_type: CDataType::SLong,
-                target_value_ptr: &mut value as *mut i32 as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::from_ref(&mut value).erase_type(),
                 ..Default::default()
             };
 
@@ -1471,10 +1472,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::Guid,
-            target_value_ptr: value.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(value.as_mut_ptr()).erase_type(),
             buffer_length: value.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
         let result = sn.write_odbc_type(42i128, &binding, &mut None);

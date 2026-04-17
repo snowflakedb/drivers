@@ -1,7 +1,10 @@
+use std::os::raw::c_void;
+
 use odbc_sys as sql;
 use serde_json::Value;
 
 use crate::api::CDataType;
+use crate::api::OdbcOutputPointer;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
     IndicatorRequiredSnafu, JsonBindingError, ReadArrowError, WriteOdbcError,
@@ -79,16 +82,16 @@ pub enum LengthOrNull {
 #[derive(Debug, Default)]
 pub struct Binding {
     pub target_type: CDataType,
-    pub target_value_ptr: sql::Pointer,
+    pub target_value_ptr: OdbcOutputPointer<c_void>,
     pub buffer_length: sql::Len,
     /// Octet-length pointer — receives the byte length of the data after fetch.
     /// Set by `SQLBindCol` (combined StrLen/Ind role) or `SQL_DESC_OCTET_LENGTH_PTR`.
-    pub octet_length_ptr: *mut sql::Len,
+    pub octet_length_ptr: OdbcOutputPointer<sql::Len>,
     /// Indicator (StrLen_or_Ind) pointer.
     /// When `SQLBindCol` is used with a combined StrLen/Ind buffer, this is the same
-    /// pointer as `octet_length_ptr`. When separate descriptor fields are used, this
+    /// pointer as `octet_length_ptr.as_raw()`. When separate descriptor fields are used, this
     /// may be distinct from `octet_length_ptr` or null if no indicator is bound.
-    pub indicator_ptr: *mut sql::Len,
+    pub indicator_ptr: OdbcOutputPointer<sql::Len>,
     /// Numeric precision, set via SQLSetDescField(SQL_DESC_PRECISION) on the ARD.
     /// Used for SQL_C_NUMERIC conversions.
     pub precision: Option<i16>,
@@ -108,19 +111,17 @@ impl Binding {
                 if self.indicator_ptr.is_null() {
                     return IndicatorRequiredSnafu.fail();
                 }
-                unsafe {
-                    std::ptr::write(self.indicator_ptr, crate::api::SQL_NULL_DATA);
-                }
+                self.indicator_ptr.write(crate::api::SQL_NULL_DATA);
                 Ok(())
             }
             LengthOrNull::Length(length) => {
                 if !self.octet_length_ptr.is_null() {
                     if !self.indicator_ptr.is_null() {
-                        unsafe { std::ptr::write(self.indicator_ptr, 0) };
+                        self.indicator_ptr.write(0);
                     }
-                    unsafe { std::ptr::write(self.octet_length_ptr, length) };
+                    self.octet_length_ptr.write(length);
                 } else if !self.indicator_ptr.is_null() {
-                    unsafe { std::ptr::write(self.indicator_ptr, length as sql::Len) };
+                    self.indicator_ptr.write(length as sql::Len);
                 }
                 Ok(())
             }
@@ -130,7 +131,7 @@ impl Binding {
     pub fn write_fixed<T>(&self, value: T) {
         unsafe {
             if !self.target_value_ptr.is_null() {
-                std::ptr::write(self.target_value_ptr as *mut T, value);
+                std::ptr::write(self.target_value_ptr.cast::<T>().as_raw(), value);
             }
         }
         let _ =
@@ -171,10 +172,10 @@ impl Binding {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 remaining.as_ptr(),
-                self.target_value_ptr as *mut u8,
+                self.target_value_ptr.cast::<u8>().as_raw(),
                 copy_len,
             );
-            std::ptr::write((self.target_value_ptr as *mut u8).add(copy_len), 0);
+            std::ptr::write(self.target_value_ptr.cast::<u8>().as_raw().add(copy_len), 0);
         }
 
         let _ = self.write_length_or_null(LengthOrNull::Length(remaining.len() as sql::Len));
@@ -197,7 +198,7 @@ impl Binding {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 remaining.as_ptr(),
-                self.target_value_ptr as *mut u8,
+                self.target_value_ptr.cast::<u8>().as_raw(),
                 copy_len,
             );
         }
@@ -260,7 +261,7 @@ impl Binding {
 
         let max_write_len = (self.buffer_length - 1) as usize;
         let written = unsafe {
-            let target = self.target_value_ptr as *mut u8;
+            let target = self.target_value_ptr.cast::<u8>().as_raw();
             let written = Self::write_from_fn_impl(target, offset, max_write_len, converter);
             std::ptr::write(target.add(written), 0);
             written
@@ -306,7 +307,7 @@ impl Binding {
 
         let max_write_len = ((self.buffer_length / 2) - 1) as usize;
         let written = unsafe {
-            let target = self.target_value_ptr as *mut u16;
+            let target = self.target_value_ptr.cast::<u16>().as_raw();
             let written = Self::write_from_fn_impl(target, offset, max_write_len, converter);
             std::ptr::write(target.add(written), 0);
             written
@@ -333,7 +334,7 @@ impl Binding {
 
         let offset = get_data_offset.unwrap_or(0);
         let max_len = (self.buffer_length / 2) as usize;
-        let value_ptr = self.target_value_ptr as *mut u16;
+        let value_ptr = self.target_value_ptr.cast::<u16>().as_raw();
         let mut dst_idx = 0;
         for c in src.encode_utf16().skip(offset) {
             if dst_idx == max_len - 1 {

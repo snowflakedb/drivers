@@ -1,18 +1,16 @@
-use crate::api::CDataType;
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu,
     InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
     InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu,
     OdbcError, StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
-use crate::api::{
-    GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
-};
+use crate::api::types::SendSyncArrowArrayStreamReader;
+use crate::api::{CDataType, OdbcOutputPointer};
+use crate::api::{GetDataState, OdbcResult, Statement, StatementState, WithState};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{Binding, ConversionError, NumericSettings, make_converter};
 use arrow::array::{Array, RecordBatchReader};
 use arrow::datatypes::Field;
-use arrow::ffi_stream::ArrowArrayStreamReader;
 use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
@@ -70,7 +68,7 @@ enum RowStatus {
 /// reader is exhausted.
 #[allow(clippy::result_large_err)]
 fn next_non_empty_batch(
-    mut reader: ArrowArrayStreamReader,
+    mut reader: SendSyncArrowArrayStreamReader,
     rows_affected: Option<i64>,
     prepared: bool,
 ) -> Result<(StatementState, ()), (StatementState, crate::api::error::OdbcError)> {
@@ -160,19 +158,17 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
 }
 
 /// Fetch the next rowset of data (block cursor aware).
-pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
+pub fn fetch(stmt: &mut Statement, warnings: &mut Warnings) -> OdbcResult<()> {
     tracing::debug!("fetch called");
-    let stmt = stmt_from_handle(statement_handle);
 
     if stmt.used_extended_fetch {
         return MixedCursorFunctionsSnafu.fail();
     }
 
-    fetch_impl(statement_handle, warnings)
+    fetch_impl(stmt, warnings)
 }
 
-fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
-    let stmt = stmt_from_handle(statement_handle);
+fn fetch_impl(stmt: &mut Statement, warnings: &mut Warnings) -> OdbcResult<()> {
     stmt.get_data_state = None;
 
     let array_size = stmt.ard.array_size.max(1);
@@ -184,7 +180,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     if array_size == 1 && bind_offset_ptr.is_null() {
         advance_cursor(&mut stmt.state)?;
         if !rows_fetched_ptr.is_null() {
-            unsafe { *rows_fetched_ptr = 1 };
+            unsafe { *rows_fetched_ptr.as_raw() = 1 };
         }
         match execute_bindings_for_row(stmt, 0, 0, 0) {
             Ok(row_warnings) => {
@@ -193,11 +189,11 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 } else {
                     RowStatus::SuccessWithInfo
                 };
-                write_row_status(row_status_ptr, 0, status);
+                write_row_status(row_status_ptr.as_raw(), 0, status);
                 warnings.extend(row_warnings);
             }
             Err(e) => {
-                write_row_status(row_status_ptr, 0, RowStatus::Error);
+                write_row_status(row_status_ptr.as_raw(), 0, RowStatus::Error);
                 return Err(e);
             }
         }
@@ -205,7 +201,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     }
 
     let bind_offset = if !bind_offset_ptr.is_null() {
-        unsafe { *bind_offset_ptr }
+        unsafe { *bind_offset_ptr.as_raw() }
     } else {
         0
     };
@@ -224,18 +220,18 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                         } else {
                             RowStatus::SuccessWithInfo
                         };
-                        write_row_status(row_status_ptr, row_idx, status);
+                        write_row_status(row_status_ptr.as_raw(), row_idx, status);
                         warnings.extend(w);
                     }
                     Err(_) => {
-                        write_row_status(row_status_ptr, row_idx, RowStatus::Error);
+                        write_row_status(row_status_ptr.as_raw(), row_idx, RowStatus::Error);
                         has_error = true;
                     }
                 }
             }
             Err(crate::api::OdbcError::NoMoreData { .. }) => {
                 for remaining in row_idx..array_size {
-                    write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+                    write_row_status(row_status_ptr.as_raw(), remaining, RowStatus::NoRow);
                 }
                 break;
             }
@@ -243,10 +239,10 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
                 if rows_fetched == 0 {
                     return Err(e);
                 }
-                write_row_status(row_status_ptr, row_idx, RowStatus::Error);
+                write_row_status(row_status_ptr.as_raw(), row_idx, RowStatus::Error);
                 has_error = true;
                 for remaining in (row_idx + 1)..array_size {
-                    write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+                    write_row_status(row_status_ptr.as_raw(), remaining, RowStatus::NoRow);
                 }
                 break;
             }
@@ -254,7 +250,7 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
     }
 
     if !rows_fetched_ptr.is_null() {
-        unsafe { *rows_fetched_ptr = rows_fetched as sql::ULen };
+        rows_fetched_ptr.write(rows_fetched as sql::ULen);
     }
 
     if rows_fetched == 0 {
@@ -270,13 +266,13 @@ fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcRes
 
 /// `SQLFetchScroll` — currently only `SQL_FETCH_NEXT` is supported.
 pub fn fetch_scroll(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     fetch_orientation: sql::SmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     let orientation = FetchOrientation::try_from(fetch_orientation)?;
     match orientation {
-        FetchOrientation::Next => fetch(statement_handle, warnings),
+        FetchOrientation::Next => fetch(stmt, warnings),
         other => {
             tracing::warn!("fetch_scroll: unsupported orientation {other:?}");
             FetchTypeOutOfRangeSnafu.fail()
@@ -289,7 +285,7 @@ pub fn fetch_scroll(
 /// Sets the `used_extended_fetch` flag so that subsequent `SQLFetch` calls
 /// are rejected (per ODBC spec) until the cursor is closed.
 pub fn extended_fetch(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     fetch_orientation: sql::SmallInt,
     _fetch_offset: sql::Len,
     row_count_ptr: *mut sql::ULen,
@@ -307,12 +303,11 @@ pub fn extended_fetch(
         }
     }
 
-    let stmt = stmt_from_handle(statement_handle);
     stmt.used_extended_fetch = true;
-    stmt.ird.rows_processed_ptr = row_count_ptr;
-    stmt.ird.array_status_ptr = row_status_ptr;
+    stmt.ird.rows_processed_ptr = OdbcOutputPointer::new(row_count_ptr);
+    stmt.ird.array_status_ptr = OdbcOutputPointer::new(row_status_ptr);
 
-    fetch_impl(statement_handle, warnings)
+    fetch_impl(stmt, warnings)
 }
 
 fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {
@@ -341,19 +336,20 @@ fn indicator_or_length_stride(bind_type: usize) -> usize {
 }
 
 fn advance_by_element_stride<T>(
-    ptr: *mut T,
+    ptr: OdbcOutputPointer<T>,
     row_idx: usize,
     element_stride: usize,
     bind_offset: isize,
-) -> *mut T {
+) -> OdbcOutputPointer<T> {
     if ptr.is_null() {
-        return std::ptr::null_mut();
+        return OdbcOutputPointer::null();
     }
     let stride = row_idx
         .checked_mul(element_stride)
         .expect("row index and element stride multiplication overflowed");
-    let byte_ptr = ptr as *mut u8;
-    unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T }
+    let byte_ptr = ptr.cast::<u8>().as_raw();
+    let raw_value = unsafe { byte_ptr.offset(bind_offset).add(stride) as *mut T };
+    OdbcOutputPointer::new(raw_value)
 }
 
 /// Create an adjusted `Binding` whose pointers target `row_idx` within the
@@ -420,6 +416,12 @@ fn execute_bindings_for_row(
             })
             .collect();
 
+        let conn_arc = stmt
+            .conn_weak()
+            .upgrade()
+            .ok_or_else(|| crate::api::error::DisconnectedSnafu.build())?;
+        let conn_guard = conn_arc.lock().unwrap();
+
         for (column_number, adjusted) in &bindings {
             let arrow_col = *column_number as usize - 1;
             if arrow_col >= schema.fields().len() {
@@ -436,9 +438,7 @@ fn execute_bindings_for_row(
                 array_ref,
                 field,
                 batch_idx,
-                // SAFETY: conn pointer is valid for the statement's lifetime;
-                // no mutable reference to the Connection exists in this scope.
-                &unsafe { stmt.conn() }.numeric_settings,
+                &conn_guard.numeric_settings,
                 &mut None,
             )
             .context(ConversionSnafu)?;
@@ -450,7 +450,7 @@ fn execute_bindings_for_row(
 
 /// Get data from a specific column
 pub fn get_data(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     col_or_param_num: sql::USmallInt,
     target_type: CDataType,
     target_value_ptr: sql::Pointer,
@@ -458,7 +458,7 @@ pub fn get_data(
     str_len_or_ind_ptr: *mut sql::Len,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    tracing::debug!("get_data: statement_handle={:?}", statement_handle);
+    tracing::debug!("get_data called");
 
     if target_value_ptr.is_null() {
         return NullPointerSnafu.fail();
@@ -470,8 +470,6 @@ pub fn get_data(
         }
         .fail();
     }
-
-    let stmt = stmt_from_handle(statement_handle);
 
     if stmt.ard.array_size > 1 {
         tracing::warn!("get_data: cannot use SQLGetData with row_array_size > 1");
@@ -539,23 +537,26 @@ pub fn get_data(
             let ard_binding = stmt.ard.bindings.get(&col_or_param_num);
             let binding = Binding {
                 target_type,
-                target_value_ptr,
+                target_value_ptr: OdbcOutputPointer::new(target_value_ptr),
                 buffer_length,
-                octet_length_ptr: str_len_or_ind_ptr,
-                indicator_ptr: str_len_or_ind_ptr,
+                octet_length_ptr: OdbcOutputPointer::new(str_len_or_ind_ptr),
+                indicator_ptr: OdbcOutputPointer::new(str_len_or_ind_ptr),
                 precision: ard_binding.and_then(|b| b.precision),
                 scale: ard_binding.and_then(|b| b.scale),
                 datetime_interval_precision: ard_binding
                     .and_then(|b| b.datetime_interval_precision),
             };
+            let conn_arc = stmt
+                .conn_weak()
+                .upgrade()
+                .ok_or_else(|| crate::api::error::DisconnectedSnafu.build())?;
+            let conn_guard = conn_arc.lock().unwrap();
             let conversion_warnings = read_arrow_value(
                 &binding,
                 array_ref,
                 field,
                 *batch_idx,
-                // SAFETY: conn pointer is valid for the statement's lifetime;
-                // no mutable reference to the Connection exists in this scope.
-                &unsafe { stmt.conn() }.numeric_settings,
+                &conn_guard.numeric_settings,
                 &mut offset,
             )
             .context(ConversionSnafu)?;
@@ -660,9 +661,9 @@ mod tests {
         fn from_buffer(target_type: CDataType, buffer: &mut [u8], str_len: *mut sql::Len) -> Self {
             Self {
                 target_type,
-                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
                 buffer_length: buffer.len() as sql::Len,
-                octet_length_ptr: str_len,
+                octet_length_ptr: OdbcOutputPointer::new(str_len),
                 ..Default::default()
             }
         }
@@ -670,7 +671,7 @@ mod tests {
         fn from_value<T>(target_type: CDataType, value: &mut T) -> Self {
             Self {
                 target_type,
-                target_value_ptr: value as *mut T as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::from_ref(value).erase_type(),
                 ..Default::default()
             }
         }
@@ -1032,9 +1033,9 @@ mod tests {
 
             let binding = Binding {
                 target_type: CDataType::WChar,
-                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
                 buffer_length: (buffer.len() * 2) as sql::Len, // buffer_length is in bytes for WChar
-                octet_length_ptr: &mut str_len,
+                octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
                 ..Default::default()
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
@@ -1275,7 +1276,7 @@ mod tests {
             let mut str_len: sql::Len = 0;
 
             let binding = Binding {
-                octet_length_ptr: &mut str_len,
+                octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
                 ..Binding::from_value(CDataType::Default, &mut value)
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
@@ -1292,7 +1293,7 @@ mod tests {
             let mut str_len: sql::Len = 0;
 
             let binding = Binding {
-                octet_length_ptr: &mut str_len,
+                octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
                 ..Binding::from_value(CDataType::Default, &mut value)
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
@@ -1309,7 +1310,7 @@ mod tests {
             let mut str_len: sql::Len = 0;
 
             let binding = Binding {
-                octet_length_ptr: &mut str_len,
+                octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
                 ..Binding::from_value(CDataType::Default, &mut value)
             };
             let result = read_arrow_value_test(&binding, &array, &field, 0);
@@ -1468,9 +1469,9 @@ mod tests {
 
             let binding = Binding {
                 target_type: CDataType::Numeric,
-                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::from_ref(&mut numeric).erase_type(),
                 buffer_length: size_of::<sql::Numeric>() as sql::Len,
-                octet_length_ptr: &mut indicator,
+                octet_length_ptr: OdbcOutputPointer::new(&mut indicator),
                 precision: Some(10),
                 scale: Some(2),
                 ..Default::default()
@@ -1499,9 +1500,9 @@ mod tests {
 
             let binding = Binding {
                 target_type: CDataType::Numeric,
-                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::from_ref(&mut numeric).erase_type(),
                 buffer_length: size_of::<sql::Numeric>() as sql::Len,
-                octet_length_ptr: std::ptr::null_mut(),
+                octet_length_ptr: OdbcOutputPointer::null(),
                 precision: Some(5),
                 scale: Some(0),
                 ..Default::default()
@@ -1533,9 +1534,9 @@ mod tests {
 
             let binding = Binding {
                 target_type: CDataType::Numeric,
-                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::from_ref(&mut numeric).erase_type(),
                 buffer_length: size_of::<sql::Numeric>() as sql::Len,
-                octet_length_ptr: std::ptr::null_mut(),
+                octet_length_ptr: OdbcOutputPointer::null(),
                 precision: Some(10),
                 scale: Some(4),
                 ..Default::default()
@@ -1564,9 +1565,9 @@ mod tests {
 
             let binding = Binding {
                 target_type: CDataType::Numeric,
-                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                target_value_ptr: OdbcOutputPointer::from_ref(&mut numeric).erase_type(),
                 buffer_length: size_of::<sql::Numeric>() as sql::Len,
-                octet_length_ptr: std::ptr::null_mut(),
+                octet_length_ptr: OdbcOutputPointer::null(),
                 precision: None,
                 scale: None,
                 ..Default::default()

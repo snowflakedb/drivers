@@ -1,5 +1,5 @@
 use crate::api::{
-    OdbcResult, env_from_handle,
+    Environment, OdbcResult,
     error::{InvalidAttributeValueSnafu, ReadOnlyAttributeSnafu, UnsupportedAttributeSnafu},
 };
 use odbc_sys as sql;
@@ -53,14 +53,13 @@ fn parse_connection_pool_match(
 }
 
 pub fn set_env_attribute(
-    environment_handle: sql::Handle,
+    env: &mut Environment,
     attribute: sql::Integer,
     value: sql::Pointer,
     _string_length: sql::Integer,
 ) -> OdbcResult<()> {
     tracing::debug!("Setting environment attribute: {attribute}");
 
-    let env = env_from_handle(environment_handle);
     let attr = to_env_attr(attribute).ok_or(UnsupportedAttributeSnafu { attribute }.build())?;
 
     match attr {
@@ -103,7 +102,7 @@ pub fn set_env_attribute(
 }
 
 pub fn get_env_attribute(
-    environment_handle: sql::Handle,
+    env: &mut Environment,
     attribute: sql::Integer,
     value: sql::Pointer,
     _buffer_length: sql::Integer,
@@ -111,7 +110,6 @@ pub fn get_env_attribute(
 ) -> OdbcResult<()> {
     tracing::debug!("Getting environment attribute: {attribute}");
 
-    let env = env_from_handle(environment_handle);
     let attr = to_env_attr(attribute).ok_or(UnsupportedAttributeSnafu { attribute }.build())?;
 
     let write_string_length = || {

@@ -495,6 +495,7 @@ pub(crate) fn read_wchar_str(binding: &ParameterBinding) -> Result<String, JsonB
 mod tests {
     use super::*;
     use crate::api::CDataType;
+    use crate::api::OdbcOutputPointer;
     use crate::api::{ApdRecord, IpdRecord};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -532,9 +533,9 @@ mod tests {
                 num,
                 ApdRecord {
                     value_type,
-                    data_ptr: ptr,
+                    data_ptr: OdbcOutputPointer::new(ptr),
                     buffer_length: buf_len,
-                    str_len_or_ind_ptr: ind_ptr,
+                    str_len_or_ind_ptr: OdbcOutputPointer::new(ind_ptr),
                 },
             );
             ipd.records.insert(
@@ -1743,9 +1744,9 @@ mod tests {
             3,
             ApdRecord {
                 value_type: CDataType::Long,
-                data_ptr: &val as *const i32 as sql::Pointer,
+                data_ptr: OdbcOutputPointer::new(std::ptr::from_ref(&val).cast_mut()).erase_type(),
                 buffer_length: 0,
-                str_len_or_ind_ptr: std::ptr::null_mut(),
+                str_len_or_ind_ptr: OdbcOutputPointer::null(),
             },
         );
         ipd.records.insert(

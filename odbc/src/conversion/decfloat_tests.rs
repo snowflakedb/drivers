@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api::CDataType;
+    use crate::api::OdbcOutputPointer;
     use crate::conversion::WriteODBCType;
     use crate::conversion::decfloat::{
         SnowflakeDecfloat, format_decfloat, i128_from_big_endian_signed,
@@ -28,10 +29,10 @@ mod tests {
     ) -> Binding {
         Binding {
             target_type,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(str_len),
+            indicator_ptr: OdbcOutputPointer::new(str_len),
             ..Default::default()
         }
     }
@@ -690,10 +691,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::TypeDate,
-            target_value_ptr: value.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(value.as_mut_ptr()).erase_type(),
             buffer_length: value.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
 
@@ -711,10 +712,10 @@ mod tests {
     ) -> Binding {
         Binding {
             target_type,
-            target_value_ptr: value as *mut T as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::from_ref(value).erase_type(),
             buffer_length: std::mem::size_of::<T>() as sql::Len,
-            octet_length_ptr: str_len as *mut sql::Len,
-            indicator_ptr: str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(str_len),
+            indicator_ptr: OdbcOutputPointer::new(str_len),
             ..Default::default()
         }
     }
@@ -1000,10 +1001,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::Binary,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
         let warnings = df.write_odbc_type((42, 0), &binding, &mut None).unwrap();
@@ -1020,10 +1021,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::Binary,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
         assert!(df.write_odbc_type((42, 0), &binding, &mut None).is_err());
@@ -1449,10 +1450,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::Binary,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
         // sig=1, exp=100 → 10^100 overflows i128 → should return 22003
@@ -1470,10 +1471,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::Binary,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
         // sig=-1, exp=100 → overflows → should return 22003
@@ -1491,10 +1492,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::Binary,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
         // sig * 10^exp overflows i128 via checked_mul
@@ -1513,10 +1514,10 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = Binding {
             target_type: CDataType::Binary,
-            target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+            target_value_ptr: OdbcOutputPointer::new(buffer.as_mut_ptr()).erase_type(),
             buffer_length: buffer.len() as sql::Len,
-            octet_length_ptr: &mut str_len as *mut sql::Len,
-            indicator_ptr: &mut str_len as *mut sql::Len,
+            octet_length_ptr: OdbcOutputPointer::new(&mut str_len),
+            indicator_ptr: OdbcOutputPointer::new(&mut str_len),
             ..Default::default()
         };
         // Large value that fits in i128: sig=99, exp=0

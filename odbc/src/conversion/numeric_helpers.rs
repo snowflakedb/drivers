@@ -90,12 +90,12 @@ pub fn write_numeric_as_binary(
         .fail();
     }
     let numeric_bytes: &[u8] = unsafe {
-        std::slice::from_raw_parts(numeric as *const sql::Numeric as *const u8, numeric_size)
+        std::slice::from_raw_parts(std::ptr::from_ref(numeric).cast::<u8>(), numeric_size)
     };
     unsafe {
         std::ptr::copy_nonoverlapping(
             numeric_bytes.as_ptr(),
-            binding.target_value_ptr as *mut u8,
+            binding.target_value_ptr.cast::<u8>().as_raw(),
             numeric_size,
         );
     }

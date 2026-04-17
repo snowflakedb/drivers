@@ -3,7 +3,7 @@ use crate::api::error::{
     ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
     StatementNotExecutedSnafu,
 };
-use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
+use crate::api::{DescField, OdbcResult, Statement, StatementState};
 use crate::conversion::warning::Warnings;
 use crate::conversion::{column_size_from_field, decimal_digits_from_field, sql_type_from_field};
 use arrow::array::RecordBatchReader;
@@ -13,11 +13,10 @@ use tracing;
 
 /// Get the number of result columns
 pub fn num_result_cols(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     column_count_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("num_result_cols called");
-    let stmt = stmt_from_handle(statement_handle);
 
     let num_cols = match stmt.state.as_ref() {
         StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
@@ -42,9 +41,8 @@ pub fn num_result_cols(
 }
 
 /// Get the number of affected rows
-pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
+pub fn row_count(stmt: &mut Statement, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
-    let stmt = stmt_from_handle(statement_handle);
     let row_count = match stmt.state.as_ref() {
         StatementState::QueryExecuted { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
@@ -66,7 +64,7 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
 /// Get a column attribute (SQLColAttribute)
 #[allow(clippy::too_many_arguments)]
 pub fn col_attribute<E: OdbcEncoding>(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     column_number: sql::USmallInt,
     field_identifier: sql::USmallInt,
     character_attribute_ptr: *mut E::Char,
@@ -80,7 +78,6 @@ pub fn col_attribute<E: OdbcEncoding>(
         column_number,
         field_identifier
     );
-    let stmt = stmt_from_handle(statement_handle);
 
     let schema = match stmt.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
@@ -108,9 +105,12 @@ pub fn col_attribute<E: OdbcEncoding>(
 
     match desc_field {
         DescField::Type | DescField::ConciseType => {
-            // SAFETY: conn pointer is valid for the statement's lifetime;
-            // no mutable reference to the Connection exists in this scope.
-            let sql_type = sql_type_from_field(field, &unsafe { stmt.conn() }.numeric_settings)
+            let conn_arc = stmt
+                .conn_weak()
+                .upgrade()
+                .ok_or_else(|| crate::api::error::DisconnectedSnafu.build())?;
+            let conn_guard = conn_arc.lock().unwrap();
+            let sql_type = sql_type_from_field(field, &conn_guard.numeric_settings)
                 .context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
                 unsafe {
@@ -170,7 +170,7 @@ pub fn col_attribute<E: OdbcEncoding>(
 /// Describe a column in the result set (SQLDescribeCol / SQLDescribeColW).
 #[allow(clippy::too_many_arguments)]
 pub fn describe_col<E: OdbcEncoding>(
-    statement_handle: sql::Handle,
+    stmt: &mut Statement,
     column_number: sql::USmallInt,
     column_name: *mut E::Char,
     buffer_length: sql::SmallInt,
@@ -182,7 +182,6 @@ pub fn describe_col<E: OdbcEncoding>(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("describe_col: column_number={column_number}");
-    let stmt = stmt_from_handle(statement_handle);
 
     let schema = match stmt.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
@@ -207,9 +206,11 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     let field = schema.field(col_idx);
-    // SAFETY: conn pointer is valid for the statement's lifetime;
-    // no mutable reference to the Connection exists in this scope.
-    let conn = unsafe { stmt.conn() };
+    let conn_arc = stmt
+        .conn_weak()
+        .upgrade()
+        .ok_or_else(|| crate::api::error::DisconnectedSnafu.build())?;
+    let conn = conn_arc.lock().unwrap();
 
     let name = field.name();
     write_string_chars::<E>(

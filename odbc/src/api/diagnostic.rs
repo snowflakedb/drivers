@@ -5,14 +5,9 @@
 
 use crate::{
     api::{
-        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, conn_from_handle,
+        OdbcError, OdbcResult, SqlState,
         encoding::{OdbcEncoding, write_string_bytes, write_string_chars},
-        env_from_handle,
-        error::{
-            InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
-            NoMoreDataSnafu,
-        },
-        stmt_from_handle,
+        error::{InvalidDiagnosticIdentifierSnafu, InvalidRecordNumberSnafu, NoMoreDataSnafu},
     },
     conversion::warning::{Warning, Warnings},
 };
@@ -164,66 +159,6 @@ impl DiagnosticInfo {
     }
 }
 
-pub trait WithDiagnosticInfo {
-    fn get_diag_info(&self) -> &DiagnosticInfo;
-    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo;
-}
-
-impl WithDiagnosticInfo for Environment {
-    fn get_diag_info(&self) -> &DiagnosticInfo {
-        &self.diagnostic_info
-    }
-    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
-        &mut self.diagnostic_info
-    }
-}
-
-impl WithDiagnosticInfo for Connection {
-    fn get_diag_info(&self) -> &DiagnosticInfo {
-        &self.diagnostic_info
-    }
-    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
-        &mut self.diagnostic_info
-    }
-}
-
-impl WithDiagnosticInfo for Statement {
-    fn get_diag_info(&self) -> &DiagnosticInfo {
-        &self.diagnostic_info
-    }
-    fn get_diag_info_mut(&mut self) -> &mut DiagnosticInfo {
-        &mut self.diagnostic_info
-    }
-}
-
-pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
-    if handle.is_null() {
-        return;
-    }
-    let t: &mut dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Env => env_from_handle(handle),
-        sql::HandleType::Dbc => conn_from_handle(handle),
-        sql::HandleType::Stmt => stmt_from_handle(handle),
-        _ => return,
-    };
-    t.get_diag_info_mut().clear();
-}
-
-pub fn from_handle_type<'a>(
-    handle_type: sql::HandleType,
-    handle: sql::Handle,
-) -> Option<&'a mut dyn WithDiagnosticInfo> {
-    match handle_type {
-        sql::HandleType::Env => Some(env_from_handle(handle)),
-        sql::HandleType::Dbc => Some(conn_from_handle(handle)),
-        sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
-        _ => {
-            tracing::info!("Invalid handle type: {:?}", handle_type);
-            None
-        }
-    }
-}
-
 pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
     let message_text = match warning {
         Warning::StringDataTruncated => "String data truncated",
@@ -248,65 +183,33 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
     }
 }
 
-pub fn set_diag_info_from_warnings(
-    handle_type: sql::HandleType,
-    handle: sql::Handle,
-    warnings: &Warnings,
-) {
-    if handle.is_null() {
-        return;
-    }
-    if let Some(t) = from_handle_type(handle_type, handle) {
-        let diagnostic_info = t.get_diag_info_mut();
-        for warning in warnings {
-            diagnostic_info.add_record(from_warning(warning));
-        }
+/// Add diagnostic records from an `OdbcResult` to the given `DiagnosticInfo`.
+/// Called from `c_api.rs` after each API function returns.
+pub fn set_diag_from_result(diag: &mut DiagnosticInfo, result: &OdbcResult<()>) {
+    if let Err(error) = result {
+        diag.add_record(error.to_diagnostic_record());
     }
 }
 
-pub fn set_diag_info_from_result(
-    handle_type: sql::HandleType,
-    handle: sql::Handle,
-    result: &OdbcResult<()>,
-) {
-    if handle.is_null() {
-        return;
-    }
-    if let Some(t) = from_handle_type(handle_type, handle) {
-        let diagnostic_info = t.get_diag_info_mut();
-        match result {
-            Ok(_) => {}
-            Err(error) => {
-                diagnostic_info.add_record(error.to_diagnostic_record());
-            }
-        }
+/// Add diagnostic records from warnings to the given `DiagnosticInfo`.
+/// Called from `c_api.rs` after API functions that produce warnings.
+pub fn set_diag_from_warnings(diag: &mut DiagnosticInfo, warnings: &Warnings) {
+    for warning in warnings {
+        diag.add_record(from_warning(warning));
     }
 }
 
-pub fn get_diag_info(
-    handle_type: sql::HandleType,
-    handle: sql::Handle,
-) -> OdbcResult<DiagnosticInfo> {
-    let t: &dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Env => env_from_handle(handle),
-        sql::HandleType::Dbc => conn_from_handle(handle),
-        sql::HandleType::Stmt => stmt_from_handle(handle),
-        _ => return InvalidHandleSnafu.fail(),
-    };
-    Ok(t.get_diag_info().clone())
-}
-
-/// Get diagnostic record from handle (SQLGetDiagRec / SQLGetDiagRecW).
+/// Get diagnostic record (SQLGetDiagRec / SQLGetDiagRecW).
 ///
 /// Retrieves diagnostic information associated with a specific handle.
+/// `diagnostic_info` is extracted by the caller (`c_api.rs`) from the handle.
 ///
 /// Per the ODBC spec, `text_length_ptr` always receives the full (untruncated)
 /// message length so the caller can allocate a sufficiently large buffer.
 /// If the message is truncated, a `StringDataTruncated` warning is pushed.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn get_diag_rec<E: OdbcEncoding>(
-    handle_type: sql::HandleType,
-    handle: sql::Handle,
+    diagnostic_info: &DiagnosticInfo,
     rec_number: sql::SmallInt,
     sql_state: *mut E::Char,
     native_error_ptr: *mut sql::Integer,
@@ -315,7 +218,6 @@ pub unsafe fn get_diag_rec<E: OdbcEncoding>(
     text_length_ptr: *mut sql::SmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let diagnostic_info = get_diag_info(handle_type, handle)?;
     if rec_number <= 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }
@@ -348,23 +250,19 @@ pub unsafe fn get_diag_rec<E: OdbcEncoding>(
     Ok(())
 }
 
-/// Get diagnostic field from handle (SQLGetDiagField / SQLGetDiagFieldW).
+/// Get diagnostic field (SQLGetDiagField / SQLGetDiagFieldW).
 ///
 /// Retrieves a specific diagnostic field from a diagnostic record.
+/// `diagnostic_info` is extracted by the caller (`c_api.rs`) from the handle.
 pub fn get_diag_field<E: OdbcEncoding>(
-    handle_type: sql::HandleType,
-    handle: sql::Handle,
+    diagnostic_info: &DiagnosticInfo,
     rec_number: sql::SmallInt,
     diag_identifier: sql::SmallInt,
     diag_info_ptr: sql::Pointer,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
-    let diagnostic_info = get_diag_info(handle_type, handle)?;
-    tracing::debug!(
-        "get_diag_field: handle_type={:?}, rec_number={rec_number}, diag_identifier={diag_identifier:?}",
-        handle_type,
-    );
+    tracing::debug!("get_diag_field: rec_number={rec_number}, diag_identifier={diag_identifier:?}",);
     if rec_number < 0 {
         return InvalidRecordNumberSnafu { number: rec_number }.fail();
     }

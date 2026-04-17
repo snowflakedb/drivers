@@ -10,7 +10,9 @@ use sf_core::protobuf::generated::database_driver_v1::{
     ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
 };
 use std::collections::HashMap;
-use std::sync::Weak;
+use std::ffi::c_void;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex, Weak};
 use tokio_util::sync::CancellationToken;
 
 use super::CDataType;
@@ -602,6 +604,70 @@ impl From<SqlType> for sql::SqlDataType {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct OdbcOutputPointer<T> {
+    ptr: *mut T,
+}
+
+impl<T> Clone for OdbcOutputPointer<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for OdbcOutputPointer<T> {}
+
+unsafe impl<T: Send + Sync> Send for OdbcOutputPointer<T> {}
+unsafe impl<T: Send + Sync> Sync for OdbcOutputPointer<T> {}
+
+impl<T> OdbcOutputPointer<T> {
+    pub fn null() -> Self {
+        Self {
+            ptr: std::ptr::null_mut(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn from_ref(reference: &mut T) -> Self {
+        Self {
+            ptr: std::ptr::from_mut(reference),
+        }
+    }
+
+    pub fn new(ptr: *mut T) -> Self {
+        Self { ptr }
+    }
+
+    #[cfg(test)]
+    pub fn erase_type(&self) -> OdbcOutputPointer<c_void> {
+        self.cast()
+    }
+
+    pub fn cast<U>(&self) -> OdbcOutputPointer<U> {
+        OdbcOutputPointer::new(self.ptr as *mut U)
+    }
+
+    pub fn as_raw(&self) -> *mut T {
+        self.ptr
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.ptr.is_null()
+    }
+
+    pub fn write(&self, value: T) {
+        unsafe {
+            std::ptr::write(self.ptr, value);
+        }
+    }
+}
+
+impl<T> Default for OdbcOutputPointer<T> {
+    fn default() -> Self {
+        Self::null()
+    }
+}
+
 /// Application Row Descriptor (ARD).
 ///
 /// Stores column binding information and block-cursor header fields.
@@ -616,7 +682,7 @@ pub struct ArdDescriptor {
     /// `SQL_DESC_BIND_TYPE` / `SQL_ATTR_ROW_BIND_TYPE` — 0 = column-wise (default).
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` / `SQL_ATTR_ROW_BIND_OFFSET_PTR` — default null.
-    pub bind_offset_ptr: *mut sql::Len,
+    pub bind_offset_ptr: OdbcOutputPointer<sql::Len>,
 }
 
 impl Default for ArdDescriptor {
@@ -632,7 +698,7 @@ impl ArdDescriptor {
             bindings: HashMap::new(),
             array_size: 1,
             bind_type: 0,
-            bind_offset_ptr: std::ptr::null_mut(),
+            bind_offset_ptr: OdbcOutputPointer::null(),
         }
     }
 
@@ -669,7 +735,7 @@ pub struct ApdDescriptor {
     /// `SQL_DESC_BIND_TYPE` — 0 = column-wise (default).
     pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` — default null.
-    pub bind_offset_ptr: *mut sql::Len,
+    pub bind_offset_ptr: OdbcOutputPointer<sql::Len>,
 }
 
 impl Default for ApdDescriptor {
@@ -685,7 +751,7 @@ impl ApdDescriptor {
             records: HashMap::new(),
             array_size: 1,
             bind_type: 0,
-            bind_offset_ptr: std::ptr::null_mut(),
+            bind_offset_ptr: OdbcOutputPointer::null(),
         }
     }
 
@@ -709,9 +775,9 @@ pub struct IrdDescriptor {
     /// `SQL_DESC_COUNT` — number of columns in the result set.
     pub desc_count: sql::SmallInt,
     /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
-    pub array_status_ptr: *mut u16,
+    pub array_status_ptr: OdbcOutputPointer<u16>,
     /// `SQL_DESC_ROWS_PROCESSED_PTR` / `SQL_ATTR_ROWS_FETCHED_PTR` — default null.
-    pub rows_processed_ptr: *mut sql::ULen,
+    pub rows_processed_ptr: OdbcOutputPointer<sql::ULen>,
 }
 
 impl Default for IrdDescriptor {
@@ -725,8 +791,8 @@ impl IrdDescriptor {
         Self {
             kind: DescriptorKind::Ird,
             desc_count: 0,
-            array_status_ptr: std::ptr::null_mut(),
-            rows_processed_ptr: std::ptr::null_mut(),
+            array_status_ptr: OdbcOutputPointer::null(),
+            rows_processed_ptr: OdbcOutputPointer::null(),
         }
     }
 }
@@ -742,9 +808,9 @@ pub struct IpdDescriptor {
     kind: DescriptorKind,
     pub records: HashMap<u16, IpdRecord>,
     /// `SQL_DESC_ARRAY_STATUS_PTR` — default null.
-    pub array_status_ptr: *mut u16,
+    pub array_status_ptr: OdbcOutputPointer<u16>,
     /// `SQL_DESC_ROWS_PROCESSED_PTR` — default null.
-    pub rows_processed_ptr: *mut sql::ULen,
+    pub rows_processed_ptr: OdbcOutputPointer<sql::ULen>,
 }
 
 impl Default for IpdDescriptor {
@@ -758,8 +824,8 @@ impl IpdDescriptor {
         Self {
             kind: DescriptorKind::Ipd,
             records: HashMap::new(),
-            array_status_ptr: std::ptr::null_mut(),
-            rows_processed_ptr: std::ptr::null_mut(),
+            array_status_ptr: OdbcOutputPointer::null(),
+            rows_processed_ptr: OdbcOutputPointer::null(),
         }
     }
 
@@ -844,6 +910,7 @@ pub struct Environment {
     pub connection_pooling: sql::AttrConnectionPooling,
     pub connection_pool_match: sql::AttrCpMatch,
     pub diagnostic_info: DiagnosticInfo,
+    pub child_connections: Vec<Arc<Mutex<Connection>>>,
 }
 
 pub enum ConnectionState {
@@ -859,7 +926,35 @@ pub enum ConnectionState {
 /// These are applied to the sf_core connection during driver_connect/connect.
 pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
 
+#[derive(Clone)]
+pub struct WindowHandle {
+    pub quiet_mode: sql::Pointer,
+}
+
+impl Default for WindowHandle {
+    fn default() -> Self {
+        Self::new(std::ptr::null_mut())
+    }
+}
+
+impl WindowHandle {
+    pub fn new(quiet_mode: sql::Pointer) -> Self {
+        Self { quiet_mode }
+    }
+
+    pub fn into_raw(self) -> sql::Pointer {
+        self.quiet_mode
+    }
+}
+
+unsafe impl Sync for WindowHandle {}
+unsafe impl Send for WindowHandle {}
+
 pub struct Connection {
+    /// Weak reference to the owning environment. The `Arc<Mutex<Environment>>`
+    /// lives in the environment's `OdbcHandleWrapper`; this `Weak` allows
+    /// navigating back to the parent without preventing cleanup.
+    env: Weak<Mutex<Environment>>,
     pub state: ConnectionState,
     pub diagnostic_info: DiagnosticInfo,
     /// Attributes set via SQLSetConnectAttr before the connection is established
@@ -868,15 +963,13 @@ pub struct Connection {
     /// SQL_ATTR_ACCESS_MODE — advisory only (default SQL_MODE_READ_WRITE)
     pub access_mode: AccessMode,
     /// SQL_ATTR_QUIET_MODE — window handle pointer (default null)
-    pub quiet_mode: sql::Pointer,
+    pub quiet_mode: WindowHandle,
     /// SQL_ATTR_PACKET_SIZE — pre-connect only (default 0 = driver-defined)
     pub packet_size: sql::UInteger,
-    /// Weak references to all child statements allocated on this connection, paired with
-    /// the raw pointer obtained from `Arc::into_raw` at allocation time.
-    /// Storing this pointer ensures `Arc::from_raw` (used in `free_connection`) receives a
-    /// pointer that satisfies its documented contract (obtained via `Arc::into_raw`, not
-    /// `Weak::as_ptr`).
-    pub(crate) child_statements: Vec<(Weak<Statement>, *const Statement)>,
+    /// Child statements allocated on this connection. The `Arc<Statement>`
+    /// provides ownership; the corresponding `OdbcHandleWrapper` holds a
+    /// `Weak<Statement>`.
+    pub(crate) child_statements: Vec<Arc<Mutex<Statement>>>,
     /// Cached local autocommit state. Defaults to `AutocommitValue::On`.
     /// Updated when SQL_ATTR_AUTOCOMMIT is set; used as fallback for get_connect_attr
     /// when the server session parameter is unavailable.
@@ -888,13 +981,29 @@ pub struct Connection {
     pub current_catalog: Option<String>,
 }
 
-// Safety: Send is required so that the async runtime can transfer ownership of the
-// Connection allocation between threads (e.g. when a Tokio task completes on a
-// different thread than it started). All ODBC API access remains serialised on the
-// single caller thread — the raw-pointer DBC handle is never shared across threads.
-// `*const Statement` inside `child_statements` is `!Send`, but Connection is never
-// accessed concurrently, so this is safe.
-unsafe impl Send for Connection {}
+impl Connection {
+    pub fn new(env: Weak<Mutex<Environment>>) -> Self {
+        Self {
+            env,
+            state: ConnectionState::Disconnected,
+            diagnostic_info: DiagnosticInfo::default(),
+            pre_connection_attrs: Default::default(),
+            numeric_settings: Default::default(),
+            access_mode: AccessMode::ReadWrite,
+            quiet_mode: WindowHandle::default(),
+            packet_size: 0,
+            child_statements: vec![],
+            cached_autocommit: AutocommitValue::On,
+            current_catalog: None,
+        }
+    }
+
+    /// Clone the `Weak<Mutex<Environment>>` back-pointer so the caller can
+    /// upgrade it and lock the parent environment.
+    pub(crate) fn env_weak(&self) -> Weak<Mutex<Environment>> {
+        self.env.clone()
+    }
+}
 
 /// Application Parameter Descriptor (APD) record.
 ///
@@ -905,18 +1014,18 @@ unsafe impl Send for Connection {}
 #[derive(Debug)]
 pub struct ApdRecord {
     pub value_type: CDataType,
-    pub data_ptr: sql::Pointer,
+    pub data_ptr: OdbcOutputPointer<c_void>,
     pub buffer_length: sql::Len,
-    pub str_len_or_ind_ptr: *mut sql::Len,
+    pub str_len_or_ind_ptr: OdbcOutputPointer<sql::Len>,
 }
 
 impl Default for ApdRecord {
     fn default() -> Self {
         Self {
             value_type: CDataType::Default,
-            data_ptr: std::ptr::null_mut(),
+            data_ptr: OdbcOutputPointer::null(),
             buffer_length: 0,
-            str_len_or_ind_ptr: std::ptr::null_mut(),
+            str_len_or_ind_ptr: OdbcOutputPointer::null(),
         }
     }
 }
@@ -971,9 +1080,9 @@ impl ParameterBinding {
         Self {
             sql_data_type: ipd.sql_data_type,
             value_type: apd.value_type,
-            parameter_value_ptr: apd.data_ptr,
+            parameter_value_ptr: apd.data_ptr.as_raw(),
             buffer_length: apd.buffer_length,
-            str_len_or_ind_ptr: apd.str_len_or_ind_ptr,
+            str_len_or_ind_ptr: apd.str_len_or_ind_ptr.as_raw(),
         }
     }
 }
@@ -985,7 +1094,7 @@ pub enum StatementState {
     },
     /// ODBC state S5: SELECT/catalog function executed, cursor is open.
     QueryExecuted {
-        reader: ArrowArrayStreamReader,
+        reader: SendSyncArrowArrayStreamReader,
         rows_affected: Option<i64>,
         /// `true` when reached via `SQLExecute` (prepared path). On
         /// `SQLFreeStmt(SQL_CLOSE)` the state returns to `Prepared`;
@@ -1005,7 +1114,7 @@ pub enum StatementState {
         prepared: bool,
     },
     Fetching {
-        reader: ArrowArrayStreamReader,
+        reader: SendSyncArrowArrayStreamReader,
         record_batch: RecordBatch,
         batch_idx: usize,
         rows_affected: Option<i64>,
@@ -1016,6 +1125,31 @@ pub enum StatementState {
         prepared: bool,
     },
     Error,
+}
+
+pub(crate) struct SendSyncArrowArrayStreamReader(ArrowArrayStreamReader);
+
+unsafe impl Send for SendSyncArrowArrayStreamReader {}
+unsafe impl Sync for SendSyncArrowArrayStreamReader {}
+
+impl Deref for SendSyncArrowArrayStreamReader {
+    type Target = ArrowArrayStreamReader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SendSyncArrowArrayStreamReader {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<ArrowArrayStreamReader> for SendSyncArrowArrayStreamReader {
+    fn from(reader: ArrowArrayStreamReader) -> Self {
+        Self(reader)
+    }
 }
 
 impl StatementState {
@@ -1111,9 +1245,10 @@ impl GetDataState {
 }
 
 pub struct Statement {
-    /// Raw pointer to the owning connection. Valid for the entire lifetime of this Statement
-    /// (the connection always outlives its statements). Access via `conn()` / `conn_ptr()`.
-    conn: *mut Connection,
+    /// Weak reference to the owning connection. The `Arc<Mutex<Connection>>`
+    /// lives in the parent environment's `child_connections`; this `Weak`
+    /// allows navigating back to the parent without preventing cleanup.
+    conn: Weak<Mutex<Connection>>,
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
@@ -1139,19 +1274,13 @@ pub struct Statement {
     pub cancel_token: CancellationToken,
 }
 
-/// Safety: Statement is always accessed on the single ODBC thread that holds the handle.
-// The conn raw pointer is valid for the Statement's lifetime (Connection outlives Statement).
-// `Send` allows moving the allocation across threads (e.g. when the runtime hands the raw
-// Arc pointer back on an arbitrary thread). `Sync` is NOT implemented: sharing `&Statement`
-// across threads is unsound because `conn` is a `*mut Connection` with no synchronisation.
-// Connection itself uses `unsafe impl Send` to suppress auto-trait checks on the
-// `Vec<(Weak<Statement>, *const Statement)>` field, so `Statement: Sync` is not required
-// for `Connection: Send`.
-unsafe impl Send for Statement {}
-
 impl Statement {
     /// Construct a new Statement for the given connection.
-    pub fn new(conn: *mut Connection, stmt_handle: StatementHandle) -> Self {
+    pub fn alloc(conn: Weak<Mutex<Connection>>, stmt_handle: StatementHandle) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self::new(conn, stmt_handle)))
+    }
+
+    pub fn new(conn: Weak<Mutex<Connection>>, stmt_handle: StatementHandle) -> Self {
         Self {
             conn,
             stmt_handle,
@@ -1170,48 +1299,9 @@ impl Statement {
         }
     }
 
-    /// Borrow the owning connection.
-    ///
-    /// # Safety
-    /// The caller must ensure the Connection outlives this borrow and no other
-    /// mutable reference to the Connection exists simultaneously.
-    pub unsafe fn conn(&self) -> &Connection {
-        debug_assert!(
-            !self.conn.is_null(),
-            "Statement::conn: connection pointer is null"
-        );
-        unsafe { &*self.conn }
+    /// Clone the `Weak<Mutex<Connection>>` back-pointer so the caller can
+    /// upgrade it and lock the parent connection.
+    pub(crate) fn conn_weak(&self) -> Weak<Mutex<Connection>> {
+        self.conn.clone()
     }
-
-    /// Return the raw connection pointer without creating a Rust borrow on `self`.
-    ///
-    /// Use this when you need both a `&mut Connection` and access to other
-    /// `Statement` fields in the same scope — the raw pointer carries no borrow
-    /// on `self`, so the borrow checker treats the resulting `&mut Connection`
-    /// as independent.
-    ///
-    /// # Safety
-    /// The caller must ensure that no live `conn()` borrow (or any other `&Connection`
-    /// derived from this statement) exists while the returned pointer is dereferenced
-    /// mutably. Having both an active `&Connection` and a `&mut Connection` pointing
-    /// to the same allocation is undefined behaviour.
-    pub(crate) unsafe fn conn_ptr(&self) -> *mut Connection {
-        self.conn
-    }
-}
-
-// Helper functions for handle conversion
-pub fn env_from_handle<'a>(handle: sql::Handle) -> &'a mut Environment {
-    let env_ptr = handle as *mut Environment;
-    unsafe { env_ptr.as_mut().unwrap() }
-}
-
-pub fn conn_from_handle<'a>(handle: sql::Handle) -> &'a mut Connection {
-    let conn_ptr = handle as *mut Connection;
-    unsafe { conn_ptr.as_mut().unwrap() }
-}
-
-pub fn stmt_from_handle<'a>(handle: sql::Handle) -> &'a mut Statement {
-    let stmt_ptr = handle as *mut Statement;
-    unsafe { stmt_ptr.as_mut().unwrap() }
 }

@@ -1,4 +1,3 @@
-use crate::api::InfoType;
 use crate::api::bitmask::Bitmask;
 use crate::api::encoding::{
     OdbcEncoding, read_string_from_pointer, write_string_bytes, write_string_bytes_i32,
@@ -12,9 +11,10 @@ use crate::api::error::{
 };
 use crate::api::runtime::global;
 use crate::api::{
-    ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
+    Connection, ConnectionState, GetDataExtensions, OdbcResult,
     types::{AccessMode, AutocommitValue, ConnectionAttribute, StatementState},
 };
+use crate::api::{InfoType, WindowHandle};
 use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
@@ -103,13 +103,13 @@ fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
 
 /// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
 pub fn driver_connect<E: OdbcEncoding>(
-    connection_handle: sql::Handle,
+    connection: &mut Connection,
     in_connection_string: *const E::Char,
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
     let params = parse_connection_string(&connection_string);
-    connect_with_params(connection_handle, params)
+    connect_with_params(connection, params)
 }
 
 /// Core connection logic shared by `driver_connect` and `connect`.
@@ -118,7 +118,7 @@ pub fn driver_connect<E: OdbcEncoding>(
 /// respects pre-connection attributes set via `SQLSetConnectAttr`, and transitions
 /// the handle to `Connected`.
 fn connect_with_params(
-    connection_handle: sql::Handle,
+    connection: &mut Connection,
     params: HashMap<String, String>,
 ) -> OdbcResult<()> {
     {
@@ -152,7 +152,6 @@ fn connect_with_params(
         options.insert("port".to_owned(), port_int.into());
     }
 
-    let connection = conn_from_handle(connection_handle);
     apply_pre_connection_overrides(&connection.pre_connection_attrs, &mut options);
 
     // Check before moving `options` into the RPC call below.
@@ -327,7 +326,7 @@ async fn apply_pre_connection_runtime_attrs_async(
 /// merges caller-supplied UID/PWD overrides, then delegates to `connect_with_params` to perform
 /// the actual connection.
 pub fn connect<E: OdbcEncoding>(
-    connection_handle: sql::Handle,
+    connection: &mut Connection,
     server_name: *const E::Char,
     name_length1: sql::SmallInt,
     user_name: *const E::Char,
@@ -367,7 +366,7 @@ pub fn connect<E: OdbcEncoding>(
     params
         .retain(|k, _| !k.eq_ignore_ascii_case("Driver") && !k.eq_ignore_ascii_case("Description"));
 
-    connect_with_params(connection_handle, params)
+    connect_with_params(connection, params)
 }
 
 /// Look up DSN parameters.
@@ -475,10 +474,9 @@ fn read_dsn_config(dsn: &str) -> OdbcResult<HashMap<String, String>> {
 }
 
 /// Disconnect from the database
-pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
+pub fn disconnect(connection: &mut Connection) -> OdbcResult<()> {
     tracing::debug!("disconnect: disconnecting from database");
 
-    let connection = conn_from_handle(connection_handle);
     if let ConnectionState::Connected {
         db_handle,
         conn_handle,
@@ -512,7 +510,7 @@ pub fn disconnect(connection_handle: sql::Handle) -> OdbcResult<()> {
 /// Snowflake does not perform ODBC escape sequence translation, so this is
 /// a simple pass-through that copies the input SQL to the output buffer.
 pub fn native_sql<E: OdbcEncoding>(
-    connection_handle: sql::Handle,
+    conn: &mut Connection,
     in_statement_text: *const E::Char,
     text_length1: sql::Integer,
     out_statement_text: *mut E::Char,
@@ -520,8 +518,6 @@ pub fn native_sql<E: OdbcEncoding>(
     text_length2_ptr: *mut sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    tracing::debug!("native_sql: connection_handle={connection_handle:?}");
-
     if in_statement_text.is_null() {
         return NullPointerSnafu.fail();
     }
@@ -538,7 +534,6 @@ pub fn native_sql<E: OdbcEncoding>(
         .fail();
     }
 
-    let conn = conn_from_handle(connection_handle);
     if matches!(conn.state, ConnectionState::Disconnected) {
         return crate::api::error::DisconnectedSnafu.fail();
     }
@@ -576,13 +571,12 @@ fn get_session_parameter(conn_handle: &ConnectionHandle, key: &str) -> OdbcResul
 /// Set a connection attribute (SQLSetConnectAttr / SQLSetConnectAttrW).
 // TODO: Clear sensitive pre_connection_attrs after apply_pre_connection_attrs.
 pub fn set_connect_attr<E: OdbcEncoding>(
-    connection_handle: sql::Handle,
+    connection: &mut Connection,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let connection = conn_from_handle(connection_handle);
     tracing::debug!("set_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
@@ -674,24 +668,12 @@ pub fn set_connect_attr<E: OdbcEncoding>(
                 ConnectionState::Disconnected => return DisconnectedSnafu.fail(),
             };
             // Return 24000 if any statement has an open cursor.
-            for (weak, raw_ptr) in &connection.child_statements {
-                // Use strong_count to check liveness without constructing Arc<Statement>
-                // (i.e., &Statement), which would coexist with the outer &mut Connection
-                // and create an aliasing hazard via Statement::conn: *mut Connection.
-                if weak.strong_count() == 0 {
-                    continue;
-                }
-                // SAFETY: strong_count > 0 guarantees the Arc allocation (and the Statement
-                // it points to) is still alive. We project to `state` via addr_of! rather than
-                // forming &Statement to avoid aliasing conn: *mut Connection with &mut Connection.
-                let is_cursor_open = unsafe {
-                    let state_ptr = std::ptr::addr_of!((*(*raw_ptr)).state);
-                    matches!(
-                        (*state_ptr).as_ref(),
-                        StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
-                    )
-                };
-                if is_cursor_open {
+            for stmt_arc in &connection.child_statements {
+                let stmt = stmt_arc.lock().unwrap();
+                if matches!(
+                    stmt.state.as_ref(),
+                    StatementState::QueryExecuted { .. } | StatementState::Fetching { .. }
+                ) {
                     return InvalidCursorStateSnafu.fail();
                 }
             }
@@ -723,7 +705,7 @@ pub fn set_connect_attr<E: OdbcEncoding>(
             Ok(())
         }
         ConnectionAttribute::QuietMode => {
-            connection.quiet_mode = value_ptr;
+            connection.quiet_mode = WindowHandle::new(value_ptr);
             Ok(())
         }
         ConnectionAttribute::PacketSize => {
@@ -777,14 +759,13 @@ pub fn set_connect_attr<E: OdbcEncoding>(
 
 /// Get a connection attribute (SQLGetConnectAttr / SQLGetConnectAttrW).
 pub fn get_connect_attr<E: OdbcEncoding>(
-    connection_handle: sql::Handle,
+    connection: &mut Connection,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
-    let connection = conn_from_handle(connection_handle);
     tracing::debug!("get_connect_attr: attribute={attribute}");
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
@@ -944,7 +925,7 @@ pub fn get_connect_attr<E: OdbcEncoding>(
         ConnectionAttribute::QuietMode => {
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::Pointer) = connection.quiet_mode;
+                    *(value_ptr as *mut sql::Pointer) = connection.quiet_mode.clone().into_raw();
                 }
             }
             Ok(())
@@ -1033,16 +1014,12 @@ pub fn get_connect_attr<E: OdbcEncoding>(
 /// Retrieve general information about the driver and data source
 /// (SQLGetInfo / SQLGetInfoW).
 pub fn get_info<E: OdbcEncoding>(
-    connection_handle: sql::Handle,
+    _connection: &mut Connection,
     info_type: sql::USmallInt,
     info_value_ptr: sql::Pointer,
     buffer_length: sql::SmallInt,
     string_length_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
-    tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
-
-    let _conn = conn_from_handle(connection_handle);
-
     let info_type = InfoType::try_from(info_type)?;
     tracing::debug!("get_info: info_type={info_type:?}");
 

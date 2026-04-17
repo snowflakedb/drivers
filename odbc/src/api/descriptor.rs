@@ -1,4 +1,5 @@
 use crate::api::CDataType;
+use crate::api::types::OdbcOutputPointer;
 use crate::api::{DescField, DescriptorRef, OdbcResult, desc_ref_from_handle};
 use odbc_sys as sql;
 use tracing;
@@ -80,7 +81,7 @@ fn get_ard_field(
                 unsafe {
                     std::ptr::write_unaligned(
                         value_ptr as *mut *mut sql::Len,
-                        desc.bind_offset_ptr,
+                        desc.bind_offset_ptr.as_raw(),
                     );
                 }
                 Ok(())
@@ -126,7 +127,7 @@ fn get_ard_field(
                 unsafe {
                     std::ptr::write_unaligned(
                         value_ptr as *mut sql::Pointer,
-                        binding.target_value_ptr,
+                        binding.target_value_ptr.as_raw(),
                     );
                 }
                 Ok(())
@@ -135,7 +136,7 @@ fn get_ard_field(
                 unsafe {
                     std::ptr::write_unaligned(
                         value_ptr as *mut *mut sql::Len,
-                        binding.indicator_ptr,
+                        binding.indicator_ptr.as_raw(),
                     );
                 }
                 Ok(())
@@ -144,7 +145,7 @@ fn get_ard_field(
                 unsafe {
                     std::ptr::write_unaligned(
                         value_ptr as *mut *mut sql::Len,
-                        binding.octet_length_ptr,
+                        binding.octet_length_ptr.as_raw(),
                     );
                 }
                 Ok(())
@@ -183,7 +184,10 @@ fn get_ird_field(
             }
             DescField::ArrayStatusPtr => {
                 unsafe {
-                    std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
+                    std::ptr::write_unaligned(
+                        value_ptr as *mut *mut u16,
+                        desc.array_status_ptr.as_raw(),
+                    );
                 }
                 Ok(())
             }
@@ -191,7 +195,7 @@ fn get_ird_field(
                 unsafe {
                     std::ptr::write_unaligned(
                         value_ptr as *mut *mut sql::ULen,
-                        desc.rows_processed_ptr,
+                        desc.rows_processed_ptr.as_raw(),
                     );
                 }
                 Ok(())
@@ -283,7 +287,7 @@ fn set_ard_field(
             DescField::BindOffsetPtr => {
                 let ptr = value_ptr as *mut sql::Len;
                 tracing::debug!("set_desc_field: ARD BindOffsetPtr = {:?}", ptr);
-                desc.bind_offset_ptr = ptr;
+                desc.bind_offset_ptr = OdbcOutputPointer::new(ptr);
                 Ok(())
             }
             _ => {
@@ -349,7 +353,7 @@ fn set_ard_field(
             DescField::DataPtr => {
                 tracing::debug!("set_desc_field: setting data_ptr on record {column_number}");
                 let binding = desc.bindings.entry(column_number).or_default();
-                binding.target_value_ptr = value_ptr;
+                binding.target_value_ptr = OdbcOutputPointer::new(value_ptr);
                 Ok(())
             }
             DescField::OctetLength => {
@@ -365,7 +369,7 @@ fn set_ard_field(
                 let ptr = value_ptr as *mut sql::Len;
                 tracing::debug!("set_desc_field: setting indicator_ptr on record {column_number}");
                 let binding = desc.bindings.entry(column_number).or_default();
-                binding.indicator_ptr = ptr;
+                binding.indicator_ptr = OdbcOutputPointer::new(ptr);
                 Ok(())
             }
             DescField::OctetLengthPtr => {
@@ -374,7 +378,7 @@ fn set_ard_field(
                     "set_desc_field: setting octet_length_ptr on record {column_number}"
                 );
                 let binding = desc.bindings.entry(column_number).or_default();
-                binding.octet_length_ptr = ptr;
+                binding.octet_length_ptr = OdbcOutputPointer::new(ptr);
                 Ok(())
             }
             DescField::DatetimeIntervalPrecision => {
@@ -419,13 +423,13 @@ fn set_ird_field(
             DescField::ArrayStatusPtr => {
                 let ptr = value_ptr as *mut u16;
                 tracing::debug!("set_desc_field: IRD ArrayStatusPtr = {:?}", ptr);
-                desc.array_status_ptr = ptr;
+                desc.array_status_ptr = OdbcOutputPointer::new(ptr);
                 Ok(())
             }
             DescField::RowsProcessedPtr => {
                 let ptr = value_ptr as *mut sql::ULen;
                 tracing::debug!("set_desc_field: IRD RowsProcessedPtr = {:?}", ptr);
-                desc.rows_processed_ptr = ptr;
+                desc.rows_processed_ptr = OdbcOutputPointer::new(ptr);
                 Ok(())
             }
             _ => {
@@ -485,7 +489,10 @@ fn get_apd_field(
         }
         DescField::BindOffsetPtr => {
             unsafe {
-                std::ptr::write_unaligned(value_ptr as *mut *mut sql::Len, desc.bind_offset_ptr);
+                std::ptr::write_unaligned(
+                    value_ptr as *mut *mut sql::Len,
+                    desc.bind_offset_ptr.as_raw(),
+                );
             }
             return Ok(());
         }
@@ -521,7 +528,7 @@ fn get_apd_field(
         }
         DescField::DataPtr => {
             unsafe {
-                std::ptr::write_unaligned(value_ptr as *mut sql::Pointer, record.data_ptr);
+                std::ptr::write_unaligned(value_ptr as *mut sql::Pointer, record.data_ptr.as_raw());
             }
             Ok(())
         }
@@ -535,7 +542,7 @@ fn get_apd_field(
             unsafe {
                 std::ptr::write_unaligned(
                     value_ptr as *mut *mut sql::Len,
-                    record.str_len_or_ind_ptr,
+                    record.str_len_or_ind_ptr.as_raw(),
                 );
             }
             Ok(())
@@ -583,7 +590,7 @@ fn set_apd_field(
                 Ok(())
             }
             DescField::BindOffsetPtr => {
-                desc.bind_offset_ptr = value_ptr as *mut sql::Len;
+                desc.bind_offset_ptr = OdbcOutputPointer::new(value_ptr).cast();
                 Ok(())
             }
             _ => {
@@ -611,7 +618,7 @@ fn set_apd_field(
                 Ok(())
             }
             DescField::DataPtr => {
-                record.data_ptr = value_ptr;
+                record.data_ptr = OdbcOutputPointer::new(value_ptr);
                 Ok(())
             }
             DescField::OctetLength => {
@@ -619,7 +626,7 @@ fn set_apd_field(
                 Ok(())
             }
             DescField::IndicatorPtr | DescField::OctetLengthPtr => {
-                record.str_len_or_ind_ptr = value_ptr as *mut sql::Len;
+                record.str_len_or_ind_ptr = OdbcOutputPointer::new(value_ptr).cast();
                 Ok(())
             }
             _ => {
@@ -654,7 +661,10 @@ fn get_ipd_field(
         }
         DescField::ArrayStatusPtr => {
             unsafe {
-                std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);
+                std::ptr::write_unaligned(
+                    value_ptr as *mut *mut u16,
+                    desc.array_status_ptr.as_raw(),
+                );
             }
             return Ok(());
         }
@@ -662,7 +672,7 @@ fn get_ipd_field(
             unsafe {
                 std::ptr::write_unaligned(
                     value_ptr as *mut *mut sql::ULen,
-                    desc.rows_processed_ptr,
+                    desc.rows_processed_ptr.as_raw(),
                 );
             }
             return Ok(());
@@ -750,11 +760,11 @@ fn set_ipd_field(
     if rec_number == 0 {
         match field {
             DescField::ArrayStatusPtr => {
-                desc.array_status_ptr = value_ptr as *mut u16;
+                desc.array_status_ptr = OdbcOutputPointer::new(value_ptr).cast();
                 Ok(())
             }
             DescField::RowsProcessedPtr => {
-                desc.rows_processed_ptr = value_ptr as *mut sql::ULen;
+                desc.rows_processed_ptr = OdbcOutputPointer::new(value_ptr).cast();
                 Ok(())
             }
             _ => {
