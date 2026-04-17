@@ -20,6 +20,7 @@ fn test_client_info() -> ClientInfo {
         ocsp_mode: None,
         crl_config: CrlConfig::default(),
         tls_config: TlsConfig::insecure(),
+        platforms: Vec::new(),
     }
 }
 

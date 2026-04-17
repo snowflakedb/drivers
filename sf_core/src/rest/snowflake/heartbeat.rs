@@ -88,6 +88,7 @@ mod tests {
             ocsp_mode: None,
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::default(),
+            platforms: Vec::new(),
         }
     }
 

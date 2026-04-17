@@ -78,6 +78,10 @@ pub struct ClientInfo {
     pub ocsp_mode: Option<String>,
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
+    /// Detected runtime platforms (e.g. `is_aws_lambda`, `is_ec2_instance`).
+    /// Populated in `connection_init` from the driver-level cache and
+    /// serialized into `CLIENT_ENVIRONMENT.PLATFORM`.
+    pub platforms: Vec<String>,
 }
 
 impl ClientInfo {
@@ -97,6 +101,7 @@ impl ClientInfo {
             ocsp_mode: Some("FAIL_OPEN".to_string()),
             crl_config,
             tls_config,
+            platforms: Vec::new(),
         };
         Ok(client_info)
     }

@@ -158,6 +158,12 @@ impl DatabaseDriverV1 {
         conn_handle: Handle,
         _db_handle: Handle,
     ) -> Result<(), ApiError> {
+        // Platform detection is cached per-driver via `OnceCell`: first
+        // connection pays up to `DETECTION_TIMEOUT` here, every subsequent
+        // connection clones the cached `Vec<String>` for free. Awaited here,
+        // before the mutex guard is acquired, so the cache miss does not
+        // extend the connection lock critical section.
+        let platforms = self.detected_platforms().await.clone();
         match self.connections.get_obj(conn_handle) {
             Some(conn_ptr) => {
                 let (config, host, port, client_info, init_params, resolved_snapshot) = {
@@ -171,8 +177,9 @@ impl DatabaseDriverV1 {
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);
-                    let client_info =
+                    let mut client_info =
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
+                    client_info.platforms = platforms;
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
 

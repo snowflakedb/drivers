@@ -82,6 +82,7 @@ fn should_refresh_session_proactively() {
             ocsp_mode: None,
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
+            platforms: Vec::new(),
         };
 
         let private_key = SensitiveString::from(

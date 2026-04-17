@@ -214,6 +214,7 @@ fn test_query_params(addr: &SocketAddr) -> QueryParameters {
             ocsp_mode: None,
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
+            platforms: Vec::new(),
         },
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
     }

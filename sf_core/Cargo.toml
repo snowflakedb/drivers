@@ -45,6 +45,7 @@ proto_utils = { path = "../proto_utils", optional = true }
 
 # AWS SDK dependencies
 aws-sdk-s3 = "1.103.0"
+aws-sdk-sts = "=1.95.0"
 aws-config = "1.8.5"
 aws-credential-types = "1.2.5"
 snafu = "0.8.7"
@@ -102,6 +103,7 @@ wiremock = "0.6"
 rcgen = "0.13"
 tokio-rustls = "0.26"
 criterion = { version = "0.5", features = ["async_tokio"] }
+temp-env = { version = "0.3", features = ["async_closure"] }
 
 [target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
