@@ -1,30 +1,16 @@
 //! Integration tests for session refresh with concurrent requests.
 
+use crate::common::client_info::test_client_info;
 use sf_core::apis::database_driver_v1::{Connection, with_valid_session};
-use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
-use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
-use sf_core::tls::config::TlsConfig;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock as AsyncRwLock;
-
-fn test_client_info() -> ClientInfo {
-    ClientInfo {
-        application: "test".to_string(),
-        version: "1.0".to_string(),
-        os: "test-os".to_string(),
-        os_version: "1.0".to_string(),
-        ocsp_mode: None,
-        crl_config: CrlConfig::default(),
-        tls_config: TlsConfig::insecure(),
-    }
-}
 
 #[tokio::test]
 async fn should_only_refresh_once_with_concurrent_401_errors() {

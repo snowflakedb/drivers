@@ -46,6 +46,7 @@ mod integration_tests {
                 crl_config,
                 ..Default::default()
             },
+            platforms: Vec::new(),
         };
 
         assert_eq!(
@@ -140,6 +141,7 @@ mod integration_tests {
             ocsp_mode: Some("FAIL_OPEN".to_string()),
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::default(),
+            platforms: Vec::new(),
         };
         let user_agent = snowflake::user_agent(&client_info);
 

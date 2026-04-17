@@ -1,6 +1,7 @@
 pub mod arrow_deserialize;
 pub mod arrow_extract_value;
 pub mod arrow_result_helper;
+pub mod client_info;
 pub mod config;
 pub mod file_utils;
 pub mod mocks;

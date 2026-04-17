@@ -174,6 +174,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
+            platforms: login_parameters.client_info.platforms.clone(),
             python_version: Some("3.11.6".to_string()),
             python_runtime: Some("CPython".to_string()),
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
@@ -2040,6 +2041,7 @@ mod tests {
             ocsp_mode: None,
             crl_config: Default::default(),
             tls_config: Default::default(),
+            platforms: Vec::new(),
         }
     }
 
@@ -2171,5 +2173,71 @@ mod tests {
                 attempt.load(Ordering::SeqCst)
             );
         }
+    }
+
+    #[test]
+    fn client_environment_platform_is_serialized_when_non_empty() {
+        let mut client_info = test_client_info();
+        client_info.platforms = vec!["is_aws_lambda".to_string(), "is_github_action".to_string()];
+        let login_params = LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: LoginMethod::Password {
+                username: "testuser".to_string(),
+                password: "testpass".into(),
+            },
+            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            client_info,
+            session_parameters: None,
+        };
+
+        let data = base_auth_request_data(&login_params);
+        let body = serde_json::to_value(&data).unwrap();
+        let platform = &body["CLIENT_ENVIRONMENT"]["PLATFORM"];
+
+        assert!(
+            platform.is_array(),
+            "PLATFORM must serialize as a JSON array, got {platform:?}"
+        );
+        let platform_strings: Vec<String> = platform
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            platform_strings,
+            vec!["is_aws_lambda".to_string(), "is_github_action".to_string()]
+        );
+    }
+
+    #[test]
+    fn client_environment_platform_is_omitted_when_empty() {
+        let login_params = LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: LoginMethod::Password {
+                username: "testuser".to_string(),
+                password: "testpass".into(),
+            },
+            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            client_info: test_client_info(),
+            session_parameters: None,
+        };
+
+        let data = base_auth_request_data(&login_params);
+        let body = serde_json::to_value(&data).unwrap();
+
+        assert!(
+            body["CLIENT_ENVIRONMENT"].get("PLATFORM").is_none(),
+            "PLATFORM must be omitted from the payload when the detected platform vec is empty, \
+             got body: {body}"
+        );
     }
 }
