@@ -1327,6 +1327,12 @@ mod tests {
     #[test_case("UID=admin;PWD=p\u{00E4}ss", &[("UID", "admin"), ("PWD", "p\u{00E4}ss")] ; "unbraced value with multibyte utf8")]
     #[test_case("PWD={p\u{00E4}ss;w\u{00F6}rd};UID=admin", &[("PWD", "p\u{00E4}ss;w\u{00F6}rd"), ("UID", "admin")] ; "braced value with multibyte utf8")]
     #[test_case("k\u{00E9}y=val", &[("K\u{00E9}Y", "val")] ; "multibyte utf8 in key")]
+    #[test_case("PWD= {val};UID=admin", &[("PWD", "{val}"), ("UID", "admin")] ; "whitespace before opening brace falls back to unbraced")]
+    #[test_case("", &[] ; "empty string")]
+    #[test_case("   ", &[] ; "whitespace only")]
+    #[test_case("UID=;SERVER=foo", &[("UID", ""), ("SERVER", "foo")] ; "key with empty value before semicolon")]
+    #[test_case("UID=", &[("UID", "")] ; "key with empty value at end")]
+    #[test_case("PWD={a}}b}}c};UID=admin", &[("PWD", "a}b}c"), ("UID", "admin")] ; "multiple escaped braces")]
     fn parse_connection_string_cases(input: &str, expected: &[(&str, &str)]) {
         let map = parse_connection_string(input).unwrap();
         assert_eq!(map.len(), expected.len());
@@ -1350,6 +1356,12 @@ mod tests {
     #[test]
     fn parse_connection_string_rejects_unterminated_brace() {
         let result = parse_connection_string("PWD={unterminated");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_connection_string_rejects_chars_after_closing_brace() {
+        let result = parse_connection_string("PWD={val}extra;UID=admin");
         assert!(result.is_err());
     }
 
