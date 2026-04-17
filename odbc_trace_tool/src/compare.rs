@@ -183,8 +183,8 @@ mod tests {
 
     #[test]
     fn test_identical_traces() {
-        let a = vec![prep("SELECT 1"), exec(), fetch_ok()];
-        let b = vec![prep("SELECT 1"), exec(), fetch_ok()];
+        let a = [prep("SELECT 1"), exec(), fetch_ok()];
+        let b = [prep("SELECT 1"), exec(), fetch_ok()];
         let fa: Vec<_> = a.iter().collect();
         let fb: Vec<_> = b.iter().collect();
         assert_eq!(compare_traces(&fa, &fb), 0.0);
@@ -225,8 +225,8 @@ mod tests {
 
     #[test]
     fn test_insertion_deletion() {
-        let a = vec![prep("SELECT 1"), exec(), fetch_ok()];
-        let b = vec![prep("SELECT 1"), exec()];
+        let a = [prep("SELECT 1"), exec(), fetch_ok()];
+        let b = [prep("SELECT 1"), exec()];
         let fa: Vec<_> = a.iter().collect();
         let fb: Vec<_> = b.iter().collect();
         let d = compare_traces(&fa, &fb);
