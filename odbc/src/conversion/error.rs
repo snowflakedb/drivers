@@ -213,7 +213,7 @@ pub enum JsonBindingError {
         location: Location,
     },
 
-    #[snafu(display("Binding numeric value out of range: {reason}"))]
+    #[snafu(display("Binding value out of range: {reason}"))]
     BindingNumericOutOfRange {
         reason: String,
         #[snafu(implicit)]
