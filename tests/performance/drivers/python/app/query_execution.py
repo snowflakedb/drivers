@@ -135,6 +135,7 @@ def _execute_query(cursor, sql):
         if not rows:
             break
         row_count += len(rows)
+    time.sleep(0.1)  # artificial regression for testing
     fetch_time = time.time() - fetch_start
 
     cpu_time_s = time.process_time() - cpu_start
