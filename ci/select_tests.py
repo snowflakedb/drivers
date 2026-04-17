@@ -39,7 +39,6 @@ Output:
 """
 
 import argparse
-import fnmatch
 import functools
 import json
 import os
@@ -156,9 +155,12 @@ def _glob_to_regex(pattern: str) -> "re.Pattern[str]":
 
 
 def matches_pattern(filepath: str, pattern: str) -> bool:
-    """Check if a filepath matches a glob pattern (supports **)."""
-    if "**" not in pattern:
-        return fnmatch.fnmatch(filepath, pattern)
+    """Check if a filepath matches a glob pattern (supports **, *, ?).
+
+    Always uses _glob_to_regex so that ``*`` never matches ``/``.
+    Python's fnmatch treats ``*`` as matching any character including ``/``,
+    which would cause ``scripts/*`` to incorrectly match ``scripts/odbc/foo.sh``.
+    """
     return bool(_glob_to_regex(pattern).match(filepath))
 
 

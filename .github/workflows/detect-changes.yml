@@ -81,15 +81,22 @@ jobs:
               - 'proto_generator/**'
               - 'protobuf/**'
               - 'thrift/**'
+              - 'tests/definitions/core/**'
             jdbc:
               - 'jdbc/**'
               - 'jdbc_bridge/**'
+              - 'tests/definitions/jdbc/**'
             odbc:
               - 'odbc/**'
               - 'odbc_tests/**'
+              - 'tests/definitions/odbc/**'
+              - 'scripts/odbc/**'
+              - 'scripts/old_odbc/**'
             python:
               - 'python/**'
               - 'pep249_dbapi/**'
+              - 'tests/definitions/python/**'
+              - 'scripts/old_python/**'
             python_packaging:
               - 'python/pyproject.toml'
               - 'python/hatch_build.py'
@@ -101,10 +108,12 @@ jobs:
               - 'error_trace/**'
               - 'error_trace_derive/**'
               - 'odbc_trace_tool/**'
-              - 'tests/!(performance|tests_format_validator|test_coverage_report)/**'
+              - 'tests/!(performance|tests_format_validator|test_coverage_report|definitions)/**'
+              - 'tests/definitions/shared/**'
               - '.github/workflows/**'
               - '.buildkite/**'
-              - 'scripts/**'
+              - 'scripts/decode_secrets.*'
+              - 'scripts/shared/**'
               - 'ci/**'
             docs_only:
               - '**/*.md'
