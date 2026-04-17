@@ -10,7 +10,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
@@ -124,13 +124,11 @@ TEST_CASE("should handle NULL binary values from literals", "[datatype][binary]"
   REQUIRE(get_binary_hex_optional(stmt, 3) == std::nullopt);
 }
 
-TEST_CASE("should select binary values from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select binary values from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with BINARY column is created
-  conn.execute("CREATE TABLE binary_table (col BINARY)");
+  conn.execute("CREATE TEMPORARY TABLE binary_table (col BINARY)");
 
   // And The table is populated with binary values [X'48656C6C6F', X'576F726C64', X'0123456789ABCDEF']
   conn.execute("INSERT INTO binary_table VALUES (X'48656C6C6F'), (X'576F726C64'), (X'0123456789ABCDEF')");
@@ -152,13 +150,11 @@ TEST_CASE("should select binary values from table", "[datatype][binary]") {
   REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
 }
 
-TEST_CASE("should select corner case binary values from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select corner case binary values from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with BINARY column is created
-  conn.execute("CREATE TABLE binary_corner_table (col BINARY)");
+  conn.execute("CREATE TEMPORARY TABLE binary_corner_table (col BINARY)");
 
   // And The table is populated with corner case binary values
   conn.execute(
@@ -179,13 +175,11 @@ TEST_CASE("should select corner case binary values from table", "[datatype][bina
   REQUIRE(SQLFetch(stmt.getHandle()) == SQL_NO_DATA);
 }
 
-TEST_CASE("should select NULL binary values from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select NULL binary values from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with BINARY column is created
-  conn.execute("CREATE TABLE binary_null_table (col BINARY)");
+  conn.execute("CREATE TEMPORARY TABLE binary_null_table (col BINARY)");
 
   // And The table is populated with NULL and non-NULL binary values [NULL, X'ABCD', NULL]
   conn.execute("INSERT INTO binary_null_table VALUES (NULL), (X'ABCD'), (NULL)");
@@ -221,13 +215,11 @@ TEST_CASE("should select NULL binary values from table", "[datatype][binary]") {
   REQUIRE(value_count == 1);
 }
 
-TEST_CASE("should select binary with specified length from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select binary with specified length from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with columns (bin5 BINARY(5), bin10 BINARY(10), bin_default BINARY) exists
-  conn.execute("CREATE TABLE binary_len_table (bin5 BINARY(5), bin10 BINARY(10), bin_default BINARY)");
+  conn.execute("CREATE TEMPORARY TABLE binary_len_table (bin5 BINARY(5), bin10 BINARY(10), bin_default BINARY)");
 
   // And Row (X'0102030405', X'01020304050607080910', X'48656C6C6F') is inserted
   conn.execute("INSERT INTO binary_len_table VALUES (X'0102030405', X'01020304050607080910', X'48656C6C6F')");
@@ -314,13 +306,11 @@ TEST_CASE("should select binary literals using parameter binding", "[datatype][b
   REQUIRE(get_binary_hex(stmt, 3) == "0123456789ABCDEF");
 }
 
-TEST_CASE("should insert binary using parameter binding", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert binary using parameter binding", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with BINARY column exists
-  conn.execute("CREATE TABLE binary_insert_table (col BINARY)");
+  conn.execute("CREATE TEMPORARY TABLE binary_insert_table (col BINARY)");
 
   // When Binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x] are inserted using binding
   SQLCHAR vals[][5] = {{0x48, 0x65, 0x6C, 0x6C, 0x6F}, {0x57, 0x6F, 0x72, 0x6C, 0x64}, {}, {0xFF}, {}};
@@ -410,13 +400,11 @@ TEST_CASE("should bind corner case binary values", "[datatype][binary]") {
   }
 }
 
-TEST_CASE("should handle VARBINARY as synonym for BINARY", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle VARBINARY as synonym for BINARY", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And A temporary table with VARBINARY column is created
-  conn.execute("CREATE TABLE varbinary_test (col VARBINARY)");
+  conn.execute("CREATE TEMPORARY TABLE varbinary_test (col VARBINARY)");
 
   // And The table is populated with binary values via VARBINARY column
   conn.execute("INSERT INTO varbinary_test VALUES (X'48656C6C6F'), (X'ABCDEF'), (X'00FF01')");
@@ -466,13 +454,11 @@ TEST_CASE("should download binary data in multiple chunks using GENERATOR", "[da
   REQUIRE(row_count == 30000);
 }
 
-TEST_CASE("should download binary data in multiple chunks from table", "[datatype][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download binary data in multiple chunks from table", "[datatype][binary]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with (bin_data BINARY) exists with 30000 sequential binary values
-  conn.execute("CREATE TABLE binary_large_table (bin_data BINARY)");
+  conn.execute("CREATE TEMPORARY TABLE binary_large_table (bin_data BINARY)");
   conn.execute(
       "INSERT INTO binary_large_table "
       "SELECT TO_BINARY(LPAD(TO_VARCHAR(seq8()), 10, '0'), 'UTF-8') FROM TABLE(GENERATOR(ROWCOUNT => 30000))");

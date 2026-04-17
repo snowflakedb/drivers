@@ -2,16 +2,14 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_BIT one to SQL_DOUBLE", "[c_bit][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT one to SQL_DOUBLE", "[c_bit][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_BIT 1 is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -29,11 +27,9 @@ TEST_CASE("should bind SQL_C_BIT one to SQL_DOUBLE", "[c_bit][conversion][sql_re
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(1.0, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_BIT zero to SQL_DOUBLE", "[c_bit][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT zero to SQL_DOUBLE", "[c_bit][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_BIT 0 is bound to SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -51,11 +47,9 @@ TEST_CASE("should bind SQL_C_BIT zero to SQL_DOUBLE", "[c_bit][conversion][sql_r
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(0.0, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_BIT one to SQL_REAL", "[c_bit][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT one to SQL_REAL", "[c_bit][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_BIT 1 is bound to SQL_REAL and inserted
   auto stmt = conn.createStatement();
@@ -73,11 +67,9 @@ TEST_CASE("should bind SQL_C_BIT one to SQL_REAL", "[c_bit][conversion][sql_real
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(1.0, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_BIT zero to SQL_REAL", "[c_bit][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT zero to SQL_REAL", "[c_bit][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_BIT 0 is bound to SQL_REAL and inserted
   auto stmt = conn.createStatement();
@@ -95,11 +87,10 @@ TEST_CASE("should bind SQL_C_BIT zero to SQL_REAL", "[c_bit][conversion][sql_rea
   CHECK_THAT(get_data<SQL_C_DOUBLE>(fetch_stmt, 1), Catch::Matchers::WithinAbs(0.0, 0.001));
 }
 
-TEST_CASE("should bind SQL_C_BIT with NULL indicator to SQL_REAL", "[c_bit][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_BIT with NULL indicator to SQL_REAL",
+                 "[c_bit][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_C_BIT is bound with SQL_NULL_DATA to SQL_REAL and inserted
   auto stmt = conn.createStatement();

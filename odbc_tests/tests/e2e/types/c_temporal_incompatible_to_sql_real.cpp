@@ -9,16 +9,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "conversion_checks.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should reject SQL_C_TYPE_DATE bound to SQL_DOUBLE", "[c_temporal][incompatible][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_DATE bound to SQL_DOUBLE",
+                 "[c_temporal][incompatible][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   SQL_DATE_STRUCT ds = {2025, 1, 15};
   SQLLEN ind = sizeof(ds);
@@ -32,11 +31,10 @@ TEST_CASE("should reject SQL_C_TYPE_DATE bound to SQL_DOUBLE", "[c_temporal][inc
   check_incompatible_bindparam(stmt, SQL_C_TYPE_DATE, SQL_DOUBLE, &ds, sizeof(ds), &ind);
 }
 
-TEST_CASE("should reject SQL_C_TYPE_TIME bound to SQL_DOUBLE", "[c_temporal][incompatible][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIME bound to SQL_DOUBLE",
+                 "[c_temporal][incompatible][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   SQL_TIME_STRUCT ts = {12, 30, 45};
   SQLLEN ind = sizeof(ts);
@@ -50,11 +48,10 @@ TEST_CASE("should reject SQL_C_TYPE_TIME bound to SQL_DOUBLE", "[c_temporal][inc
   check_incompatible_bindparam(stmt, SQL_C_TYPE_TIME, SQL_DOUBLE, &ts, sizeof(ts), &ind);
 }
 
-TEST_CASE("should reject SQL_C_TYPE_TIMESTAMP bound to SQL_DOUBLE", "[c_temporal][incompatible][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_TYPE_TIMESTAMP bound to SQL_DOUBLE",
+                 "[c_temporal][incompatible][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   SQL_TIMESTAMP_STRUCT tss = {2025, 1, 15, 12, 30, 45, 0};
   SQLLEN ind = sizeof(tss);
@@ -68,11 +65,10 @@ TEST_CASE("should reject SQL_C_TYPE_TIMESTAMP bound to SQL_DOUBLE", "[c_temporal
   check_incompatible_bindparam(stmt, SQL_C_TYPE_TIMESTAMP, SQL_DOUBLE, &tss, sizeof(tss), &ind);
 }
 
-TEST_CASE("should reject SQL_C_GUID bound to SQL_DOUBLE", "[c_temporal][incompatible][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_GUID bound to SQL_DOUBLE",
+                 "[c_temporal][incompatible][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   SQLGUID guid = {0x12345678, 0x1234, 0x5678, {0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34, 0x56, 0x78}};
   SQLLEN ind = sizeof(guid);
