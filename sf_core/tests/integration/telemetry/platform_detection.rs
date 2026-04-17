@@ -1,3 +1,5 @@
+use sf_core::telemetry::platform_detection::platform_detection_env_vars;
+
 use crate::common::mocks::password;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
@@ -21,7 +23,7 @@ fn login_request_body(mock: &MockServerWithTls) -> serde_json::Value {
     let reqs = mock.received_requests();
     let login = reqs
         .iter()
-        .find(|r| r.url.path() == "/session/v1/login-request")
+        .find(|req| req.url.path() == "/session/v1/login-request")
         .expect("no login-request captured");
     serde_json::from_slice(&login.body).expect("login body is not valid JSON")
 }
@@ -29,28 +31,31 @@ fn login_request_body(mock: &MockServerWithTls) -> serde_json::Value {
 #[test]
 fn should_send_platform_disabled_when_detection_is_disabled_via_env_var() {
     //Given SNOWFLAKE_DISABLE_PLATFORM_DETECTION is set to "true"
-    temp_env::with_var("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", Some("true"), || {
-        //And Wiremock is running with a password login-success mapping
-        let fixture = PlatformDetectionFixture::new();
+    temp_env::with_vars(
+        platform_detection_env_vars(&[("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", "true")]),
+        || {
+            //And Wiremock is running with a password login-success mapping
+            let fixture = PlatformDetectionFixture::new();
 
-        //When Trying to Connect
-        fixture.client.connect().expect("connect should succeed");
+            //When Trying to Connect
+            fixture.client.connect().expect("connect should succeed");
 
-        //Then The login-request body contains CLIENT_ENVIRONMENT.PLATFORM equal to ["disabled"]
-        let body = login_request_body(&fixture.mock);
-        let platform = &body["data"]["CLIENT_ENVIRONMENT"]["PLATFORM"];
-        assert_eq!(
-            platform,
-            &serde_json::json!(["disabled"]),
-            "expected PLATFORM=[\"disabled\"], got body: {body}"
-        );
-    });
+            //Then The login-request body contains CLIENT_ENVIRONMENT.PLATFORM equal to ["disabled"]
+            let body = login_request_body(&fixture.mock);
+            let platform = &body["data"]["CLIENT_ENVIRONMENT"]["PLATFORM"];
+            assert_eq!(
+                platform,
+                &serde_json::json!(["disabled"]),
+                "expected PLATFORM=[\"disabled\"], got body: {body}"
+            );
+        },
+    );
 }
 
 #[test]
 fn should_send_empty_platform_array_when_detection_produces_no_platforms() {
-    //Given SNOWFLAKE_DISABLE_PLATFORM_DETECTION is unset
-    temp_env::with_var_unset("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", || {
+    //Given no platform-detection env vars are set
+    temp_env::with_vars(platform_detection_env_vars(&[]), || {
         //And Wiremock is running with a password login-success mapping
         let fixture = PlatformDetectionFixture::new();
 
@@ -63,7 +68,31 @@ fn should_send_empty_platform_array_when_detection_produces_no_platforms() {
         assert_eq!(
             platform,
             &serde_json::json!([]),
-            "expected PLATFORM=[], got body: {body}"
+            "expected PLATFORM=[], got body: {body}",
         );
     });
+}
+
+#[test]
+fn should_detect_aws_lambda() {
+    //Given LAMBDA_TASK_ROOT is set to "/var/task"
+    temp_env::with_vars(
+        platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
+        || {
+            //And Wiremock is running with a password login-success mapping
+            let fixture = PlatformDetectionFixture::new();
+
+            //When Trying to Connect
+            fixture.client.connect().expect("connect should succeed");
+
+            //Then The login-request body contains CLIENT_ENVIRONMENT.PLATFORM equal to ["is_aws_lambda"]
+            let body = login_request_body(&fixture.mock);
+            let platform = &body["data"]["CLIENT_ENVIRONMENT"]["PLATFORM"];
+            assert_eq!(
+                platform,
+                &serde_json::json!(["is_aws_lambda"]),
+                "expected PLATFORM=[\"is_aws_lambda\"], got body: {body}"
+            );
+        },
+    );
 }
