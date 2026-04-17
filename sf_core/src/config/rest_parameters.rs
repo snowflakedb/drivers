@@ -102,6 +102,28 @@ impl ClientInfo {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_fixtures {
+    use super::ClientInfo;
+    use crate::crl::config::CrlConfig;
+    use crate::tls::config::TlsConfig;
+
+    /// Minimal [`ClientInfo`] for tests. Uses [`TlsConfig::insecure`] so it works
+    /// with plain-HTTP mock servers. Override specific fields with struct-update
+    /// syntax: `ClientInfo { application: "foo".into(), ..test_client_info() }`.
+    pub fn test_client_info() -> ClientInfo {
+        ClientInfo {
+            application: "sf_core_test".to_string(),
+            version: "1.0.0".to_string(),
+            os: std::env::consts::OS.to_string(),
+            os_version: "1.0".to_string(),
+            ocsp_mode: None,
+            crl_config: CrlConfig::default(),
+            tls_config: TlsConfig::insecure(),
+        }
+    }
+}
+
 pub struct LoginParameters {
     pub account_name: String,
     pub login_method: LoginMethod,

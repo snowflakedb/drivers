@@ -98,6 +98,7 @@ tokio = { version = "1.47.1", features = ["fs"] }
 opentelemetry_sdk = { version = "0.30.0", default-features = false, features = ["experimental_metrics_custom_reader"] }
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
+sf_core = { path = ".", features = ["test-utils"] }
 bzip2 = "0.6.0"
 brotli = "8.0.2"
 zstd = "0.13.3"

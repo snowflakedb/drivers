@@ -6,11 +6,10 @@
 //! - Retry uses the same requestId for server-side idempotency
 //! - Sync mode is the default execution mode
 
-use sf_core::config::rest_parameters::{ClientInfo, DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
+use sf_core::config::rest_parameters::test_fixtures::test_client_info;
+use sf_core::config::rest_parameters::{DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
 use sf_core::config::retry::RetryPolicy;
-use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
-use sf_core::tls::config::TlsConfig;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -206,15 +205,7 @@ async fn should_use_sync_mode_by_default() {
 fn test_query_params(addr: &SocketAddr) -> QueryParameters {
     QueryParameters {
         server_url: format!("http://{}", addr),
-        client_info: ClientInfo {
-            application: "test".to_string(),
-            version: "1.0.0".to_string(),
-            os: "test-os".to_string(),
-            os_version: "1.0".to_string(),
-            ocsp_mode: None,
-            crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::insecure(),
-        },
+        client_info: test_client_info(),
         log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
     }
 }

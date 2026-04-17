@@ -1648,6 +1648,7 @@ pub enum SnowflakeResponseError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::rest_parameters::test_fixtures::test_client_info;
     use crate::token_cache::{TokenCache, TokenCacheError, TokenType};
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -2037,18 +2038,6 @@ mod tests {
         assert!(!response.success);
         assert!(response.data.is_none());
         assert_eq!(response.message.as_deref(), Some("Unauthorized"));
-    }
-
-    fn test_client_info() -> ClientInfo {
-        ClientInfo {
-            application: "TestApp".to_string(),
-            version: "1.0.0".to_string(),
-            os: "Linux".to_string(),
-            os_version: "5.15".to_string(),
-            ocsp_mode: None,
-            crl_config: Default::default(),
-            tls_config: Default::default(),
-        }
     }
 
     #[test]

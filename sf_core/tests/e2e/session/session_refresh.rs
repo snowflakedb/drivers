@@ -4,8 +4,8 @@ use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::config::{get_parameters, setup_logging};
 use crate::common::private_key_helper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use sf_core::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
-use sf_core::crl::config::CrlConfig;
+use sf_core::config::rest_parameters::test_fixtures::test_client_info;
+use sf_core::config::rest_parameters::{LoginMethod, LoginParameters};
 use sf_core::rest::snowflake::{refresh_session, snowflake_login_with_client};
 use sf_core::sensitive::SensitiveString;
 use sf_core::tls::client::create_tls_client_with_config;
@@ -74,15 +74,7 @@ fn should_refresh_session_proactively() {
             .get_server_url()
             .expect("server_url or host required");
 
-        let client_info = ClientInfo {
-            application: "sf_core_test".to_string(),
-            version: "1.0.0".to_string(),
-            os: std::env::consts::OS.to_string(),
-            os_version: "1.0".to_string(),
-            ocsp_mode: None,
-            crl_config: CrlConfig::default(),
-            tls_config: TlsConfig::insecure(),
-        };
+        let client_info = test_client_info();
 
         let private_key = SensitiveString::from(
             fs::read_to_string(temp_key_file.path()).expect("Failed to read private key file"),
