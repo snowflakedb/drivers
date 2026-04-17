@@ -112,20 +112,17 @@ fn set_invalid_pat_token(client: &SnowflakeTestClient) {
 }
 
 fn ci_build_tag() -> String {
-    if let Ok(build) = std::env::var("BUILDKITE_BUILD_NUMBER")
-        && !build.is_empty()
-    {
-        return format!("BK_{}", sanitize(&build));
-    }
-    if let Ok(build) = std::env::var("BUILD_NUMBER")
-        && !build.is_empty()
-    {
-        return format!("JNK_{}", sanitize(&build));
-    }
-    if let Ok(build) = std::env::var("GITHUB_RUN_NUMBER")
-        && !build.is_empty()
-    {
-        return format!("GHA_{}", sanitize(&build));
+    for (var, prefix) in [
+        ("BUILDKITE_BUILD_NUMBER", "BK"),
+        ("BUILD_NUMBER", "JNK"),
+        ("GITHUB_RUN_NUMBER", "GHA"),
+    ] {
+        if let Ok(raw) = std::env::var(var) {
+            let s = sanitize(&raw);
+            if !s.is_empty() {
+                return format!("{prefix}_{s}");
+            }
+        }
     }
     "LOCAL_0".to_string()
 }

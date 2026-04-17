@@ -9,19 +9,20 @@ from .auth_helpers import verify_login_error, verify_simple_query_execution
 
 
 def _sanitize(s: str) -> str:
-    return "".join(c for c in s if c.isalnum())
+    return "".join(c for c in s if c.isascii() and c.isalnum())
 
 
 def _ci_build_tag() -> str:
-    bk = os.environ.get("BUILDKITE_BUILD_NUMBER")
-    if bk:
-        return f"BK_{_sanitize(bk)}"
-    jnk = os.environ.get("BUILD_NUMBER")
-    if jnk:
-        return f"JNK_{_sanitize(jnk)}"
-    gha = os.environ.get("GITHUB_RUN_NUMBER")
-    if gha:
-        return f"GHA_{_sanitize(gha)}"
+    for var, prefix in [
+        ("BUILDKITE_BUILD_NUMBER", "BK"),
+        ("BUILD_NUMBER", "JNK"),
+        ("GITHUB_RUN_NUMBER", "GHA"),
+    ]:
+        raw = os.environ.get(var)
+        if raw:
+            s = _sanitize(raw)
+            if s:
+                return f"{prefix}_{s}"
     return "LOCAL_0"
 
 

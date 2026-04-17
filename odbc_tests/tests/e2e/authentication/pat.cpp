@@ -52,12 +52,18 @@ class PatSetup {
   }
 
   static std::string ci_build_tag() {
-    const char* bk = std::getenv("BUILDKITE_BUILD_NUMBER");
-    if (bk && bk[0] != '\0') return "BK_" + sanitize(bk);
-    const char* jnk = std::getenv("BUILD_NUMBER");
-    if (jnk && jnk[0] != '\0') return "JNK_" + sanitize(jnk);
-    const char* gha = std::getenv("GITHUB_RUN_NUMBER");
-    if (gha && gha[0] != '\0') return "GHA_" + sanitize(gha);
+    struct CiVar {
+      const char* env;
+      const char* prefix;
+    };
+    for (auto [env, prefix] :
+         {CiVar{"BUILDKITE_BUILD_NUMBER", "BK"}, CiVar{"BUILD_NUMBER", "JNK"}, CiVar{"GITHUB_RUN_NUMBER", "GHA"}}) {
+      const char* raw = std::getenv(env);
+      if (raw) {
+        auto s = sanitize(raw);
+        if (!s.empty()) return std::string(prefix) + "_" + s;
+      }
+    }
     return "LOCAL_0";
   }
 
