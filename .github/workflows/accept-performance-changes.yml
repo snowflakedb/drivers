@@ -1,0 +1,82 @@
+name: Accept Performance Changes
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  accept-performance-regression:
+    if: github.event.label.name == 'ACCEPT_PERFORMANCE_CHANGES'
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      statuses: write
+    steps:
+      - name: Re-request performance/regression check run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.pull_request.head.sha;
+
+            // Mark this specific commit as accepted — Jenkins checks this SHA-pinned
+            // status instead of the PR label, so a later push (different SHA) won't
+            // inadvertently skip regression tests.
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              state: 'success',
+              context: 'performance/regression/accepted',
+              description: 'Regression accepted via ACCEPT_PERFORMANCE_CHANGES label.',
+            });
+
+            // Find the failing performance/regression check run posted by Jenkins
+            const { data: { check_runs } } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+              check_name: 'performance/regression',
+              filter: 'latest',
+            });
+
+            const failing = check_runs.find(r =>
+              r.conclusion === 'failure' || r.conclusion === 'timed_out'
+            );
+
+            if (!failing) {
+              core.info('No failing performance/regression check run found — nothing to re-request.');
+              return;
+            }
+
+            core.info(`Re-requesting check run ${failing.id} (${failing.app.name}) to trigger Jenkins re-run with label present.`);
+            await github.rest.checks.rerequestRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: failing.id,
+            });
+
+  remove-label-on-push:
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove ACCEPT_PERFORMANCE_CHANGES label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                name: 'ACCEPT_PERFORMANCE_CHANGES'
+              });
+              core.info('Removed ACCEPT_PERFORMANCE_CHANGES label — re-add it to accept the regression on the new commit.');
+            } catch (e) {
+              if (e.status === 404) {
+                core.info('ACCEPT_PERFORMANCE_CHANGES label not present, nothing to remove.');
+              } else {
+                throw e;
+              }
+            }

@@ -18,6 +18,8 @@ import groovy.transform.Field
 
 // Track whether the Python+ODBC lane detected a confirmed regression
 @Field def regressionDetected = false
+// Set to true if the accept label is already present at pipeline start
+@Field def labelAccepted = false
 
 def setupVenv() {
     dir('tests/performance') {
@@ -36,13 +38,26 @@ def hasPrLabel(String labelName) {
         return false
     }
     try {
-        def labels = sh(
-            returnStdout: true,
-            script: "gh pr view ${env.CHANGE_ID} --repo snowflakedb/universal-driver --json labels --jq '.labels[].name'"
-        ).trim()
+        def labels = ''
+        withCredentials([usernamePassword(
+            credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+            usernameVariable: 'GITHUB_APP',
+            passwordVariable: 'GITHUB_TOKEN'
+        )]) {
+            labels = sh(
+                returnStdout: true,
+                script: """
+                    curl -sf \
+                        -H "Authorization: token \${GITHUB_TOKEN}" \
+                        -H "Accept: application/vnd.github.v3+json" \
+                        "https://api.github.com/repos/snowflakedb/universal-driver/issues/${env.CHANGE_ID}/labels" \
+                    | python3 -c "import sys,json; print('\\n'.join(l['name'] for l in json.load(sys.stdin)))"
+                """
+            ).trim()
+        }
         return labels.split('\n').any { it.trim() == labelName }
     } catch (Exception e) {
-        echo "Warning: Could not check PR labels via gh CLI: ${e.message}"
+        echo "Warning: Could not check PR labels via GitHub API: ${e.message}"
         return false
     }
 }
@@ -135,7 +150,55 @@ pipeline {
     }
 
     stages {
+        stage('Accept Label Check') {
+            when {
+                expression { env.CHANGE_ID != null }
+                beforeAgent true
+            }
+            agent { label 'drivers-perf-regular-memory-node-snowos' }
+            steps {
+                script {
+                    def accepted = false
+                    withCredentials([usernamePassword(
+                        credentialsId: 'jenkins-snowflake-github-app-3-snowflakedb',
+                        usernameVariable: 'GITHUB_APP',
+                        passwordVariable: 'GITHUB_TOKEN'
+                    )]) {
+                        def result = sh(
+                            returnStdout: true,
+                            script: """
+                                curl -sf \
+                                    -H "Authorization: token \${GITHUB_TOKEN}" \
+                                    -H "Accept: application/vnd.github.v3+json" \
+                                    "https://api.github.com/repos/snowflakedb/universal-driver/commits/${env.GIT_COMMIT}/statuses" \
+                                | python3 -c "
+import sys, json
+statuses = json.load(sys.stdin)
+accepted = any(
+    s['context'] == 'performance/regression/accepted' and s['state'] == 'success'
+    for s in statuses
+)
+print('true' if accepted else 'false')
+"
+                            """
+                        ).trim()
+                        accepted = (result == 'true')
+                    }
+
+                    if (accepted) {
+                        labelAccepted = true
+                        postRegressionStatus('SUCCESS', 'Regression previously accepted for this commit')
+                        echo "Commit ${env.GIT_COMMIT} has performance/regression/accepted status — skipping tests"
+                    }
+                }
+            }
+        }
+
         stage('PR Check') {
+            when {
+                expression { !labelAccepted }
+                beforeAgent true
+            }
             failFast true
             parallel {
                 stage('Core') {
@@ -262,10 +325,10 @@ pipeline {
                                     def accepted = hasPrLabel(ACCEPT_PERF_LABEL)
                                     if (accepted) {
                                         echo "Regression detected but '${ACCEPT_PERF_LABEL}' label is present — accepting performance changes"
-                                        postRegressionStatus('SUCCESS', "Regression accepted via ${ACCEPT_PERF_LABEL} label")
+                                        postRegressionStatus('SUCCESS', "Regression accepted via ${ACCEPT_PERF_LABEL} label".toString())
                                     } else {
                                         echo "Regression detected and '${ACCEPT_PERF_LABEL}' label is NOT present — add the label and re-run to accept"
-                                        postRegressionStatus('FAILURE', "Regression confirmed — add ${ACCEPT_PERF_LABEL} label to accept")
+                                        postRegressionStatus('FAILURE', "Regression confirmed — add ${ACCEPT_PERF_LABEL} label to accept".toString())
                                     }
                                 }
                             }
