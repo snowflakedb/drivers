@@ -7,6 +7,7 @@ use super::database::Database;
 use super::statement::Statement;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
+use crate::telemetry::platform_detection::detect_platforms;
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
 /// Injection points for `DatabaseDriverV1`.
@@ -26,12 +27,7 @@ pub struct DatabaseDriverV1 {
     pub(super) statements: HandleManager<Mutex<Statement>>,
     token_cache: once_cell::sync::OnceCell<KeyringTokenCache>,
     fs: Arc<dyn FsAdapter>,
-}
-
-impl Default for DatabaseDriverV1 {
-    fn default() -> Self {
-        Self::new()
-    }
+    platforms: tokio::sync::OnceCell<Vec<String>>,
 }
 
 impl DatabaseDriverV1 {
@@ -46,6 +42,7 @@ impl DatabaseDriverV1 {
             statements: HandleManager::new(),
             token_cache: once_cell::sync::OnceCell::new(),
             fs: providers.fs.unwrap_or_else(|| Arc::new(RealFs)),
+            platforms: tokio::sync::OnceCell::const_new(),
         }
     }
 
@@ -55,6 +52,10 @@ impl DatabaseDriverV1 {
 
     pub fn fs_adapter(&self) -> Arc<dyn FsAdapter> {
         self.fs.clone()
+    }
+
+    pub async fn platforms(&self) -> &Vec<String> {
+        self.platforms.get_or_init(detect_platforms).await
     }
 }
 

@@ -172,8 +172,9 @@ impl DatabaseDriverV1 {
                     let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
                     let host = resolved.get_string(param_names::HOST);
                     let port = resolved.get_int(param_names::PORT);
-                    let client_info =
+                    let mut client_info =
                         ClientInfo::from_settings(&resolved).context(ConfigurationSnafu)?;
+                    client_info.platforms = self.platforms().await.clone();
                     let init_params = conn.init_session_parameters.clone();
                     let resolved_snapshot = resolved.clone();
 

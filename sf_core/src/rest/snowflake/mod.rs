@@ -175,6 +175,7 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
             os: login_parameters.client_info.os.clone(),
             os_version: login_parameters.client_info.os_version.clone(),
             ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
+            platforms: login_parameters.client_info.platforms.clone(),
             python_version: Some("3.11.6".to_string()),
             python_runtime: Some("CPython".to_string()),
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
@@ -1720,6 +1721,24 @@ mod tests {
         }
     }
 
+    fn test_login_params() -> LoginParameters {
+        LoginParameters {
+            account_name: "testaccount".to_string(),
+            login_method: LoginMethod::Password {
+                username: "testuser".to_string(),
+                password: "testpass".into(),
+            },
+            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
+            database: None,
+            schema: None,
+            warehouse: None,
+            role: None,
+            client_info: test_client_info(),
+            session_parameters: None,
+            spcs_token: None,
+        }
+    }
+
     mod try_get_cached_mfa_token_tests {
         use super::*;
 
@@ -2042,21 +2061,7 @@ mod tests {
 
     #[test]
     fn password_auth_payload_does_not_include_authenticator() {
-        let login_params = LoginParameters {
-            account_name: "testaccount".to_string(),
-            login_method: LoginMethod::Password {
-                username: "testuser".to_string(),
-                password: "testpass".into(),
-            },
-            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
-            database: None,
-            schema: None,
-            warehouse: None,
-            role: None,
-            client_info: test_client_info(),
-            session_parameters: None,
-            spcs_token: None,
-        };
+        let login_params = test_login_params();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
         let data = rt
@@ -2074,19 +2079,11 @@ mod tests {
     #[test]
     fn pat_auth_payload_includes_authenticator() {
         let login_params = LoginParameters {
-            account_name: "testaccount".to_string(),
             login_method: LoginMethod::Pat {
                 username: "testuser".to_string(),
                 token: "pat_secret".into(),
             },
-            server_url: "https://testaccount.snowflakecomputing.com".to_string(),
-            database: None,
-            schema: None,
-            warehouse: None,
-            role: None,
-            client_info: test_client_info(),
-            session_parameters: None,
-            spcs_token: None,
+            ..test_login_params()
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
@@ -2138,19 +2135,8 @@ mod tests {
 
             let client = reqwest::Client::new();
             let params = LoginParameters {
-                account_name: "testaccount".to_string(),
-                login_method: LoginMethod::Password {
-                    username: "testuser".to_string(),
-                    password: "testpass".into(),
-                },
                 server_url: server.uri(),
-                database: None,
-                schema: None,
-                warehouse: None,
-                role: None,
-                client_info: test_client_info(),
-                session_parameters: None,
-                spcs_token: None,
+                ..test_login_params()
             };
             let auth_req = AuthRequest {
                 data: AuthRequestData {
