@@ -119,6 +119,14 @@ impl ChunkDownloadData {
     }
 }
 
+#[derive(Debug)]
+pub struct InitialChunkData {
+    pub rowset_base64: String,
+    pub row_count: i32,
+    pub uncompressed_size: i64,
+    pub compressed_size: i64,
+}
+
 /// Downloads chunk data from the given URL.
 ///
 /// When reqwest's `gzip` feature handles `Content-Encoding: gzip` transparently
