@@ -2,53 +2,48 @@
 
 type Result<T> = std::result::Result<T, String>;
 use arrow_array::StringArray;
-use sf_core::protobuf::apis::RustTransport;
-use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::config::param_names;
+use sf_core::protobuf::apis::database_driver_v1::{
+    DatabaseDriverClient as BlockingDatabaseDriver, DatabaseDriverClientBlockingExt,
+    database_driver_client,
+};
 use sf_core::protobuf::generated::database_driver_v1::*;
-use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 use std::fs;
 
 use crate::types::TestConnectionParams;
 
-pub type DatabaseDriver = DatabaseDriverClient;
+pub type DatabaseDriver = BlockingDatabaseDriver;
 
 pub struct DriverRuntime {
-    runtime: tokio::runtime::Runtime,
     client: DatabaseDriver,
 }
 
 impl DriverRuntime {
     pub fn new() -> Self {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime");
-        let client = DatabaseDriver::new(RustTransport::new());
-        Self { runtime, client }
+        let client = database_driver_client();
+        Self { client }
     }
 
-    pub fn block_on<T>(&self, f: impl AsyncFnOnce(&DatabaseDriver) -> T) -> T {
-        self.runtime.block_on(f(&self.client))
+    pub fn client(&self) -> &DatabaseDriver {
+        &self.client
     }
 }
 
 pub fn create_database(rt: &DriverRuntime) -> Result<DatabaseHandle> {
     let db_response = rt
-        .block_on(async |c| c.database_new(DatabaseNewRequest {}).await)
+        .client
+        .database_new_blocking(DatabaseNewRequest {})
         .map_err(|e| format!("Database creation failed: {:?}", e))?;
 
     let db_handle = db_response
         .db_handle
         .ok_or_else(|| "Database creation failed: No handle returned".to_string())?;
 
-    rt.block_on(async |c| {
-        c.database_init(DatabaseInitRequest {
+    rt.client
+        .database_init_blocking(DatabaseInitRequest {
             db_handle: Some(db_handle),
         })
-        .await
-    })
-    .map_err(|e| format!("Database initialization failed: {:?}", e))?;
+        .map_err(|e| format!("Database initialization failed: {:?}", e))?;
 
     Ok(db_handle)
 }
@@ -59,18 +54,22 @@ pub fn create_connection(
     params: &TestConnectionParams,
 ) -> Result<ConnectionHandle> {
     let conn_response = rt
-        .block_on(async |c| c.connection_new(ConnectionNewRequest {}).await)
+        .client
+        .connection_new_blocking(ConnectionNewRequest {})
         .map_err(|e| format!("Connection creation failed: {:?}", e))?;
 
     let conn_handle = conn_response
         .conn_handle
         .ok_or_else(|| "Connection creation failed: No handle returned".to_string())?;
 
+    // Set connection parameters
     set_connection_option(rt, &conn_handle, "account", &params.account)?;
     set_connection_option(rt, &conn_handle, "user", &params.user)?;
 
+    // Use JWT key-pair authentication
     set_connection_option(rt, &conn_handle, "authenticator", "SNOWFLAKE_JWT")?;
 
+    // First check if a private key file path is provided, otherwise create from contents
     let private_key_file = if let Some(ref key_file_path) = params.private_key_file {
         key_file_path.clone()
     } else if let Some(ref key_contents) = params.private_key_contents {
@@ -92,14 +91,13 @@ pub fn create_connection(
 
     set_tls_options(rt, &conn_handle, params)?;
 
-    rt.block_on(async |c| {
-        c.connection_init(ConnectionInitRequest {
+    // Initialize connection (performs login)
+    rt.client
+        .connection_init_blocking(ConnectionInitRequest {
             conn_handle: Some(conn_handle),
             db_handle: Some(db_handle),
         })
-        .await
-    })
-    .map_err(|e| format!("Connection initialization failed: {:?}", e))?;
+        .map_err(|e| format!("Connection initialization failed: {:?}", e))?;
 
     Ok(conn_handle)
 }
@@ -111,11 +109,9 @@ pub fn create_statement(
     async_override: Option<bool>,
 ) -> Result<StatementHandle> {
     let stmt_response = rt
-        .block_on(async |c| {
-            c.statement_new(StatementNewRequest {
-                conn_handle: Some(conn_handle),
-            })
-            .await
+        .client
+        .statement_new_blocking(StatementNewRequest {
+            conn_handle: Some(conn_handle),
         })
         .map_err(|e| format!("Statement creation failed: {:?}", e))?;
 
@@ -123,68 +119,56 @@ pub fn create_statement(
         .stmt_handle
         .ok_or_else(|| "Statement creation failed: No handle returned".to_string())?;
 
-    rt.block_on(async |c| {
-        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+    rt.client
+        .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
             stmt_handle: Some(stmt_handle),
             query: sql.to_string(),
         })
-        .await
-    })
-    .map_err(|e| format!("Statement SQL query set failed: {:?}", e))?;
+        .map_err(|e| format!("Statement SQL query set failed: {:?}", e))?;
 
     if let Some(enabled) = async_override {
-        let value = if enabled { "true" } else { "false" }.to_string();
-        rt.block_on(async |c| {
-            c.statement_set_option_string(StatementSetOptionStringRequest {
+        let options = [(
+            param_names::ASYNC_EXECUTION.as_str().to_string(),
+            ConfigSetting::from(enabled),
+        )]
+        .into_iter()
+        .collect();
+        rt.client
+            .statement_set_options_blocking(StatementSetOptionsRequest {
                 stmt_handle: Some(stmt_handle),
-                key: STATEMENT_ASYNC_EXECUTION_OPTION.to_string(),
-                value,
+                options,
             })
-            .await
-        })
-        .map_err(|e| format!("Statement option set failed: {:?}", e))?;
+            .map_err(|e| format!("Statement option set failed: {:?}", e))?;
     }
 
     Ok(stmt_handle)
 }
 
-pub fn reset_statement_query(
-    rt: &DriverRuntime,
-    stmt_handle: StatementHandle,
-    sql: &str,
-) -> Result<()> {
-    rt.block_on(async |c| {
-        c.statement_set_sql_query(StatementSetSqlQueryRequest {
+pub fn reset_statement_query(rt: &DriverRuntime, stmt_handle: StatementHandle, sql: &str) -> Result<()> {
+    rt.client
+        .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
             stmt_handle: Some(stmt_handle),
             query: sql.to_string(),
         })
-        .await
-    })
-    .map_err(|e| format!("Statement query reset failed: {:?}", e))?;
+        .map_err(|e| format!("Statement query reset failed: {:?}", e))?;
     Ok(())
 }
 
 pub fn get_server_version(rt: &DriverRuntime, conn_handle: ConnectionHandle) -> Result<String> {
     use crate::arrow::create_arrow_reader;
 
-    let version_stmt =
-        create_statement(rt, conn_handle, "SELECT CURRENT_VERSION() AS VERSION", None)?;
-
+    let version_stmt = create_statement(rt, conn_handle, "SELECT CURRENT_VERSION() AS VERSION", None)?;
     let response = rt
-        .block_on(async |c| {
-            c.statement_execute_query(StatementExecuteQueryRequest {
-                stmt_handle: Some(version_stmt),
-                bindings: None,
-            })
-            .await
+        .client
+        .statement_execute_query_blocking(StatementExecuteQueryRequest {
+            stmt_handle: Some(version_stmt),
+            bindings: None,
         })
         .map_err(|e| format!("Query execution failed: {:?}", e))?;
 
     let result = response
         .result
         .ok_or_else(|| "No result in execute response".to_string())?;
-
-    // Arrow iteration happens outside the runtime
     let mut reader = create_arrow_reader(result)?;
 
     if let Some(batch_result) = reader.next() {
@@ -194,26 +178,22 @@ pub fn get_server_version(rt: &DriverRuntime, conn_handle: ConnectionHandle) -> 
             if batch.num_rows() > 0 {
                 let version = column.value(0).to_string();
 
-                rt.block_on(async |c| {
-                    c.statement_release(StatementReleaseRequest {
+                rt.client
+                    .statement_release_blocking(StatementReleaseRequest {
                         stmt_handle: Some(version_stmt),
                     })
-                    .await
-                })
-                .ok();
+                    .ok();
 
                 return Ok(version);
             }
         }
     }
 
-    rt.block_on(async |c| {
-        c.statement_release(StatementReleaseRequest {
+    rt.client
+        .statement_release_blocking(StatementReleaseRequest {
             stmt_handle: Some(version_stmt),
         })
-        .await
-    })
-    .ok();
+        .ok();
 
     Err(format!("Could not extract version from result"))
 }
@@ -238,22 +218,18 @@ pub fn execute_setup_queries(
         let stmt_handle = create_statement(rt, conn_handle, query, None)
             .map_err(|e| format!("Setup query statement creation failed: {:?}", e))?;
 
-        rt.block_on(async |c| {
-            c.statement_execute_query(StatementExecuteQueryRequest {
+        rt.client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
             })
-            .await
-        })
-        .map_err(|e| format!("Setup query execution failed: {:?}", e))?;
+            .map_err(|e| format!("Setup query execution failed: {:?}", e))?;
 
-        rt.block_on(async |c| {
-            c.statement_release(StatementReleaseRequest {
+        rt.client
+            .statement_release_blocking(StatementReleaseRequest {
                 stmt_handle: Some(stmt_handle),
             })
-            .await
-        })
-        .ok();
+            .ok();
     }
 
     println!("✓ Setup queries completed");
@@ -266,15 +242,15 @@ fn set_connection_option(
     key: &str,
     value: &str,
 ) -> Result<()> {
-    rt.block_on(async |c| {
-        c.connection_set_option_string(ConnectionSetOptionStringRequest {
+    let options = [(key.to_string(), ConfigSetting::from(value))]
+        .into_iter()
+        .collect();
+    rt.client
+        .connection_set_options_blocking(ConnectionSetOptionsRequest {
             conn_handle: Some(*conn_handle),
-            key: key.to_string(),
-            value: value.to_string(),
+            options,
         })
-        .await
-    })
-    .map_err(|e| format!("Connection option set failed ({}): {:?}", key, e))?;
+        .map_err(|e| format!("Connection option set failed ({}): {:?}", key, e))?;
     Ok(())
 }
 

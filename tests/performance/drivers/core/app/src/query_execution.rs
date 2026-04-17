@@ -1,6 +1,7 @@
 //! Query execution and performance measurement helpers
 
 type Result<T> = std::result::Result<T, String>;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClientBlockingExt;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use std::time::{Duration, Instant};
 
@@ -162,13 +163,11 @@ fn execute_iteration(rt: &DriverRuntime, stmt_handle: StatementHandle) -> Result
 
     let start_query = Instant::now();
     let response = rt
-        .block_on(async |c| {
-            c.statement_execute_query(StatementExecuteQueryRequest {
+        .client()
+        .statement_execute_query_blocking(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 bindings: None,
             })
-            .await
-        })
         .map_err(|e| format!("Query execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();
 

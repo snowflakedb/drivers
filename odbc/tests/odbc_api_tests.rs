@@ -71,9 +71,9 @@
 
 use sf_core::{
     protobuf::apis::database_driver_v1::{DatabaseDriverClientBlockingExt, database_driver_client},
+    protobuf::config_setting_ext::config_option,
     protobuf::generated::database_driver_v1::{
-        ConnectionNewRequest, ConnectionSetOptionIntRequest, ConnectionSetOptionStringRequest,
-        DatabaseInitRequest, DatabaseNewRequest,
+        ConnectionNewRequest, ConnectionSetOptionsRequest, DatabaseInitRequest, DatabaseNewRequest,
     },
 };
 
@@ -95,38 +95,17 @@ fn smoke_connection_set_tls_config() {
         .unwrap();
 
     client
-        .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
+        .connection_set_options_blocking(ConnectionSetOptionsRequest {
             conn_handle: Some(conn),
-            key: "verify_hostname".to_string(),
-            value: "true".to_string(),
+            options: vec![
+                config_option("verify_hostname", "true"),
+                config_option("verify_certificates", "true"),
+                config_option("crl_mode", "ENABLED"),
+                config_option("crl_http_timeout", 30_i64),
+                config_option("crl_connection_timeout", 10_i64),
+            ]
+            .into_iter()
+            .collect(),
         })
-        .expect("set verify_hostname");
-    client
-        .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn),
-            key: "verify_certificates".to_string(),
-            value: "true".to_string(),
-        })
-        .expect("set verify_certificates");
-    client
-        .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
-            conn_handle: Some(conn),
-            key: "crl_mode".to_string(),
-            value: "ENABLED".to_string(),
-        })
-        .expect("set crl_mode");
-    client
-        .connection_set_option_int_blocking(ConnectionSetOptionIntRequest {
-            conn_handle: Some(conn),
-            key: "crl_http_timeout".to_string(),
-            value: 30,
-        })
-        .expect("set crl_http_timeout");
-    client
-        .connection_set_option_int_blocking(ConnectionSetOptionIntRequest {
-            conn_handle: Some(conn),
-            key: "crl_connection_timeout".to_string(),
-            value: 10,
-        })
-        .expect("set crl_connection_timeout");
+        .expect("set options");
 }
