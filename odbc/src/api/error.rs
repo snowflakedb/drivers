@@ -381,6 +381,13 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Invalid connection string: {reason}"))]
+    InvalidConnectionString {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -620,6 +627,7 @@ impl OdbcError {
                 SqlState::DataSourceNameNotFoundAndNoDefaultDriverSpecified
             }
             OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
+            OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
         }
     }
 
