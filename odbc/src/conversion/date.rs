@@ -13,7 +13,7 @@ use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
-    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
@@ -189,17 +189,7 @@ impl ReadODBC for SnowflakeDate {
                 })
             }
             CDataType::Binary => {
-                let len = buffer_data_len(binding);
-                if len != std::mem::size_of::<sql::Date>() {
-                    return BindingNumericOutOfRangeSnafu {
-                        reason: format!(
-                            "SQL_C_BINARY buffer length {len} does not match SQL_DATE_STRUCT size ({})",
-                            std::mem::size_of::<sql::Date>()
-                        ),
-                    }
-                    .fail();
-                }
-                let date = read_unaligned::<sql::Date>(binding);
+                let date = read_binary_struct::<sql::Date>(binding, "SQL_DATE_STRUCT")?;
                 NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
                     .ok_or_else(|| {
                         BindingNumericOutOfRangeSnafu {

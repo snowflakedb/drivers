@@ -12,7 +12,7 @@ use crate::conversion::error::{
     UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::param_binding::{
-    buffer_data_len, read_char_str, read_unaligned, read_wchar_str,
+    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
 };
 use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::{Warning, Warnings};
@@ -239,17 +239,7 @@ impl ReadODBC for SnowflakeTime {
                     })
             }
             CDataType::Binary => {
-                let len = buffer_data_len(binding);
-                if len != std::mem::size_of::<sql::Time>() {
-                    return BindingNumericOutOfRangeSnafu {
-                        reason: format!(
-                            "SQL_C_BINARY buffer length {len} does not match SQL_TIME_STRUCT size ({})",
-                            std::mem::size_of::<sql::Time>()
-                        ),
-                    }
-                    .fail();
-                }
-                let time = read_unaligned::<sql::Time>(binding);
+                let time = read_binary_struct::<sql::Time>(binding, "SQL_TIME_STRUCT")?;
                 NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
                     .ok_or_else(|| {
                         BindingNumericOutOfRangeSnafu {

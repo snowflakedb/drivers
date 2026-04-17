@@ -385,6 +385,28 @@ pub(crate) fn buffer_data_len(binding: &ParameterBinding) -> usize {
     max_len
 }
 
+/// Read a fixed-size POD struct `T` from an `SQL_C_BINARY` parameter buffer,
+/// rejecting buffers whose length does not exactly match `size_of::<T>()`.
+///
+/// `struct_name` is used only to produce a descriptive error message
+/// (e.g. `"SQL_DATE_STRUCT"`) when the length check fails.
+pub(crate) fn read_binary_struct<T: Copy>(
+    binding: &ParameterBinding,
+    struct_name: &str,
+) -> Result<T, JsonBindingError> {
+    let len = buffer_data_len(binding);
+    let expected = std::mem::size_of::<T>();
+    if len != expected {
+        return BindingNumericOutOfRangeSnafu {
+            reason: format!(
+                "SQL_C_BINARY buffer length {len} does not match {struct_name} size ({expected})"
+            ),
+        }
+        .fail();
+    }
+    Ok(read_unaligned::<T>(binding))
+}
+
 /// Convert bytes from the system's ANSI code page to a Rust UTF-8 `String`.
 ///
 /// On Windows, SQL_C_CHAR data uses the active ANSI code page (ACP), which may
