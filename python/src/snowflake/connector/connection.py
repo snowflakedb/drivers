@@ -125,7 +125,7 @@ class Connection:
         kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_mfa_params(kwargs)
 
-        self._log_max_query_length: int = kwargs.pop("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
+        self._log_max_query_length: int = kwargs.get("log_max_query_length", LOG_MAX_QUERY_LENGTH)  # type: ignore[assignment]
 
         application = kwargs.pop("application", None)
         if application is None or (isinstance(application, str) and not application):

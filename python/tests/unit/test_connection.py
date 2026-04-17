@@ -807,23 +807,15 @@ class TestLogMaxQueryLength:
 
         assert conn._format_query_for_log("SELECT 1") == "..."
 
-    def test_not_sent_to_sf_core(self, mock_db_api):
-        """log_max_query_length is a client-side concern and must not be forwarded to sf_core."""
+    def test_sent_to_sf_core(self, mock_db_api):
+        """log_max_query_length should be forwarded to sf_core for Rust-side log truncation."""
         from snowflake.connector.connection import Connection
 
         with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
             Connection(user="u", account="a", log_max_query_length=200)
 
         request = mock_db_api.connection_set_options.call_args[0][0]
-        assert "log_max_query_length" not in request.options
-
-    def test_not_in_stored_kwargs(self, mock_db_api):
-        """log_max_query_length should be popped from kwargs so it doesn't leak."""
-        from snowflake.connector.connection import Connection
-
-        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
-            conn = Connection(user="u", account="a", log_max_query_length=200)
-        assert "log_max_query_length" not in conn.kwargs
+        assert request.options["log_max_query_length"] == ConfigSetting(int_value=200)
 
     def test_format_query_at_exact_boundary(self, connection):
         """Legacy uses strict less-than: a query of exactly log_max_query_length chars IS truncated."""

@@ -908,7 +908,11 @@ async fn execute_async_with_fallback<'a>(
             },
         ) => {
             tracing::error!(
-                sql_prefix = query_input.sql.chars().take(50).collect::<String>(),
+                sql_prefix = query_input
+                    .sql
+                    .chars()
+                    .take(query_parameters.log_max_query_length)
+                    .collect::<String>(),
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
@@ -962,7 +966,11 @@ async fn execute_sync_with_retry<'a>(
 ) -> Result<query_response::Response, RestError> {
     // Generate requestId upfront - persisted across retries for idempotency
     let request_id = uuid::Uuid::new_v4();
-    let sql_prefix = query_input.sql.chars().take(50).collect::<String>();
+    let sql_prefix = query_input
+        .sql
+        .chars()
+        .take(query_parameters.log_max_query_length)
+        .collect::<String>();
 
     tracing::debug!(
         request_id = %request_id,
