@@ -419,7 +419,16 @@ impl ReadODBC for SnowflakeReal {
                 let len = buffer_data_len(binding);
                 let expected = match binding.sql_data_type {
                     sql::SqlDataType::REAL => 4usize,
-                    _ => 8,
+                    sql::SqlDataType::DOUBLE | sql::SqlDataType::FLOAT => 8usize,
+                    _ => {
+                        return BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "SQL_C_BINARY is not supported for {:?} in real context",
+                                binding.sql_data_type
+                            ),
+                        }
+                        .fail();
+                    }
                 };
                 if len != expected {
                     return BindingNumericOutOfRangeSnafu {
