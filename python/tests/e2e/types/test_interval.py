@@ -18,10 +18,11 @@ IMPORTANT - timedelta range limitation:
     Python's datetime.timedelta has an asymmetric range:
         timedelta.max =  999999999 days 23:59:59.999999
         timedelta.min = -999999999 days (exactly, no sub-day component)
-    Positive extreme compound intervals like '999999999 23' DAY TO HOUR fit
-    within timedelta.max, but their negation '-999999999 23' requires
-    -1000000000 days internally, which exceeds timedelta.min. Tests involving
-    such values assert InterfaceError instead of a timedelta result.
+    Positive extreme compound intervals like '999999999 23' DAY TO HOUR fit within timedelta.max,
+    but their negation '-999999999 23' requires -1000000000 days internally, which exceeds timedelta.min.
+    The regular DAY TO HOUR / DAY TO MINUTE scenarios therefore use values that fit in timedelta,
+    while dedicated "max literal" / "min literal" scenarios exercise full +999999999 / -999999999 spec range.
+    The min scenarios assert InterfaceError (Snowflake error 252005) due to the timedelta overflow.
 
 INTERVAL support requires ENABLE_INTERVAL_TYPE to be active on the account.
 """
@@ -255,45 +256,84 @@ class TestIntervalLiteral:
             -timedelta(seconds=999999999, microseconds=999999),
         )
 
-    @pytest.mark.skip_universal(reason="TODO: interval overflow raises interface error")
     def test_should_select_interval_day_to_hour_literals(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
         # When Query "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR,
-        #   '-1 2'::INTERVAL DAY TO HOUR,
-        #   '999999999 23'::INTERVAL DAY TO HOUR, '-999999999 23'::INTERVAL DAY TO HOUR" is executed
-        sql = (
-            "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR, "
-            "'-1 2'::INTERVAL DAY TO HOUR, "
-            "'999999999 23'::INTERVAL DAY TO HOUR, '-999999999 23'::INTERVAL DAY TO HOUR"
-        )
+        #   '-1 2'::INTERVAL DAY TO HOUR" is executed
+        sql = "SELECT '0 0'::INTERVAL DAY TO HOUR, '1 2'::INTERVAL DAY TO HOUR, '-1 2'::INTERVAL DAY TO HOUR"
+        result = execute_query(sql, single_row=True)
 
         # Then the result should contain expected INTERVAL DAY TO HOUR literal values in order
-        with pytest.raises(InterfaceError, match="252005"):
-            execute_query(
-                sql, single_row=True
-            )  # Negative extreme '-999999999 23' overflows timedelta (see module docstring).
+        assert_type(result, timedelta)
+        assert result == (timedelta(0), timedelta(days=1, hours=2), -timedelta(days=1, hours=2))
 
-    @pytest.mark.skip_universal(reason="TODO: interval overflow raises interface error")
+    def test_should_select_interval_day_to_hour_max_literal(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT '999999999 23'::INTERVAL DAY TO HOUR" is executed
+        sql = "SELECT '999999999 23'::INTERVAL DAY TO HOUR"
+        result = execute_query(sql, single_row=True)
+
+        # Then the result should contain expected INTERVAL DAY TO HOUR max value
+        assert_type(result, timedelta)
+        assert result == (timedelta(days=999999999, hours=23),)
+
+    def test_should_select_interval_day_to_hour_min_literal(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT '-999999999 23'::INTERVAL DAY TO HOUR" is executed
+        sql = "SELECT '-999999999 23'::INTERVAL DAY TO HOUR"
+
+        # Then the result should contain expected INTERVAL DAY TO HOUR min value
+        with pytest.raises(InterfaceError, match="252005"):
+            execute_query(sql, single_row=True)  # '-999999999 23' overflows timedelta.min (see module docstring).
+
     def test_should_select_interval_day_to_minute_literals(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
         # When Query "SELECT '0 0:0'::INTERVAL DAY TO MINUTE, '1 2:30'::INTERVAL DAY TO MINUTE,
-        #   '-1 2:30'::INTERVAL DAY TO MINUTE,
-        #   '999999999 23:59'::INTERVAL DAY TO MINUTE, '-999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+        #   '-1 2:30'::INTERVAL DAY TO MINUTE" is executed
         sql = (
             "SELECT '0 0:0'::INTERVAL DAY TO MINUTE, '1 2:30'::INTERVAL DAY TO MINUTE, "
-            "'-1 2:30'::INTERVAL DAY TO MINUTE, "
-            "'999999999 23:59'::INTERVAL DAY TO MINUTE, '-999999999 23:59'::INTERVAL DAY TO MINUTE"
+            "'-1 2:30'::INTERVAL DAY TO MINUTE"
         )
+        result = execute_query(sql, single_row=True)
 
         # Then the result should contain expected INTERVAL DAY TO MINUTE literal values in order
+        assert_type(result, timedelta)
+        assert result == (
+            timedelta(0),
+            timedelta(days=1, hours=2, minutes=30),
+            -timedelta(days=1, hours=2, minutes=30),
+        )
+
+    def test_should_select_interval_day_to_minute_max_literal(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT '999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+        sql = "SELECT '999999999 23:59'::INTERVAL DAY TO MINUTE"
+        result = execute_query(sql, single_row=True)
+
+        # Then the result should contain expected INTERVAL DAY TO MINUTE max value
+        assert_type(result, timedelta)
+        assert result == (timedelta(days=999999999, hours=23, minutes=59),)
+
+    def test_should_select_interval_day_to_minute_min_literal(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT '-999999999 23:59'::INTERVAL DAY TO MINUTE" is executed
+        sql = "SELECT '-999999999 23:59'::INTERVAL DAY TO MINUTE"
+
+        # Then the result should contain expected INTERVAL DAY TO MINUTE min value
         with pytest.raises(InterfaceError, match="252005"):
-            execute_query(
-                sql, single_row=True
-            )  # Negative extreme '-999999999 23:59' overflows timedelta (see module docstring).
+            execute_query(sql, single_row=True)  # '-999999999 23:59' overflows timedelta.min (see module docstring).
 
     def test_should_select_interval_hour_to_minute_literals(self, execute_query):
         # Given Snowflake client is logged in
@@ -751,35 +791,75 @@ class TestIntervalBinding:
             -timedelta(seconds=999999999, microseconds=999999),
         )
 
-    @pytest.mark.skip_universal(reason="TODO: interval overflow raises interface error")
-    def test_should_select_interval_day_to_hour_values_using_parameter_binding(self, execute_query):
+    def test_should_select_interval_day_to_hour_value_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
-        # When Query "SELECT ?::INTERVAL DAY TO HOUR, ?::INTERVAL DAY TO HOUR"
-        #   is executed with bound string values ['1 2', '-999999999 23']
-        sql = "SELECT ?::INTERVAL DAY TO HOUR, ?::INTERVAL DAY TO HOUR"
+        # When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '1 2'
+        sql = "SELECT ?::INTERVAL DAY TO HOUR"
+        result = execute_query(sql, ("1 2",), single_row=True)
 
-        # Then the result should contain expected INTERVAL DAY TO HOUR bound values in order
-        with pytest.raises(InterfaceError, match="252005"):
-            execute_query(
-                sql, ("1 2", "-999999999 23"), single_row=True
-            )  # Negative extreme '-999999999 23' overflows timedelta (see module docstring).
+        # Then the result should contain expected INTERVAL DAY TO HOUR bound value
+        assert result == (timedelta(days=1, hours=2),)
 
-    @pytest.mark.skip_universal(reason="TODO: interval overflow raises interface error")
-    def test_should_select_interval_day_to_minute_values_using_parameter_binding(self, execute_query):
+    def test_should_select_interval_day_to_hour_max_value_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
         pass
 
-        # When Query "SELECT ?::INTERVAL DAY TO MINUTE, ?::INTERVAL DAY TO MINUTE"
-        #   is executed with bound string values ['1 2:30', '-999999999 23:59']
-        sql = "SELECT ?::INTERVAL DAY TO MINUTE, ?::INTERVAL DAY TO MINUTE"
+        # When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '999999999 23'
+        sql = "SELECT ?::INTERVAL DAY TO HOUR"
+        result = execute_query(sql, ("999999999 23",), single_row=True)
 
-        # Then the result should contain expected INTERVAL DAY TO MINUTE bound values in order
+        # Then the result should contain expected INTERVAL DAY TO HOUR max bound value
+        assert result == (timedelta(days=999999999, hours=23),)
+
+    def test_should_select_interval_day_to_hour_min_value_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT ?::INTERVAL DAY TO HOUR" is executed with bound string value '-999999999 23'
+        sql = "SELECT ?::INTERVAL DAY TO HOUR"
+
+        # Then the result should contain expected INTERVAL DAY TO HOUR min bound value
         with pytest.raises(InterfaceError, match="252005"):
             execute_query(
-                sql, ("1 2:30", "-999999999 23:59"), single_row=True
-            )  # Negative extreme '-999999999 23:59' overflows timedelta (see module docstring).
+                sql, ("-999999999 23",), single_row=True
+            )  # '-999999999 23' overflows timedelta.min (see module docstring).
+
+    def test_should_select_interval_day_to_minute_value_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '1 2:30'
+        sql = "SELECT ?::INTERVAL DAY TO MINUTE"
+        result = execute_query(sql, ("1 2:30",), single_row=True)
+
+        # Then the result should contain expected INTERVAL DAY TO MINUTE bound value
+        assert result == (timedelta(days=1, hours=2, minutes=30),)
+
+    def test_should_select_interval_day_to_minute_max_value_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '999999999 23:59'
+        sql = "SELECT ?::INTERVAL DAY TO MINUTE"
+        result = execute_query(sql, ("999999999 23:59",), single_row=True)
+
+        # Then the result should contain expected INTERVAL DAY TO MINUTE max bound value
+        assert result == (timedelta(days=999999999, hours=23, minutes=59),)
+
+    def test_should_select_interval_day_to_minute_min_value_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+        pass
+
+        # When Query "SELECT ?::INTERVAL DAY TO MINUTE" is executed with bound string value '-999999999 23:59'
+        sql = "SELECT ?::INTERVAL DAY TO MINUTE"
+
+        # Then the result should contain expected INTERVAL DAY TO MINUTE min bound value
+        with pytest.raises(InterfaceError, match="252005"):
+            execute_query(
+                sql, ("-999999999 23:59",), single_row=True
+            )  # '-999999999 23:59' overflows timedelta.min (see module docstring).
 
     def test_should_select_interval_hour_to_minute_values_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
