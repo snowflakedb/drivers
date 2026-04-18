@@ -233,6 +233,7 @@ fn read_struct_timestamp_tz(
 /// implementation allocated a fresh `String` (and a second one for the
 /// fractional part) on every call.
 fn format_timestamp_string_into<'a>(dt: &NaiveDateTime, buf: &'a mut [u8; 48]) -> &'a str {
+    let nanos = dt.nanosecond();
     let len = {
         let mut cur = Cursor::new(&mut buf[..]);
         // Infallible: the buffer is large enough for any chrono `NaiveDateTime`.
@@ -246,16 +247,16 @@ fn format_timestamp_string_into<'a>(dt: &NaiveDateTime, buf: &'a mut [u8; 48]) -
             dt.minute(),
             dt.second()
         );
-        let nanos = dt.nanosecond();
         if nanos != 0 {
             let _ = write!(cur, ".{nanos:09}");
         }
         cur.position() as usize
     };
-    // Trim trailing zeros from the optional fractional part, matching the
-    // previous `.trim_end_matches('0')` behavior.
+    // Trim trailing zeros from the fractional part (matching the previous
+    // `.trim_end_matches('0')` behavior). Skip the scan entirely when we
+    // know no fractional part was written.
     let mut end = len;
-    if buf[..end].contains(&b'.') {
+    if nanos != 0 {
         while end > 0 && buf[end - 1] == b'0' {
             end -= 1;
         }

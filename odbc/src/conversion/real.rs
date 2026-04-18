@@ -63,7 +63,8 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
 fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> &str {
     let len = {
         let mut cur = Cursor::new(&mut buf[..]);
-        // Infallible: the buffer is large enough for any finite `f64`.
+        // Infallible: the buffer is large enough for any `f64`, including
+        // `NaN`, `inf`, `-inf`, and the widest-magnitude finite values.
         let _ = write!(cur, "{value}");
         cur.position() as usize
     };

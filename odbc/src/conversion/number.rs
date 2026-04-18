@@ -151,6 +151,39 @@ const POW10_U128: [u128; (MAX_DECIMAL_SCALE + 1) as usize] = {
     a
 };
 
+/// Fetch `10^scale` as `i128` from the precomputed table, returning an
+/// `SQLSTATE 22003` error instead of panicking for `scale > 38`.
+///
+/// The previous `10i128.pow(scale)` implementation would panic in debug
+/// builds and silently overflow in release for `scale > 38`; this helper
+/// normalizes both to a typed conversion error. In practice Snowflake
+/// DECIMAL scale is always in `0..=37`, so the error branch is not
+/// expected on well-formed server output.
+fn pow10_i128(scale: u32) -> Result<i128, WriteOdbcError> {
+    POW10_I128.get(scale as usize).copied().ok_or_else(|| {
+        NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "DECIMAL scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}"
+            ),
+        }
+        .build()
+    })
+}
+
+/// `u128` counterpart to [`pow10_i128`], used for re-scaling in the
+/// `SQL_C_NUMERIC` arm where the scale difference comes from the
+/// application-supplied ARD and is not otherwise validated.
+fn pow10_u128(scale: u32) -> Result<u128, WriteOdbcError> {
+    POW10_U128.get(scale as usize).copied().ok_or_else(|| {
+        NumericValueOutOfRangeSnafu {
+            reason: format!(
+                "scale {scale} exceeds supported range 0..={MAX_DECIMAL_SCALE} for SQL_C_NUMERIC"
+            ),
+        }
+        .build()
+    })
+}
+
 impl SnowflakeNumber {
     /// Format a scaled `i128` as a decimal string into `buf` without any heap
     /// allocation, returning the filled slice as `&str`.
@@ -240,7 +273,7 @@ impl WriteODBCType for SnowflakeNumber {
             other => other,
         };
 
-        let scale_factor = POW10_I128[self.scale as usize];
+        let scale_factor = pow10_i128(self.scale)?;
         let int_value = snowflake_value / scale_factor;
         let has_fractional = self.scale > 0 && snowflake_value % scale_factor != 0;
 
@@ -368,15 +401,15 @@ impl WriteODBCType for SnowflakeNumber {
 
                 let scale_diff = target_scale as i32 - self.scale as i32;
                 let truncated = if scale_diff < 0 {
-                    let divisor = POW10_U128[(-scale_diff) as usize];
+                    let divisor = pow10_u128((-scale_diff) as u32)?;
                     abs_value % divisor != 0
                 } else {
                     false
                 };
                 let unscaled: u128 = if scale_diff >= 0 {
-                    abs_value * POW10_U128[scale_diff as usize]
+                    abs_value * pow10_u128(scale_diff as u32)?
                 } else {
-                    abs_value / POW10_U128[(-scale_diff) as usize]
+                    abs_value / pow10_u128((-scale_diff) as u32)?
                 };
 
                 let numeric = sql::Numeric {
@@ -680,5 +713,59 @@ mod format_decimal_into_tests {
             assert_matches(1234567890, scale);
             assert_matches(-1234567890, scale);
         }
+    }
+}
+
+#[cfg(test)]
+mod pow10_tests {
+    use super::{MAX_DECIMAL_SCALE, POW10_I128, POW10_U128, pow10_i128, pow10_u128};
+    use crate::conversion::error::WriteOdbcError;
+
+    #[test]
+    fn pow10_i128_matches_table_in_range() {
+        for scale in 0..=MAX_DECIMAL_SCALE {
+            assert_eq!(
+                pow10_i128(scale).unwrap(),
+                POW10_I128[scale as usize],
+                "pow10_i128({scale}) disagrees with table"
+            );
+        }
+    }
+
+    #[test]
+    fn pow10_u128_matches_table_in_range() {
+        for scale in 0..=MAX_DECIMAL_SCALE {
+            assert_eq!(
+                pow10_u128(scale).unwrap(),
+                POW10_U128[scale as usize],
+                "pow10_u128({scale}) disagrees with table"
+            );
+        }
+    }
+
+    #[test]
+    fn pow10_i128_out_of_range_returns_22003() {
+        let err = pow10_i128(MAX_DECIMAL_SCALE + 1).unwrap_err();
+        assert!(
+            matches!(err, WriteOdbcError::NumericValueOutOfRange { .. }),
+            "expected NumericValueOutOfRange, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pow10_u128_out_of_range_returns_22003() {
+        let err = pow10_u128(MAX_DECIMAL_SCALE + 1).unwrap_err();
+        assert!(
+            matches!(err, WriteOdbcError::NumericValueOutOfRange { .. }),
+            "expected NumericValueOutOfRange, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn pow10_far_out_of_range_does_not_panic() {
+        // The previous `10i128.pow(n)` would panic in debug for n > 38.
+        // The new helpers return a typed error instead.
+        assert!(pow10_i128(100).is_err());
+        assert!(pow10_u128(u32::MAX).is_err());
     }
 }
