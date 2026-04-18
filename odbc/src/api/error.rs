@@ -548,7 +548,8 @@ impl OdbcError {
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::JsonBinding { source, .. } => match source {
-                JsonBindingError::NumericMagnitudeOverflow { .. } => {
+                JsonBindingError::NumericMagnitudeOverflow { .. }
+                | JsonBindingError::BindingNumericOutOfRange { .. } => {
                     SqlState::NumericValueOutOfRange
                 }
                 JsonBindingError::UnsupportedCDataType { .. } => {
@@ -736,7 +737,8 @@ impl ErrorTrace for CoreProtobufError {
 mod tests {
     use super::*;
     use crate::conversion::error::{
-        InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu, UnsupportedCDataTypeSnafu,
+        BindingNumericOutOfRangeSnafu, InvalidBooleanValueSnafu, NumericMagnitudeOverflowSnafu,
+        UnsupportedCDataTypeSnafu,
     };
 
     #[test]
@@ -823,6 +825,20 @@ mod tests {
             location: snafu::Location::new("test", 0, 0),
         };
         assert_eq!(odbc_err.to_sql_state(), SqlState::StringDataRightTruncation);
+    }
+
+    #[test]
+    fn binding_numeric_out_of_range_maps_to_22003() {
+        let json_err = BindingNumericOutOfRangeSnafu {
+            reason: "SQL_C_BINARY buffer length 12 does not match SQL_DATE_STRUCT size (6)"
+                .to_string(),
+        }
+        .build();
+        let odbc_err = OdbcError::JsonBinding {
+            source: json_err,
+            location: snafu::Location::new("test", 0, 0),
+        };
+        assert_eq!(odbc_err.to_sql_state(), SqlState::NumericValueOutOfRange);
     }
 
     #[test]

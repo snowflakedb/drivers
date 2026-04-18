@@ -14,9 +14,9 @@ use super::binary::SnowflakeBinary;
 use super::boolean::SnowflakeBoolean;
 use super::date::SnowflakeDate;
 use super::error::{
-    InvalidParameterIndicesSnafu, InvalidUtf8Snafu, JsonBindingError, NullPointerSnafu,
-    NumericMagnitudeOverflowSnafu, SerializationSnafu, UnsupportedParameterTypeSnafu,
-    WCharConversionSnafu,
+    BindingNumericOutOfRangeSnafu, InvalidParameterIndicesSnafu, InvalidUtf8Snafu,
+    JsonBindingError, NullPointerSnafu, NumericMagnitudeOverflowSnafu, SerializationSnafu,
+    UnsupportedParameterTypeSnafu, WCharConversionSnafu,
 };
 use super::number::{NumericSqlType, SnowflakeNumber};
 use super::real::SnowflakeReal;
@@ -82,6 +82,21 @@ impl ParamConverter for DecimalParamConverter {
             CDataType::Numeric => {
                 let (value, scale) = read_numeric_struct(binding)?;
                 format_numeric_value(value, scale)
+            }
+            CDataType::Binary => {
+                let len = buffer_data_len(binding);
+                if len == std::mem::size_of::<sql::Numeric>() {
+                    let (value, scale) = read_numeric_struct(binding)?;
+                    format_numeric_value(value, scale)
+                } else {
+                    return Err(BindingNumericOutOfRangeSnafu {
+                        reason: format!(
+                            "SQL_C_BINARY buffer length {len} does not match SQL_NUMERIC_STRUCT size ({})",
+                            std::mem::size_of::<sql::Numeric>()
+                        ),
+                    }
+                    .build());
+                }
             }
             _ => {
                 return Err(UnsupportedParameterTypeSnafu {
@@ -368,6 +383,28 @@ pub(crate) fn buffer_data_len(binding: &ParameterBinding) -> usize {
     }
 
     max_len
+}
+
+/// Read a fixed-size POD struct `T` from an `SQL_C_BINARY` parameter buffer,
+/// rejecting buffers whose length does not exactly match `size_of::<T>()`.
+///
+/// `struct_name` is used only to produce a descriptive error message
+/// (e.g. `"SQL_DATE_STRUCT"`) when the length check fails.
+pub(crate) fn read_binary_struct<T: Copy>(
+    binding: &ParameterBinding,
+    struct_name: &str,
+) -> Result<T, JsonBindingError> {
+    let len = buffer_data_len(binding);
+    let expected = std::mem::size_of::<T>();
+    if len != expected {
+        return BindingNumericOutOfRangeSnafu {
+            reason: format!(
+                "SQL_C_BINARY buffer length {len} does not match {struct_name} size ({expected})"
+            ),
+        }
+        .fail();
+    }
+    Ok(read_unaligned::<T>(binding))
 }
 
 /// Convert bytes from the system's ANSI code page to a Rust UTF-8 `String`.
@@ -2671,5 +2708,491 @@ mod tests {
             convert_binding(&binding),
             Err(JsonBindingError::InvalidBooleanValue { .. })
         ));
+    }
+
+    // =========================================================================
+    // SQL_C_BINARY → SQL_INTEGER / SQL_BIGINT / SQL_SMALLINT / SQL_TINYINT
+    // =========================================================================
+
+    #[test]
+    fn convert_binary_4bytes_to_integer() -> TestResult {
+        let val: i32 = 42;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::INTEGER,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("42".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_8bytes_to_bigint() -> TestResult {
+        let val: i64 = 9_999_999_999;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::EXT_BIG_INT,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("9999999999".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_2bytes_to_smallint() -> TestResult {
+        let val: i16 = -7;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::SMALLINT,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("-7".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_1byte_to_tinyint() -> TestResult {
+        let val: i8 = 127;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::EXT_TINY_INT,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("127".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_wrong_size_to_integer_fails() {
+        let bytes: [u8; 3] = [1, 2, 3];
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::INTEGER,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_binary_4bytes_to_bigint_fails() {
+        let val: i32 = 42;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::EXT_BIG_INT,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_binary_8bytes_to_real_fails() {
+        let val: f64 = 3.125;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::REAL,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    // =========================================================================
+    // SQL_C_BINARY → SQL_FLOAT / SQL_DOUBLE / SQL_REAL
+    // =========================================================================
+
+    #[test]
+    fn convert_binary_8bytes_to_double() -> TestResult {
+        let val: f64 = 3.125;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::DOUBLE,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, Value::String("3.125".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_4bytes_to_real() -> TestResult {
+        let val: f32 = 2.5;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::REAL,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Real);
+        assert_eq!(v, Value::String("2.5".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_nan_to_double_fails() {
+        let val: f64 = f64::NAN;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::DOUBLE,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_binary_infinity_to_real_fails() {
+        let val: f32 = f32::INFINITY;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::REAL,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::NumericMagnitudeOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_binary_wrong_size_to_double_fails() {
+        let bytes: [u8; 3] = [1, 2, 3];
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::DOUBLE,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    // =========================================================================
+    // SQL_C_BINARY → SQL_DECIMAL / SQL_NUMERIC (via DecimalParamConverter)
+    // =========================================================================
+
+    #[test]
+    fn convert_binary_numeric_struct_to_decimal() -> TestResult {
+        let numeric = sql::Numeric {
+            precision: 10,
+            scale: 2,
+            sign: 1,
+            val: {
+                let mut v = [0u8; 16];
+                let bytes = 12345u128.to_le_bytes();
+                v.copy_from_slice(&bytes);
+                v
+            },
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &numeric as *const _ as *const u8,
+                mem::size_of::<sql::Numeric>(),
+            )
+        };
+        let mut ind: sql::Len = mem::size_of::<sql::Numeric>() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::DECIMAL,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("123.45".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_wrong_size_to_decimal_fails() {
+        let bytes: [u8; 10] = [0; 10];
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::DECIMAL,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    // =========================================================================
+    // SQL_C_BINARY → SQL_DATE
+    // =========================================================================
+
+    #[test]
+    fn convert_binary_to_date() -> TestResult {
+        let date = sql::Date {
+            year: 2025,
+            month: 3,
+            day: 26,
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(&date as *const _ as *const u8, mem::size_of::<sql::Date>())
+        };
+        let mut ind: sql::Len = mem::size_of::<sql::Date>() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::DATE,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Date);
+        let expected_millis = (chrono::NaiveDate::from_ymd_opt(2025, 3, 26).unwrap()
+            - chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+        .num_days()
+            * 86_400_000;
+        assert_eq!(v, Value::String(expected_millis.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_wrong_size_to_date_fails() {
+        let bytes: [u8; 4] = [0; 4];
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::DATE,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    // =========================================================================
+    // SQL_C_BINARY → SQL_TIME
+    // =========================================================================
+
+    #[test]
+    fn convert_binary_to_time() -> TestResult {
+        let time = sql::Time {
+            hour: 14,
+            minute: 30,
+            second: 45,
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(&time as *const _ as *const u8, mem::size_of::<sql::Time>())
+        };
+        let mut ind: sql::Len = mem::size_of::<sql::Time>() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::TIME,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Time);
+        let nanos = 14 * 3600 * 1_000_000_000i64 + 30 * 60 * 1_000_000_000 + 45 * 1_000_000_000;
+        assert_eq!(v, Value::String(nanos.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_wrong_size_to_time_fails() {
+        let bytes: [u8; 4] = [0; 4];
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::TIME,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    // =========================================================================
+    // SQL_C_BINARY → SQL_TIMESTAMP
+    // =========================================================================
+
+    #[test]
+    fn convert_binary_to_timestamp() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 2025,
+            month: 3,
+            day: 26,
+            hour: 14,
+            minute: 30,
+            second: 45,
+            fraction: 0,
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &ts as *const _ as *const u8,
+                mem::size_of::<sql::Timestamp>(),
+            )
+        };
+        let mut ind: sql::Len = mem::size_of::<sql::Timestamp>() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::TIMESTAMP,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2025, 3, 26)
+            .unwrap()
+            .and_hms_opt(14, 30, 45)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap();
+        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_wrong_size_to_timestamp_fails() {
+        let bytes: [u8; 8] = [0; 8];
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::TIMESTAMP,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        assert!(matches!(
+            convert_binding(&binding),
+            Err(JsonBindingError::BindingNumericOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn convert_binary_negative_i32_to_integer() -> TestResult {
+        let val: i32 = -100;
+        let bytes = val.to_ne_bytes();
+        let mut ind: sql::Len = bytes.len() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::INTEGER,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::Fixed);
+        assert_eq!(v, Value::String("-100".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_binary_timestamp_with_fraction() -> TestResult {
+        let ts = sql::Timestamp {
+            year: 2025,
+            month: 1,
+            day: 1,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: 500_000_000,
+        };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &ts as *const _ as *const u8,
+                mem::size_of::<sql::Timestamp>(),
+            )
+        };
+        let mut ind: sql::Len = mem::size_of::<sql::Timestamp>() as sql::Len;
+        let binding = make_binding(
+            CDataType::Binary,
+            sql::SqlDataType::TIMESTAMP,
+            bytes.as_ptr() as sql::Pointer,
+            bytes.len() as sql::Len,
+            &mut ind,
+        );
+        let (ty, v) = convert_binding(&binding)?;
+        assert_eq!(ty, SnowflakeLogicalType::TimestampNtz);
+        let expected_nanos = chrono::NaiveDate::from_ymd_opt(2025, 1, 1)
+            .unwrap()
+            .and_hms_nano_opt(0, 0, 0, 500_000_000)
+            .unwrap()
+            .and_utc()
+            .timestamp_nanos_opt()
+            .unwrap();
+        assert_eq!(v, Value::String(expected_nanos.to_string()));
+        Ok(())
     }
 }

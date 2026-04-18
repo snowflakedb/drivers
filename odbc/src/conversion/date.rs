@@ -6,11 +6,15 @@ use serde_json::Value;
 
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
-use crate::conversion::error::{JsonBindingError, UnsupportedCDataTypeSnafu};
+use crate::conversion::error::{
+    BindingNumericOutOfRangeSnafu, JsonBindingError, UnsupportedCDataTypeSnafu,
+};
 use crate::conversion::error::{
     NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::traits::{ReadODBC, SnowflakeLogicalType, WriteJson};
 use crate::conversion::warning::Warnings;
@@ -183,6 +187,19 @@ impl ReadODBC for SnowflakeDate {
                     }
                     .build()
                 })
+            }
+            CDataType::Binary => {
+                let date = read_binary_struct::<sql::Date>(binding, "SQL_DATE_STRUCT")?;
+                NaiveDate::from_ymd_opt(date.year as i32, date.month as u32, date.day as u32)
+                    .ok_or_else(|| {
+                        BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "invalid date from SQL_C_BINARY: year={}, month={}, day={}",
+                                date.year, date.month, date.day
+                            ),
+                        }
+                        .build()
+                    })
             }
             _ => UnsupportedCDataTypeSnafu {
                 c_type: binding.value_type,
