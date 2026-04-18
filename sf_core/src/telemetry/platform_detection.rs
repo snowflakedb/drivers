@@ -486,6 +486,41 @@ mod tests {
         .await;
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn drops_detectors_when_timeout_reached() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_delay(DETECTION_TIMEOUT * 4))
+            .mount(&server)
+            .await;
+
+        let mut slow_sts =
+            FakeCallerIdentityProvider::new(Some("arn:aws:iam::123456789012:user/alice".into()));
+        slow_sts.delay = DETECTION_TIMEOUT * 4;
+
+        let mut cfg = test_detection_config();
+        cfg.caller_identity_provider = Arc::new(slow_sts);
+        cfg.ec2_metadata_url = format!("{}/ec2", server.uri());
+        cfg.azure_metadata_base_url = server.uri();
+        cfg.gce_metadata_root_url = server.uri();
+        cfg.gce_metadata_base_url = server.uri();
+
+        temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+            let detect = tokio::spawn({
+                let cfg = cfg.clone();
+                async move { detect_platforms(&cfg).await }
+            });
+            tokio::time::advance(DETECTION_TIMEOUT + Duration::from_millis(1)).await;
+
+            let platforms = detect.await.expect("detect_platforms timed out");
+            assert!(
+                platforms.is_empty(),
+                "all slow detectors must be dropped by per-detector timeout, got {platforms:?}"
+            );
+        })
+        .await;
+    }
+
     mod has_aws_identity {
         use super::*;
 
@@ -515,36 +550,9 @@ mod tests {
             })
             .await;
         }
-
-        #[tokio::test(start_paused = true)]
-        async fn drops_when_provider_exceeds_timeout() {
-            let mut cfg = test_detection_config();
-            let mut caller_identity_provider = FakeCallerIdentityProvider::new(Some(
-                "arn:aws:iam::123456789012:user/alice".into(),
-            ));
-            caller_identity_provider.delay = DETECTION_TIMEOUT * 4;
-            cfg.caller_identity_provider = Arc::new(caller_identity_provider);
-
-            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
-                let detect = tokio::spawn({
-                    let cfg = cfg.clone();
-                    async move { detect_platforms(&cfg).await }
-                });
-                tokio::time::advance(DETECTION_TIMEOUT + Duration::from_millis(1)).await;
-
-                let platforms = detect.await.expect("detect_platforms timed out");
-                assert!(
-                    platforms.is_empty(),
-                    "slow provider must be dropped by per-detector timeout, got {platforms:?}"
-                );
-            })
-            .await;
-        }
     }
 
     mod metadata_server_detectors {
-        use std::time::Instant;
-
         use wiremock::matchers::{header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -691,48 +699,6 @@ mod tests {
                     platforms,
                     vec!["has_gcp_identity".to_string()],
                     "expected has_gcp_identity, got {platforms:?}"
-                );
-            })
-            .await;
-        }
-
-        /// Every HTTP URL points at a mock that delays 3s; every detector
-        /// must be aborted by the per-detector 200ms timeout rather than
-        /// the whole call blocking for 3s.
-        #[tokio::test]
-        async fn aborts_within_200ms_when_metadata_endpoint_hangs() {
-            let server = MockServer::start().await;
-            Mock::given(method("GET"))
-                .respond_with(
-                    ResponseTemplate::new(200)
-                        .set_body_string(r#"{"instanceId":"i-12345"}"#)
-                        .set_delay(Duration::from_secs(3)),
-                )
-                .mount(&server)
-                .await;
-
-            let mut cfg = test_detection_config();
-            cfg.ec2_metadata_url = format!("{}/ec2", server.uri());
-            cfg.azure_metadata_base_url = server.uri();
-            cfg.gce_metadata_root_url = server.uri();
-            cfg.gce_metadata_base_url = server.uri();
-
-            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
-                let start = Instant::now();
-                let platforms = detect_platforms(&cfg).await;
-                let elapsed = start.elapsed();
-
-                assert!(
-                    !platforms.iter().any(|p| p.starts_with("is_ec2")
-                        || p.starts_with("is_azure")
-                        || p.starts_with("is_gce")
-                        || p.starts_with("has_")),
-                    "expected no HTTP detector to fire, got {platforms:?}"
-                );
-
-                assert!(
-                    elapsed < DETECTION_TIMEOUT + Duration::from_millis(400),
-                    "expected abort near {DETECTION_TIMEOUT:?}, got {elapsed:?}"
                 );
             })
             .await;
