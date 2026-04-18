@@ -9,10 +9,16 @@ use serde_json::Value;
 use crate::api::CDataType;
 use crate::api::ParameterBinding;
 use crate::conversion::error::{
-    InvalidArrowValueSnafu, JsonBindingError, NumericValueOutOfRangeSnafu, ReadArrowError,
-    UnsupportedCDataTypeSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    BindingNumericOutOfRangeSnafu, InvalidArrowValueSnafu, JsonBindingError,
+    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedCDataTypeSnafu,
+    UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
-use crate::conversion::param_binding::{read_char_str, read_unaligned, read_wchar_str};
+use crate::conversion::param_binding::{
+    read_binary_struct, read_char_str, read_unaligned, read_wchar_str,
+};
+use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
+use crate::conversion::warning::{Warning, Warnings};
+use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 /// Format a `NaiveTime` as `HH:MM:SS[.fffffffff]` into a stack buffer without
 /// heap allocation. 32 bytes is ample for the widest output (`HH:MM:SS.` + 9
@@ -43,9 +49,6 @@ fn format_time_ascii<'a>(time: &NaiveTime, buf: &'a mut [u8; 32]) -> &'a str {
     // SAFETY: only ASCII digits, `:`, and `.` written above.
     unsafe { std::str::from_utf8_unchecked(&buf[..end]) }
 }
-use crate::conversion::traits::{Binding, ReadODBC, SnowflakeLogicalType, WriteJson};
-use crate::conversion::warning::{Warning, Warnings};
-use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeTime {
     pub(crate) scale: u32,
@@ -245,6 +248,19 @@ impl ReadODBC for SnowflakeTime {
                     .map_err(|_| {
                         UnsupportedCDataTypeSnafu {
                             c_type: binding.value_type,
+                        }
+                        .build()
+                    })
+            }
+            CDataType::Binary => {
+                let time = read_binary_struct::<sql::Time>(binding, "SQL_TIME_STRUCT")?;
+                NaiveTime::from_hms_opt(time.hour as u32, time.minute as u32, time.second as u32)
+                    .ok_or_else(|| {
+                        BindingNumericOutOfRangeSnafu {
+                            reason: format!(
+                                "invalid time from SQL_C_BINARY: hour={}, minute={}, second={}",
+                                time.hour, time.minute, time.second
+                            ),
                         }
                         .build()
                     })
