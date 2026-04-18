@@ -2,6 +2,7 @@
 mod alter_session_parser;
 pub mod connection;
 mod database;
+mod disk_reader;
 pub(crate) mod error;
 mod global_state;
 mod query;
@@ -12,6 +13,7 @@ pub use crate::config::settings::Setting;
 pub use crate::handle_manager::Handle;
 pub use connection::{Connection, ConnectionInfo, RefreshContext, with_valid_session};
 pub use database::FetchChunkInput;
+pub use disk_reader::{DiskReader, RealDiskReader};
 pub use error::ApiError;
 pub use global_state::DatabaseDriverV1;
 pub use statement::{BindingType, ColumnMetadata, DataPtr, ExecuteResult, StoredChunkInfo};
