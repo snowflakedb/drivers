@@ -2,6 +2,8 @@ use aws_sdk_sts::config::BehaviorVersion;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 
+use super::{DetectionConfig, env_non_empty};
+
 /// Abstraction over the STS `GetCallerIdentity` lookup used by `has_aws_identity`,
 /// so tests can inject a canned ARN, `None`, or a delay instead of hitting live
 /// AWS. See [`tests::FakeCallerIdentityProvider`] for the test double.
@@ -29,6 +31,43 @@ impl CallerIdentityProvider for StsCallerIdentityProvider {
         }
         .boxed()
     }
+}
+
+pub(super) fn is_aws_lambda() -> bool {
+    env_non_empty("LAMBDA_TASK_ROOT")
+}
+
+pub(super) async fn is_ec2_instance(http: &reqwest::Client, config: &DetectionConfig) -> bool {
+    let token = async {
+        let response = http
+            .put(format!("{}/latest/api/token", config.aws_metadata_base_url))
+            .header("X-aws-ec2-metadata-token-ttl-seconds", "21600")
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let body = response.text().await.ok()?;
+        Some(body.trim().to_string()).filter(|t| !t.is_empty())
+    }
+    .await;
+
+    let document: reqwest::Result<serde_json::Value> = async {
+        let mut request = http.get(format!(
+            "{}/latest/dynamic/instance-identity/document",
+            config.aws_metadata_base_url,
+        ));
+        if let Some(token) = token {
+            request = request.header("X-aws-ec2-metadata-token", token);
+        }
+        request.send().await?.error_for_status()?.json().await
+    }
+    .await;
+
+    document
+        .ok()
+        .and_then(|doc| doc.get("instanceId")?.as_str().map(str::to_owned))
+        .is_some_and(|id| !id.is_empty())
 }
 
 pub(super) async fn has_aws_identity(provider: &dyn CallerIdentityProvider) -> bool {
