@@ -1,14 +1,31 @@
-type EnvDetector = (&'static str, fn() -> bool);
+use std::sync::Arc;
+use std::time::Duration;
 
-const ENV_DETECTORS: &[EnvDetector] = &[
-    ("is_aws_lambda", is_aws_lambda),
-    ("is_azure_function", is_azure_function),
-    ("is_gce_cloud_run_service", is_gce_cloud_run_service),
-    ("is_gce_cloud_run_job", is_gce_cloud_run_job),
-    ("is_github_action", is_github_action),
-];
+use futures::FutureExt;
+use futures::future::BoxFuture;
 
-pub async fn detect_platforms() -> Vec<String> {
+use super::aws_identity::{CallerIdentityProvider, StsCallerIdentityProvider, has_aws_identity};
+
+const DETECTION_TIMEOUT: Duration = Duration::from_millis(200);
+
+#[derive(Clone)]
+pub struct DetectionConfig {
+    pub(crate) caller_identity_provider: Arc<dyn CallerIdentityProvider>,
+}
+
+impl Default for DetectionConfig {
+    fn default() -> Self {
+        Self {
+            caller_identity_provider: Arc::new(StsCallerIdentityProvider),
+        }
+    }
+}
+
+/// Run all detectors concurrently with a per-detector [`DETECTION_TIMEOUT`].
+///
+/// Returns the names of only those detectors that succeeded. Order matches
+/// the detector list below so the serialized array is stable across runs.
+pub async fn detect_platforms(config: &DetectionConfig) -> Vec<String> {
     if std::env::var("SNOWFLAKE_DISABLE_PLATFORM_DETECTION")
         .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
         .unwrap_or(false)
@@ -16,10 +33,36 @@ pub async fn detect_platforms() -> Vec<String> {
         return vec!["disabled".to_string()];
     }
 
-    ENV_DETECTORS
-        .iter()
-        .filter(|(_, probe)| probe())
-        .map(|(name, _)| (*name).to_string())
+    let detectors: Vec<(&'static str, BoxFuture<'_, bool>)> = vec![
+        ("is_aws_lambda", async { is_aws_lambda() }.boxed()),
+        ("is_azure_function", async { is_azure_function() }.boxed()),
+        (
+            "is_gce_cloud_run_service",
+            async { is_gce_cloud_run_service() }.boxed(),
+        ),
+        (
+            "is_gce_cloud_run_job",
+            async { is_gce_cloud_run_job() }.boxed(),
+        ),
+        ("is_github_action", async { is_github_action() }.boxed()),
+        (
+            "has_aws_identity",
+            has_aws_identity(config.caller_identity_provider.as_ref()).boxed(),
+        ),
+    ];
+
+    let results = futures::future::join_all(detectors.into_iter().map(|(name, fut)| async move {
+        let detected = tokio::time::timeout(DETECTION_TIMEOUT, fut)
+            .await
+            .unwrap_or(false);
+        (name, detected)
+    }))
+    .await;
+
+    results
+        .into_iter()
+        .filter(|(_, detected)| *detected)
+        .map(|(name, _)| name.to_string())
         .collect()
 }
 
@@ -96,14 +139,27 @@ pub fn platform_detection_env_vars(
 
 #[cfg(test)]
 mod tests {
+    use super::super::aws_identity::tests::FakeCallerIdentityProvider;
     use super::*;
+
+    /// Returns a [`DetectionConfig`] wired with inert fakes for every field,
+    /// so detectors never reach the network. Tests override individual fields
+    /// (e.g. `cfg.caller_identity_provider = ...`) to exercise specific paths.
+    fn test_detection_config() -> DetectionConfig {
+        DetectionConfig {
+            caller_identity_provider: Arc::new(FakeCallerIdentityProvider::new(None)),
+        }
+    }
 
     #[tokio::test]
     async fn returns_disabled_when_env_flag_true() {
         temp_env::async_with_vars(
             platform_detection_env_vars(&[("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", "true")]),
             async {
-                assert_eq!(detect_platforms().await, vec!["disabled"]);
+                assert_eq!(
+                    detect_platforms(&test_detection_config()).await,
+                    vec!["disabled"]
+                );
             },
         )
         .await;
@@ -119,7 +175,7 @@ mod tests {
                 )]),
                 async {
                     assert_eq!(
-                        detect_platforms().await,
+                        detect_platforms(&test_detection_config()).await,
                         vec!["disabled"],
                         "disable flag {flag_value} should short-circuit detection",
                     );
@@ -134,7 +190,7 @@ mod tests {
         temp_env::async_with_vars(
             platform_detection_env_vars(&[("SNOWFLAKE_DISABLE_PLATFORM_DETECTION", "false")]),
             async {
-                let platforms = detect_platforms().await;
+                let platforms = detect_platforms(&test_detection_config()).await;
                 assert!(platforms.is_empty(), "expected empty, got {platforms:?}");
             },
         )
@@ -144,7 +200,7 @@ mod tests {
     #[tokio::test]
     async fn returns_empty_when_no_platform_detected() {
         temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
-            let platforms = detect_platforms().await;
+            let platforms = detect_platforms(&test_detection_config()).await;
             assert!(platforms.is_empty(), "expected empty, got {platforms:?}");
         })
         .await;
@@ -155,7 +211,10 @@ mod tests {
         temp_env::async_with_vars(
             platform_detection_env_vars(&[("LAMBDA_TASK_ROOT", "/var/task")]),
             async {
-                assert_eq!(detect_platforms().await, vec!["is_aws_lambda".to_string()]);
+                assert_eq!(
+                    detect_platforms(&test_detection_config()).await,
+                    vec!["is_aws_lambda".to_string()]
+                );
             },
         )
         .await;
@@ -171,7 +230,7 @@ mod tests {
             ]),
             async {
                 assert_eq!(
-                    detect_platforms().await,
+                    detect_platforms(&test_detection_config()).await,
                     vec!["is_azure_function".to_string()]
                 );
             },
@@ -189,7 +248,7 @@ mod tests {
             ]),
             async {
                 assert_eq!(
-                    detect_platforms().await,
+                    detect_platforms(&test_detection_config()).await,
                     vec!["is_gce_cloud_run_service".to_string()]
                 );
             },
@@ -206,7 +265,7 @@ mod tests {
             ]),
             async {
                 assert_eq!(
-                    detect_platforms().await,
+                    detect_platforms(&test_detection_config()).await,
                     vec!["is_gce_cloud_run_job".to_string()]
                 );
             },
@@ -220,7 +279,7 @@ mod tests {
             platform_detection_env_vars(&[("GITHUB_ACTIONS", "true")]),
             async {
                 assert_eq!(
-                    detect_platforms().await,
+                    detect_platforms(&test_detection_config()).await,
                     vec!["is_github_action".to_string()]
                 );
             },
@@ -238,7 +297,7 @@ mod tests {
                 ("GITHUB_ACTIONS", "true"),
             ]),
             async {
-                let platforms = detect_platforms().await;
+                let platforms = detect_platforms(&test_detection_config()).await;
                 assert_eq!(
                     platforms,
                     vec![
@@ -246,7 +305,7 @@ mod tests {
                         "is_gce_cloud_run_job".to_string(),
                         "is_github_action".to_string(),
                     ],
-                    "detector order must match ENV_DETECTORS declaration order",
+                    "detector order must match",
                 );
             },
         )
@@ -263,7 +322,7 @@ mod tests {
             ]),
             async {
                 assert_eq!(
-                    detect_platforms().await,
+                    detect_platforms(&test_detection_config()).await,
                     vec!["disabled"],
                     "disabled flag must short-circuit before any detectors run",
                 );
@@ -277,7 +336,7 @@ mod tests {
         temp_env::async_with_vars(
             platform_detection_env_vars(&[("GITHUB_ACTIONS", "")]),
             async {
-                let platforms = detect_platforms().await;
+                let platforms = detect_platforms(&test_detection_config()).await;
                 assert!(
                     !platforms.contains(&"is_github_action".to_string()),
                     "empty string must be treated as unset, got {platforms:?}",
@@ -285,5 +344,61 @@ mod tests {
             },
         )
         .await;
+    }
+
+    mod has_aws_identity {
+        use super::*;
+
+        #[tokio::test]
+        async fn detects_has_aws_identity_when_provider_returns_wif_arn() {
+            let mut cfg = test_detection_config();
+            cfg.caller_identity_provider = Arc::new(FakeCallerIdentityProvider::new(Some(
+                "arn:aws:iam::123456789012:user/alice".into(),
+            )));
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert_eq!(platforms, vec!["has_aws_identity".to_string()]);
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn rejects_when_sts_returns_no_arn() {
+            let mut cfg = test_detection_config();
+            cfg.caller_identity_provider = Arc::new(FakeCallerIdentityProvider::new(None));
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let platforms = detect_platforms(&cfg).await;
+                assert!(
+                    platforms.is_empty(),
+                    "missing ARN must produce an empty platforms array, got {platforms:?}"
+                );
+            })
+            .await;
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn drops_when_provider_exceeds_timeout() {
+            let mut cfg = test_detection_config();
+            let mut caller_identity_provider = FakeCallerIdentityProvider::new(Some(
+                "arn:aws:iam::123456789012:user/alice".into(),
+            ));
+            caller_identity_provider.delay = DETECTION_TIMEOUT * 4;
+            cfg.caller_identity_provider = Arc::new(caller_identity_provider);
+
+            temp_env::async_with_vars(platform_detection_env_vars(&[]), async {
+                let detect = tokio::spawn({
+                    let cfg = cfg.clone();
+                    async move { detect_platforms(&cfg).await }
+                });
+                tokio::time::advance(DETECTION_TIMEOUT + Duration::from_millis(1)).await;
+
+                let platforms = detect.await.expect("detect_platforms timed out");
+                assert!(
+                    platforms.is_empty(),
+                    "slow provider must be dropped by per-detector timeout, got {platforms:?}"
+                );
+            })
+            .await;
+        }
     }
 }

@@ -9,7 +9,7 @@ use super::statement::Statement;
 use crate::fs_adapter::{FsAdapter, RealFs};
 use crate::handle_manager::HandleManager;
 use crate::telemetry::os_details::detect_os_details;
-use crate::telemetry::platform_detection::detect_platforms;
+use crate::telemetry::platform_detection::{DetectionConfig, detect_platforms};
 use crate::token_cache::{KeyringTokenCache, TokenCacheError};
 
 /// Injection points for `DatabaseDriverV1`.
@@ -65,7 +65,9 @@ impl DatabaseDriverV1 {
     }
 
     pub async fn platforms(&self) -> &Vec<String> {
-        self.platforms.get_or_init(detect_platforms).await
+        self.platforms
+            .get_or_init(|| async { detect_platforms(&DetectionConfig::default()).await })
+            .await
     }
 
     pub fn os_details(&self) -> &Option<HashMap<String, String>> {
