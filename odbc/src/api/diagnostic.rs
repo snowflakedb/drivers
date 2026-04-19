@@ -327,6 +327,10 @@ pub fn set_diag_info_from_result(
         let diagnostic_info = t.get_diag_info_mut();
         match result {
             Ok(_) => {}
+            // SQL_NEED_DATA is a success-class return code, not an error.
+            // Don't post a diagnostic record — the Driver Manager uses the
+            // return code alone to drive the DAE protocol.
+            Err(OdbcError::DaeRequired { .. }) => {}
             Err(error) => {
                 diagnostic_info.add_record(error.to_diagnostic_record());
             }

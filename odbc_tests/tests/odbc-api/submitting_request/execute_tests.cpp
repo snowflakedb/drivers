@@ -393,8 +393,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: Executes with bound paramet
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: SQL_NEED_DATA with data-at-execution parameter",
                  "[odbc-api][execute][submitting_request]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -407,6 +405,88 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: SQL_NEED_DATA with data-at-
   REQUIRE(ret == SQL_NEED_DATA);
 
   SQLCancel(stmt_handle());
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: spurious DAE binding ignored when SQL has no parameter markers",
+                 "[odbc-api][execute][submitting_request]") {
+  // For prepared execution the server reports the true parameter marker count
+  // (0 for "SELECT 1").  A DAE binding on param 1 should be ignored because
+  // it does not correspond to a real marker.
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: SQL_NEED_DATA with SQL_LEN_DATA_AT_EXEC indicator",
+                 "[odbc-api][execute][submitting_request]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_LEN_DATA_AT_EXEC(100);
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLCancel(stmt_handle());
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: SQL_NEED_DATA with mixed DAE and regular parameters",
+                 "[odbc-api][execute][submitting_request]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?, ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLINTEGER regular_val = 42;
+  SQLLEN regular_ind = sizeof(regular_val);
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &regular_val, 0,
+                         &regular_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(2), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLCancel(stmt_handle());
+}
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: SQLCancel during SQL_NEED_DATA restores Prepared state",
+                 "[odbc-api][execute][submitting_request]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLCancel(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Rebind with a real value and re-execute to confirm Prepared state is restored.
+  SQLCHAR val[] = "42";
+  SQLLEN val_ind = SQL_NTS;
+  ret =
+      SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0, val, sizeof(val), &val_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_SUCCESS);
 }
 
 // ============================================================================
@@ -429,8 +509,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 when statement not pr
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLExecute: HY010 during SQL_NEED_DATA",
                  "[odbc-api][execute][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 

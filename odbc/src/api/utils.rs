@@ -19,6 +19,10 @@ pub fn num_result_cols(
     tracing::debug!("num_result_cols called");
     let stmt = stmt_from_handle(statement_handle);
 
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
+
     let num_cols = match stmt.state.as_ref() {
         StatementState::Prepared { schema } => schema.fields().len() as sql::SmallInt,
         StatementState::QueryExecuted { reader, .. } => {
@@ -45,6 +49,11 @@ pub fn num_result_cols(
 pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
+
     let row_count = match stmt.state.as_ref() {
         StatementState::QueryExecuted { rows_affected, .. }
         | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
@@ -81,6 +90,10 @@ pub fn col_attribute<E: OdbcEncoding>(
         field_identifier
     );
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
 
     let schema = match stmt.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),
@@ -183,6 +196,10 @@ pub fn describe_col<E: OdbcEncoding>(
 ) -> OdbcResult<()> {
     tracing::debug!("describe_col: column_number={column_number}");
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return crate::api::error::InvalidDuringDaeSnafu.fail();
+    }
 
     let schema = match stmt.state.as_ref() {
         StatementState::QueryExecuted { reader, .. } => reader.schema(),

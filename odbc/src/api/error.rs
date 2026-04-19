@@ -395,6 +395,20 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Data-at-execution required"))]
+    DaeRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display(
+        "Function sequence error: cannot call this function during data-at-execution"
+    ))]
+    InvalidDuringDae {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub trait Required<T>: Sized {
@@ -637,6 +651,8 @@ impl OdbcError {
             }
             OdbcError::OperationCanceled { .. } => SqlState::OperationCanceled,
             OdbcError::InvalidConnectionString { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::DaeRequired { .. } => SqlState::GeneralError,
+            OdbcError::InvalidDuringDae { .. } => SqlState::FunctionSequenceError,
         }
     }
 

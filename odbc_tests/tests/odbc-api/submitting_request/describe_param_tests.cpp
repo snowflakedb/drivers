@@ -2,7 +2,6 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -11,7 +10,6 @@
 #include "ODBCFixtures.hpp"
 #include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
-#include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -288,8 +286,6 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 for statement n
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLDescribeParam: HY010 during SQL_NEED_DATA",
                  "[odbc-api][describeparam][submitting_request][error]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
