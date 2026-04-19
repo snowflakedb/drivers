@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 
+const DEFAULT_SPCS_TOKEN_PATH: &str = "/snowflake/session/spcs_token";
+
 pub(crate) fn read_spcs_token() -> Option<String> {
     std::env::var_os("SNOWFLAKE_RUNNING_INSIDE_SPCS")?;
 
     #[cfg(any(test, feature = "test-utils"))]
-    let path_override: Option<PathBuf> = test_overrides::spcs_token_path();
+    let path =
+        test_overrides::spcs_token_path().unwrap_or_else(|| PathBuf::from(DEFAULT_SPCS_TOKEN_PATH));
 
     #[cfg(not(any(test, feature = "test-utils")))]
-    let path_override: Option<PathBuf> = None;
-
-    let path = path_override.unwrap_or_else(|| PathBuf::from("/snowflake/session/spcs_token"));
+    let path = PathBuf::from(DEFAULT_SPCS_TOKEN_PATH);
 
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
