@@ -897,8 +897,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLCancelHandle: SQL_ERROR with HY092 f
   // Unix DM (unixODBC) may return SQL_INVALID_HANDLE instead.
   WINDOWS_ONLY {
     REQUIRE(ret == SQL_ERROR);
-    // TODO(SNOW-3307200): verify HY092 SQLSTATE once descriptor diagnostic
-    // infrastructure lands.
+    NEW_DRIVER_ONLY("New driver sets HY092 on descriptor") {
+      REQUIRE(get_sqlstate(SQL_HANDLE_DESC, static_cast<SQLHANDLE>(ard)) == "HY092");
+    }
   }
   UNIX_ONLY {
     // unixODBC returns SQL_INVALID_HANDLE for unsupported handle types.
