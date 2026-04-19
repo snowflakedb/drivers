@@ -185,9 +185,12 @@ impl DatabaseDriverV1 {
 
                 let http_client = create_tls_client_with_config(config.tls.clone())
                     .context(TlsClientCreationSnafu)?;
-                let mut login_parameters =
-                    LoginParameters::from_connection_config(&config, client_info, None);
-                login_parameters.spcs_token = read_spcs_token();
+                let login_parameters = LoginParameters::from_connection_config(
+                    &config,
+                    client_info,
+                    None,
+                    read_spcs_token(),
+                );
 
                 let mfa_caching_requested = matches!(
                     &login_parameters.login_method,
