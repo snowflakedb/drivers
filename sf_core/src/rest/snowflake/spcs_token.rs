@@ -3,9 +3,13 @@ use std::path::PathBuf;
 pub(crate) fn read_spcs_token() -> Option<String> {
     std::env::var_os("SNOWFLAKE_RUNNING_INSIDE_SPCS")?;
 
-    let path = test_overrides::SPCS_TOKEN_PATH
-        .with(|cell| cell.borrow().clone())
-        .unwrap_or_else(|| PathBuf::from("/snowflake/session/spcs_token"));
+    #[cfg(any(test, feature = "test-utils"))]
+    let path_override: Option<PathBuf> = test_overrides::spcs_token_path();
+
+    #[cfg(not(any(test, feature = "test-utils")))]
+    let path_override: Option<PathBuf> = None;
+
+    let path = path_override.unwrap_or_else(|| PathBuf::from("/snowflake/session/spcs_token"));
 
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
@@ -27,24 +31,18 @@ pub(crate) fn read_spcs_token() -> Option<String> {
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_overrides {
     use std::cell::RefCell;
     use std::path::PathBuf;
 
     thread_local! {
-        pub static SPCS_TOKEN_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+        static SPCS_TOKEN_PATH: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     }
 
     /// RAII guard that restores the previous `SPCS_TOKEN_PATH` on drop.
     pub struct SpcsTokenPathGuard {
         previous: Option<PathBuf>,
-    }
-
-    impl SpcsTokenPathGuard {
-        pub fn set(path: PathBuf) -> Self {
-            let previous = SPCS_TOKEN_PATH.with(|cell| cell.borrow_mut().replace(path));
-            Self { previous }
-        }
     }
 
     impl Drop for SpcsTokenPathGuard {
@@ -54,24 +52,33 @@ pub mod test_overrides {
             });
         }
     }
+
+    pub fn spcs_token_path() -> Option<PathBuf> {
+        SPCS_TOKEN_PATH.with(|cell| cell.borrow().clone())
+    }
+
+    pub fn set_spcs_token_path(path: PathBuf) -> SpcsTokenPathGuard {
+        let previous = SPCS_TOKEN_PATH.with(|cell| cell.borrow_mut().replace(path));
+        SpcsTokenPathGuard { previous }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
-    use test_overrides::SpcsTokenPathGuard;
+    use test_overrides::{SpcsTokenPathGuard, set_spcs_token_path};
 
-    fn spcs_token_file(content: &str) -> (tempfile::NamedTempFile, SpcsTokenPathGuard) {
+    fn mock_token_file(content: &str) -> (tempfile::NamedTempFile, SpcsTokenPathGuard) {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         write!(f, "{content}").unwrap();
-        let guard = SpcsTokenPathGuard::set(f.path().to_path_buf());
+        let guard = set_spcs_token_path(f.path().to_path_buf());
         (f, guard)
     }
 
     #[test]
     fn returns_none_when_env_var_not_set() {
-        let (_f, _guard) = spcs_token_file("my-spcs-token");
+        let _token_file = mock_token_file("my-spcs-token");
         temp_env::with_var_unset("SNOWFLAKE_RUNNING_INSIDE_SPCS", || {
             assert!(read_spcs_token().is_none());
         });
@@ -79,7 +86,7 @@ mod tests {
 
     #[test]
     fn returns_trimmed_token_when_env_var_is_set() {
-        let (_f, _guard) = spcs_token_file("  my-spcs-token \n");
+        let _token_file = mock_token_file("  my-spcs-token \n");
         temp_env::with_var("SNOWFLAKE_RUNNING_INSIDE_SPCS", Some("true"), || {
             assert_eq!(read_spcs_token().unwrap(), "my-spcs-token");
         });
@@ -87,7 +94,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_empty_file() {
-        let (_f, _guard) = spcs_token_file("");
+        let _token_file = mock_token_file("");
         temp_env::with_var("SNOWFLAKE_RUNNING_INSIDE_SPCS", Some("true"), || {
             assert!(read_spcs_token().is_none());
         });
@@ -95,7 +102,7 @@ mod tests {
 
     #[test]
     fn returns_none_when_env_set_but_file_missing() {
-        let _guard = SpcsTokenPathGuard::set("/nonexistent/spcs_token".into());
+        let _token_path_guard = set_spcs_token_path("/nonexistent/spcs_token".into());
         temp_env::with_var("SNOWFLAKE_RUNNING_INSIDE_SPCS", Some("true"), || {
             assert!(read_spcs_token().is_none());
         });

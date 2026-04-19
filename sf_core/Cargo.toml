@@ -12,6 +12,7 @@ fips = ["rustls/fips"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
 perf_timing = []
+test-utils = []
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
@@ -90,6 +91,7 @@ proto_generator = { path = "../proto_generator" }
 libc = "0.2"
 
 [dev-dependencies]
+sf_core = { path = ".", features = ["test-utils"] }
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"
