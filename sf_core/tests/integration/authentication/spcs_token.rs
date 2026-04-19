@@ -6,12 +6,12 @@ use std::io::Write;
 use wiremock::matchers::{body_partial_json, method, path_regex};
 use wiremock::{Match, Mock, Request};
 
-struct SpcsTestFixture {
+struct SpcsTokenTestContext {
     mock: MockServerWithTls,
     client: SnowflakeTestClient,
 }
 
-impl SpcsTestFixture {
+impl SpcsTokenTestContext {
     fn new() -> Self {
         let mock = MockServerWithTls::start();
         let client = SnowflakeTestClient::with_int_tests_params(Some(&mock.http_url()));
@@ -33,8 +33,8 @@ impl Match for SpcsTokenFieldAbsent {
 
 #[test]
 fn should_not_include_spcs_token_when_env_var_is_not_set() {
-    let fixture = SpcsTestFixture::new();
-    fixture.mock.mount(
+    let context = SpcsTokenTestContext::new();
+    context.mock.mount(
         Mock::given(method("POST"))
             .and(path_regex(r"/session/v1/login-request"))
             .and(SpcsTokenFieldAbsent)
@@ -42,7 +42,7 @@ fn should_not_include_spcs_token_when_env_var_is_not_set() {
     );
 
     temp_env::with_var_unset("SNOWFLAKE_RUNNING_INSIDE_SPCS", || {
-        let result = fixture.client.connect();
+        let result = context.client.connect();
         assert!(
             result.is_ok(),
             "Expected login without SPCS_TOKEN to succeed, got: {result:?}"
@@ -52,8 +52,8 @@ fn should_not_include_spcs_token_when_env_var_is_not_set() {
 
 #[test]
 fn should_include_spcs_token_when_env_var_is_set_and_file_exists() {
-    let fixture = SpcsTestFixture::new();
-    fixture.mock.mount(
+    let context = SpcsTokenTestContext::new();
+    context.mock.mount(
         Mock::given(method("POST"))
             .and(path_regex(r"/session/v1/login-request"))
             .and(body_partial_json(serde_json::json!({
@@ -69,7 +69,7 @@ fn should_include_spcs_token_when_env_var_is_set_and_file_exists() {
         writeln!(token_file, "my-spcs-token").unwrap();
         let _token_path_guard = set_spcs_token_path(token_file.path().to_path_buf());
 
-        let result = fixture.client.connect();
+        let result = context.client.connect();
         assert!(
             result.is_ok(),
             "Expected login with SPCS_TOKEN to succeed, got: {result:?}"
