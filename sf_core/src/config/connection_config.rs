@@ -521,6 +521,7 @@ impl LoginParameters {
             role: config.session.role.clone(),
             client_info,
             session_parameters,
+            spcs_token: None,
         }
     }
 }

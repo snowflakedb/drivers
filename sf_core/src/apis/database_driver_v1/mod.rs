@@ -5,6 +5,7 @@ mod database;
 pub(crate) mod error;
 mod global_state;
 mod query;
+pub mod spcs_token;
 pub(crate) mod statement;
 pub(crate) mod validation;
 

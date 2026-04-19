@@ -6,7 +6,6 @@ pub mod heartbeat;
 mod native_okta;
 pub mod query_request;
 pub mod query_response;
-pub mod spcs_token;
 
 use std::collections::HashMap;
 
@@ -266,7 +265,7 @@ pub async fn auth_request_data(
     token_cache: Option<&dyn TokenCache>,
 ) -> Result<AuthRequestData, RestError> {
     let mut data = base_auth_request_data(login_parameters);
-    data.spcs_token = spcs_token::read_spcs_token();
+    data.spcs_token = login_parameters.spcs_token.clone();
 
     if let Some(params) = session_parameters {
         let json_params = params
@@ -2039,6 +2038,7 @@ mod tests {
             role: None,
             client_info: test_client_info(),
             session_parameters: None,
+            spcs_token: None,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();
@@ -2069,6 +2069,7 @@ mod tests {
             role: None,
             client_info: test_client_info(),
             session_parameters: None,
+            spcs_token: None,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = reqwest::Client::new();

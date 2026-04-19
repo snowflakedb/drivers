@@ -264,6 +264,9 @@ async fn request_authenticator_endpoints(
     budget: Duration,
 ) -> Result<AuthenticatorRequestData, NativeOktaError> {
     let policy = remaining_policy(base_policy, start, budget)?;
+    // TODO:
+    // this SHOULD NOT use base_auth_request_data.
+    // /session/authenticator-request has much smaller set of fields that it requires
     let mut data: AuthRequestData = super::base_auth_request_data(login_parameters);
     data.login_name = Some(config.username.to_string());
     data.authenticator = Some(config.okta_url.as_str().to_string());

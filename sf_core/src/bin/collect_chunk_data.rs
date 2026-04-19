@@ -325,6 +325,7 @@ fn build_login_params(
         role: params.role.clone(),
         client_info,
         session_parameters: None,
+        spcs_token: None,
     })
 }
 

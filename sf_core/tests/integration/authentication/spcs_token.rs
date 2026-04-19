@@ -1,7 +1,7 @@
 use crate::common::mocks::password;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::tls_proxy::MockServerWithTls;
-use sf_core::rest::snowflake::spcs_token::test_overrides::set_spcs_token_path;
+use sf_core::apis::database_driver_v1::spcs_token::test_overrides::set_spcs_token_path;
 use std::io::Write;
 use wiremock::matchers::{body_partial_json, method, path_regex};
 use wiremock::{Match, Mock, Request};

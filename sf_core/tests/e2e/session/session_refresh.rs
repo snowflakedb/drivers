@@ -105,6 +105,7 @@ fn should_refresh_session_proactively() {
             role: parameters.role.clone(),
             client_info: client_info.clone(),
             session_parameters: None,
+            spcs_token: None,
         };
 
         let http_client = create_tls_client_with_config(TlsConfig::insecure())
