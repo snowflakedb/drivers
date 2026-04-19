@@ -289,3 +289,24 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: SQLFreeStmt SQL_RESET
   ret = SQLExecute(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 }
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLBindParameter: HY010 during SQL_NEED_DATA",
+                 "[odbc-api][bindparam][preparing][error]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  SQLINTEGER dummy_val = 0;
+  SQLLEN dummy_ind = sizeof(dummy_val);
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &dummy_val, 0, &dummy_ind);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  SQLCancel(stmt_handle());
+}

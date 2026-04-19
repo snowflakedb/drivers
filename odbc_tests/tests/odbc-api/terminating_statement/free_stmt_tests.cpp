@@ -972,3 +972,28 @@ TEST_CASE("SQLFreeStmt: SQL_INVALID_HANDLE for null statement handle",
   const SQLRETURN ret = SQLFreeStmt(SQL_NULL_HSTMT, SQL_CLOSE);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
+
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLFreeStmt: HY010 during SQL_NEED_DATA",
+                 "[odbc-api][freestmt][terminating_statement][error]") {
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT ?"), SQL_NTS);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  SQLLEN dae_ind = SQL_DATA_AT_EXEC;
+  ret = SQLBindParameter(stmt_handle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 100, 0,
+                         reinterpret_cast<SQLPOINTER>(1), 0, &dae_ind);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  ret = SQLExecute(stmt_handle());
+  REQUIRE(ret == SQL_NEED_DATA);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_CLOSE);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_UNBIND);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  ret = SQLFreeStmt(stmt_handle(), SQL_RESET_PARAMS);
+  REQUIRE_EXPECTED_ERROR(ret, "HY010", stmt_handle(), SQL_HANDLE_STMT);
+
+  SQLCancel(stmt_handle());
+}

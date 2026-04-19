@@ -1,3 +1,11 @@
 cmake_minimum_required(VERSION 4.0)
 
 add_odbc_test(odbc_api_get_diag_rec_tests get_diag_rec_tests.cpp)
+add_odbc_test(odbc_api_fetch_tests fetch_tests.cpp)
+add_odbc_test(odbc_api_get_data_tests get_data_tests.cpp)
+add_odbc_test(odbc_api_more_results_tests more_results_tests.cpp)
+add_odbc_test(odbc_api_bind_col_tests bind_col_tests.cpp)
+add_odbc_test(odbc_api_col_attribute_tests col_attribute_tests.cpp)
+add_odbc_test(odbc_api_describe_col_tests describe_col_tests.cpp)
+add_odbc_test(odbc_api_num_result_cols_tests num_result_cols_tests.cpp)
+add_odbc_test(odbc_api_row_count_tests row_count_tests.cpp)
