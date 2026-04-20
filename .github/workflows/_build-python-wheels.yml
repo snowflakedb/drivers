@@ -30,6 +30,11 @@ on:
         required: false
         default: false
         description: 'Run auditwheel repair on Linux wheels to retag as manylinux and validate shared-lib deps.'
+      linux-container:
+        type: string
+        required: false
+        default: ''
+        description: 'Container image for Linux builds (e.g. quay.io/pypa/manylinux_2_28_x86_64). Empty = bare runner.'
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,10 +46,22 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.sf-core-matrix) }}
     runs-on: ${{ matrix.os }}
+    container: ${{ contains(matrix.os, 'ubuntu') && inputs.linux-container || '' }}
     name: build_sf_core (${{ matrix.os }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (container)
+        if: inputs.linux-container != ''
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      # perl-IPC-Cmd is required by openssl-src (vendored OpenSSL build)
+      - name: Install vendored OpenSSL build deps (container)
+        if: inputs.linux-container != ''
+        run: yum install -y perl-IPC-Cmd
 
       - name: Cache Cargo registry
         uses: actions/cache@v5
@@ -101,10 +118,13 @@ jobs:
       - name: Build sf_core (Linux)
         if: runner.os == 'Linux'
         run: |
-          if [ "${{ inputs.openssl-static }}" = "true" ]; then
+          EXTRA_ARGS=""
+          if [ "${{ inputs.linux-container }}" != "" ]; then
+            EXTRA_ARGS="--features vendored-openssl"
+          elif [ "${{ inputs.openssl-static }}" = "true" ]; then
             export OPENSSL_STATIC=1
           fi
-          cargo build --release --package sf_core
+          cargo build --release --package sf_core $EXTRA_ARGS
 
       - name: Build sf_core (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
@@ -128,6 +148,7 @@ jobs:
         py: ${{ fromJSON(inputs.wheel-matrix-py) }}
         exclude: ${{ fromJSON(inputs.wheel-matrix-exclude) }}
     runs-on: ${{ matrix.os }}
+    container: ${{ contains(matrix.os, 'ubuntu') && inputs.linux-container || '' }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
       CMAKE_GENERATOR_PLATFORM: ${{ matrix.os == 'windows-11-arm' && 'ARM64' || '' }}
@@ -136,18 +157,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Rust toolchain (container)
+        if: inputs.linux-container != ''
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Download pre-built sf_core
         uses: actions/download-artifact@v4
         with:
           name: sf-core-${{ matrix.os }}
           path: python/src/snowflake/connector/_core
 
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install system dependencies (Linux, bare runner)
+        if: runner.os == 'Linux' && inputs.linux-container == ''
         run: |
           sudo apt-get update
           if [ "${{ inputs.auditwheel }}" = "true" ]; then
             sudo apt-get install -y patchelf
+          fi
+
+      - name: Install system dependencies (Linux, container)
+        if: runner.os == 'Linux' && inputs.linux-container != ''
+        run: |
+          if [ "${{ inputs.auditwheel }}" = "true" ] && ! command -v patchelf &>/dev/null; then
+            yum install -y patchelf
           fi
 
       - name: Install uv

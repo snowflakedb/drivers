@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["protobuf"]
 fips = ["rustls/fips"]
 protobuf = ["prost", "proto_utils"]
+vendored-openssl = ["openssl/vendored"]
 auth_mfa_e2e = []
 perf_timing = []
 
