@@ -35,18 +35,18 @@ inline int current_pid() { return getpid(); }
  *     // test code
  *   }
  */
-#define SKIP_FOR_JSON_RESULT_SET(reason)                                              \
-  do {                                                                                \
-    const char* result_format = std::getenv("QUERY_RESULT_FORMAT");                   \
-    if (result_format != nullptr) {                                                   \
-      std::string normalized_result_format(result_format);                            \
-      std::transform(normalized_result_format.begin(), normalized_result_format.end(), \
-                     normalized_result_format.begin(),                                 \
+#define SKIP_FOR_JSON_RESULT_SET(reason)                                                  \
+  do {                                                                                    \
+    const char* result_format = std::getenv("QUERY_RESULT_FORMAT");                       \
+    if (result_format != nullptr) {                                                       \
+      std::string normalized_result_format(result_format);                                \
+      std::transform(normalized_result_format.begin(), normalized_result_format.end(),    \
+                     normalized_result_format.begin(),                                    \
                      [](unsigned char c) { return static_cast<char>(std::toupper(c)); }); \
-      if (normalized_result_format == "JSON") {                                       \
-        SKIP("Skipped for JSON result format: " reason);                              \
-      }                                                                               \
-    }                                                                                 \
+      if (normalized_result_format == "JSON") {                                           \
+        SKIP("Skipped for JSON result format: " reason);                                  \
+      }                                                                                   \
+    }                                                                                     \
   } while (0)
 
 inline picojson::object get_test_parameters(const std::string& connection_name) {

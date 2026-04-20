@@ -382,6 +382,11 @@ jobs:
             hatch_env: "test-pandas"
             cloud_provider: aws
           - os: ubuntu-latest
+            py: "3.13"
+            hatch_env: "test-pandas"
+            cloud_provider: aws
+            result_format: json
+          - os: ubuntu-latest
             py: "3.14"
             hatch_env: "test-pandas"
             cloud_provider: azure
