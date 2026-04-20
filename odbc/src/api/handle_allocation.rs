@@ -214,17 +214,17 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
 }
 
 /// Initialize logging (helper function for allocation)
+///
+/// Installs a reloadable ODBC file-logging layer (initially disabled) via the
+/// global tracing subscriber. DSN parameters parsed at connect time later
+/// reconfigure this layer through [`crate::api::logging::reconfigure_logging`].
 pub fn init_logging() {
     use std::sync::LazyLock;
 
-    // TODO: This is a hack to initialize the logging system.
-    // We should find a better way to do this.
     static LOGGING_RESULT: LazyLock<Result<(), sf_core::logging::LogError>> = LazyLock::new(|| {
-        sf_core::logging::init(sf_core::logging::LoggingConfig::new(
-            Some("odbc.log".into()),
-            false,
-            false,
-        ))
+        let reload_layer = crate::api::logging::create_reload_layer();
+        let config = sf_core::logging::LoggingConfig::new(None, false, false);
+        sf_core::logging::init_logging(config, Some(reload_layer))
     });
 
     if let Err(e) = LOGGING_RESULT.as_ref() {
