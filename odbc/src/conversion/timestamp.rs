@@ -618,82 +618,63 @@ impl_snowflake_timestamp!(SnowflakeTimestampTz, tz, SnowflakeLogicalType::Timest
 #[cfg(test)]
 mod format_timestamp_string_into_tests {
     use super::format_timestamp_string_into;
-    use chrono::{DateTime, NaiveDateTime};
+    use crate::conversion::error::WriteOdbcError;
+    use chrono::{DateTime, NaiveDate};
 
-    /// Reference: the previous `format!`-based implementation. Kept inline to
-    /// guarantee byte-identical output from the new stack-buffer version.
-    fn format_timestamp_reference(dt: &NaiveDateTime) -> String {
-        use chrono::{Datelike, Timelike};
-        let nanos = dt.nanosecond();
-        if nanos == 0 {
-            format!(
-                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                dt.year(),
-                dt.month(),
-                dt.day(),
-                dt.hour(),
-                dt.minute(),
-                dt.second()
-            )
-        } else {
-            let frac = format!("{nanos:09}");
-            let trimmed = frac.trim_end_matches('0');
-            format!(
-                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{}",
-                dt.year(),
-                dt.month(),
-                dt.day(),
-                dt.hour(),
-                dt.minute(),
-                dt.second(),
-                trimmed
-            )
-        }
-    }
-
-    fn assert_matches(secs: i64, nanos: u32) {
-        let dt = DateTime::from_timestamp(secs, nanos).unwrap().naive_utc();
+    fn fmt(secs: i64, nanos: u32) -> Result<String, WriteOdbcError> {
+        let dt = DateTime::from_timestamp(secs, nanos)
+            .expect("DateTime::from_timestamp with in-range inputs")
+            .naive_utc();
         let mut buf = [0u8; 48];
-        let actual = format_timestamp_string_into(&dt, &mut buf).unwrap();
-        let expected = format_timestamp_reference(&dt);
-        assert_eq!(
-            actual, expected,
-            "mismatch for (secs={secs}, nanos={nanos})"
-        );
+        Ok(format_timestamp_string_into(&dt, &mut buf)?.to_string())
+    }
+
+    // 2023-11-14 22:13:20 UTC, an arbitrary mid-range instant used to exercise
+    // the fractional-seconds trimming paths.
+    const REF_EPOCH: i64 = 1_700_000_000;
+
+    #[test]
+    fn no_fractional_seconds() -> Result<(), WriteOdbcError> {
+        assert_eq!(fmt(0, 0)?, "1970-01-01 00:00:00");
+        assert_eq!(fmt(REF_EPOCH, 0)?, "2023-11-14 22:13:20");
+        Ok(())
     }
 
     #[test]
-    fn no_fractional_seconds() {
-        assert_matches(0, 0);
-        assert_matches(1_700_000_000, 0);
-    }
-
-    #[test]
-    fn with_fractional_seconds_various_trailing_zero_counts() {
+    fn with_fractional_seconds_various_trailing_zero_counts() -> Result<(), WriteOdbcError> {
         // Trailing-zero trimming is the interesting behavior to preserve.
-        assert_matches(1_700_000_000, 1); // "000000001"
-        assert_matches(1_700_000_000, 10); // "00000001"
-        assert_matches(1_700_000_000, 123_000_000); // "123"
-        assert_matches(1_700_000_000, 123_456_789); // no zeros to trim
-        assert_matches(1_700_000_000, 999_999_999);
+        assert_eq!(fmt(REF_EPOCH, 1)?, "2023-11-14 22:13:20.000000001");
+        assert_eq!(fmt(REF_EPOCH, 10)?, "2023-11-14 22:13:20.00000001");
+        assert_eq!(fmt(REF_EPOCH, 123_000_000)?, "2023-11-14 22:13:20.123");
+        assert_eq!(
+            fmt(REF_EPOCH, 123_456_789)?,
+            "2023-11-14 22:13:20.123456789"
+        );
+        assert_eq!(
+            fmt(REF_EPOCH, 999_999_999)?,
+            "2023-11-14 22:13:20.999999999"
+        );
+        Ok(())
     }
 
     #[test]
-    fn pre_epoch_timestamp() {
-        assert_matches(-1_000, 0);
-        assert_matches(-1_000, 500_000);
+    fn pre_epoch_timestamp() -> Result<(), WriteOdbcError> {
+        assert_eq!(fmt(-1_000, 0)?, "1969-12-31 23:43:20");
+        assert_eq!(fmt(-1_000, 500_000)?, "1969-12-31 23:43:20.0005");
+        Ok(())
     }
 
     #[test]
-    fn year_padding() {
-        let dt = chrono::NaiveDate::from_ymd_opt(1, 1, 1)
-            .unwrap()
+    fn year_padding() -> Result<(), WriteOdbcError> {
+        let dt = NaiveDate::from_ymd_opt(1, 1, 1)
+            .expect("NaiveDate::from_ymd_opt with in-range inputs")
             .and_hms_opt(0, 0, 0)
-            .unwrap();
+            .expect("NaiveDate::and_hms_opt with in-range inputs");
         let mut buf = [0u8; 48];
         assert_eq!(
-            format_timestamp_string_into(&dt, &mut buf).unwrap(),
+            format_timestamp_string_into(&dt, &mut buf)?,
             "0001-01-01 00:00:00"
         );
+        Ok(())
     }
 }

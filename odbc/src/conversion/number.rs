@@ -648,107 +648,118 @@ impl WriteJson for SnowflakeNumber {
 #[cfg(test)]
 mod format_decimal_into_tests {
     use super::{MAX_DECIMAL_SCALE, SnowflakeNumber};
+    use crate::conversion::error::WriteOdbcError;
 
-    fn fmt(value: i128, scale: u32) -> String {
+    fn fmt(value: i128, scale: u32) -> Result<String, WriteOdbcError> {
         let mut buf = [0u8; 48];
-        SnowflakeNumber::format_decimal_into(value, scale, &mut buf)
-            .expect("unexpected format error for in-range scale")
-            .to_string()
+        Ok(SnowflakeNumber::format_decimal_into(value, scale, &mut buf)?.to_string())
     }
 
     #[test]
-    fn scale_zero_integer() {
-        assert_eq!(fmt(0, 0), "0");
-        assert_eq!(fmt(1, 0), "1");
-        assert_eq!(fmt(-1, 0), "-1");
-        assert_eq!(fmt(123_456_789, 0), "123456789");
-        assert_eq!(fmt(-123_456_789, 0), "-123456789");
+    fn scale_zero_integer() -> Result<(), WriteOdbcError> {
+        assert_eq!(fmt(0, 0)?, "0");
+        assert_eq!(fmt(1, 0)?, "1");
+        assert_eq!(fmt(-1, 0)?, "-1");
+        assert_eq!(fmt(123_456_789, 0)?, "123456789");
+        assert_eq!(fmt(-123_456_789, 0)?, "-123456789");
+        Ok(())
     }
 
     #[test]
-    fn scale_greater_than_digit_count_pads_with_zeros() {
+    fn scale_greater_than_digit_count_pads_with_zeros() -> Result<(), WriteOdbcError> {
         // The interesting shape is "0." + (scale - digits) zeros + digits.
-        assert_eq!(fmt(1, 30), "0.000000000000000000000000000001");
-        assert_eq!(fmt(-1, 30), "-0.000000000000000000000000000001");
-        assert_eq!(fmt(9, 10), "0.0000000009");
-        assert_eq!(fmt(-9, 10), "-0.0000000009");
+        assert_eq!(fmt(1, 30)?, "0.000000000000000000000000000001");
+        assert_eq!(fmt(-1, 30)?, "-0.000000000000000000000000000001");
+        assert_eq!(fmt(9, 10)?, "0.0000000009");
+        assert_eq!(fmt(-9, 10)?, "-0.0000000009");
+        Ok(())
     }
 
     #[test]
-    fn scale_equal_to_digit_count_uses_leading_zero() {
+    fn scale_equal_to_digit_count_uses_leading_zero() -> Result<(), WriteOdbcError> {
         // boundary between the two branches: digits.len() == scale
-        assert_eq!(fmt(5, 1), "0.5");
-        assert_eq!(fmt(-5, 1), "-0.5");
-        assert_eq!(fmt(123, 3), "0.123");
-        assert_eq!(fmt(-123, 3), "-0.123");
+        assert_eq!(fmt(5, 1)?, "0.5");
+        assert_eq!(fmt(-5, 1)?, "-0.5");
+        assert_eq!(fmt(123, 3)?, "0.123");
+        assert_eq!(fmt(-123, 3)?, "-0.123");
+        Ok(())
     }
 
     #[test]
-    fn scale_within_digit_count() {
-        assert_eq!(fmt(12345, 2), "123.45");
-        assert_eq!(fmt(-12345, 2), "-123.45");
-        assert_eq!(fmt(100, 3), "0.100");
-        assert_eq!(fmt(-100, 3), "-0.100");
+    fn scale_within_digit_count() -> Result<(), WriteOdbcError> {
+        assert_eq!(fmt(12345, 2)?, "123.45");
+        assert_eq!(fmt(-12345, 2)?, "-123.45");
+        assert_eq!(fmt(100, 3)?, "0.100");
+        assert_eq!(fmt(-100, 3)?, "-0.100");
+        Ok(())
     }
 
     #[test]
-    fn value_zero_at_various_scales() {
-        assert_eq!(fmt(0, 0), "0");
-        assert_eq!(fmt(0, 1), "0.0");
-        assert_eq!(fmt(0, 6), "0.000000");
-        assert_eq!(fmt(0, MAX_DECIMAL_SCALE), format!("0.{}", "0".repeat(38)));
+    fn value_zero_at_various_scales() -> Result<(), WriteOdbcError> {
+        assert_eq!(fmt(0, 0)?, "0");
+        assert_eq!(fmt(0, 1)?, "0.0");
+        assert_eq!(fmt(0, 6)?, "0.000000");
+        assert_eq!(fmt(0, MAX_DECIMAL_SCALE)?, format!("0.{}", "0".repeat(38)));
+        Ok(())
     }
 
     #[test]
-    fn i128_extremes_at_scale_zero() {
-        assert_eq!(fmt(i128::MAX, 0), "170141183460469231731687303715884105727");
+    fn i128_extremes_at_scale_zero() -> Result<(), WriteOdbcError> {
         assert_eq!(
-            fmt(i128::MIN, 0),
+            fmt(i128::MAX, 0)?,
+            "170141183460469231731687303715884105727"
+        );
+        assert_eq!(
+            fmt(i128::MIN, 0)?,
             "-170141183460469231731687303715884105728"
         );
+        Ok(())
     }
 
     #[test]
-    fn i128_extremes_with_fractional_scale() {
+    fn i128_extremes_with_fractional_scale() -> Result<(), WriteOdbcError> {
         // 39-digit i128::MAX with scale=10 -> 29-digit int + 10-digit frac
         assert_eq!(
-            fmt(i128::MAX, 10),
+            fmt(i128::MAX, 10)?,
             "17014118346046923173168730371.5884105727"
         );
         assert_eq!(
-            fmt(i128::MIN, 10),
+            fmt(i128::MIN, 10)?,
             "-17014118346046923173168730371.5884105728"
         );
+        Ok(())
     }
 
     #[test]
-    fn large_values_with_fractional_scale() {
+    fn large_values_with_fractional_scale() -> Result<(), WriteOdbcError> {
         assert_eq!(
-            fmt(123_456_789_012_345_678_901_234_567_890_i128, 12),
+            fmt(123_456_789_012_345_678_901_234_567_890_i128, 12)?,
             "123456789012345678.901234567890"
         );
         assert_eq!(
-            fmt(-123_456_789_012_345_678_901_234_567_890_i128, 12),
+            fmt(-123_456_789_012_345_678_901_234_567_890_i128, 12)?,
             "-123456789012345678.901234567890"
         );
+        Ok(())
     }
 
     #[test]
-    fn max_scale_with_unit_value() {
+    fn max_scale_with_unit_value() -> Result<(), WriteOdbcError> {
         // pathological "0.<37 zeros>1" — exercises the outer edge of the
         // padding loop without overflowing the 48-byte output buffer.
         let mut expected = String::from("0.");
         expected.push_str(&"0".repeat((MAX_DECIMAL_SCALE - 1) as usize));
         expected.push('1');
-        assert_eq!(fmt(1, MAX_DECIMAL_SCALE), expected);
+        assert_eq!(fmt(1, MAX_DECIMAL_SCALE)?, expected);
+        Ok(())
     }
 
     #[test]
     fn scale_above_max_decimal_scale_returns_numeric_value_out_of_range() {
         // Defense-in-depth: the function rejects an out-of-range scale with
         // a typed conversion error rather than overflowing the 48-byte output
-        // buffer.
-        use crate::conversion::error::WriteOdbcError;
+        // buffer. `expect_err` is the inverse of `expect` — it asserts that
+        // the Result is Err and extracts the inner error for further checks.
         let mut buf = [0u8; 48];
         let err = SnowflakeNumber::format_decimal_into(1, MAX_DECIMAL_SCALE + 1, &mut buf)
             .expect_err("expected NumericValueOutOfRange for scale > MAX_DECIMAL_SCALE");
