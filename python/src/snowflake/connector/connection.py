@@ -272,7 +272,7 @@ class Connection:
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._errorhandler: Callable
 
-        if self.auto_cleanup:
+        if self._should_auto_cleanup():
             atexit.register(self._close_at_process_exit)
 
     def _parse_kwargs(self, kwargs: dict[str, Any], autocommit: bool | None) -> None:
@@ -350,9 +350,7 @@ class Connection:
             self.db_api.connection_set_options(
                 ConnectionSetOptionsRequest(
                     conn_handle=self.conn_handle,
-                    options=_build_config_settings(
-                        {LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: single_attempt_no_retry}
-                    ),
+                    options=_build_config_settings({LogoutOptionKeys.LOGOUT_MAX_ATTEMPTS: single_attempt_no_retry}),
                 )
             )
 
@@ -378,8 +376,19 @@ class Connection:
             except Exception:
                 pass
 
+    def _should_auto_cleanup(self) -> bool:
+        """Whether this connection should auto-close on GC/exit.
+
+        Uses getattr with False as fallback (NOT the default value of auto_cleanup,
+        which is True). False here is a GC fail-safe: if __del__ fires on a
+        half-initialized object (exception during __init__), we must NOT attempt
+        cleanup on an object whose Core handles were never created.
+        """
+        return getattr(self, "auto_cleanup", False)
+
     def __del__(self) -> None:
-        self._try_close()
+        if self._should_auto_cleanup():
+            self._try_close()
 
     def _release_connection_handle(self) -> None:
         """Release the Rust-side connection handle."""

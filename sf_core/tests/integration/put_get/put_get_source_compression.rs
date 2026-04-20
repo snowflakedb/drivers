@@ -40,7 +40,7 @@ fn should_return_error_for_unsupported_compression_type() {
     );
 
     // Then Unsupported compression error is thrown
-    match client
+    match *client
         .execute_query_no_unwrap(&put_sql)
         .expect_err("Expected unsupported compression error")
     {

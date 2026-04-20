@@ -38,24 +38,14 @@ class CoreIntrospector:
         self.db_api = spy
 
     def get_options_sent(self) -> dict[str, Any]:
-        """Extract key->value pairs sent to Core via any set-option RPC path.
+        """Extract key->value pairs sent to Core via set-option RPCs at init time.
 
-        Inspects both individual typed RPCs (connection_set_option_bool/int/string)
-        and the batch RPC (connection_set_options). Later calls overwrite earlier
-        ones for the same key, matching Core's seed behavior.
+        Reads from the batch connection_set_options RPC (the only option-setting
+        path used by the connector). Does NOT capture close-time overrides
+        passed via ConnectionCloseRequest proto fields — those are tested via
+        WireMock request counts (behavioral outcome).
         """
         options: dict[str, Any] = {}
-        # Individual typed RPCs (e.g. close(retry=False) → connection_set_option_int)
-        for call in self.db_api.connection_set_option_bool.call_args_list:
-            req = call.args[0]
-            options[req.key] = req.value
-        for call in self.db_api.connection_set_option_int.call_args_list:
-            req = call.args[0]
-            options[req.key] = req.value
-        for call in self.db_api.connection_set_option_string.call_args_list:
-            req = call.args[0]
-            options[req.key] = req.value
-        # Batch RPC (generic kwargs + _send_logout_config)
         for call in self.db_api.connection_set_options.call_args_list:
             req = call.args[0]
             for key, setting in req.options.items():

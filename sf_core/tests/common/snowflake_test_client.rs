@@ -261,34 +261,27 @@ impl SnowflakeTestClient {
         response.result.unwrap()
     }
 
-    pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
+    #[allow(clippy::result_large_err)]
+    pub fn execute_query_no_unwrap(
+        &self,
+        sql: &str,
+    ) -> Result<ExecuteResult, Box<ProtoError<DriverException>>> {
         let stmt_handle = self.new_statement();
 
-        if let Err(e) = self
-            .client
+        self.client
             .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 query: sql.to_string(),
-            })
-        {
-            return Err(format!("Failed to set SQL query: {e:?}"));
-        }
+            })?;
 
-        match self
-            .client
-            .statement_execute_query_blocking(StatementExecuteQueryRequest {
-                stmt_handle: Some(stmt_handle),
-                bindings: None,
-            }) {
-            Ok(response) => {
-                let proto_result = response.result.unwrap();
-                Ok(proto_result)
-            }
-            Err(e) => match e.as_ref() {
-                ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
-                ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
-            },
-        }
+        let response =
+            self.client
+                .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt_handle),
+                    bindings: None,
+                })?;
+
+        Ok(response.result.unwrap())
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
@@ -312,6 +305,10 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_connection_option_int(&self, option_name: &str, option_value: i64) {
+        self.set_connection_config_setting(option_name, option_value.into());
+    }
+
+    pub fn set_connection_option_bool(&self, option_name: &str, option_value: bool) {
         self.set_connection_config_setting(option_name, option_value.into());
     }
 
@@ -438,6 +435,17 @@ impl SnowflakeTestClient {
         }
     }
 
+    /// Initialize this connection (call after configuring options, before queries).
+    #[allow(clippy::result_large_err)]
+    pub fn connection_init_blocking(
+        &self,
+    ) -> Result<ConnectionInitResponse, Box<ProtoError<DriverException>>> {
+        self.client.connection_init_blocking(ConnectionInitRequest {
+            conn_handle: Some(self.conn_handle),
+            db_handle: Some(self.db_handle),
+        })
+    }
+
     pub fn set_logout_error_strategy(&self, strategy: ErrorStrategy) {
         self.set_connection_option("logout_error_strategy", strategy.as_str());
     }
@@ -455,9 +463,7 @@ impl SnowflakeTestClient {
 
     /// Check whether this connection has been closed.
     #[allow(clippy::result_large_err)]
-    pub fn connection_is_closed_blocking(
-        &self,
-    ) -> Result<bool, Box<ProtoError<DriverException>>> {
+    pub fn connection_is_closed_blocking(&self) -> Result<bool, Box<ProtoError<DriverException>>> {
         self.client
             .connection_is_closed_blocking(ConnectionIsClosedRequest {
                 conn_handle: Some(self.conn_handle),

@@ -1809,7 +1809,7 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
             .unwrap();
 
     //Then Query fails with connection closed error
-    match result_after.expect_err("Query should fail after connection is closed") {
+    match *result_after.expect_err("Query should fail after connection is closed") {
         proto_utils::ProtoError::Application(exc) => {
             assert!(
                 exc.message.contains("closed"),

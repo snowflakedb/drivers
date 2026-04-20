@@ -44,9 +44,11 @@ class SnowflakeRestful:
 
     @property
     def token(self) -> str | None:
-        """Required by Python API"""
+        """Required by Python API. Returns None after close (handle released)."""
+        if self._connection.is_closed():
+            return None
         session_token: str | None = self._connection_info.session_token
-        return session_token
+        return session_token if session_token else None
 
     @property
     def _host(self) -> str | None:
@@ -87,6 +89,9 @@ class SnowflakeRestful:
 
     @property
     def master_token(self) -> str | None:
+        """Returns None after close (handle released)."""
+        if self._connection.is_closed():
+            return None
         info = self._connection._get_connection_info(include_master_token=True)
         master_token: str = info.master_token
         return master_token if master_token else None
