@@ -119,6 +119,7 @@ jobs:
           cmake --version
 
           Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.ccache" | Out-Null
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
 
@@ -411,6 +412,7 @@ jobs:
           cmake --version
 
           Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.ccache" | Out-Null
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
 
@@ -480,14 +482,14 @@ jobs:
           DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
 
       - name: Save test dependencies cache
-        if: always()
+        if: always() && matrix.cloud_provider == 'aws'
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
           key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
       - name: Save ccache
-        if: always()
+        if: always() && matrix.cloud_provider == 'aws'
         uses: actions/cache/save@v5
         with:
           path: .ccache
