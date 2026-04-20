@@ -157,6 +157,7 @@ mod tests {
                 crl_config: CrlConfig::default(),
                 tls_config: TlsConfig::default(),
             },
+            log_max_query_length: 80,
         }
     }
 

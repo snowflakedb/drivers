@@ -31,6 +31,7 @@ fn test_query_parameters(server_url: &str) -> QueryParameters {
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::default(),
         },
+        log_max_query_length: 80,
     }
 }
 
