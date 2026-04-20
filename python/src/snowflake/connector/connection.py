@@ -154,7 +154,6 @@ class Connection:
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle: ConnectionHandle | None = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
-
         session_params: SessionParameters | None = kwargs.pop("session_parameters", None)  # type: ignore
 
         if autocommit is not None:
