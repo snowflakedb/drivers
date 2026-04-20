@@ -64,3 +64,10 @@ repos:
         pass_filenames: false
         files: ^jdbc/
         language: system
+    -   id: behavior-differences-validator
+        name: Behavioral Differences format check
+        description: Validate BehaviorDifferences.yaml schema (status, type, required fields)
+        entry: python3 odbc_tests/validate_behavior_differences.py
+        pass_filenames: false
+        files: ^odbc_tests/BehaviorDifferences\.yaml$
+        language: system
