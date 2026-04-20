@@ -8,6 +8,7 @@ use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::ConfigurationSnafu;
+use crate::apis::database_driver_v1::error::QueryResponseProcessingError;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
@@ -16,6 +17,7 @@ use crate::apis::database_driver_v1::{
 };
 use crate::config::config_manager;
 use crate::config::path_resolver;
+use crate::file_manager::FileManagerError;
 use crate::protobuf::generated::database_driver_v1::*;
 use crate::rest::snowflake::error::SfError;
 use arrow::ffi::FFI_ArrowSchema;
@@ -513,6 +515,39 @@ fn extract_query_id(error: &ApiError) -> Option<String> {
     }
 }
 
+/// Map a `QueryResponseProcessingError` to a more specific `StatusCode` for
+/// file-transfer (PUT/GET) operations.  Falls back to `InternalError` for
+/// non-file-transfer query-processing failures.
+fn file_transfer_status_code(error: &QueryResponseProcessingError) -> StatusCode {
+    match error {
+        QueryResponseProcessingError::FileUpload {
+            source: FileManagerError::PathExpansion { .. } | FileManagerError::NoFilesMatched { .. },
+            ..
+        } => StatusCode::LocalFileNotFound,
+        QueryResponseProcessingError::FileUpload {
+            source: FileManagerError::Io { .. },
+            ..
+        } => StatusCode::LocalFileNotFound,
+        QueryResponseProcessingError::FileUpload {
+            source: FileManagerError::CompressionType { .. },
+            ..
+        } => StatusCode::UnsupportedCompression,
+        QueryResponseProcessingError::FileDownload {
+            source:
+                FileManagerError::S3Download { .. }
+                | FileManagerError::GcsDownload { .. }
+                | FileManagerError::AzureDownload { .. },
+            ..
+        } => StatusCode::RemoteFileNotFound,
+        QueryResponseProcessingError::FileDownload {
+            source: FileManagerError::Io { .. },
+            ..
+        } => StatusCode::RemoteFileNotFound,
+        QueryResponseProcessingError::RemoteFileNotFound { .. } => StatusCode::RemoteFileNotFound,
+        _ => StatusCode::InternalError,
+    }
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let status_code = match &error {
         ApiError::GenericError { .. } => StatusCode::GenericError,
@@ -571,7 +606,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::ConnectionLocking { .. } => StatusCode::InternalError,
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
-        ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
+        ApiError::QueryResponseProcessing { source, .. } => {
+            file_transfer_status_code(source.as_ref())
+        }
         ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
         ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
         ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,

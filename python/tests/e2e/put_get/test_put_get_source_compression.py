@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from snowflake.connector import ProgrammingError
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
     as_file_uri,
@@ -220,15 +221,11 @@ def test_should_return_error_for_unsupported_compression_type(connection):
         put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
 
         # Then Unsupported compression error is thrown
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(ProgrammingError) as exc_info:
             cursor.execute(put_command)
-
-        if NEW_DRIVER_ONLY("BD#4"):
-            assert "Unsupported compression type" in str(exc_info.value)
-
-        if OLD_DRIVER_ONLY("BD#4"):
-            assert "253007" in str(exc_info.value)
-            assert "Feature is not supported" in str(exc_info.value)
+        error = exc_info.value
+        assert "xz" in error.msg.lower()
+        assert error.errno == 253007
 
 
 def get_compression_test_file_path(compression_type: str) -> Path:
