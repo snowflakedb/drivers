@@ -18,6 +18,8 @@ jobs:
       sf-core-matrix: '[{"os": "ubuntu-latest", "lib_name": "libsf_core.so"}]'
       wheel-matrix-os: '["ubuntu-latest"]'
       wheel-matrix-py: '["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]'
+      openssl-static: true
+      auditwheel: true
 
   # ── Test each wheel against cloud providers ────────────────────────
   # 4 suites per wheel: aws, gcp, azure (without pandas) + aws (with pandas)

@@ -20,6 +20,16 @@ on:
         required: false
         default: '[]'
         description: 'JSON array of {os, py} exclusions for wheel matrix'
+      openssl-static:
+        type: boolean
+        required: false
+        default: false
+        description: 'Statically link OpenSSL into sf_core (Linux). Eliminates libssl/libcrypto runtime deps.'
+      auditwheel:
+        type: boolean
+        required: false
+        default: false
+        description: 'Run auditwheel repair on Linux wheels to retag as manylinux and validate shared-lib deps.'
 
 env:
   CARGO_TERM_COLOR: always
@@ -78,7 +88,11 @@ jobs:
 
       - name: Build sf_core (Linux)
         if: runner.os == 'Linux'
-        run: cargo build --release --package sf_core
+        run: |
+          if [ "${{ inputs.openssl-static }}" = "true" ]; then
+            export OPENSSL_STATIC=1
+          fi
+          cargo build --release --package sf_core
 
       - name: Build sf_core (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
@@ -118,7 +132,11 @@ jobs:
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update
+        run: |
+          sudo apt-get update
+          if [ "${{ inputs.auditwheel }}" = "true" ]; then
+            sudo apt-get install -y patchelf
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7.2.1
@@ -196,6 +214,19 @@ jobs:
           uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
         env:
           PROTO_CARGO_TARGET_DIR: ${{ github.workspace }}\proto-target
+
+      - name: Make wheel manylinux-compliant (auditwheel)
+        if: runner.os == 'Linux' && inputs.auditwheel
+        working-directory: ./python
+        run: |
+          uv tool install auditwheel
+          echo "=== auditwheel show (before repair) ==="
+          auditwheel show dist/*.whl
+          auditwheel repair dist/*.whl --wheel-dir dist-repaired/
+          rm dist/*.whl
+          mv dist-repaired/*.whl dist/
+          echo "=== auditwheel show (after repair) ==="
+          auditwheel show dist/*.whl
 
       - name: Inspect wheel (Linux)
         if: runner.os == 'Linux'
