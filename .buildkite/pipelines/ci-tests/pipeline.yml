@@ -333,8 +333,9 @@ steps:
         -e BUILDKITE_BUILD_NUMBER \
         "$$DOCKER_IMAGE" \
         bash -c '
+          set -euo pipefail
           ./scripts/decode_secrets.sh
-          pip3 install snowflake-connector-python -q
+          python3 -m pip install snowflake-connector-python -q
           python3 scripts/cleanup_test_pats.py \
             --parameter-path /workdir/parameters.json
         '

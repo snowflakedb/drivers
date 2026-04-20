@@ -86,12 +86,11 @@ def build_connection_kwargs(params):
 
 
 def _load_pem_private_key(pem_text, password=None):
-    from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import serialization
 
     pwd_bytes = password.encode() if password else None
     private_key = serialization.load_pem_private_key(
-        pem_text.encode(), password=pwd_bytes, backend=default_backend()
+        pem_text.encode(), password=pwd_bytes
     )
     return private_key.private_bytes(
         encoding=serialization.Encoding.DER,
