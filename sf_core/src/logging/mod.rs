@@ -18,6 +18,7 @@ mod opentelemetry;
 
 pub struct LoggingConfig {
     pub log_file: Option<PathBuf>,
+    pub log_level: LevelFilter,
     pub stderr: bool,
     pub opentelemetry: bool,
 }
@@ -26,9 +27,15 @@ impl LoggingConfig {
     pub fn new(log_file: Option<PathBuf>, stderr: bool, opentelemetry: bool) -> Self {
         Self {
             log_file,
+            log_level: LevelFilter::INFO,
             stderr,
             opentelemetry,
         }
+    }
+
+    pub fn with_log_level(mut self, level: LevelFilter) -> Self {
+        self.log_level = level;
+        self
     }
 }
 
@@ -54,7 +61,7 @@ where
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(log_file)
-                .with_filter(LevelFilter::INFO),
+                .with_filter(config.log_level),
         )
     } else {
         None
