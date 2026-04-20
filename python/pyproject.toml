@@ -298,7 +298,7 @@ template = "test"
 test = [
     "uv pip uninstall snowflake-connector-python-ud",
     "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:4.3.0}",
-    "pytest tests/integ tests/e2e --ignore=tests/e2e/pandas {args}",
+    "pytest tests/integ tests/e2e --ignore=tests/e2e/pandas --ignore=tests/e2e/session {args}",
 ]
 compare = "python ci/reference_tests/compare_reports.py {args}"
 
