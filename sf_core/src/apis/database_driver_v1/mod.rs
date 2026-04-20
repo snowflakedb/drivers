@@ -4,6 +4,7 @@ pub mod connection;
 mod database;
 pub(crate) mod error;
 mod global_state;
+pub(crate) mod heartbeat;
 mod query;
 pub(crate) mod statement;
 pub(crate) mod validation;

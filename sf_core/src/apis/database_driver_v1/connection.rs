@@ -687,6 +687,23 @@ impl RefreshContext {
         let guard = conn.lock().await;
         Self::new(&guard)
     }
+
+    /// Create a `RefreshContext` from individual components (no `Connection` needed).
+    pub fn from_parts(
+        tokens_lock: Arc<AsyncRwLock<Option<SessionTokens>>>,
+        http_client: reqwest::Client,
+        server_url: String,
+        client_info: ClientInfo,
+    ) -> Self {
+        Self {
+            tokens_lock,
+            http_client,
+            server_url,
+            client_info,
+            state: RefreshState::Initial,
+        }
+    }
+
     /// Create a new `RefreshContext` by extracting connection info.
     pub fn new(conn: &Connection) -> Result<Self, ApiError> {
         Ok(Self {
