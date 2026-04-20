@@ -12,6 +12,7 @@ type ReloadHandle = reload::Handle<InnerLayer, Registry>;
 
 static LOG_HANDLE: OnceLock<ReloadHandle> = OnceLock::new();
 
+#[allow(dead_code)]
 pub(crate) struct OdbcLogConfig {
     pub log_path: Option<PathBuf>,
     pub log_level: Option<LevelFilter>,

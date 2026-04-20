@@ -10,6 +10,7 @@ use crate::api::error::{
     InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu,
     OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
+use crate::api::logging::OdbcLogConfig;
 use crate::api::runtime::global;
 use crate::api::{
     ConnectionState, GetDataExtensions, OdbcResult, conn_from_handle,
@@ -20,7 +21,9 @@ use odbc_sys as sql;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use snafu::ResultExt;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tracing;
+use tracing::level_filters::LevelFilter;
 
 const SQL_TXN_READ_COMMITTED: sql::UInteger = 2;
 const SQL_CD_FALSE: sql::UInteger = 0;
@@ -45,6 +48,73 @@ fn normalize_crl_enabled_value(value: &str) -> String {
     }
 }
 
+/// Maps a numeric level or named level string to a `LevelFilter`.
+///
+/// Numeric mapping: 0=OFF, 1=FATAL→ERROR, 2=ERROR, 3=WARN, 4=INFO, 5=DEBUG, 6=TRACE.
+fn parse_log_level(value: &str) -> Option<LevelFilter> {
+    match value.trim() {
+        "0" => Some(LevelFilter::OFF),
+        "1" | "2" => Some(LevelFilter::ERROR),
+        "3" => Some(LevelFilter::WARN),
+        "4" => Some(LevelFilter::INFO),
+        "5" => Some(LevelFilter::DEBUG),
+        "6" => Some(LevelFilter::TRACE),
+        other => match other.to_ascii_uppercase().as_str() {
+            "OFF" => Some(LevelFilter::OFF),
+            "ERROR" | "FATAL" => Some(LevelFilter::ERROR),
+            "WARN" | "WARNING" => Some(LevelFilter::WARN),
+            "INFO" => Some(LevelFilter::INFO),
+            "DEBUG" => Some(LevelFilter::DEBUG),
+            "TRACE" => Some(LevelFilter::TRACE),
+            _ => {
+                tracing::warn!("Unrecognized log level {other:?}, ignoring");
+                None
+            }
+        },
+    }
+}
+
+/// Extracts ODBC-local logging parameters from the DSN/connection-string map.
+///
+/// Removes `LOGLEVEL`, `LOGPATH`, `LOGFILESIZE`, `LOGFILECOUNT`, and `TRACING`
+/// from `params` so they are not forwarded to sf_core's `connection_set_options`.
+/// `LOGLEVEL` takes precedence over `TRACING` when both are present.
+fn extract_logging_params(params: &mut HashMap<String, String>) -> OdbcLogConfig {
+    let log_level_raw = params.remove("LOGLEVEL");
+    let tracing_raw = params.remove("TRACING");
+    let log_path_raw = params.remove("LOGPATH");
+    let log_file_size_raw = params.remove("LOGFILESIZE");
+    let log_file_count_raw = params.remove("LOGFILECOUNT");
+
+    let log_level = log_level_raw
+        .as_deref()
+        .and_then(parse_log_level)
+        .or_else(|| tracing_raw.as_deref().and_then(parse_log_level));
+
+    let log_path = log_path_raw.map(PathBuf::from);
+
+    let log_file_size_mb = log_file_size_raw.and_then(|s| {
+        s.parse::<u64>().ok().or_else(|| {
+            tracing::warn!("Invalid LogFileSize value {s:?}, ignoring");
+            None
+        })
+    });
+
+    let log_file_count = log_file_count_raw.and_then(|s| {
+        s.parse::<u32>().ok().or_else(|| {
+            tracing::warn!("Invalid LogFileCount value {s:?}, ignoring");
+            None
+        })
+    });
+
+    OdbcLogConfig {
+        log_path,
+        log_level,
+        log_file_size_mb,
+        log_file_count,
+    }
+}
+
 fn normalize_connection_string_options(
     connection_string_map: HashMap<String, String>,
 ) -> HashMap<String, ConfigSetting> {
@@ -64,6 +134,7 @@ fn normalize_connection_string_option(
     }
 
     match upper.as_str() {
+        "LOGLEVEL" | "LOGPATH" | "LOGFILESIZE" | "LOGFILECOUNT" | "TRACING" => None,
         "PORT" => Some(("port".to_owned(), value.into())),
         "CRL_MODE" => Some(("CRL_MODE".to_owned(), value.to_uppercase().into())),
         "CRL_ENABLED" => Some((
@@ -201,7 +272,7 @@ pub fn driver_connect<E: OdbcEncoding>(
 /// the handle to `Connected`.
 fn connect_with_params(
     connection_handle: sql::Handle,
-    params: HashMap<String, String>,
+    mut params: HashMap<String, String>,
 ) -> OdbcResult<()> {
     {
         const REDACTED_KEYS: &[&str] = &[
@@ -221,6 +292,11 @@ fn connect_with_params(
             })
             .collect();
         tracing::info!("connect_with_params: params={:?}", redacted_map);
+    }
+
+    let log_config = extract_logging_params(&mut params);
+    if let Err(e) = crate::api::logging::reconfigure_logging(&log_config) {
+        tracing::warn!("Failed to reconfigure ODBC file logging: {e}");
     }
 
     let mut options = normalize_connection_string_options(params);
@@ -1363,6 +1439,114 @@ mod tests {
     fn parse_connection_string_rejects_chars_after_closing_brace() {
         let result = parse_connection_string("PWD={val}extra;UID=admin");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_logging_params_removes_all_logging_keys() {
+        let mut params = HashMap::from([
+            ("LOGLEVEL".to_owned(), "5".to_owned()),
+            ("LOGPATH".to_owned(), "/tmp/logs".to_owned()),
+            ("LOGFILESIZE".to_owned(), "10".to_owned()),
+            ("LOGFILECOUNT".to_owned(), "3".to_owned()),
+            ("TRACING".to_owned(), "4".to_owned()),
+            ("SERVER".to_owned(), "example.com".to_owned()),
+        ]);
+
+        let config = extract_logging_params(&mut params);
+
+        assert_eq!(config.log_level, Some(LevelFilter::DEBUG));
+        assert_eq!(config.log_path, Some(PathBuf::from("/tmp/logs")));
+        assert_eq!(config.log_file_size_mb, Some(10));
+        assert_eq!(config.log_file_count, Some(3));
+        assert!(!params.contains_key("LOGLEVEL"));
+        assert!(!params.contains_key("LOGPATH"));
+        assert!(!params.contains_key("LOGFILESIZE"));
+        assert!(!params.contains_key("LOGFILECOUNT"));
+        assert!(!params.contains_key("TRACING"));
+        assert_eq!(params.get("SERVER").unwrap(), "example.com");
+    }
+
+    #[test]
+    fn extract_logging_params_loglevel_takes_precedence_over_tracing() {
+        let mut params = HashMap::from([
+            ("LOGLEVEL".to_owned(), "6".to_owned()),
+            ("TRACING".to_owned(), "3".to_owned()),
+        ]);
+
+        let config = extract_logging_params(&mut params);
+        assert_eq!(config.log_level, Some(LevelFilter::TRACE));
+    }
+
+    #[test]
+    fn extract_logging_params_falls_back_to_tracing() {
+        let mut params = HashMap::from([("TRACING".to_owned(), "3".to_owned())]);
+
+        let config = extract_logging_params(&mut params);
+        assert_eq!(config.log_level, Some(LevelFilter::WARN));
+    }
+
+    #[test]
+    fn extract_logging_params_returns_none_when_no_logging_keys() {
+        let mut params = HashMap::from([("SERVER".to_owned(), "example.com".to_owned())]);
+
+        let config = extract_logging_params(&mut params);
+
+        assert!(config.log_level.is_none());
+        assert!(config.log_path.is_none());
+        assert!(config.log_file_size_mb.is_none());
+        assert!(config.log_file_count.is_none());
+    }
+
+    #[test_case("0", Some(LevelFilter::OFF) ; "numeric off")]
+    #[test_case("1", Some(LevelFilter::ERROR) ; "numeric fatal maps to error")]
+    #[test_case("2", Some(LevelFilter::ERROR) ; "numeric error")]
+    #[test_case("3", Some(LevelFilter::WARN) ; "numeric warn")]
+    #[test_case("4", Some(LevelFilter::INFO) ; "numeric info")]
+    #[test_case("5", Some(LevelFilter::DEBUG) ; "numeric debug")]
+    #[test_case("6", Some(LevelFilter::TRACE) ; "numeric trace")]
+    #[test_case("OFF", Some(LevelFilter::OFF) ; "named off")]
+    #[test_case("error", Some(LevelFilter::ERROR) ; "named error case insensitive")]
+    #[test_case("FATAL", Some(LevelFilter::ERROR) ; "named fatal maps to error")]
+    #[test_case("warn", Some(LevelFilter::WARN) ; "named warn")]
+    #[test_case("WARNING", Some(LevelFilter::WARN) ; "named warning")]
+    #[test_case("INFO", Some(LevelFilter::INFO) ; "named info")]
+    #[test_case("debug", Some(LevelFilter::DEBUG) ; "named debug")]
+    #[test_case("TRACE", Some(LevelFilter::TRACE) ; "named trace")]
+    #[test_case("nonsense", None ; "unrecognized returns none")]
+    #[test_case("7", None ; "out of range numeric returns none")]
+    fn parse_log_level_cases(input: &str, expected: Option<LevelFilter>) {
+        assert_eq!(parse_log_level(input), expected);
+    }
+
+    #[test]
+    fn extract_logging_params_ignores_invalid_file_size() {
+        let mut params = HashMap::from([("LOGFILESIZE".to_owned(), "not_a_number".to_owned())]);
+
+        let config = extract_logging_params(&mut params);
+        assert!(config.log_file_size_mb.is_none());
+        assert!(!params.contains_key("LOGFILESIZE"));
+    }
+
+    #[test]
+    fn extract_logging_params_ignores_invalid_file_count() {
+        let mut params = HashMap::from([("LOGFILECOUNT".to_owned(), "abc".to_owned())]);
+
+        let config = extract_logging_params(&mut params);
+        assert!(config.log_file_count.is_none());
+        assert!(!params.contains_key("LOGFILECOUNT"));
+    }
+
+    #[test]
+    fn normalize_excludes_logging_params_from_options() {
+        let params = HashMap::from([
+            ("LOGLEVEL".to_owned(), "5".to_owned()),
+            ("LOGPATH".to_owned(), "/tmp".to_owned()),
+            ("SERVER".to_owned(), "example.com".to_owned()),
+        ]);
+        let options = normalize_connection_string_options(params);
+        assert!(!options.contains_key("LOGLEVEL"));
+        assert!(!options.contains_key("LOGPATH"));
+        assert_eq!(config_string(&options, "SERVER"), Some("example.com"));
     }
 
     #[cfg(not(windows))]
