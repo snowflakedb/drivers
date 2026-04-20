@@ -12,6 +12,7 @@ fips = ["rustls/fips"]
 protobuf = ["prost", "proto_utils"]
 auth_mfa_e2e = []
 perf_timing = []
+cli = ["clap"]
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
@@ -26,7 +27,7 @@ reqwest = { version = "0.12.23", features = ["json", "rustls-tls", "gzip"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", features = ["raw_value"] }
 futures = "0.3"
-tokio = { version = "1.47.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-util = { version = "0.7", features = ["time"] }
 tokio-stream = "0.1"
 toml = "0.8"
@@ -78,10 +79,9 @@ hex = "0.4"
 memchr = "2"
 sonic-rs = "0.5"
 sha2 = "0.10"
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
 signature = "2"
 der = "0.7"
-pkcs1 = "0.7"
 num-traits = "0.2.19"
 
 [build-dependencies]
@@ -91,6 +91,7 @@ proto_generator = { path = "../proto_generator" }
 libc = "0.2"
 
 [dev-dependencies]
+tokio = { version = "1.47.1", features = ["fs"] }
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
 bzip2 = "0.6.0"
@@ -117,10 +118,12 @@ path = "tests/e2e/mod.rs"
 [[bin]]
 name = "tls_client"
 path = "src/bin/tls_client.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "collect_chunk_data"
 path = "src/bin/collect_chunk_data.rs"
+required-features = ["cli"]
 
 [[bench]]
 name = "prefetch_bench"
