@@ -156,8 +156,9 @@ jobs:
       # Two-phase tarpaulin invocation (build, then run) provides clearer CI signal:
       # a failure in "Build" → compilation error; a failure in "Run tests" → test failure.
       # --skip-clean ensures the second invocation reuses the first's build artifacts.
-      # The generated lcov.info is intentionally not uploaded from GHA — Codecov uploads
-      # are handled by ci/Jenkinsfile.coverage (see `uploadToCodecov` calls there).
+      # The generated lcov.info is intentionally not uploaded from GHA; coverage reporting
+      # is owned by the dedicated Jenkins coverage pipeline (ci/Jenkinsfile.coverage), which
+      # surfaces results as Jenkins build status + archived artifacts — no external upload.
       - name: Build sf_core with tarpaulin
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
