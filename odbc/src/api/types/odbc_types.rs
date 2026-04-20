@@ -1197,7 +1197,6 @@ impl ExecutionOrigin {
 }
 
 /// State of an individual DAE parameter's data during the `SQLPutData` loop.
-#[allow(dead_code)]
 pub enum ParamValue {
     Pending,
     Null,
@@ -1205,7 +1204,6 @@ pub enum ParamValue {
 }
 
 /// Holds the context for a data-at-execution operation in progress.
-#[allow(dead_code)]
 pub struct DaeContext {
     pub dae_params: Vec<u16>,
     pub current_index: usize,
@@ -1250,18 +1248,15 @@ pub enum StatementState {
     },
     /// ODBC state S8: Need data, waiting for `SQLParamData`.
     AwaitingParamData {
-        #[allow(dead_code)]
         dae_context: Box<DaeContext>,
         origin: ExecutionOrigin,
     },
     /// ODBC state S9: Need data, waiting for `SQLPutData`.
-    #[allow(dead_code)]
     AwaitingPutData {
         dae_context: Box<DaeContext>,
         origin: ExecutionOrigin,
     },
     /// ODBC state S10: Need data, `SQLPutData` called at least once.
-    #[allow(dead_code)]
     PutDataCalled {
         dae_context: Box<DaeContext>,
         origin: ExecutionOrigin,
@@ -1306,7 +1301,7 @@ impl<T> State<T> {
 
     /// Invariant: `current_state` is always `Some` between public API calls.
     /// Every caller must call `set` before returning to restore the invariant.
-    fn take(&mut self) -> T {
+    pub(crate) fn take(&mut self) -> T {
         self.current_state.take().expect(
             "State::take called on an empty state — set() was not called after a previous take()",
         )
@@ -1392,8 +1387,26 @@ pub struct Statement {
 
 /// All mutable statement state, protected by `Statement::inner`.
 ///
-/// Lock ordering: always lock `Connection` (via `dbc.connection.lock()`) **before**
-/// locking `Statement::inner` when both are needed.
+/// # Lock ordering
+///
+/// When both `Connection` (`dbc.connection.lock()`) and `inner` must be
+/// held, `Connection` is locked first. `exec_direct_impl`,
+/// `prepare_impl`, `param_data` (and the `execute_dae` it delegates to),
+/// `fetch`, and `extended_fetch` follow this rule.
+///
+/// Functions that only mutate `inner` (`SQLBindCol`, `SQLBindParameter`,
+/// `SQLPutData`, `SQLSetStmtAttr`, `SQLFreeStmt`, `SQLNumParams`,
+/// `SQLDescribeParam`, the diagnostic helpers) do not lock `Connection`
+/// at all. `SQLCancel` operates only on `Statement::active_cancel` and
+/// never touches either mutex.
+///
+/// # Known violators
+///
+/// `SQLExecute` (`execute`) and `SQLMoreResults` (`more_results`) still
+/// acquire `inner` before `Connection`. They must be reordered to match
+/// the rule above before they can safely interleave with a concurrent
+/// thread holding `Connection` — e.g. once `SQL_ATTR_ASYNC_ENABLE` lands
+/// and the same connection can be driven from another thread mid-call.
 pub struct StatementInner {
     pub state: State<StatementState>,
     pub ard: ArdDescriptor,
@@ -1505,6 +1518,16 @@ impl Statement {
     }
 
     /// Look up the parent connection via the global dbc_registry.
+    ///
+    /// Callers should take this guard only when they will (a) lock
+    /// `dbc.connection`, (b) read the session `conn_handle` from
+    /// `ConnectionState::Connected`, or (c) otherwise dereference connection
+    /// state. Functions that only mutate `Statement::inner` (e.g.
+    /// `SQLBindCol`, `SQLBindParameter`, `SQLPutData`, `SQLSetStmtAttr`,
+    /// `SQLCancel`) do not need this — the stmt-registry read guard returned
+    /// by `stmt_from_handle` already keeps the parent `Dbc` alive for the
+    /// duration of the call, because `cleanup_connection` write-locks every
+    /// child statement before tearing down the `Dbc` slot.
     ///
     /// Returns an error if the parent connection has already been freed.
     pub fn conn(&self) -> OdbcResult<HandleGuard<Dbc>> {

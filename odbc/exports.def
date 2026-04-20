@@ -37,7 +37,9 @@ EXPORTS
     SQLNumParams
     SQLNumResultCols
     SQLDescribeParam
+    SQLParamData
     SQLPrepareW
+    SQLPutData
     SQLRowCount
     SQLSetConnectAttrW
     SQLSetDescFieldW

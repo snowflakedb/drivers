@@ -987,6 +987,37 @@ pub unsafe extern "system" fn SQLPrepareW(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLParamData(
+    statement_handle: sql::Handle,
+    value_ptr_ptr: *mut sql::Pointer,
+) -> sql::RetCode {
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLParamData");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::param_data(statement_handle, value_ptr_ptr);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn SQLPutData(
+    statement_handle: sql::Handle,
+    data_ptr: sql::Pointer,
+    str_len_or_ind: sql::Len,
+) -> sql::RetCode {
+    record_api!(sql::HandleType::Stmt, statement_handle, "SQLPutData");
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::put_data(statement_handle, data_ptr, str_len_or_ind);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    record_err!(sql::HandleType::Stmt, statement_handle, result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "system" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCode {
     record_api!(sql::HandleType::Stmt, statement_handle, "SQLExecute");
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
