@@ -1,6 +1,6 @@
 /*
 Jenkinsfile template for use in a multibranch pipeline
- */
+*/
 
 @Library('pipeline-utils') _
 import com.snowflake.DevEnvUtils
