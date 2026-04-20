@@ -486,3 +486,14 @@ behavior_differences:
     impact: |
       Applications that probe SQLGetFunctions before calling SQLCancelHandle will incorrectly believe the old driver does not support it. The function works regardless of what SQLGetFunctions reports.
 
+  46:
+    name: "SQL_C_BINARY as SQLBindParameter source for SQL_DECIMAL/NUMERIC/TIME/TIMESTAMP is not supported"
+    status: unknown
+    type: enhancement
+    reviewed: false
+    old_driver_behavior: |
+      When SQLBindParameter is called with InputOutputType=SQL_PARAM_INPUT and ValueType=SQL_C_BINARY against a parameter whose ParameterType is SQL_DECIMAL, SQL_NUMERIC, SQL_TYPE_TIME, or SQL_TYPE_TIMESTAMP, the driver rejects the bind with SQLSTATE 22003 even when the buffer length exactly matches the required struct size.
+    new_driver_behavior: |
+      Per the MS ODBC specification ("C to SQL: Binary" appendix) the driver checks that BufferLength equals the SQL data length (sizeof(SQL_NUMERIC_STRUCT) = 19 for DECIMAL/NUMERIC, sizeof(SQL_TIME_STRUCT) = 6 for TIME, sizeof(SQL_TIMESTAMP_STRUCT) = 16 for TIMESTAMP) and forwards the raw bytes to the server. Buffers of any other length are rejected with SQLSTATE 22003, matching the spec's "Byte length of data <> SQL data length -> 22003" rule.
+    impact: |
+      Applications that bind a typed C struct as SQL_C_BINARY now have a portable way to insert these SQL types without separate SQL_C_NUMERIC / SQL_C_TYPE_TIMESTAMP / etc. bindings. See SNOW-3031774 (PR #833 for the Rust implementation, PR #834 for E2E coverage).
