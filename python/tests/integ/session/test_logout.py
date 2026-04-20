@@ -3,6 +3,8 @@
 These tests use Wiremock to verify that logout HTTP requests are sent correctly.
 """
 
+import pytest
+
 from tests.wiremock_client import WiremockClient
 
 
@@ -99,6 +101,7 @@ class TestLogoutWithWiremock:
 
             assert len(logout_requests) >= 1, "Should send logout when keep_alive=False"
 
+    @pytest.mark.skip_reference  # Old connector (v4.3.0) doesn't retry logout on 503
     def test_should_retry_logout_on_503_error(self, int_test_connection_factory):
         """Verify logout retries on 503 Service Unavailable."""
         with WiremockClient().start() as wiremock:
