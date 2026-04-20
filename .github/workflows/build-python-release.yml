@@ -1,7 +1,7 @@
 name: Python Release Build
 
 on:
-  # temporarly for testing
+  # temporarily for testing
   pull_request:
   workflow_dispatch:
 
@@ -41,6 +41,7 @@ jobs:
     name: test_wheels (${{ matrix.hatch_env }}, py${{ matrix.py }}, ${{ matrix.cloud_provider }})
     env:
       MATRIX_KEY: ${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ matrix.cloud_provider }}
+      UV_CACHE_DIR: /tmp/.uv-cache
     steps:
       - uses: actions/checkout@v4
 
@@ -58,8 +59,6 @@ jobs:
             uv-${{ env.MATRIX_KEY }}-
             uv-${{ matrix.os }}-${{ matrix.py }}-
             uv-${{ matrix.os }}-
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
 
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}

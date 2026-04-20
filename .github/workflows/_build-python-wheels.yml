@@ -64,12 +64,24 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-sf-core-release-target-
 
+      - name: Capture vcpkg version for cache key (Windows ARM64)
+        if: matrix.os == 'windows-11-arm'
+        id: vcpkg-ver-core
+        shell: pwsh
+        run: |
+          $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
+            Select-String 'version\s+(\S+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Select-Object -First 1
+          if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
+          echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+
       - name: Cache vcpkg packages
         if: matrix.os == 'windows-11-arm'
         uses: actions/cache@v5
         with:
           path: C:\vcpkg\installed
-          key: vcpkg-arm64-windows-static-md-openssl
+          key: ${{ matrix.os }}-vcpkg-openssl-static-md-${{ env.VCPKG_VER }}
 
       - name: Install ARM64 OpenSSL (static) via vcpkg
         if: matrix.os == 'windows-11-arm'
