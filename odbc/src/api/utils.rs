@@ -1,6 +1,6 @@
 use crate::api::encoding::{OdbcEncoding, write_string_bytes, write_string_chars};
 use crate::api::error::{
-    ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu,
+    ConversionSnafu, InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu, NullPointerSnafu,
     StatementNotExecutedSnafu,
 };
 use crate::api::{DescField, OdbcResult, StatementState, stmt_from_handle};
@@ -10,6 +10,31 @@ use arrow::array::RecordBatchReader;
 use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
+
+/// Process a catalog function string argument according to SQL_ATTR_METADATA_ID rules.
+///
+/// When `metadata_id` is `true`, the argument is treated as a case-insensitive identifier:
+/// - `None` (NULL pointer) → `HY009` (`InvalidUseOfNullPointer`): identifier is required.
+/// - Trailing spaces are stripped.
+/// - The string is folded to uppercase.
+///
+/// When `metadata_id` is `false` (default), the argument is treated as an ordinary search
+/// pattern and returned unchanged; `None` means "match all" (no filter applied).
+///
+/// Catalog functions must call this for every string argument except `TableType` in
+/// `SQLTables` (which is always treated as an ordinary argument per the ODBC spec).
+#[allow(dead_code)] // Used by catalog functions (SQLTables, SQLColumns, …) not yet implemented
+pub(crate) fn process_catalog_arg(
+    arg: Option<&str>,
+    metadata_id: bool,
+) -> OdbcResult<Option<String>> {
+    match (arg, metadata_id) {
+        (None, true) => NullPointerSnafu.fail(),
+        (None, false) => Ok(None),
+        (Some(s), true) => Ok(Some(s.trim_end().to_uppercase())),
+        (Some(s), false) => Ok(Some(s.to_string())),
+    }
+}
 
 /// Get the number of result columns
 pub fn num_result_cols(
@@ -265,4 +290,146 @@ pub fn describe_col<E: OdbcEncoding>(
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::error::OdbcError;
+
+    // ---- process_catalog_arg: SQL_FALSE (pattern mode) ----
+
+    #[test]
+    fn catalog_arg_none_pattern_mode_returns_none() {
+        assert_eq!(process_catalog_arg(None, false).unwrap(), None);
+    }
+
+    #[test]
+    fn catalog_arg_some_pattern_mode_returns_unchanged() {
+        assert_eq!(
+            process_catalog_arg(Some("Hello World"), false).unwrap(),
+            Some("Hello World".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_pattern_mode_preserves_trailing_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("hello  "), false).unwrap(),
+            Some("hello  ".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_pattern_mode_preserves_leading_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("  hello"), false).unwrap(),
+            Some("  hello".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_empty_string_pattern_mode() {
+        assert_eq!(
+            process_catalog_arg(Some(""), false).unwrap(),
+            Some("".to_string())
+        );
+    }
+
+    // ---- process_catalog_arg: SQL_TRUE (identifier mode) ----
+
+    #[test]
+    fn catalog_arg_none_identifier_mode_returns_hy009() {
+        let result = process_catalog_arg(None, true);
+        assert!(matches!(result, Err(OdbcError::NullPointer { .. })));
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases() {
+        assert_eq!(
+            process_catalog_arg(Some("hello"), true).unwrap(),
+            Some("HELLO".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_strips_trailing_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("  foo  "), true).unwrap(),
+            Some("  FOO".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_preserves_leading_spaces() {
+        assert_eq!(
+            process_catalog_arg(Some("  hello"), true).unwrap(),
+            Some("  HELLO".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_empty_string_identifier_mode() {
+        assert_eq!(
+            process_catalog_arg(Some(""), true).unwrap(),
+            Some("".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_only_spaces_identifier_mode_strips_all() {
+        assert_eq!(
+            process_catalog_arg(Some("   "), true).unwrap(),
+            Some("".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_mixed_case_identifier_mode() {
+        assert_eq!(
+            process_catalog_arg(Some("MyTable"), true).unwrap(),
+            Some("MYTABLE".to_string())
+        );
+    }
+
+    // ---- process_catalog_arg: Unicode uppercasing ----
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases_accented_latin() {
+        // Basic Latin accented characters: é → É, ñ → Ñ
+        assert_eq!(
+            process_catalog_arg(Some("résumé"), true).unwrap(),
+            Some("RÉSUMÉ".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases_german_sharp_s() {
+        // ß has no single-char uppercase in Unicode — it maps to the two-char sequence "SS"
+        assert_eq!(
+            process_catalog_arg(Some("straße"), true).unwrap(),
+            Some("STRASSE".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_identifier_mode_uppercases_greek() {
+        assert_eq!(
+            process_catalog_arg(Some("ελληνικά"), true).unwrap(),
+            Some("ΕΛΛΗΝΙΚΆ".to_string())
+        );
+    }
+
+    #[test]
+    fn catalog_arg_pattern_mode_preserves_unicode_unchanged() {
+        // In pattern mode nothing should be transformed regardless of script
+        assert_eq!(
+            process_catalog_arg(Some("straße"), false).unwrap(),
+            Some("straße".to_string())
+        );
+    }
 }
