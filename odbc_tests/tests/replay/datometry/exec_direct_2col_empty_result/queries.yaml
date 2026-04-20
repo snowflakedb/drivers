@@ -1,0 +1,4 @@
+queries:
+- index: 0
+  original: 'select distinct schemaname, objectname from "DTMREPLAYTESTDB"."__DTM_MDSTORE"."__DTM_MDSTORE_TABLE" where propname = ''specific_function_name'' '
+  mapped: select distinct schemaname, objectname from "DTMREPLAYTESTDB"."__DTM_MDSTORE"."__DTM_MDSTORE_TABLE" where propname = 'specific_function_name'

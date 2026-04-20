@@ -1,0 +1,7 @@
+queries:
+- index: 0
+  original: |-
+    -- DTM_BRID: 6691e2b3-389d-40d4-90f9-873fc082c184
+    -- DTM_QRY:
+    show schemas like 'public'
+  mapped: show schemas like 'public' in database "DTMREPLAYTESTDB"
