@@ -69,6 +69,8 @@ jobs:
         with:
           mode: save
           shared-key: "odbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   odbc_tests_reference:
     strategy:
@@ -145,6 +147,21 @@ jobs:
             Write-Host "Downloading Snowflake ODBC MSI from: $snowflakeOdbcUrl"
             Invoke-Checked "Invoke-WebRequest download Snowflake ODBC MSI" { Invoke-WebRequest -Uri $snowflakeOdbcUrl -OutFile $cachedMsi }
           }
+
+          # Verify Authenticode signature BEFORE handing the MSI to msiexec. The MSI can be restored
+          # from GHA's cache, which is a mutable bucket tied to the repo — defense in depth against
+          # cache tampering or repository-scoped compromise. Authenticode verification is the
+          # canonical Windows integrity check: it validates cryptographic signature + trust chain,
+          # and (with SignerCertificate.Subject matching) confirms the publisher is Snowflake.
+          $sig = Get-AuthenticodeSignature $cachedMsi
+          if ($sig.Status -ne 'Valid') {
+            throw "MSI Authenticode signature is not Valid (status: $($sig.Status), message: $($sig.StatusMessage)). Refusing to install possibly tampered MSI at $cachedMsi."
+          }
+          if ($sig.SignerCertificate.Subject -notlike "*Snowflake*") {
+            throw "MSI signer is not Snowflake (subject: $($sig.SignerCertificate.Subject)). Refusing to install MSI from unexpected publisher."
+          }
+          Write-Host "MSI Authenticode signature valid; signer: $($sig.SignerCertificate.Subject)"
+
           $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i `"$cachedMsi`" /quiet" -Wait -PassThru
           if ($msiProcess.ExitCode -ne 0) { throw "msiexec failed with exit code $($msiProcess.ExitCode)" }
 
@@ -318,6 +335,8 @@ jobs:
         with:
           mode: save
           shared-key: "odbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Upload ODBC driver
         uses: actions/upload-artifact@v4
@@ -488,11 +507,32 @@ jobs:
           if (-not $installPath) { throw "vswhere could not locate a Visual Studio installation" }
           $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
           if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found at $vcvars" }
-          # Source vcvarsall.bat and export the resulting env vars so later steps see cl.exe, link.exe, etc.
-          cmd /c "`"$vcvars`" amd64 && set" | ForEach-Object {
+
+          # Source vcvarsall.bat and capture its output. Capture to a variable first so we can
+          # inspect $LASTEXITCODE before any pipeline resets it: piping `cmd /c ... | ForEach-Object`
+          # would succeed as a pipeline even if vcvarsall.bat failed, leaving later steps running
+          # without cl.exe / link.exe on PATH.
+          $vcvarsOutput = cmd /c "`"$vcvars`" amd64 && set" 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "vcvarsall.bat output:"
+            $vcvarsOutput | ForEach-Object { Write-Host $_ }
+            throw "vcvarsall.bat amd64 failed with exit code $LASTEXITCODE"
+          }
+          $vcvarsOutput | ForEach-Object {
             if ($_ -match '^([^=]+)=(.*)$') {
               echo "$($Matches[1])=$($Matches[2])" >> $env:GITHUB_ENV
             }
+          }
+
+          # Post-condition: verify the MSVC toolchain is actually on PATH. vcvarsall.bat can exit 0
+          # while setting a broken environment (e.g., missing components, wrong host arch), so treat
+          # "cl.exe not found" as a hard failure rather than letting the next build step blow up
+          # with a confusing linker error.
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+            throw "MSVC environment setup completed but cl.exe is not on PATH"
+          }
+          if (-not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
+            throw "MSVC environment setup completed but link.exe is not on PATH"
           }
 
       - name: Decode secrets

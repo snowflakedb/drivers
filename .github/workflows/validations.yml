@@ -77,6 +77,8 @@ jobs:
           shared-key: "format-validator"
           target-dir: tests/tests_format_validator/target
           lockfiles: tests/tests_format_validator/Cargo.lock
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   test-coverage-report:
     runs-on: ubuntu-latest
@@ -113,6 +115,8 @@ jobs:
           shared-key: "format-validator"
           target-dir: tests/tests_format_validator/target
           lockfiles: tests/tests_format_validator/Cargo.lock
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Upload coverage report
         if: success()

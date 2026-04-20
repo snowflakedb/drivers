@@ -111,6 +111,8 @@ jobs:
         with:
           mode: save
           shared-key: "jdbc"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
       - name: Save Gradle cache
         if: always() && steps.gradle-cache.outputs.cache-hit != 'true'

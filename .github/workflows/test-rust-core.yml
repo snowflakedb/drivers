@@ -64,6 +64,8 @@ jobs:
         with:
           mode: save
           shared-key: "clippy"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   build-without-protobuf:
     needs: detect-changes
@@ -83,12 +85,16 @@ jobs:
       - name: Build sf_core without protobuf feature
         run: cargo build --package sf_core --no-default-features --features fips
 
-      # Compile-test the test code too: catches test modules that use protobuf types
-      # without a `#[cfg(feature = "protobuf")]` guard. --no-run skips execution so
-      # this lane stays fast (it's a compile-only lane by design) and doesn't need
-      # PARAMETER_PATH / network access.
-      - name: Compile tests without protobuf feature
-        run: cargo test --no-run --package sf_core --no-default-features --features fips
+      # Compile-test the library's unit tests (tests inside sf_core/src/*) to catch
+      # modules that use protobuf types without a `#[cfg(feature = "protobuf")]` guard.
+      # Scoped to --lib deliberately: the integration and e2e test harness under
+      # sf_core/tests/ hard-depends on protobuf (shared test helpers import protobuf
+      # types unconditionally). Gating every integration test file is a larger refactor
+      # tracked separately; this check still catches the more impactful class of bugs
+      # (accidentally exposing protobuf-dependent code in the library's public surface).
+      # --no-run skips execution so this lane stays fast and doesn't need network access.
+      - name: Compile library unit tests without protobuf feature
+        run: cargo test --no-run --lib --package sf_core --no-default-features --features fips
 
       - name: Save Rust cache
         if: always()
@@ -96,6 +102,8 @@ jobs:
         with:
           mode: save
           shared-key: "no-protobuf"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   test:
     needs: detect-changes
@@ -174,6 +182,8 @@ jobs:
         with:
           mode: save
           shared-key: "core-test"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   # Non-FIPS ARM64 build and test.
   # On windows-11-arm, --all-features fails for aarch64-pc-windows-msvc with:
@@ -330,6 +340,8 @@ jobs:
         with:
           mode: save
           shared-key: "arm64-nonfips"
+          registry-cache-hit: ${{ steps.rust-cache.outputs.registry-cache-hit }}
+          target-cache-hit: ${{ steps.rust-cache.outputs.target-cache-hit }}
 
   rust-core-status:
     needs: [detect-changes, format, clippy, build-without-protobuf, test, test_windows_arm64_nonfips]

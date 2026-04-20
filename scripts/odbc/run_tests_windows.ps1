@@ -15,6 +15,23 @@ try {
     # generator (MSBuild), preserving existing behavior.
     $useNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) `
            -and (Get-Command cl.exe -ErrorAction SilentlyContinue)
+    $desiredGenerator = if ($useNinja) { "Ninja" } else { "Visual Studio" }
+
+    # CMake refuses to reconfigure a build tree with a different generator than it was
+    # first created with ("Error: generator ... does not match the generator used previously").
+    # In CI the workspace is always fresh so this never triggers; this is defense-in-depth
+    # for local devs re-running the script after switching MSVC env state. Wipe cmake-build
+    # if the previously-used generator doesn't match the one we're about to use.
+    $cacheFile = "cmake-build\CMakeCache.txt"
+    if (Test-Path $cacheFile) {
+        $existingGenerator = (Select-String -Path $cacheFile -Pattern '^CMAKE_GENERATOR:INTERNAL=(.*)$' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value.Trim() } |
+            Select-Object -First 1)
+        if ($existingGenerator -and -not $existingGenerator.StartsWith($desiredGenerator)) {
+            Write-Host "run_tests: generator changed ('$existingGenerator' -> '$desiredGenerator'); wiping cmake-build/"
+            Remove-Item -Recurse -Force cmake-build
+        }
+    }
 
     New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
     $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=$env:DRIVER_TYPE")
