@@ -21,9 +21,9 @@ def getAgentLabel(platform) {
     case 'linux-aarch64-glibc':
       return 'small-node-aarch64'
     case 'macos-x86_64':
-      return 'mac_x86'
+      return 'mac_x86_v2'
     case 'macos-aarch64':
-      return 'mac_m1'
+      return 'mac_m1_v2'
     case 'windows-x86_64':
       return 'windows-build-vs2022'
     case 'windows-i686':
@@ -385,30 +385,40 @@ pipeline {
                 }
                 sh label: 'Install system dependencies', script: 'yum install -y unzip'
 
-                sh label: 'Rust Core VPN E2E tests', script: '''
-                  set +x
-                  export PARAMETER_PATH=$(pwd)/parameters.json
-                  cargo test --package sf_core -- --ignored
-                '''
+                try {
+                  sh label: 'Rust Core VPN E2E tests', script: '''
+                    set +x
+                    export PARAMETER_PATH=$(pwd)/parameters.json
+                    cargo test --package sf_core -- --ignored
+                  '''
 
-                sh label: 'ODBC VPN E2E tests', script: '''
-                  set +x
-                  cargo build
-                  source /opt/rh/gcc-toolset-11/enable
-                  cd odbc_tests
-                  mkdir -p cmake-build
-                  cmake -B cmake-build \
-                      -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                      -D ODBC_INCLUDE_DIR="/usr/include" \
-                      -D DRIVER_TYPE=NEW \
-                      .
-                  cmake --build cmake-build -- -j $(nproc)
+                  sh label: 'ODBC VPN E2E tests', script: '''
+                    set +x
+                    cargo build
+                    source /opt/rh/gcc-toolset-11/enable
+                    cd odbc_tests
+                    mkdir -p cmake-build
+                    cmake -B cmake-build \
+                        -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                        -D ODBC_INCLUDE_DIR="/usr/include" \
+                        -D DRIVER_TYPE=NEW \
+                        .
+                    cmake --build cmake-build -- -j $(nproc)
 
-                  WORKSPACE_ROOT=$(pwd)/..
-                  export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-                  export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
-                  ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
-                '''
+                    WORKSPACE_ROOT=$(pwd)/..
+                    export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                    export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -R "native_okta" --no-tests=error
+                  '''
+                } finally {
+                  sh label: 'Cleanup test PATs', script: '''
+                    set +x
+                    pip3 install snowflake-connector-python -q 2>/dev/null || true
+                    python3 scripts/cleanup_test_pats.py \
+                      --parameter-path $(pwd)/parameters.json \
+                      --build-tag "JNK_${BUILD_NUMBER}" || true
+                  '''
+                }
               }
             }
           }

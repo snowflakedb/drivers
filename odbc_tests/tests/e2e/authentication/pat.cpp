@@ -3,7 +3,11 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <iomanip>
+#include <iterator>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -41,6 +45,28 @@ class PatSetup {
 
   ~PatSetup() { cleanup(); }
 
+  static std::string sanitize(const std::string& s) {
+    std::string result;
+    std::copy_if(s.begin(), s.end(), std::back_inserter(result), ::isalnum);
+    return result;
+  }
+
+  static std::string ci_build_tag() {
+    struct CiVar {
+      const char* env;
+      const char* prefix;
+    };
+    for (auto [env, prefix] :
+         {CiVar{"BUILDKITE_BUILD_NUMBER", "BK"}, CiVar{"BUILD_NUMBER", "JNK"}, CiVar{"GITHUB_RUN_NUMBER", "GHA"}}) {
+      const char* raw = std::getenv(env);
+      if (raw) {
+        auto s = sanitize(raw);
+        if (!s.empty()) return std::string(prefix) + "_" + s;
+      }
+    }
+    return "LOCAL_0";
+  }
+
   PatResult acquire() {
     PatResult result;
 
@@ -49,7 +75,7 @@ class PatSetup {
     std::uniform_int_distribution<uint32_t> dis;
     uint32_t random_number = dis(gen);
     std::stringstream ss;
-    ss << "pat_" << std::hex << std::setw(8) << std::setfill('0') << random_number;
+    ss << "UD_ODBC_" << ci_build_tag() << "_" << std::hex << std::setw(8) << std::setfill('0') << random_number;
     token_name = ss.str();
     result.token_name = token_name;
 
