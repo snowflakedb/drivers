@@ -776,25 +776,27 @@ mod pow10_tests {
     use crate::conversion::error::WriteOdbcError;
 
     #[test]
-    fn pow10_i128_matches_table_in_range() {
+    fn pow10_i128_matches_table_in_range() -> Result<(), WriteOdbcError> {
         for scale in 0..=MAX_DECIMAL_SCALE {
             assert_eq!(
-                pow10_i128(scale).unwrap(),
+                pow10_i128(scale)?,
                 POW10_I128[scale as usize],
                 "pow10_i128({scale}) disagrees with table"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn pow10_u128_matches_table_in_range() {
+    fn pow10_u128_matches_table_in_range() -> Result<(), WriteOdbcError> {
         for scale in 0..=MAX_DECIMAL_SCALE {
             assert_eq!(
-                pow10_u128(scale).unwrap(),
+                pow10_u128(scale)?,
                 POW10_U128[scale as usize],
                 "pow10_u128({scale}) disagrees with table"
             );
         }
+        Ok(())
     }
 
     #[test]
