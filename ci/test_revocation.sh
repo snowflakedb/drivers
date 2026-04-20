@@ -8,7 +8,7 @@ set +x
 
 THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 DRIVER_ROOT="$( dirname "${THIS_DIR}")"
-WORKSPACE=${WORKSPACE:-${DRIVER_ROOT}}
+WORKSPACE="${WORKSPACE:-${DRIVER_ROOT}}"
 
 echo "[Info] Starting revocation validation tests"
 
@@ -22,11 +22,38 @@ fi
 REVOCATION_BRANCH="${REVOCATION_BRANCH:-main}"
 REVOCATION_REPO="https://github.com/snowflake-eng/revocation-validation.git"
 REVOCATION_DIR="$(mktemp -d "${TMPDIR:-/tmp}/revocation-validation.XXXXXX")"
-trap 'rm -rf "$REVOCATION_DIR"' EXIT
+
+# Clean up workspace AND any ASKPASS helper on exit. The askpass script is chmod 700
+# and deleted here to minimize the window in which the helper file exists on disk.
+ASKPASS_SCRIPT=""
+cleanup() {
+    rm -rf "$REVOCATION_DIR"
+    if [ -n "$ASKPASS_SCRIPT" ]; then
+        rm -f "$ASKPASS_SCRIPT"
+    fi
+}
+trap cleanup EXIT
+
 if [ -n "$GITHUB_USER" ] && [ -n "$GITHUB_TOKEN" ]; then
-    git clone -q --depth 1 --branch "$REVOCATION_BRANCH" \
-        "https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/snowflake-eng/revocation-validation.git" \
-        "$REVOCATION_DIR"
+    # Use GIT_ASKPASS instead of embedding the token in the clone URL. Tokens in URLs
+    # leak via `ps` output, shell history, git error messages, and sometimes CI build
+    # logs. GIT_ASKPASS is the canonical git auth mechanism for non-interactive use:
+    # git invokes the helper to get the password, which we read from the env (passed
+    # down to the helper process, not exposed on any command line).
+    ASKPASS_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/git-askpass.XXXXXX")"
+    cat >"$ASKPASS_SCRIPT" <<'EOF'
+#!/bin/sh
+# git calls this helper with a prompt like "Username for ..." or "Password for ...".
+# Match on the first word to return the right credential from the env.
+case "$1" in
+    Username*) printf '%s\n' "$GITHUB_USER" ;;
+    *)         printf '%s\n' "$GITHUB_TOKEN" ;;
+esac
+EOF
+    chmod 700 "$ASKPASS_SCRIPT"
+    GIT_ASKPASS="$ASKPASS_SCRIPT" GIT_TERMINAL_PROMPT=0 \
+        git clone -q --depth 1 --branch "$REVOCATION_BRANCH" \
+        "$REVOCATION_REPO" "$REVOCATION_DIR"
 else
     git clone -q --depth 1 --branch "$REVOCATION_BRANCH" "$REVOCATION_REPO" "$REVOCATION_DIR"
 fi

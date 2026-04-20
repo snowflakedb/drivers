@@ -297,6 +297,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if result.success {
         Ok(())
     } else {
-        std::process::exit(1);
+        // Returning Err is cleaner than std::process::exit(1):
+        //   - main unwinds normally (Drops run, buffered output flushes)
+        //   - tokio runtime shuts down gracefully
+        //   - the process still exits with a non-zero code because main returned Err
+        // The error message is pulled from the TestResult we just wrote out, so the
+        // exit reason is consistent with the JSON result file on disk.
+        Err(Box::from(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("TLS request failed")
+                .to_string(),
+        ))
     }
 }
