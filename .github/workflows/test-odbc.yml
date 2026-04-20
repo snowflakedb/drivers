@@ -467,12 +467,21 @@ jobs:
         run: |
           set -euxo pipefail
           # cmake via pip (official Kitware wheel) — faster than brew and keeps Linux/macOS install symmetric.
-          # `python3 -m pip` avoids PATH-based pip resolution pitfalls.
-          python3 -m pip install 'cmake>=4.0.3'
+          # Use a dedicated venv rather than installing into the default python3: macos-latest's
+          # python3 is Homebrew-managed and marked as an externally-managed environment (PEP 668),
+          # so a bare `pip install` fails. A venv is the PEP-668-compliant way to isolate the install
+          # without system-wide side effects. The venv's bin dir is prepended to PATH via GITHUB_PATH
+          # so `cmake` resolves to the 4.0+ version in subsequent steps.
+          CMAKE_VENV="$RUNNER_TEMP/cmake-venv"
+          python3 -m venv "$CMAKE_VENV"
+          "$CMAKE_VENV/bin/python" -m pip install --upgrade pip >/dev/null
+          "$CMAKE_VENV/bin/pip" install 'cmake>=4.0.3'
+          echo "$CMAKE_VENV/bin" >> $GITHUB_PATH
+          # Verify against the venv's cmake explicitly — GITHUB_PATH isn't applied to this step.
+          "$CMAKE_VENV/bin/cmake" --version
           # Only packages without pip wheels stay on brew. `ninja` is pre-installed on macos-latest,
           # but listing it here is cheap (no-op if present) and self-documenting.
           brew install unixodbc ccache ninja
-          cmake --version
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
       - name: Install dependencies (Windows)
