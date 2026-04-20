@@ -7,8 +7,8 @@ use crate::api::error::Required;
 use crate::api::error::{
     AttributeCannotBeSetNowSnafu, DataSourceNotFoundSnafu, DisconnectedSnafu,
     InvalidAttributeValueSnafu, InvalidBufferLengthSnafu, InvalidCatalogNameSnafu,
-    InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu, OdbcRuntimeSnafu,
-    ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
+    InvalidConnectionStringSnafu, InvalidCursorStateSnafu, InvalidPortSnafu, NullPointerSnafu,
+    OdbcRuntimeSnafu, ReadOnlyAttributeSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu,
 };
 use crate::api::runtime::global;
 use crate::api::{
@@ -86,19 +86,101 @@ fn normalize_connection_string_option(
     }
 }
 
-/// Parse connection string into key-value pairs
-fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
+/// Parse connection string into key-value pairs.
+///
+/// Supports brace-quoted values (e.g. `PWD={p@ss;word}`) where `}}` inside
+/// braces is an escaped literal `}`. Rejects duplicate keys (case-insensitive)
+/// and unterminated brace sequences.
+fn parse_connection_string(connection_string: &str) -> OdbcResult<HashMap<String, String>> {
     let mut map = HashMap::new();
-    for pair in connection_string.split(';') {
-        let parts: Vec<&str> = pair.splitn(2, '=').collect();
-        if parts.len() == 2 {
-            map.insert(
-                parts[0].trim().to_ascii_uppercase(),
-                parts[1].trim().to_string(),
-            );
+    let bytes = connection_string.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        // Skip whitespace and semicolons between pairs.
+        while i < len && (bytes[i] == b';' || bytes[i].is_ascii_whitespace()) {
+            i += 1;
         }
+        if i >= len {
+            break;
+        }
+
+        // Read key: accumulate until '='.
+        let key_start = i;
+        while i < len && bytes[i] != b'=' {
+            i += 1;
+        }
+        if i >= len {
+            // No '=' found — skip this trailing segment (matches old behaviour).
+            break;
+        }
+        let key = connection_string[key_start..i].trim().to_ascii_uppercase();
+        i += 1; // skip '='
+
+        // Read value.
+        let value = if i < len && bytes[i] == b'{' {
+            // Brace-quoted value.
+            i += 1; // skip opening '{'
+            let mut val = String::new();
+            let mut seg_start = i;
+            loop {
+                if i >= len {
+                    return InvalidConnectionStringSnafu {
+                        reason: format!("unterminated brace in value for key: {key}"),
+                    }
+                    .fail();
+                }
+                if bytes[i] == b'}' {
+                    val.push_str(&connection_string[seg_start..i]);
+                    if i + 1 < len && bytes[i + 1] == b'}' {
+                        // Escaped '}}' → literal '}'.
+                        val.push('}');
+                        i += 2;
+                        seg_start = i;
+                    } else {
+                        // Closing brace.
+                        i += 1;
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            // After closing '}', expect ';' or end-of-string (skip whitespace).
+            while i < len && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < len && bytes[i] != b';' {
+                return InvalidConnectionStringSnafu {
+                    reason: format!("unexpected character after closing brace for key: {key}"),
+                }
+                .fail();
+            }
+            val
+        } else {
+            // Unbraced value: accumulate until ';' or end-of-string.
+            let val_start = i;
+            while i < len && bytes[i] != b';' {
+                i += 1;
+            }
+            connection_string[val_start..i].trim().to_string()
+        };
+
+        if key.is_empty() {
+            continue;
+        }
+
+        if map.contains_key(&key) {
+            return InvalidConnectionStringSnafu {
+                reason: format!("duplicate key: {key}"),
+            }
+            .fail();
+        }
+        map.insert(key, value);
     }
-    map
+
+    Ok(map)
 }
 
 /// Connect using connection string (SQLDriverConnect / SQLDriverConnectW).
@@ -108,7 +190,7 @@ pub fn driver_connect<E: OdbcEncoding>(
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
     let connection_string = E::read_string(in_connection_string, in_string_length as i32)?;
-    let params = parse_connection_string(&connection_string);
+    let params = parse_connection_string(&connection_string)?;
     connect_with_params(connection_handle, params)
 }
 
@@ -1237,12 +1319,50 @@ mod tests {
     #[test_case("UID=admin;  ;SERVER=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "skips blank segments")]
     #[test_case("UID=admin;", &[("UID", "admin")] ; "trailing semicolon")]
     #[test_case("uid=admin;Server=foo", &[("UID", "admin"), ("SERVER", "foo")] ; "normalizes mixed case keys")]
+    #[test_case("PWD={p@ss;word};SERVER=foo", &[("PWD", "p@ss;word"), ("SERVER", "foo")] ; "brace quoted semicolon in value")]
+    #[test_case("PWD={val=ue};UID=admin", &[("PWD", "val=ue"), ("UID", "admin")] ; "brace quoted equals in value")]
+    #[test_case("PWD={};UID=admin", &[("PWD", ""), ("UID", "admin")] ; "empty braced value")]
+    #[test_case("PWD={a}}b};UID=admin", &[("PWD", "a}b"), ("UID", "admin")] ; "escaped brace in value")]
+    #[test_case("DRIVER={/usr/lib/driver.so};UID=admin", &[("DRIVER", "/usr/lib/driver.so"), ("UID", "admin")] ; "typical driver path")]
+    #[test_case("UID=admin;PWD=p\u{00E4}ss", &[("UID", "admin"), ("PWD", "p\u{00E4}ss")] ; "unbraced value with multibyte utf8")]
+    #[test_case("PWD={p\u{00E4}ss;w\u{00F6}rd};UID=admin", &[("PWD", "p\u{00E4}ss;w\u{00F6}rd"), ("UID", "admin")] ; "braced value with multibyte utf8")]
+    #[test_case("k\u{00E9}y=val", &[("K\u{00E9}Y", "val")] ; "multibyte utf8 in key")]
+    #[test_case("PWD= {val};UID=admin", &[("PWD", "{val}"), ("UID", "admin")] ; "whitespace before opening brace falls back to unbraced")]
+    #[test_case("", &[] ; "empty string")]
+    #[test_case("   ", &[] ; "whitespace only")]
+    #[test_case("UID=;SERVER=foo", &[("UID", ""), ("SERVER", "foo")] ; "key with empty value before semicolon")]
+    #[test_case("UID=", &[("UID", "")] ; "key with empty value at end")]
+    #[test_case("PWD={a}}b}}c};UID=admin", &[("PWD", "a}b}c"), ("UID", "admin")] ; "multiple escaped braces")]
     fn parse_connection_string_cases(input: &str, expected: &[(&str, &str)]) {
-        let map = parse_connection_string(input);
+        let map = parse_connection_string(input).unwrap();
         assert_eq!(map.len(), expected.len());
         for (key, value) in expected {
             assert_eq!(map.get(*key).unwrap(), value);
         }
+    }
+
+    #[test]
+    fn parse_connection_string_rejects_duplicate_key() {
+        let result = parse_connection_string("UID=admin;UID=other");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_connection_string_rejects_duplicate_key_case_insensitive() {
+        let result = parse_connection_string("UID=admin;uid=other");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_connection_string_rejects_unterminated_brace() {
+        let result = parse_connection_string("PWD={unterminated");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_connection_string_rejects_chars_after_closing_brace() {
+        let result = parse_connection_string("PWD={val}extra;UID=admin");
+        assert!(result.is_err());
     }
 
     #[cfg(not(windows))]

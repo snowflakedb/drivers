@@ -26,16 +26,12 @@ jobs:
         run: |
           rustup component add rustfmt clippy
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v5
+      - name: Restore Rust cache
+        id: rust-cache
+        uses: ./.github/actions/cargo-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-precommit-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-precommit-
+          mode: restore
+          shared-key: "precommit"
 
       - name: Install clang-format
         run: sudo apt-get update && sudo apt-get install -y clang-format
@@ -60,8 +56,9 @@ jobs:
         run: |
           pip install pre-commit hatch "virtualenv<21.0.0"
 
-      - name: Cache pre-commit hooks
-        uses: actions/cache@v5
+      - name: Restore pre-commit hooks cache
+        id: pre-commit-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -70,3 +67,16 @@ jobs:
 
       - name: Run pre-commit on all files
         run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Save pre-commit hooks cache
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Save Rust cache
+        if: always()
+        uses: ./.github/actions/cargo-cache
+        with:
+          mode: save
+          shared-key: "precommit"

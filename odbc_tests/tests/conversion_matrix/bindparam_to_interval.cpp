@@ -18,13 +18,11 @@ static const SqlTypeInfo INTERVAL_SQL_TYPES[] = {
 };
 // clang-format on
 
-TEST_CASE("conversion matrix: all C types -> INTERVAL SQL types via SQLBindParameter",
-          "[conversion_matrix][bindparam][interval]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "conversion matrix: all C types -> INTERVAL SQL types via SQLBindParameter",
+                 "[conversion_matrix][bindparam][interval]") {
   SKIP_UNLESS_PROGRESS_REPORT();
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE OR REPLACE TABLE cm_interval (val VARCHAR)");
+  conn.execute("CREATE TEMPORARY TABLE cm_interval (val VARCHAR)");
   ResultWriter report(get_report_path("bindparam_to_interval"));
 
   // When each C type is bound to each INTERVAL SQL type and executed

@@ -134,17 +134,29 @@ class TestProperties:
         batch.connection = None
         assert batch.connection is None
 
-    def test_rowcount_raises(self):
-        with pytest.raises(NotImplementedError):
-            _ = _make_batch().rowcount
+    def test_rowcount_defaults_to_zero(self):
+        assert _make_batch().rowcount == 0
 
-    def test_compressed_size_raises(self):
-        with pytest.raises(NotImplementedError):
-            _ = _make_batch().compressed_size
+    def test_rowcount_from_chunk(self):
+        chunk = ResultChunk(row_count=42)
+        batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
+        assert batch.rowcount == 42
 
-    def test_uncompressed_size_raises(self):
-        with pytest.raises(NotImplementedError):
-            _ = _make_batch().uncompressed_size
+    def test_compressed_size_none_when_unset(self):
+        assert _make_batch().compressed_size is None
+
+    def test_compressed_size_from_chunk(self):
+        chunk = ResultChunk(compressed_size=1024)
+        batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
+        assert batch.compressed_size == 1024
+
+    def test_uncompressed_size_none_when_unset(self):
+        assert _make_batch().uncompressed_size is None
+
+    def test_uncompressed_size_from_chunk(self):
+        chunk = ResultChunk(uncompressed_size=4096)
+        batch = ResultBatch(chunk=chunk, description=_make_description("ID"), connection=None)
+        assert batch.uncompressed_size == 4096
 
 
 # ------------------------------------------------------------------

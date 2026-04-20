@@ -14,7 +14,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_matchers.hpp"
@@ -25,11 +25,9 @@
 // ============================================================================
 
 // Byte length of data is longer than the buffer length, so the data is truncated.
-TEST_CASE("should truncate string data when byte length is longer than the buffer length",
-          "[datatype][string][conversion][char]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should truncate string data when byte length is longer than the buffer length",
+                 "[datatype][string][conversion][char]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting a long string is executed
   auto stmt = conn.execute_fetch("SELECT 'This is a very long string that will be truncated' AS long_str");
@@ -56,11 +54,10 @@ TEST_CASE("should truncate string data when byte length is longer than the buffe
   }
 }
 
-TEST_CASE("should truncate wide string data when byte length is longer than the buffer length",
-          "[datatype][string][conversion][wchar]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should truncate wide string data when byte length is longer than the buffer length",
+                 "[datatype][string][conversion][wchar]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting a long string is executed
   auto stmt = conn.execute_fetch("SELECT 'This is a very long string that will be truncated' AS long_str");
@@ -86,8 +83,8 @@ TEST_CASE("should truncate wide string data when byte length is longer than the 
 // UTF-16 TO ASCII CONVERSION
 // ============================================================================
 
-TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
-          "[datatype][string][conversion]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
+                 "[datatype][string][conversion]") {
   if (!is_ascii_locale()) {
     SKIP("This test is not applicable on non-ASCII locales");
   }
@@ -95,8 +92,6 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
   // on non-UTF-8 locales non-ASCII characters (> 0x7F) are replaced with 0x1a (SUB character),
   // on UTF-8 locales the characters are preserved as UTF-8.
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting strings with non-ASCII Unicode characters is executed
   auto stmt = conn.executew_fetch(
@@ -143,14 +138,11 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
 // BASIC STRING QUERY AND PARAMETER BINDING
 // ============================================================================
 
-TEST_CASE("Test string basic query", "[e2e][types][string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Test string basic query", "[e2e][types][string]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A string value is inserted and selected via SQL_C_CHAR
-  conn.execute("DROP TABLE IF EXISTS test_string_basic");
-  conn.execute("CREATE TABLE test_string_basic (str_col VARCHAR(1000))");
+  conn.execute("CREATE TEMPORARY TABLE test_string_basic (str_col VARCHAR(1000))");
   conn.execute("INSERT INTO test_string_basic (str_col) VALUES ('Hello World')");
   auto stmt = conn.createStatement();
 
@@ -170,14 +162,11 @@ TEST_CASE("Test string basic query", "[e2e][types][string]") {
   REQUIRE(std::string(buffer, indicator) == "Hello World");
 }
 
-TEST_CASE("Test basic string binding", "[e2e][types][string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "Test basic string binding", "[e2e][types][string]") {
   // Given A Snowflake connection
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When A string value is inserted via parameter binding and selected
-  conn.execute("DROP TABLE IF EXISTS test_string_basic_binding");
-  conn.execute("CREATE TABLE test_string_basic_binding (str_col VARCHAR(1000))");
+  conn.execute("CREATE TEMPORARY TABLE test_string_basic_binding (str_col VARCHAR(1000))");
   auto stmt = conn.createStatement();
 
   SQLRETURN ret =

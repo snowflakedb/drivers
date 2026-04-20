@@ -4,16 +4,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR and read back", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG to SQL_VARCHAR and read back",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_SLONG 42 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -31,11 +30,10 @@ TEST_CASE("should bind SQL_C_SLONG to SQL_VARCHAR and read back", "[c_integer][c
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "42");
 }
 
-TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR and read back", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SBIGINT to SQL_VARCHAR and read back",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_SBIGINT 9999999999 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -53,11 +51,10 @@ TEST_CASE("should bind SQL_C_SBIGINT to SQL_VARCHAR and read back", "[c_integer]
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "9999999999");
 }
 
-TEST_CASE("should bind SQL_C_SSHORT to SQL_VARCHAR and read back", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SSHORT to SQL_VARCHAR and read back",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_SSHORT -32768 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -75,11 +72,10 @@ TEST_CASE("should bind SQL_C_SSHORT to SQL_VARCHAR and read back", "[c_integer][
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-32768");
 }
 
-TEST_CASE("should bind SQL_C_UTINYINT to SQL_VARCHAR and read back", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UTINYINT to SQL_VARCHAR and read back",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_UTINYINT 255 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -97,11 +93,10 @@ TEST_CASE("should bind SQL_C_UTINYINT to SQL_VARCHAR and read back", "[c_integer
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "255");
 }
 
-TEST_CASE("should bind SQL_C_ULONG to SQL_VARCHAR and read back", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_ULONG to SQL_VARCHAR and read back",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_ULONG 4000000000 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -119,11 +114,10 @@ TEST_CASE("should bind SQL_C_ULONG to SQL_VARCHAR and read back", "[c_integer][c
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "4000000000");
 }
 
-TEST_CASE("should bind SQL_C_STINYINT negative to SQL_VARCHAR", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_STINYINT negative to SQL_VARCHAR",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_STINYINT -128 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -141,11 +135,10 @@ TEST_CASE("should bind SQL_C_STINYINT negative to SQL_VARCHAR", "[c_integer][con
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "-128");
 }
 
-TEST_CASE("should bind SQL_C_USHORT to SQL_VARCHAR and read back", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_USHORT to SQL_VARCHAR and read back",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_USHORT 65535 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -163,11 +156,10 @@ TEST_CASE("should bind SQL_C_USHORT to SQL_VARCHAR and read back", "[c_integer][
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "65535");
 }
 
-TEST_CASE("should bind SQL_C_UBIGINT max to SQL_VARCHAR", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_UBIGINT max to SQL_VARCHAR",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_UBIGINT max is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -185,11 +177,10 @@ TEST_CASE("should bind SQL_C_UBIGINT max to SQL_VARCHAR", "[c_integer][conversio
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == std::to_string(std::numeric_limits<SQLUBIGINT>::max()));
 }
 
-TEST_CASE("should bind SQL_C_SLONG zero to SQL_VARCHAR", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG zero to SQL_VARCHAR",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_SLONG 0 is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -207,11 +198,10 @@ TEST_CASE("should bind SQL_C_SLONG zero to SQL_VARCHAR", "[c_integer][conversion
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "0");
 }
 
-TEST_CASE("should bind SQL_C_SLONG with NULL indicator to SQL_VARCHAR", "[c_integer][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_SLONG with NULL indicator to SQL_VARCHAR",
+                 "[c_integer][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(100))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(100))");
 
   // When SQL_C_SLONG is bound with SQL_NULL_DATA to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();

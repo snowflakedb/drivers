@@ -1,4 +1,5 @@
-use sf_core::config::logout::ErrorStrategy;
+use proto_utils::ProtoError;
+use sf_core::config::param_names;
 use sf_core::protobuf::apis::database_driver_v1::{
     DatabaseDriverClient, DatabaseDriverClientBlockingExt, database_driver_client,
 };
@@ -259,30 +260,34 @@ impl SnowflakeTestClient {
         response.result.unwrap()
     }
 
-    /// Execute a query, returning the typed proto error on failure instead of
-    /// erasing it to `String`. This lets callers match on `DriverException`
-    /// fields (error code, message) rather than parsing Debug output.
-    #[allow(clippy::result_large_err)]
-    pub fn execute_query_no_unwrap(
-        &self,
-        sql: &str,
-    ) -> Result<ExecuteResult, proto_utils::ProtoError<DriverException>> {
+    pub fn execute_query_no_unwrap(&self, sql: &str) -> Result<ExecuteResult, String> {
         let stmt_handle = self.new_statement();
 
-        self.client
+        if let Err(e) = self
+            .client
             .statement_set_sql_query_blocking(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt_handle),
                 query: sql.to_string(),
-            })?;
+            })
+        {
+            return Err(format!("Failed to set SQL query: {e:?}"));
+        }
 
-        let response =
-            self.client
-                .statement_execute_query_blocking(StatementExecuteQueryRequest {
-                    stmt_handle: Some(stmt_handle),
-                    bindings: None,
-                })?;
-
-        Ok(response.result.unwrap())
+        match self
+            .client
+            .statement_execute_query_blocking(StatementExecuteQueryRequest {
+                stmt_handle: Some(stmt_handle),
+                bindings: None,
+            }) {
+            Ok(response) => {
+                let proto_result = response.result.unwrap();
+                Ok(proto_result)
+            }
+            Err(e) => match e.as_ref() {
+                ProtoError::Application(e) => Err(format!("Failed to execute query: {e:?}")),
+                ProtoError::Transport(e) => Err(format!("Transport error: {e:?}")),
+            },
+        }
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
@@ -302,103 +307,43 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_connection_option(&self, option_name: &str, option_value: &str) {
-        self.client
-            .connection_set_option_string_blocking(ConnectionSetOptionStringRequest {
-                conn_handle: Some(self.conn_handle),
-                key: option_name.to_string(),
-                value: option_value.to_string(),
-            })
-            .unwrap();
+        self.set_connection_config_setting(option_name, option_value.to_string().into());
     }
 
     pub fn set_connection_option_int(&self, option_name: &str, option_value: i64) {
-        self.client
-            .connection_set_option_int_blocking(ConnectionSetOptionIntRequest {
-                conn_handle: Some(self.conn_handle),
-                key: option_name.to_string(),
-                value: option_value,
-            })
-            .unwrap();
-    }
-
-    pub fn set_connection_option_bool(&self, option_name: &str, option_value: bool) {
-        self.client
-            .connection_set_option_bool_blocking(ConnectionSetOptionBoolRequest {
-                conn_handle: Some(self.conn_handle),
-                key: option_name.to_string(),
-                value: option_value,
-            })
-            .unwrap();
+        self.set_connection_config_setting(option_name, option_value.into());
     }
 
     pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
         self.client
-            .connection_set_option_bytes_blocking(ConnectionSetOptionBytesRequest {
+            .connection_set_options_blocking(ConnectionSetOptionsRequest {
                 conn_handle: Some(self.conn_handle),
-                key: option_name.to_string(),
-                value: option_value.to_vec(),
+                options: [(option_name.to_string(), option_value.to_vec().into())]
+                    .into_iter()
+                    .collect(),
             })
             .unwrap();
     }
 
-    pub fn set_logout_error_strategy(&self, strategy: ErrorStrategy) {
-        self.set_connection_option("logout_error_strategy", strategy.as_str());
-    }
-
-    /// Initialize this connection (call after configuring options, before queries).
-    #[allow(clippy::result_large_err)]
-    pub fn connection_init_blocking(
-        &self,
-    ) -> Result<ConnectionInitResponse, proto_utils::ProtoError<DriverException>> {
-        self.client.connection_init_blocking(ConnectionInitRequest {
-            conn_handle: Some(self.conn_handle),
-            db_handle: Some(self.db_handle),
-        })
-    }
-
-    /// Close this connection and optionally send logout request.
-    #[allow(clippy::result_large_err)]
-    pub fn connection_close_blocking(
-        &self,
-    ) -> Result<ConnectionCloseResponse, proto_utils::ProtoError<DriverException>> {
-        self.client
-            .connection_close_blocking(ConnectionCloseRequest {
-                conn_handle: Some(self.conn_handle),
-            })
-    }
-
-    /// Check whether this connection has been closed.
-    #[allow(clippy::result_large_err)]
-    pub fn connection_is_closed_blocking(
-        &self,
-    ) -> Result<bool, proto_utils::ProtoError<DriverException>> {
-        self.client
-            .connection_is_closed_blocking(ConnectionIsClosedRequest {
-                conn_handle: Some(self.conn_handle),
-            })
-            .map(|r| r.is_closed)
-    }
-
-    /// Get connection info (tokens, host, etc.) for inspection after close.
-    #[allow(clippy::result_large_err)]
-    pub fn connection_get_info_blocking(
-        &self,
-        include_master_token: bool,
-    ) -> Result<ConnectionGetInfoResponse, proto_utils::ProtoError<DriverException>> {
-        self.client
-            .connection_get_info_blocking(ConnectionGetInfoRequest {
-                conn_handle: Some(self.conn_handle),
-                include_master_token,
-                ..Default::default()
-            })
-    }
-
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
         self.client
-            .statement_set_option_bool_blocking(StatementSetOptionBoolRequest {
+            .statement_set_options_blocking(StatementSetOptionsRequest {
                 stmt_handle: Some(*stmt),
-                key: "async_execution".to_string(),
-                value: enabled,
+                options: [(
+                    param_names::ASYNC_EXECUTION.as_str().to_string(),
+                    ConfigSetting::from(enabled),
+                )]
+                .into_iter()
+                .collect(),
+            })
+            .unwrap();
+    }
+
+    fn set_connection_config_setting(&self, key: &str, setting: ConfigSetting) {
+        self.client
+            .connection_set_options_blocking(ConnectionSetOptionsRequest {
+                conn_handle: Some(self.conn_handle),
+                options: [(key.to_string(), setting)].into_iter().collect(),
             })
             .unwrap();
     }

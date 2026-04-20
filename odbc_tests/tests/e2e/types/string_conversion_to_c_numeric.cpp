@@ -11,7 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 
@@ -27,10 +27,9 @@ static long long numeric_val_to_int(const SQL_NUMERIC_STRUCT& num) {
 
 static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>((unsigned char)c); }
 
-TEST_CASE("should convert string literals to SQL_C_NUMERIC", "[datatype][string][conversion][numeric]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to SQL_C_NUMERIC",
+                 "[datatype][string][conversion][numeric]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting various numeric string formats is executed
   auto stmt = conn.execute_fetch(

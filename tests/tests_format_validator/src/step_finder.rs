@@ -75,9 +75,9 @@ impl LanguageConfig {
 
     fn odbc() -> Self {
         Self {
-            test_annotation: "TEST_CASE(", // Catch2 style
+            test_annotation: "TEST_CASE(", // Catch2 style (also matches TEST_CASE_METHOD)
             method_pattern: |method_name| {
-                format!(r#"TEST_CASE\s*\(\s*"{}""#, regex::escape(method_name))
+                format!(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"{}""#, regex::escape(method_name))
             },
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for C++
@@ -125,7 +125,7 @@ impl MethodBoundaryFinder {
 
         // Pre-compile regexes outside the loop
         let test_method_regex = Regex::new(r"def\s+(test_\w+)\s*\(")?;
-        let catch2_regex = Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)""#)?;
+        let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
         // Rust: support optional async before fn
         let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
         // Match Java method declarations (not annotation lines like @MethodSource(...))
@@ -147,11 +147,26 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "TEST_CASE(" => {
-                    // C++ Catch2: TEST_CASE("method_name")
-                    if trimmed.starts_with("TEST_CASE(") {
+                    // C++ Catch2: TEST_CASE("method_name") or TEST_CASE_METHOD(Fixture, "method_name")
+                    // Declarations may span multiple lines.
+                    if trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(") {
                         if let Some(captures) = catch2_regex.captures(trimmed) {
                             let method_name = captures[1].to_string();
-                            methods.push((method_name, i + 1)); // +1 for 1-indexed line numbers
+                            methods.push((method_name, i + 1));
+                        } else {
+                            let mut combined = trimmed.to_string();
+                            for j in (i + 1)..lines.len().min(i + 5) {
+                                combined.push(' ');
+                                combined.push_str(lines[j].trim());
+                                if let Some(captures) = catch2_regex.captures(&combined) {
+                                    let method_name = captures[1].to_string();
+                                    methods.push((method_name, i + 1));
+                                    break;
+                                }
+                                if combined.contains('{') {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -258,17 +273,33 @@ impl MethodBoundaryFinder {
                 || (self.config.test_annotation.contains("pytest")
                     && trimmed.starts_with("@pytest"))
                 || (self.config.test_annotation == "TEST_CASE("
-                    && trimmed.starts_with("TEST_CASE("))
+                    && (trimmed.starts_with("TEST_CASE(") || trimmed.starts_with("TEST_CASE_METHOD(")))
                 || (self.config.test_annotation == "#[test]"
                     && rust_test_attr_regex.is_match(trimmed))
             {
                 // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
+                // (or on a continuation line for multi-line declarations)
                 if self.config.test_annotation == "TEST_CASE(" {
                     let pattern = (self.config.method_pattern)(method_name);
                     let method_regex = Regex::new(&pattern)?;
                     if method_regex.is_match(trimmed) {
                         method_start_line = Some(i);
+                        break;
+                    }
+                    let mut combined = trimmed.to_string();
+                    for j in (i + 1)..lines.len().min(i + 5) {
+                        combined.push(' ');
+                        combined.push_str(lines[j].trim());
+                        if method_regex.is_match(&combined) {
+                            method_start_line = Some(i);
+                            break;
+                        }
+                        if combined.contains('{') {
+                            break;
+                        }
+                    }
+                    if method_start_line.is_some() {
                         break;
                     }
                 } else {
@@ -729,12 +760,35 @@ impl StepFinder {
                     comment_prefix,
                 )?;
             }
-            let empty_steps = boundary_finder.find_empty_steps_from_boundaries_generic(
+            let mut empty_steps = boundary_finder.find_empty_steps_from_boundaries_generic(
                 &content,
                 start_idx,
                 end_idx,
                 comment_prefix,
             )?;
+
+            // When a Catch2 TEST_CASE_METHOD fixture is used, the "Given" step that
+            // establishes a connection is handled by the fixture constructor — allow
+            // it to be empty.  Recognized phrasings (case-insensitive):
+            //   - "Given Snowflake client is logged in"
+            //   - "Given A Snowflake connection is established"
+            //   - "Given A Snowflake connection"
+            // New fixture-based tests should reuse one of these; add new variants
+            // here if a different phrasing becomes necessary.
+            if !empty_steps.is_empty() {
+                let lines: Vec<&str> = content.lines().collect();
+                let uses_fixture = (start_idx..end_idx.min(lines.len()))
+                    .any(|i| lines[i].trim().starts_with("TEST_CASE_METHOD("));
+                if uses_fixture {
+                    empty_steps.retain(|step| {
+                        let s = step.to_lowercase();
+                        !(s.starts_with("given") && (s.contains("logged in")
+                            || s.contains("connection is established")
+                            || s.contains("snowflake connection")))
+                    });
+                }
+            }
+
             Ok((steps, empty_steps))
         } else {
             Ok((vec![], vec![]))

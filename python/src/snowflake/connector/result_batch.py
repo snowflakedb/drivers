@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from enum import Enum, unique
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ._internal.arrow_stream_utils import (
     collect_arrow_table,
@@ -90,6 +90,10 @@ class ResultBatch:
         self._chunk = chunk
         self._description = description
         self._connection = connection
+        # Populated by :meth:`populate_data`; consumed (reset to ``None``) by
+        # :meth:`_take_arrow_stream_ptr` because an Arrow stream can only be
+        # read once.
+        self._arrow_stream_ptr: int | None = None
 
     @classmethod
     def from_chunks(
@@ -109,15 +113,19 @@ class ResultBatch:
 
     @property
     def rowcount(self) -> int:
-        raise NotImplementedError("Per-batch rowcount is not yet available.")
+        return self._chunk.row_count
 
     @property
     def compressed_size(self) -> int | None:
-        raise NotImplementedError("Per-batch compressed_size is not yet available.")
+        if self._chunk.HasField("compressed_size"):
+            return self._chunk.compressed_size
+        return None
 
     @property
     def uncompressed_size(self) -> int | None:
-        raise NotImplementedError("Per-batch uncompressed_size is not yet available.")
+        if self._chunk.HasField("uncompressed_size"):
+            return self._chunk.uncompressed_size
+        return None
 
     @property
     def column_names(self) -> list[str]:
@@ -148,6 +156,32 @@ class ResultBatch:
         )
         response = connection.db_api.database_fetch_chunk(request)
         return get_stream_ptr(response)
+
+    def _take_arrow_stream_ptr(self, connection: Connection) -> int:
+        """Return the Arrow stream pointer, fetching first if necessary.
+
+        If :meth:`populate_data` was called beforehand the cached pointer is
+        returned; otherwise a fresh fetch is performed.  The cached pointer is
+        always cleared after this call because an Arrow stream can only be
+        consumed once.
+        """
+        if self._arrow_stream_ptr is None:
+            self.populate_data(connection=connection)
+        stream_ptr = cast(int, self._arrow_stream_ptr)
+        self._arrow_stream_ptr = None
+        return stream_ptr
+
+    @backward_compatibility
+    def populate_data(self, connection: Connection | None = None, **kwargs: Any) -> ResultBatch:
+        """Pre-fetch this batch's data and store it for later consumption.
+
+        After calling this method, the next call to :meth:`create_iter`,
+        :meth:`to_arrow`, or :meth:`to_pandas` will use the pre-fetched data
+        instead of issuing a new fetch request.
+        """
+        conn = self._resolve_connection(connection)
+        self._arrow_stream_ptr = self._fetch_arrow_stream_ptr(conn)
+        return self
 
     def __iter__(self) -> Iterator[tuple | dict | Exception]:
         return self.create_iter()
@@ -205,7 +239,7 @@ class ResultBatch:
                 ]
             )
 
-        stream_ptr = self._fetch_arrow_stream_ptr(conn)
+        stream_ptr = self._take_arrow_stream_ptr(conn)
         return create_row_iterator(stream_ptr, use_dict_result=use_dict_result)
 
     @requires_dependency(pyarrow)
@@ -216,7 +250,7 @@ class ResultBatch:
         force_microsecond_precision: bool = False,
     ) -> Table:
         conn = self._resolve_connection(connection)
-        stream_ptr = self._fetch_arrow_stream_ptr(conn)
+        stream_ptr = self._take_arrow_stream_ptr(conn)
         return collect_arrow_table(
             create_table_iterator(
                 stream_ptr,
@@ -255,6 +289,7 @@ class ResultBatch:
         self._chunk = chunk
         self._description = state["description"]
         self._connection = None
+        self._arrow_stream_ptr = None
 
 
 @backward_compatibility

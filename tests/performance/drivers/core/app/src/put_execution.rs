@@ -2,6 +2,7 @@
 
 type Result<T> = std::result::Result<T, String>;
 use regex::Regex;
+use sf_core::protobuf::apis::database_driver_v1::DatabaseDriverClientBlockingExt;
 use sf_core::protobuf::generated::database_driver_v1::*;
 use std::fs;
 use std::path::Path;
@@ -122,14 +123,12 @@ fn execute_put_get_iteration(
 
     let cpu_before = process_cpu_seconds();
     let start_query = Instant::now();
-    rt.block_on(async |c| {
-        c.statement_execute_query(StatementExecuteQueryRequest {
+    rt.client()
+        .statement_execute_query_blocking(StatementExecuteQueryRequest {
             stmt_handle: Some(stmt_handle),
             bindings: None,
         })
-        .await
-    })
-    .map_err(|e| format!("PUT/GET execution failed: {e:?}"))?;
+        .map_err(|e| format!("PUT/GET execution failed: {e:?}"))?;
     let query_time = start_query.elapsed().as_secs_f64();
     let cpu_time_s = process_cpu_seconds() - cpu_before;
     let peak_rss_mb = get_peak_rss_mb();

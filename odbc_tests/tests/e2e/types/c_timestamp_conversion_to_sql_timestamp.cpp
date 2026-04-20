@@ -1,18 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIMESTAMP and read back",
-          "[c_timestamp][conversion][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIMESTAMP and read back",
+                 "[c_timestamp][conversion][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
-  conn.execute("CREATE TABLE t (col TIMESTAMP_NTZ)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When SQL_C_TYPE_TIMESTAMP 2026-04-13 14:30:45 is bound and inserted
   auto stmt = conn.createStatement();
@@ -44,12 +42,10 @@ TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP to SQL_TYPE_TIMESTAMP and read back"
   CHECK(result.second == 45);
 }
 
-TEST_CASE("should bind SQL_C_TYPE_TIMESTAMP with NULL indicator to SQL_TYPE_TIMESTAMP",
-          "[c_timestamp][conversion][sql_timestamp]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_TYPE_TIMESTAMP with NULL indicator to SQL_TYPE_TIMESTAMP",
+                 "[c_timestamp][conversion][sql_timestamp]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIMESTAMP_NTZ)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIMESTAMP_NTZ)");
 
   // When SQL_C_TYPE_TIMESTAMP is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();

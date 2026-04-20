@@ -591,7 +591,7 @@ impl GherkinValidator {
                 }
             }
             Language::Odbc => {
-                let catch2_regex = Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)""#)?;
+                let catch2_regex = Regex::new(r#"TEST_CASE(?:_METHOD)?\s*\(\s*(?:\w+\s*,\s*)?"([^"]+)""#)?;
                 for captures in catch2_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }

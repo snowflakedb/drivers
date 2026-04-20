@@ -4,6 +4,7 @@ use std::fs;
 use url::Url;
 
 use crate::config::InvalidParameterValueSnafu;
+use crate::config::param_registry::param_names;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, ConflictingParametersSnafu, MissingParameterSnafu};
@@ -37,10 +38,22 @@ fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
     Ok(base_url)
 }
 
+pub const DEFAULT_LOG_MAX_QUERY_LENGTH: usize = 80;
+
+/// Read `log_max_query_length` from a settings bag, clamp to non-negative,
+/// and fall back to [`DEFAULT_LOG_MAX_QUERY_LENGTH`] when absent.
+pub fn resolve_log_max_query_length(settings: &dyn Settings) -> usize {
+    settings
+        .get_int(param_names::LOG_MAX_QUERY_LENGTH.as_str())
+        .map(|v| v.max(0) as usize)
+        .unwrap_or(DEFAULT_LOG_MAX_QUERY_LENGTH)
+}
+
 #[derive(Clone)]
 pub struct QueryParameters {
     pub server_url: String,
     pub client_info: ClientInfo,
+    pub log_max_query_length: usize,
 }
 
 impl QueryParameters {
@@ -52,6 +65,7 @@ impl QueryParameters {
         Ok(Self {
             server_url: get_server_url(settings)?,
             client_info: ClientInfo::from_settings(settings)?,
+            log_max_query_length: resolve_log_max_query_length(settings),
         })
     }
 }

@@ -83,6 +83,7 @@ pub mod param_names {
     pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
     pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
     pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
+    pub const LOG_MAX_QUERY_LENGTH: ParamKey = ParamKey("log_max_query_length");
 }
 
 /// Which API layer owns writes for a parameter.
@@ -655,6 +656,20 @@ static PARAM_DEFS: &[ParamDef] = &[
         used_at_connect: false,
         mutable_after_connect: false,
     },
+    ParamDef {
+        canonical_name: param_names::LOG_MAX_QUERY_LENGTH.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        additional_value_type: None,
+        required: Required::Never,
+        default: Some(|| Setting::Int(80)),
+        sensitive: false,
+        description: "Maximum number of characters of a query string to include in log messages",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
+    },
     // ── Statement ──────────────────────────────────────────────────────
     ParamDef {
         canonical_name: param_names::ASYNC_EXECUTION.as_str(),
@@ -861,6 +876,20 @@ mod tests {
         assert!(r.is_known("SERVER"));
         assert!(r.is_known("host"));
         assert!(!r.is_known("unknown_key"));
+    }
+
+    #[test]
+    fn log_max_query_length_has_correct_defaults() {
+        let r = registry();
+        let def = r
+            .resolve("log_max_query_length")
+            .expect("log_max_query_length should be registered");
+        assert_eq!(def.canonical_name, "log_max_query_length");
+        assert_eq!(def.value_type, ValueType::Int);
+        assert_eq!(def.scope, ParamScope::Connection);
+        assert!(!def.used_at_connect);
+        assert!(!def.mutable_after_connect);
+        assert_eq!(def.default.unwrap()(), Setting::Int(80));
     }
 
     #[test]

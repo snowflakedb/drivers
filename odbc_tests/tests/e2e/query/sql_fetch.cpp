@@ -5,7 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -984,14 +984,13 @@ TEST_CASE("SQLFetch returns 22018 when invalid date string is bound to SQL_C_TYP
   REQUIRE(ret == SQL_ERROR);
   CHECK(get_sqlstate(stmt) == "22018");
 }
-TEST_CASE("SQLFetch returns 24000 when no result set exists.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLFetch returns 24000 when no result set exists.", "[query]") {
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto schema = Schema::use_random_schema(conn);
 
   // When a non-SELECT statement is executed (no result set)
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TABLE test_table (id INT)", SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"CREATE TEMPORARY TABLE fetch_no_resultset_t (id INT)", SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // Then SQLFetch should return SQL_ERROR with SQLSTATE 24000 (Invalid cursor state)
@@ -1368,18 +1367,17 @@ TEST_CASE("SQLFetchScroll returns HY010 when called without executing statement.
   REQUIRE_THAT(OdbcResult(ret, stmt), OdbcMatchers::IsError() && OdbcMatchers::HasSqlState("HY010"));
 }
 
-TEST_CASE("SQLFetchScroll returns 24000 when no result set exists after DDL.", "[query]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "SQLFetchScroll returns 24000 when no result set exists after DDL.", "[query]") {
   // Doc: "24000 - Invalid cursor state: The StatementHandle was in an executed state
   //       but no result set was associated with the StatementHandle."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlfetchscroll-function#diagnostics
 
   // Given Snowflake client is logged in
-  Connection conn;
   auto stmt = conn.createStatement();
-  auto schema = Schema::use_random_schema(conn);
 
   // When a DDL statement is executed (no result set)
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("CREATE TABLE fetch_scroll_test (id INT)"), SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt.getHandle(), sqlchar("CREATE TEMPORARY TABLE fetch_scroll_test (id INT)"), SQL_NTS);
   REQUIRE_ODBC(ret, stmt);
 
   // And SQLFetchScroll is called on the statement with no result set

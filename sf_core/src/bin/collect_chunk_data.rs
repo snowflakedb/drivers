@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use sf_core::chunks::get_chunk_data;
-use sf_core::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters, QueryParameters};
+use sf_core::config::rest_parameters::{
+    ClientInfo, DEFAULT_LOG_MAX_QUERY_LENGTH, LoginMethod, LoginParameters, QueryParameters,
+};
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::query_response::Data;
 use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_login, snowflake_query};
@@ -352,6 +354,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let query_params = QueryParameters {
         server_url,
         client_info,
+        log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
     };
     let session_token = login_result.tokens.session_token.reveal().to_string();
 
