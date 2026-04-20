@@ -8,8 +8,9 @@ on:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
+  # Using github.run_id (not github.ref) for the fallback so back-to-back main pushes don't cancel each other.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -64,9 +65,11 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Build Rust components
-        run: |
-          cargo build --package sf_core
-          cargo build --package jdbc_bridge
+        # jdbc_bridge depends on sf_core (as an rlib, statically linked into libjdbc_bridge.so),
+        # so a single `cargo build --package jdbc_bridge` transitively builds sf_core.
+        # No runtime consumer needs libsf_core.so directly — only libjdbc_bridge.so is loaded by
+        # the JDBC tests via CORE_PATH below.
+        run: cargo build --package jdbc_bridge
 
       - name: Make gradlew executable
         run: chmod +x jdbc/gradlew
@@ -82,6 +85,26 @@ jobs:
           # In merge queue, retry each failing test up to 2 times (via Gradle Test Retry Plugin)
           GRADLE_TEST_RETRY_COUNT: ${{ github.event_name == 'merge_group' && '2' || '' }}
 
+      - name: Upload NEW driver test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-tests-artifacts
+          path: |
+            jdbc/build/test-results/test/**/*.xml
+            jdbc/build/jacoco/test.exec
+            jdbc/build/reports/jacoco/test/**
+          if-no-files-found: error
+
+      - name: Print NEW driver overall coverage
+        if: always()
+        run: |
+          python3 jdbc/ci/reference_tests/extract_coverage.py \
+            --report jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
+            --label "NEW JDBC" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --allow-missing
+
       - name: Save Rust cache
         if: always()
         uses: ./.github/actions/cargo-cache
@@ -90,7 +113,7 @@ jobs:
           shared-key: "jdbc"
 
       - name: Save Gradle cache
-        if: always()
+        if: always() && steps.gradle-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: |
@@ -162,7 +185,7 @@ jobs:
             --allow-missing
 
       - name: Save Gradle cache
-        if: always()
+        if: always() && steps.gradle-cache-ref.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: |

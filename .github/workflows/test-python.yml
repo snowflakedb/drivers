@@ -556,6 +556,16 @@ jobs:
           name: results-universal-${{ env.MATRIX_KEY }}
           path: python/reports/*-${{ env.MATRIX_KEY }}.*
 
+      # Prune unreachable entries (stale wheels, orphan metadata, old builds) before the cache
+      # save. Typically trims 30-50% of the cache, which directly reduces the post-job save time
+      # — particularly noticeable on Windows where tar/compression of many small files is slow.
+      # Python interpreters live in a separate uv "data" dir, not UV_CACHE_DIR, so pruning does
+      # not affect interpreter caching.
+      - name: Prune uv cache
+        if: always()
+        shell: bash
+        run: uv cache prune --ci
+
       - name: Save uv cache (Linux)
         if: always() && runner.os == 'Linux'
         uses: actions/cache/save@v5

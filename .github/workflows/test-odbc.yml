@@ -412,22 +412,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-vcpkg-
 
+      # Cache Homebrew bottle downloads to avoid re-fetching unixodbc/ccache on every run
+      # (brew install on GHA macOS runners is ~2-3 min uncached, <15s with bottles cached).
+      # Fixed key is fine — bottles are versioned inside, and Homebrew auto-resolves updates.
+      - name: Restore Homebrew cache (macOS)
+        if: runner.os == 'macOS'
+        id: brew-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: macos-brew-odbc-tests-v1
+          restore-keys: |
+            macos-brew-odbc-tests-
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache
-          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
-          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
-          sudo rm cmake-4.0.3-linux-x86_64.sh
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev ccache ninja-build
+          # odbc_tests/CMakeLists.txt requires CMake >= 4.0; ubuntu-latest ships ~3.30.
+          # pip wheel is an official Kitware artifact and installs in ~15s (vs ~60s for the .sh installer).
+          pip install 'cmake>=4.0.3'
           cmake --version
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
+        env:
+          # Skip Homebrew's self-update (~30-60s on every invocation) — we don't need bleeding-edge
+          # formulae, just a working unixodbc/ccache/ninja.
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: |
           set -euxo pipefail
-          brew install unixodbc cmake ccache
+          # cmake via pip (official Kitware wheel) — faster than brew and keeps Linux/macOS install symmetric.
+          pip install 'cmake>=4.0.3'
+          # Only packages without pip wheels stay on brew. `ninja` is pre-installed on macos-latest,
+          # but listing it here is cheap (no-op if present) and self-documenting.
+          brew install unixodbc ccache ninja
           cmake --version
           echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
@@ -556,6 +578,13 @@ jobs:
         with:
           path: .vcpkg-binary-cache
           key: ${{ runner.os }}-vcpkg-zlib-v1
+
+      - name: Save Homebrew cache (macOS)
+        if: always() && runner.os == 'macOS' && steps.brew-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: macos-brew-odbc-tests-v1
 
   build_rpm:
     # RPM packaging is independent: it builds the driver from scratch in its own Docker image
