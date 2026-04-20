@@ -236,12 +236,12 @@ fn format_timestamp_string_into<'a>(dt: &NaiveDateTime, buf: &'a mut [u8; 48]) -
     let nanos = dt.nanosecond();
     let len = {
         let mut cur = Cursor::new(&mut buf[..]);
-        // 48 bytes is comfortably larger than the widest output chrono produces
-        // today (~32 bytes including a signed 6-digit year). The debug_assert
-        // pair guards against a future chrono release widening the format,
+        // 48 bytes is comfortably larger than the widest output chrono
+        // produces (~32 bytes including a signed 6-digit year). The .expect()
+        // calls guard against a future chrono release widening the format,
         // which would otherwise be silently truncated by `write!` returning
         // `Err` and the unsafe `from_utf8_unchecked` below.
-        let date_res = write!(
+        write!(
             cur,
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             dt.year(),
@@ -250,11 +250,10 @@ fn format_timestamp_string_into<'a>(dt: &NaiveDateTime, buf: &'a mut [u8; 48]) -
             dt.hour(),
             dt.minute(),
             dt.second()
-        );
-        debug_assert!(date_res.is_ok(), "timestamp buf too small for date+time");
+        )
+        .expect("timestamp buf too small for date+time");
         if nanos != 0 {
-            let frac_res = write!(cur, ".{nanos:09}");
-            debug_assert!(frac_res.is_ok(), "timestamp buf too small for fraction");
+            write!(cur, ".{nanos:09}").expect("timestamp buf too small for fraction");
         }
         cur.position() as usize
     };

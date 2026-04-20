@@ -152,14 +152,11 @@ const POW10_U128: [u128; (MAX_DECIMAL_SCALE + 1) as usize] = {
 };
 
 /// Fetch `10^scale` as `i128` from the precomputed table, returning an
-/// `SQLSTATE 22003` error instead of panicking for `scale > 38`.
+/// `SQLSTATE 22003` error for `scale > MAX_DECIMAL_SCALE`.
 ///
-/// The previous `10i128.pow(scale)` implementation would panic in debug
-/// builds and silently overflow in release for `scale > 38`; this helper
-/// normalizes both to a typed conversion error. In practice Snowflake
-/// DECIMAL scale is always in `0..=38` (the maximum precision is 38, and
-/// `0 ≤ scale ≤ precision`), so the error branch is not expected on
-/// well-formed server output.
+/// In practice Snowflake DECIMAL scale is always in `0..=38` (max precision
+/// is 38 and `0 ≤ scale ≤ precision`), so the error branch is not expected
+/// on well-formed server output.
 fn pow10_i128(scale: u32) -> Result<i128, WriteOdbcError> {
     POW10_I128.get(scale as usize).copied().ok_or_else(|| {
         NumericValueOutOfRangeSnafu {
@@ -189,14 +186,20 @@ impl SnowflakeNumber {
     /// Format a scaled `i128` as a decimal string into `buf` without any heap
     /// allocation, returning the filled slice as `&str`.
     ///
-    /// `buf` must be large enough for the widest possible output:
-    /// optional `-`, up to 39 digits of whole part, a `.`, and up to 38
-    /// fractional digits. 48 bytes is sufficient.
+    /// `buf` must be large enough for the widest possible output: optional
+    /// `-`, up to 39 digits of whole part, a `.`, and up to `MAX_DECIMAL_SCALE`
+    /// fractional digits. 48 bytes is sufficient. `scale` is asserted to be in
+    /// `0..=MAX_DECIMAL_SCALE`.
     ///
-    /// The output is byte-identical to the previous
-    /// `format!`/`String::insert`-based implementation, including the shape
-    /// `"0.000...digits"` when `scale > digits`.
+    /// Output shape:
+    /// - `scale == 0`              → `[-]<digits>`
+    /// - `digits.len() > scale`    → `[-]<int>.<frac>`
+    /// - `digits.len() <= scale`   → `[-]0.<zero-pad><digits>`
     fn format_decimal_into(value: i128, scale: u32, buf: &mut [u8; 48]) -> &str {
+        assert!(
+            scale <= MAX_DECIMAL_SCALE,
+            "format_decimal_into: scale={scale} exceeds supported range 0..={MAX_DECIMAL_SCALE}",
+        );
         // Stage the absolute-value digits through `itoa`-equivalent formatting
         // (via the std library's `Display` for unsigned integers, which writes
         // directly into the provided buffer without heap allocation).
@@ -204,11 +207,11 @@ impl SnowflakeNumber {
         let abs_len = {
             let mut cur = std::io::Cursor::new(&mut abs_tmp[..]);
             use std::io::Write as _;
-            // 40 bytes always fits the decimal expansion of any u128
-            // (max is 39 digits). debug_assert guards against future code
-            // changes that might shrink the scratch buffer or feed a wider type.
-            let res = write!(cur, "{}", value.unsigned_abs());
-            debug_assert!(res.is_ok(), "abs_tmp[40] too small for u128 Display");
+            // 40 bytes always fits the decimal expansion of any u128 (max 39
+            // digits); the .expect() guards against the buffer being shrunk
+            // or a wider type being formatted into it.
+            write!(cur, "{}", value.unsigned_abs())
+                .expect("abs_tmp[40] too small for u128 Display");
             cur.position() as usize
         };
         let digits = &abs_tmp[..abs_len];
@@ -232,10 +235,7 @@ impl SnowflakeNumber {
             buf[len..len + scale].copy_from_slice(&digits[int_part..]);
             len += scale;
         } else {
-            // "0." + (scale - digits.len()) zero-pad + digits.
-            // Matches the original implementation which wrote a leading "0"
-            // whenever `scale >= digits.len()` (the `while s.len() <= scale`
-            // loop grew `s` until the decimal insert position was zero).
+            // "0." + (scale - digits.len()) zero-pad + digits
             buf[len] = b'0';
             len += 1;
             buf[len] = b'.';
@@ -404,16 +404,11 @@ impl WriteODBCType for SnowflakeNumber {
                 let abs_value = snowflake_value.unsigned_abs();
 
                 let scale_diff = target_scale as i32 - self.scale as i32;
-                let truncated = if scale_diff < 0 {
+                let (unscaled, truncated): (u128, bool) = if scale_diff >= 0 {
+                    (abs_value * pow10_u128(scale_diff as u32)?, false)
+                } else {
                     let divisor = pow10_u128((-scale_diff) as u32)?;
-                    abs_value % divisor != 0
-                } else {
-                    false
-                };
-                let unscaled: u128 = if scale_diff >= 0 {
-                    abs_value * pow10_u128(scale_diff as u32)?
-                } else {
-                    abs_value / pow10_u128((-scale_diff) as u32)?
+                    (abs_value / divisor, abs_value % divisor != 0)
                 };
 
                 let numeric = sql::Numeric {
@@ -628,95 +623,105 @@ impl WriteJson for SnowflakeNumber {
 mod format_decimal_into_tests {
     use super::{MAX_DECIMAL_SCALE, SnowflakeNumber};
 
-    /// Reference implementation of the previous `format_decimal` — kept
-    /// inside the test module so that we can assert byte-identical output
-    /// for the new stack-buffer implementation.
-    fn format_decimal_reference(value: i128, scale: u32) -> String {
-        if scale > 0 {
-            let mut s = value.to_string();
-            let is_negative = s.starts_with('-');
-            if is_negative {
-                s.remove(0);
-            }
-            while s.len() <= scale as usize {
-                s.insert(0, '0');
-            }
-            let decimal_pos = s.len() - scale as usize;
-            s.insert(decimal_pos, '.');
-            if is_negative {
-                s.insert(0, '-');
-            }
-            s
-        } else {
-            value.to_string()
-        }
-    }
-
-    fn assert_matches(value: i128, scale: u32) {
+    fn fmt(value: i128, scale: u32) -> String {
         let mut buf = [0u8; 48];
-        let actual = SnowflakeNumber::format_decimal_into(value, scale, &mut buf);
-        let expected = format_decimal_reference(value, scale);
-        assert_eq!(
-            actual, expected,
-            "format_decimal_into({value}, {scale}) mismatch"
-        );
+        SnowflakeNumber::format_decimal_into(value, scale, &mut buf).to_string()
     }
 
     #[test]
     fn scale_zero_integer() {
-        assert_matches(0, 0);
-        assert_matches(1, 0);
-        assert_matches(-1, 0);
-        assert_matches(123456789, 0);
-        assert_matches(-123456789, 0);
+        assert_eq!(fmt(0, 0), "0");
+        assert_eq!(fmt(1, 0), "1");
+        assert_eq!(fmt(-1, 0), "-1");
+        assert_eq!(fmt(123_456_789, 0), "123456789");
+        assert_eq!(fmt(-123_456_789, 0), "-123456789");
     }
 
     #[test]
     fn scale_greater_than_digit_count_pads_with_zeros() {
-        // Previously hit the O(n^2) insert(0) loop.
-        assert_matches(1, 30);
-        assert_matches(-1, 30);
-        assert_matches(9, 10);
-        assert_matches(-9, 10);
+        // The interesting shape is "0." + (scale - digits) zeros + digits.
+        assert_eq!(fmt(1, 30), "0.000000000000000000000000000001");
+        assert_eq!(fmt(-1, 30), "-0.000000000000000000000000000001");
+        assert_eq!(fmt(9, 10), "0.0000000009");
+        assert_eq!(fmt(-9, 10), "-0.0000000009");
+    }
+
+    #[test]
+    fn scale_equal_to_digit_count_uses_leading_zero() {
+        // boundary between the two branches: digits.len() == scale
+        assert_eq!(fmt(5, 1), "0.5");
+        assert_eq!(fmt(-5, 1), "-0.5");
+        assert_eq!(fmt(123, 3), "0.123");
+        assert_eq!(fmt(-123, 3), "-0.123");
     }
 
     #[test]
     fn scale_within_digit_count() {
-        assert_matches(12345, 2);
-        assert_matches(-12345, 2);
-        assert_matches(100, 3);
-        assert_matches(-100, 3);
+        assert_eq!(fmt(12345, 2), "123.45");
+        assert_eq!(fmt(-12345, 2), "-123.45");
+        assert_eq!(fmt(100, 3), "0.100");
+        assert_eq!(fmt(-100, 3), "-0.100");
     }
 
     #[test]
     fn value_zero_at_various_scales() {
-        for scale in 0..=MAX_DECIMAL_SCALE {
-            assert_matches(0, scale);
-        }
+        assert_eq!(fmt(0, 0), "0");
+        assert_eq!(fmt(0, 1), "0.0");
+        assert_eq!(fmt(0, 6), "0.000000");
+        assert_eq!(fmt(0, MAX_DECIMAL_SCALE), format!("0.{}", "0".repeat(38)));
     }
 
     #[test]
-    fn i128_extremes() {
-        assert_matches(i128::MAX, 0);
-        assert_matches(i128::MIN, 0);
-        assert_matches(i128::MAX, 10);
-        assert_matches(i128::MIN, 10);
+    fn i128_extremes_at_scale_zero() {
+        assert_eq!(fmt(i128::MAX, 0), "170141183460469231731687303715884105727");
+        assert_eq!(
+            fmt(i128::MIN, 0),
+            "-170141183460469231731687303715884105728"
+        );
+    }
+
+    #[test]
+    fn i128_extremes_with_fractional_scale() {
+        // 39-digit i128::MAX with scale=10 -> 29-digit int + 10-digit frac
+        assert_eq!(
+            fmt(i128::MAX, 10),
+            "17014118346046923173168730371.5884105727"
+        );
+        assert_eq!(
+            fmt(i128::MIN, 10),
+            "-17014118346046923173168730371.5884105728"
+        );
     }
 
     #[test]
     fn large_values_with_fractional_scale() {
-        assert_matches(123_456_789_012_345_678_901_234_567_890i128, 12);
-        assert_matches(-123_456_789_012_345_678_901_234_567_890i128, 12);
+        assert_eq!(
+            fmt(123_456_789_012_345_678_901_234_567_890_i128, 12),
+            "123456789012345678.901234567890"
+        );
+        assert_eq!(
+            fmt(-123_456_789_012_345_678_901_234_567_890_i128, 12),
+            "-123456789012345678.901234567890"
+        );
     }
 
     #[test]
-    fn every_scale_zero_to_max() {
-        for scale in 0..=MAX_DECIMAL_SCALE {
-            assert_matches(1, scale);
-            assert_matches(-1, scale);
-            assert_matches(1234567890, scale);
-            assert_matches(-1234567890, scale);
-        }
+    fn max_scale_with_unit_value() {
+        // pathological "0.<37 zeros>1" — exercises the outer edge of the
+        // padding loop without overflowing the 48-byte output buffer.
+        let mut expected = String::from("0.");
+        expected.push_str(&"0".repeat((MAX_DECIMAL_SCALE - 1) as usize));
+        expected.push('1');
+        assert_eq!(fmt(1, MAX_DECIMAL_SCALE), expected);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds supported range 0..=38")]
+    fn scale_above_max_decimal_scale_panics() {
+        // Defense-in-depth: the function asserts the precondition rather
+        // than overflowing the 48-byte output buffer.
+        let mut buf = [0u8; 48];
+        SnowflakeNumber::format_decimal_into(1, MAX_DECIMAL_SCALE + 1, &mut buf);
     }
 }
 
