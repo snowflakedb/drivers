@@ -8,8 +8,22 @@ Push-Location (Join-Path $ScriptDir "..\..\odbc_tests")
 try {
     $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
 
+    # Use Ninja when both the Ninja build tool and the MSVC compiler are on PATH.
+    # Ninja parallelizes at the file level (vs MSBuild's project-level) and has faster
+    # startup, but it requires vcvarsall.bat to have been sourced first so that cl.exe
+    # is on PATH. Callers that don't set up MSVC env get the default Visual Studio
+    # generator (MSBuild), preserving existing behavior.
+    $useNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) `
+           -and (Get-Command cl.exe -ErrorAction SilentlyContinue)
+
     New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
     $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=$env:DRIVER_TYPE")
+    if ($useNinja) {
+        $cmakeArgs += @("-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug")
+        Write-Host "run_tests: using Ninja generator"
+    } else {
+        Write-Host "run_tests: using default generator (MSBuild)"
+    }
     if (Get-Command ccache -ErrorAction SilentlyContinue) {
         $cmakeArgs += @("-DCMAKE_CXX_COMPILER_LAUNCHER=ccache", "-DCMAKE_C_COMPILER_LAUNCHER=ccache")
     }
@@ -17,7 +31,11 @@ try {
         $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
     }
     cmake @cmakeArgs .
-    cmake --build cmake-build --config Debug --parallel ($NPROC)
+    if ($useNinja) {
+        cmake --build cmake-build --parallel ($NPROC)
+    } else {
+        cmake --build cmake-build --config Debug --parallel ($NPROC)
+    }
 
     # --- Schema lifecycle: pre-create a shared schema for all test processes ---
     $schemaTool = Join-Path $pwd "cmake-build\tools\schema_tool.exe"
@@ -36,7 +54,13 @@ try {
         Write-Host "run_tests: schema pre-creation failed, falling back to per-process"
     }
 
-    $ctestArgs = @("-j", ($NPROC * 4), "-C", "Debug", "--test-dir", "cmake-build", "--output-on-failure")
+    # Ninja is single-config so `-C Debug` is not needed (and not recognized by ctest
+    # for single-config builds). MSBuild is multi-config and needs it.
+    if ($useNinja) {
+        $ctestArgs = @("-j", ($NPROC * 4), "--test-dir", "cmake-build", "--output-on-failure")
+    } else {
+        $ctestArgs = @("-j", ($NPROC * 4), "-C", "Debug", "--test-dir", "cmake-build", "--output-on-failure")
+    }
     if ($env:CTEST_FILTER) {
         $ctestArgs += @("-R", $env:CTEST_FILTER)
     }

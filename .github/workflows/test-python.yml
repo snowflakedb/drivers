@@ -8,8 +8,9 @@ on:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
+  # Using github.run_id (not github.ref) for the fallback so back-to-back main pushes don't cancel each other.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -52,15 +53,7 @@ jobs:
 
       - name: Capture vcpkg version for cache key
         if: matrix.os == 'windows-11-arm'
-        id: vcpkg-ver-sf-core
-        shell: pwsh
-        run: |
-          $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
-            Select-String 'version\s+(\S+)' |
-            ForEach-Object { $_.Matches[0].Groups[1].Value } |
-            Select-Object -First 1
-          if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
-          echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+        uses: ./.github/actions/vcpkg-version
 
       - name: Restore vcpkg cache
         if: matrix.os == 'windows-11-arm'
@@ -78,7 +71,7 @@ jobs:
           vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg cache
-        if: matrix.os == 'windows-11-arm'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-sf-core.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed
@@ -126,19 +119,27 @@ jobs:
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
+      # Matrix is an explicit `include:` list of (os, py) pairs that are actually consumed
+      # downstream: each entry here maps 1-to-1 to a wheel downloaded by either python_tests
+      # or python_tests_reference. If you add a new test cell, add a matching build entry.
+      #
+      # Excluded combinations and why:
+      #   - ubuntu × 3.10, 3.11, 3.12 : not exercised by python_tests
+      #   - windows-11-arm × 3.9, 3.10, 3.14 : no native ARM64 Windows builds in uv
+      #     (revisit 3.14 once https://github.com/astral-sh/uv/releases ships ARM64 builds)
+      #   - windows-11-arm × 3.13 : not exercised by python_tests
       matrix:
-        os: [ubuntu-latest, windows-11-arm]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-        exclude:
-          # Python 3.9 and 3.10 have no native ARM64 Windows builds in uv
-          - os: windows-11-arm
+        include:
+          - os: ubuntu-latest
             py: "3.9"
-          - os: windows-11-arm
-            py: "3.10"
-          # TODO: Remove when Python 3.14 ARM64 Windows builds are available in uv
-          # (check https://github.com/astral-sh/uv/releases after 3.14 final release)
-          - os: windows-11-arm
+          - os: ubuntu-latest
+            py: "3.13"  # Reference combination consumed by python_tests_reference
+          - os: ubuntu-latest
             py: "3.14"
+          - os: windows-11-arm
+            py: "3.11"
+          - os: windows-11-arm
+            py: "3.12"
     runs-on: ${{ matrix.os }}
     name: build_wheel (${{ matrix.os }}, py${{ matrix.py }})
     env:
@@ -190,22 +191,9 @@ jobs:
       # cryptography has no pre-built ARM64 Windows wheel, so uv builds it from
       # source via maturin. OpenSSL is needed for this dependency build.
 
-      # Capture vcpkg version so the cache key tracks runner image vcpkg baseline.
-      # When GitHub updates the runner's vcpkg (new runner image), the key changes
-      # automatically and the stale cache is not reused.
-      # Extract only the version token (e.g. "2024-09-01-eb982c5b...") so the
-      # cache key is short and fails loudly if vcpkg is missing or output changes.
       - name: Capture vcpkg version for cache key (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
-        id: vcpkg-ver-build
-        shell: pwsh
-        run: |
-          $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
-            Select-String 'version\s+(\S+)' |
-            ForEach-Object { $_.Matches[0].Groups[1].Value } |
-            Select-Object -First 1
-          if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
-          echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+        uses: ./.github/actions/vcpkg-version
 
       # Restore vcpkg OpenSSL: avoids rebuilding from C source (~7 min per run).
       - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
@@ -224,7 +212,7 @@ jobs:
           vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-build.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -260,6 +248,7 @@ jobs:
         run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
 
       - name: Save proto generator target cache
+        if: always() && steps.proto-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: proto-target
@@ -288,6 +277,7 @@ jobs:
           shared-key: "packaging"
 
       - name: Restore core-target cache
+        id: core-target-cache
         uses: actions/cache/restore@v5
         with:
           path: core-target
@@ -295,6 +285,7 @@ jobs:
           restore-keys: ${{ runner.os }}-rust-packaging-core-target-
 
       - name: Restore proto-target cache
+        id: proto-target-cache-pkg
         uses: actions/cache/restore@v5
         with:
           path: proto-target
@@ -327,12 +318,14 @@ jobs:
           shared-key: "packaging"
 
       - name: Save core-target cache
+        if: always() && steps.core-target-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: core-target
           key: ${{ runner.os }}-rust-packaging-core-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Save proto-target cache
+        if: always() && steps.proto-target-cache-pkg.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: proto-target
@@ -404,14 +397,18 @@ jobs:
         with:
           version: "0.9.28"
 
+      # UV cache key intentionally omits matrix.cloud_provider: uv installs the same wheel +
+      # dependencies regardless of which cloud provider the E2E tests target, so sharing one
+      # cache per (os, py, hatch_env) triple across cloud providers avoids 3x cache duplication
+      # and improves hit rates.
       - name: Restore uv cache (Linux)
         if: runner.os == 'Linux'
         uses: actions/cache/restore@v5
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ env.MATRIX_KEY }}-
+            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-
             uv-${{ matrix.os }}-${{ matrix.py }}-
             uv-${{ matrix.os }}-
 
@@ -420,9 +417,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
-          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ env.MATRIX_KEY }}-
+            uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-
             uv-${{ matrix.os }}-${{ matrix.py }}-
             uv-${{ matrix.os }}-
 
@@ -449,15 +446,7 @@ jobs:
 
       - name: Capture vcpkg version for cache key (Windows ARM64)
         if: matrix.os == 'windows-11-arm'
-        id: vcpkg-ver-test
-        shell: pwsh
-        run: |
-          $ver = & C:\vcpkg\vcpkg.exe version 2>$null |
-            Select-String 'version\s+(\S+)' |
-            ForEach-Object { $_.Matches[0].Groups[1].Value } |
-            Select-Object -First 1
-          if (-not $ver) { Write-Error "Could not determine vcpkg version"; exit 1 }
-          echo "VCPKG_VER=$ver" >> $env:GITHUB_ENV
+        uses: ./.github/actions/vcpkg-version
 
       # Share the vcpkg cache with build_wheel so OpenSSL is not rebuilt here either.
       - name: Restore vcpkg ARM64 static OpenSSL cache (Windows ARM64)
@@ -476,7 +465,7 @@ jobs:
           vcpkg install openssl:arm64-windows-static-md
 
       - name: Save vcpkg ARM64 static OpenSSL cache (Windows ARM64)
-        if: matrix.os == 'windows-11-arm'
+        if: matrix.os == 'windows-11-arm' && steps.vcpkg-cache-test.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: C:\vcpkg\installed\arm64-windows-static-md
@@ -572,14 +561,14 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
       - name: Save uv cache (Windows)
         if: always() && runner.os == 'Windows'
         uses: actions/cache/save@v5
         with:
           path: ${{ runner.temp }}\.uv-cache
-          key: uv-${{ env.MATRIX_KEY }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ matrix.hatch_env }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:

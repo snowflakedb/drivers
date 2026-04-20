@@ -10,15 +10,17 @@ on:
     types: [ checks_requested ]
 
 concurrency:
-  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel).
+  # Using github.run_id (not github.ref) for the fallback so back-to-back main pushes don't cancel each other.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_BASEDIR: ${{ github.workspace }}
-  CCACHE_MAXSIZE: 200M
+  CCACHE_MAXSIZE: 1G
+  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite"
 
 jobs:
   detect-changes:
@@ -105,6 +107,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-odbc-
 
+      # Cache the reference Snowflake ODBC installer (MSI/DEB) keyed on the version file.
+      # The installer version changes rarely, so this skips the ~20MB download on every run.
+      - name: Cache reference ODBC installer
+        uses: actions/cache@v5
+        with:
+          path: .cache/reference-odbc
+          key: ${{ runner.os }}-ref-odbc-${{ hashFiles('ci/reference-odbc-version') }}
+
       - name: Install dependencies (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -126,9 +136,16 @@ jobs:
           $referenceOdbcVersion = (Get-Content "ci/reference-odbc-version" -Raw).Trim()
           $snowflakeOdbcMsi = "snowflake64_odbc-$referenceOdbcVersion.msi"
           $snowflakeOdbcUrl = "https://sfc-repo.snowflakecomputing.com/odbc/win64/$referenceOdbcVersion/$snowflakeOdbcMsi"
-          Write-Host "Downloading Snowflake ODBC MSI from: $snowflakeOdbcUrl"
-          Invoke-Checked "Invoke-WebRequest download Snowflake ODBC MSI" { Invoke-WebRequest -Uri $snowflakeOdbcUrl -OutFile $snowflakeOdbcMsi }
-          $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i $snowflakeOdbcMsi /quiet" -Wait -PassThru
+          $cacheDir = Join-Path $env:GITHUB_WORKSPACE ".cache\reference-odbc"
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+          $cachedMsi = Join-Path $cacheDir $snowflakeOdbcMsi
+          if (Test-Path $cachedMsi) {
+            Write-Host "Using cached Snowflake ODBC MSI: $cachedMsi"
+          } else {
+            Write-Host "Downloading Snowflake ODBC MSI from: $snowflakeOdbcUrl"
+            Invoke-Checked "Invoke-WebRequest download Snowflake ODBC MSI" { Invoke-WebRequest -Uri $snowflakeOdbcUrl -OutFile $cachedMsi }
+          }
+          $msiProcess = Start-Process -FilePath "msiexec" -ArgumentList "/i `"$cachedMsi`" /quiet" -Wait -PassThru
           if ($msiProcess.ExitCode -ne 0) { throw "msiexec failed with exit code $($msiProcess.ExitCode)" }
 
       - name: Install dependencies (Linux)
@@ -141,14 +158,20 @@ jobs:
           pip install cmake>=4.0.3
           cmake --version
 
-          # Install reference ODBC driver
+          # Install reference ODBC driver (downloaded installer is cached across runs keyed on ci/reference-odbc-version)
           REFERENCE_ODBC_VERSION=$(cat ci/reference-odbc-version | tr -d '[:space:]')
           . ci/reference-odbc-checksums
           echo "Installing reference ODBC driver version: $REFERENCE_ODBC_VERSION"
           DEB="snowflake-odbc-${REFERENCE_ODBC_VERSION}.x86_64.deb"
-          curl -O "https://sfc-repo.snowflakecomputing.com/odbc/linux/${REFERENCE_ODBC_VERSION}/${DEB}"
-          echo "${DEB_X86_64_SHA256}  ${DEB}" | sha256sum -c -
-          sudo dpkg -i "${DEB}"
+          CACHE_DIR=".cache/reference-odbc"
+          mkdir -p "${CACHE_DIR}"
+          if [[ -f "${CACHE_DIR}/${DEB}" ]]; then
+            echo "Using cached installer: ${CACHE_DIR}/${DEB}"
+          else
+            curl -o "${CACHE_DIR}/${DEB}" "https://sfc-repo.snowflakecomputing.com/odbc/linux/${REFERENCE_ODBC_VERSION}/${DEB}"
+          fi
+          echo "${DEB_X86_64_SHA256}  ${CACHE_DIR}/${DEB}" | sha256sum -c -
+          sudo dpkg -i "${CACHE_DIR}/${DEB}"
           sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
 
       - name: Decode secrets
@@ -379,6 +402,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-odbc-
 
+      - name: Restore vcpkg binary cache (Windows)
+        if: runner.os == 'Windows'
+        id: vcpkg-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .vcpkg-binary-cache
+          key: ${{ runner.os }}-vcpkg-zlib-v1
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -408,11 +441,12 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "$commandName failed with exit code $LASTEXITCODE" }
           }
 
-          Invoke-Checked "pip install cmake" { pip install cmake>=4.0.3 }
+          # cmake is pre-installed on windows-latest (4.2+); no need to pip install it
           cmake --version
 
           Invoke-Checked "choco install ccache" { choco install ccache -y --no-progress }
           New-Item -ItemType Directory -Force -Path $env:CCACHE_DIR | Out-Null
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\.vcpkg-binary-cache" | Out-Null
 
           Invoke-Checked "vcpkg install zlib:x64-windows" { vcpkg install zlib:x64-windows }
 
@@ -421,6 +455,23 @@ jobs:
             Invoke-Checked "choco install openssl" { choco install openssl -y --no-progress }
           }
           echo "C:\Program Files\OpenSSL\bin" >> $env:GITHUB_PATH
+
+      - name: Setup MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Locate Visual Studio via vswhere (pre-installed on windows-latest)
+          $installPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          if (-not $installPath) { throw "vswhere could not locate a Visual Studio installation" }
+          $vcvars = Join-Path $installPath "VC\Auxiliary\Build\vcvarsall.bat"
+          if (-not (Test-Path $vcvars)) { throw "vcvarsall.bat not found at $vcvars" }
+          # Source vcvarsall.bat and export the resulting env vars so later steps see cl.exe, link.exe, etc.
+          cmd /c "`"$vcvars`" amd64 && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') {
+              echo "$($Matches[1])=$($Matches[2])" >> $env:GITHUB_ENV
+            }
+          }
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh ${{ matrix.cloud_provider }}
@@ -481,22 +532,36 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           DRIVER_PATH: ${{ github.workspace }}/target/debug/${{ matrix.driver_lib }}
 
+      # Save caches unconditionally (not gated on matrix.cloud_provider == 'aws'): when multiple
+      # matrix cells finish near-simultaneously, GHA returns a benign "Unable to reserve cache"
+      # warning for the late writers. That's acceptable; it's better than losing save-on-failure,
+      # which the combined actions/cache@v5 does NOT support (save-always was removed in v5).
       - name: Save test dependencies cache
-        if: always() && matrix.cloud_provider == 'aws'
+        if: always() && steps.test-deps-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: odbc_tests/cmake-build/_deps
           key: ${{ runner.os }}-test-deps-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
       - name: Save ccache
-        if: always() && matrix.cloud_provider == 'aws'
+        if: always() && steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: .ccache
           key: ${{ runner.os }}-ccache-odbc-${{ hashFiles('odbc_tests/CMakeLists.txt') }}
 
+      - name: Save vcpkg binary cache (Windows)
+        if: always() && runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .vcpkg-binary-cache
+          key: ${{ runner.os }}-vcpkg-zlib-v1
+
   build_rpm:
-    needs: [detect-changes, odbc_unit_tests, odbc_tests]
+    # RPM packaging is independent: it builds the driver from scratch in its own Docker image
+    # and does not consume artifacts from the test jobs. Running in parallel shaves ~10-15 minutes
+    # of wall time off the critical path for producing RPM artifacts.
+    needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     strategy:
       fail-fast: false
