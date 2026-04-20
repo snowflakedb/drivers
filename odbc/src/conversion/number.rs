@@ -157,8 +157,9 @@ const POW10_U128: [u128; (MAX_DECIMAL_SCALE + 1) as usize] = {
 /// The previous `10i128.pow(scale)` implementation would panic in debug
 /// builds and silently overflow in release for `scale > 38`; this helper
 /// normalizes both to a typed conversion error. In practice Snowflake
-/// DECIMAL scale is always in `0..=37`, so the error branch is not
-/// expected on well-formed server output.
+/// DECIMAL scale is always in `0..=38` (the maximum precision is 38, and
+/// `0 ≤ scale ≤ precision`), so the error branch is not expected on
+/// well-formed server output.
 fn pow10_i128(scale: u32) -> Result<i128, WriteOdbcError> {
     POW10_I128.get(scale as usize).copied().ok_or_else(|| {
         NumericValueOutOfRangeSnafu {
@@ -203,8 +204,11 @@ impl SnowflakeNumber {
         let abs_len = {
             let mut cur = std::io::Cursor::new(&mut abs_tmp[..]);
             use std::io::Write as _;
-            // Infallible: abs_tmp is large enough for any u128.
-            let _ = write!(cur, "{}", value.unsigned_abs());
+            // 40 bytes always fits the decimal expansion of any u128
+            // (max is 39 digits). debug_assert guards against future code
+            // changes that might shrink the scratch buffer or feed a wider type.
+            let res = write!(cur, "{}", value.unsigned_abs());
+            debug_assert!(res.is_ok(), "abs_tmp[40] too small for u128 Display");
             cur.position() as usize
         };
         let digits = &abs_tmp[..abs_len];

@@ -63,9 +63,14 @@ impl ReadArrowType<Float64Array> for SnowflakeReal {
 fn format_f64_display_into(value: f64, buf: &mut [u8; 384]) -> &str {
     let len = {
         let mut cur = Cursor::new(&mut buf[..]);
-        // Infallible: the buffer is large enough for any `f64`, including
-        // `NaN`, `inf`, `-inf`, and the widest-magnitude finite values.
-        let _ = write!(cur, "{value}");
+        // 384 bytes is comfortably larger than the widest output Rust's
+        // `<f64 as Display>::fmt` produces today (~325 bytes for `1e-300`,
+        // `1e308`, etc., since Display uses non-scientific notation for
+        // all finite values). The debug_assert guards against a future
+        // libcore change widening the format, which would otherwise be
+        // silently truncated.
+        let res = write!(cur, "{value}");
+        debug_assert!(res.is_ok(), "f64 buf[384] too small for Display output");
         cur.position() as usize
     };
     // SAFETY: `<f64 as Display>::fmt` only emits ASCII characters.
