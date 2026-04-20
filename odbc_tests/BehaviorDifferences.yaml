@@ -486,3 +486,18 @@ behavior_differences:
       of range) per the ODBC specification, which states that when the byte
       length of the data exceeds BufferLength for SQL_C_BINARY, the result
       is undefined and SQLSTATE 22003 must be returned.
+
+  45:
+    name: "SQLGetFunctions does not report SQLCancelHandle as supported"
+    description: |
+      OLD driver: SQLGetFunctions returns SQL_FALSE for SQL_API_SQLCANCELHANDLE
+      even though the reference driver exports and handles the function.
+      The internal supported-functions bitmap does not include the ODBC 3.8
+      SQLCancelHandle entry, so the function works at runtime but the
+      SQLGetFunctions report is missing.
+      NEW driver: Will report SQL_API_SQLCANCELHANDLE as supported once
+      SQLGetFunctions is implemented.
+      Impact: Applications that probe SQLGetFunctions before calling
+      SQLCancelHandle will incorrectly believe the old driver does not
+      support it. The function works regardless of what SQLGetFunctions
+      reports.

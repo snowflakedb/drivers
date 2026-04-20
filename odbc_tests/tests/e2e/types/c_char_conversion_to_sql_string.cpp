@@ -3,18 +3,17 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_CHAR to SQL_VARCHAR and read back", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR to SQL_VARCHAR and read back",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(200))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
   // When SQL_C_CHAR "hello world" is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -32,11 +31,10 @@ TEST_CASE("should bind SQL_C_CHAR to SQL_VARCHAR and read back", "[c_char][conve
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "hello world");
 }
 
-TEST_CASE("should bind SQL_C_CHAR empty string to SQL_VARCHAR", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR empty string to SQL_VARCHAR",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(200))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
   // When SQL_C_CHAR empty string is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -54,11 +52,10 @@ TEST_CASE("should bind SQL_C_CHAR empty string to SQL_VARCHAR", "[c_char][conver
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "");
 }
 
-TEST_CASE("should bind SQL_C_CHAR at max length to fixed-size VARCHAR", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR at max length to fixed-size VARCHAR",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(5))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(5))");
 
   // When SQL_C_CHAR "abcde" is bound to VARCHAR(5) and inserted
   auto stmt = conn.createStatement();
@@ -76,11 +73,10 @@ TEST_CASE("should bind SQL_C_CHAR at max length to fixed-size VARCHAR", "[c_char
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "abcde");
 }
 
-TEST_CASE("should reject SQL_C_CHAR exceeding fixed-size VARCHAR", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_CHAR exceeding fixed-size VARCHAR",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(5))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(5))");
 
   // When SQL_C_CHAR "hello world" is bound to VARCHAR(5) and inserted
   auto stmt = conn.createStatement();
@@ -100,11 +96,10 @@ TEST_CASE("should reject SQL_C_CHAR exceeding fixed-size VARCHAR", "[c_char][con
   NEW_DRIVER_ONLY("BD#40") { CHECK(get_sqlstate(stmt) == "22001"); }
 }
 
-TEST_CASE("should bind SQL_C_WCHAR to SQL_VARCHAR and read back", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR to SQL_VARCHAR and read back",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(200))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
   // When SQL_C_WCHAR "test" is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -123,11 +118,10 @@ TEST_CASE("should bind SQL_C_WCHAR to SQL_VARCHAR and read back", "[c_char][conv
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "test");
 }
 
-TEST_CASE("should bind SQL_C_WCHAR empty string to SQL_VARCHAR", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR empty string to SQL_VARCHAR",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(200))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
   // When SQL_C_WCHAR empty string is bound to SQL_VARCHAR and inserted
   auto stmt = conn.createStatement();
@@ -146,11 +140,10 @@ TEST_CASE("should bind SQL_C_WCHAR empty string to SQL_VARCHAR", "[c_char][conve
   CHECK(get_data<SQL_C_CHAR>(fetch_stmt, 1) == "");
 }
 
-TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_VARCHAR", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_CHAR with NULL indicator to SQL_VARCHAR",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(200))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
   // When SQL_C_CHAR is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();
@@ -167,11 +160,10 @@ TEST_CASE("should bind SQL_C_CHAR with NULL indicator to SQL_VARCHAR", "[c_char]
   CHECK(get_data_optional<SQL_C_CHAR>(fetch_stmt, 1) == std::nullopt);
 }
 
-TEST_CASE("should bind SQL_C_WCHAR with NULL indicator to SQL_VARCHAR", "[c_char][conversion][sql_string]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_WCHAR with NULL indicator to SQL_VARCHAR",
+                 "[c_char][conversion][sql_string]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col VARCHAR(200))");
+  conn.execute("CREATE TEMPORARY TABLE t (col VARCHAR(200))");
 
   // When SQL_C_WCHAR is bound with SQL_NULL_DATA and inserted
   auto stmt = conn.createStatement();

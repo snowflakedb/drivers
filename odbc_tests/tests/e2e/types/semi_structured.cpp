@@ -12,14 +12,12 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <cstring>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
-#include "compatibility.hpp"
+#include "SchemaFixtures.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
 #include "get_diag_rec.hpp"
@@ -37,7 +35,7 @@ static void check_json_equals(const std::u16string& actual_json_text, const std:
 // TYPE CASTING (shared)
 // ============================================================================
 
-TEST_CASE("should cast semi-structured values to appropriate type", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should cast semi-structured values to appropriate type", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -64,7 +62,7 @@ TEST_CASE("should cast semi-structured values to appropriate type", "[semi_struc
 // TYPE CASTING (ODBC-specific)
 // ============================================================================
 
-TEST_CASE("should cast semi-structured values to SQL_VARCHAR", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should cast semi-structured values to SQL_VARCHAR", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -91,7 +89,7 @@ TEST_CASE("should cast semi-structured values to SQL_VARCHAR", "[semi_structured
 // SELECT WITH LITERALS (shared)
 // ============================================================================
 
-TEST_CASE("should select semi-structured literals", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select semi-structured literals", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -108,7 +106,7 @@ TEST_CASE("should select semi-structured literals", "[semi_structured]") {
   check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"({"a":1,"b":2})");
 }
 
-TEST_CASE("should select deeply nested semi-structured literals", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select deeply nested semi-structured literals", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -123,7 +121,7 @@ TEST_CASE("should select deeply nested semi-structured literals", "[semi_structu
 // NULL HANDLING (shared)
 // ============================================================================
 
-TEST_CASE("should handle NULL semi-structured values from literals", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL semi-structured values from literals", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -140,14 +138,12 @@ TEST_CASE("should handle NULL semi-structured values from literals", "[semi_stru
 // TABLE OPERATIONS (shared)
 // ============================================================================
 
-TEST_CASE("should select semi-structured values from table", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select semi-structured values from table", "[semi_structured]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with VARIANT, OBJECT, and ARRAY columns exists with JSON values
   conn.execute(
-      "CREATE OR REPLACE TABLE semi_struct_table "
+      "CREATE OR REPLACE TEMPORARY TABLE semi_struct_table "
       "(v VARIANT, o OBJECT, a ARRAY)");
   conn.execute(
       "INSERT INTO semi_struct_table "
@@ -181,13 +177,11 @@ TEST_CASE("should select semi-structured values from table", "[semi_structured]"
   check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"(["a","b"])");
 }
 
-TEST_CASE("should handle NULL semi-structured values from table", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL semi-structured values from table", "[semi_structured]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with VARIANT column exists containing NULLs and values
-  conn.execute("CREATE OR REPLACE TABLE semi_struct_null_table (v VARIANT, id INT)");
+  conn.execute("CREATE OR REPLACE TEMPORARY TABLE semi_struct_null_table (v VARIANT, id INT)");
   conn.execute(
       "INSERT INTO semi_struct_null_table "
       "SELECT PARSE_JSON(column2), column1 FROM VALUES (1, NULL), (2, '{\"a\":1}'), (3, NULL)");
@@ -217,7 +211,8 @@ TEST_CASE("should handle NULL semi-structured values from table", "[semi_structu
 // MULTIPLE CHUNKS DOWNLOADING (shared)
 // ============================================================================
 
-TEST_CASE("should download semi-structured data in multiple chunks", "[semi_structured][large_result_set]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should download semi-structured data in multiple chunks",
+                 "[semi_structured][large_result_set]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -251,7 +246,7 @@ TEST_CASE("should download semi-structured data in multiple chunks", "[semi_stru
 // PARAMETER BINDING (shared)
 // ============================================================================
 
-TEST_CASE("should select variant using parameter binding", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select variant using parameter binding", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -275,7 +270,7 @@ TEST_CASE("should select variant using parameter binding", "[semi_structured]") 
   check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"({"bound":true})");
 }
 
-TEST_CASE("should select NULL variant using parameter binding", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should select NULL variant using parameter binding", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -298,13 +293,11 @@ TEST_CASE("should select NULL variant using parameter binding", "[semi_structure
   CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
 }
 
-TEST_CASE("should insert variant using parameter binding", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should insert variant using parameter binding", "[semi_structured]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with VARIANT column exists
-  conn.execute("CREATE OR REPLACE TABLE semi_struct_bind (v VARIANT, id INT)");
+  conn.execute("CREATE OR REPLACE TEMPORARY TABLE semi_struct_bind (v VARIANT, id INT)");
 
   // When JSON values are inserted using parameter binding via PARSE_JSON(?)
   const char* values[] = {"{\"x\":1}", "[1,2,3]", "{\"nested\":{\"a\":true}}"};
@@ -345,7 +338,8 @@ TEST_CASE("should insert variant using parameter binding", "[semi_structured]") 
 // CONVERSION TO SQL_C_CHAR - TRUNCATION (ODBC-specific)
 // ============================================================================
 
-TEST_CASE("should truncate variant data when buffer is too short", "[semi_structured][conversion][char]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should truncate variant data when buffer is too short",
+                 "[semi_structured][conversion][char]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -374,7 +368,8 @@ TEST_CASE("should truncate variant data when buffer is too short", "[semi_struct
 // CONVERSION TO SQL_C_WCHAR (ODBC-specific)
 // ============================================================================
 
-TEST_CASE("should retrieve variant data as SQL_C_WCHAR", "[semi_structured][conversion][wchar]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should retrieve variant data as SQL_C_WCHAR",
+                 "[semi_structured][conversion][wchar]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -389,7 +384,8 @@ TEST_CASE("should retrieve variant data as SQL_C_WCHAR", "[semi_structured][conv
 // CONVERSION TO SQL_C_BINARY (ODBC-specific)
 // ============================================================================
 
-TEST_CASE("should retrieve variant data as SQL_C_BINARY", "[semi_structured][conversion][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should retrieve variant data as SQL_C_BINARY",
+                 "[semi_structured][conversion][binary]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -406,7 +402,8 @@ TEST_CASE("should retrieve variant data as SQL_C_BINARY", "[semi_structured][con
   check_json_equals(std::string(reinterpret_cast<char*>(buffer), static_cast<size_t>(indicator)), R"({"b":2})");
 }
 
-TEST_CASE("should return SQL_NULL_DATA for NULL variant as SQL_C_BINARY", "[semi_structured][conversion][binary]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should return SQL_NULL_DATA for NULL variant as SQL_C_BINARY",
+                 "[semi_structured][conversion][binary]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -425,7 +422,7 @@ TEST_CASE("should return SQL_NULL_DATA for NULL variant as SQL_C_BINARY", "[semi
 // EMPTY JSON CONTAINERS (shared)
 // ============================================================================
 
-TEST_CASE("should handle empty JSON containers", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle empty JSON containers", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -438,7 +435,7 @@ TEST_CASE("should handle empty JSON containers", "[semi_structured]") {
   check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"({})");
 }
 
-TEST_CASE("should handle empty JSON array literal", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle empty JSON array literal", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -449,14 +446,12 @@ TEST_CASE("should handle empty JSON array literal", "[semi_structured]") {
   check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"([])");
 }
 
-TEST_CASE("should round-trip empty JSON containers through a table", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should round-trip empty JSON containers through a table", "[semi_structured]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // And Table with VARIANT, OBJECT, and ARRAY columns exists with empty containers
   conn.execute(
-      "CREATE OR REPLACE TABLE semi_struct_empty "
+      "CREATE OR REPLACE TEMPORARY TABLE semi_struct_empty "
       "(v VARIANT, o OBJECT, a ARRAY)");
   conn.execute(
       "INSERT INTO semi_struct_empty "
@@ -479,7 +474,7 @@ TEST_CASE("should round-trip empty JSON containers through a table", "[semi_stru
 // JSON WITH UNICODE CONTENT (shared)
 // ============================================================================
 
-TEST_CASE("should handle JSON with unicode content", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle JSON with unicode content", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -500,7 +495,7 @@ TEST_CASE("should handle JSON with unicode content", "[semi_structured]") {
   CHECK(cjk_it->second.get<std::string>() == "\xe9\x9b\xaa\xe8\x8a\xb1");
 }
 
-TEST_CASE("should handle JSON with unicode in keys", "[semi_structured]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle JSON with unicode in keys", "[semi_structured]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -521,7 +516,8 @@ TEST_CASE("should handle JSON with unicode in keys", "[semi_structured]") {
   CHECK(flower_it->second.get<std::string>() == "flower");
 }
 
-TEST_CASE("should handle JSON with unicode via SQL_C_WCHAR", "[semi_structured][conversion][wchar]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle JSON with unicode via SQL_C_WCHAR",
+                 "[semi_structured][conversion][wchar]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -542,8 +538,8 @@ TEST_CASE("should handle JSON with unicode via SQL_C_WCHAR", "[semi_structured][
 // CONVERSION TO SQL_C_WCHAR - TRUNCATION (ODBC-specific)
 // ============================================================================
 
-TEST_CASE("should truncate variant data as SQL_C_WCHAR when buffer is too short",
-          "[semi_structured][conversion][wchar][01004]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should truncate variant data as SQL_C_WCHAR when buffer is too short",
+                 "[semi_structured][conversion][wchar][01004]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -574,7 +570,8 @@ TEST_CASE("should truncate variant data as SQL_C_WCHAR when buffer is too short"
 // SQLColAttribute - SQL_DESC_TYPE_NAME (ODBC-specific)
 // ============================================================================
 
-TEST_CASE("should report SQL_DESC_TYPE_NAME for semi-structured columns", "[semi_structured][metadata]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should report SQL_DESC_TYPE_NAME for semi-structured columns",
+                 "[semi_structured][metadata]") {
   // Given Snowflake client is logged in
   Connection conn;
 
@@ -594,6 +591,80 @@ TEST_CASE("should report SQL_DESC_TYPE_NAME for semi-structured columns", "[semi
     REQUIRE_ODBC(ret, stmt);
     CHECK(std::string(reinterpret_cast<char*>(type_name), name_len) == expected_type_names[col - 1]);
   }
+}
+
+// ============================================================================
+// MULTI-ROW TABLE OPERATIONS (ODBC-specific)
+// ============================================================================
+
+TEST_CASE_METHOD(ConnSchemaFixture, "should select multi-row table with all semi-structured columns",
+                 "[semi_structured]") {
+  // Given Snowflake client is logged in
+
+  // And Table with VARIANT, OBJECT, and ARRAY columns exists with multiple rows including NULLs
+  conn.execute("CREATE OR REPLACE TEMPORARY TABLE semi_multi (id INT, v VARIANT, o OBJECT, a ARRAY)");
+  conn.execute(
+      "INSERT INTO semi_multi "
+      "SELECT 1, PARSE_JSON('{\"x\":1}'), OBJECT_CONSTRUCT('k','v1'), ARRAY_CONSTRUCT(1,2)");
+  conn.execute(
+      "INSERT INTO semi_multi "
+      "SELECT 2, PARSE_JSON('[10,20]'), OBJECT_CONSTRUCT('a',1,'b',2), ARRAY_CONSTRUCT('x','y','z')");
+  conn.execute(
+      "INSERT INTO semi_multi "
+      "SELECT 3, NULL, NULL, NULL");
+
+  // When Query "SELECT v, o, a FROM <table> ORDER BY id" is executed
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), sqlchar("SELECT v, o, a FROM semi_multi ORDER BY id"), SQL_NTS);
+  REQUIRE_ODBC(ret, stmt);
+
+  // Then Each row should contain the expected semi-structured values including NULLs
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"({"x":1})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 2), R"({"k":"v1"})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"([1,2])");
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 1), R"([10,20])");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 2), R"({"a":1,"b":2})");
+  check_json_equals(get_data<SQL_C_CHAR>(stmt, 3), R"(["x","y","z"])");
+
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE_ODBC(ret, stmt);
+  CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 1).has_value());
+  CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 2).has_value());
+  CHECK(!get_data_optional<SQL_C_CHAR>(stmt, 3).has_value());
+
+  ret = SQLFetch(stmt.getHandle());
+  CHECK(ret == SQL_NO_DATA);
+}
+
+// ============================================================================
+// STRUCTURED TYPES (ODBC-specific)
+// ============================================================================
+
+TEST_CASE("should handle structured types", "[semi_structured][structured_types]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+
+  // When Structured type expressions (typed array, typed object, typed map) are fetched as SQL_C_CHAR
+  auto arr_stmt = conn.execute_fetch("SELECT ARRAY_CONSTRUCT(1,2,3)::ARRAY(INT)");
+
+  // Then Each structured type returns valid JSON data
+  check_json_equals(get_data<SQL_C_CHAR>(arr_stmt, 1), R"([1,2,3])");
+
+  auto obj_stmt =
+      conn.execute_fetch("SELECT OBJECT_CONSTRUCT('a', 1, 'b', 'two', 'c', 3)::OBJECT(a INT, b VARCHAR, c INT)");
+  auto obj_json = parse_json_text(get_data<SQL_C_CHAR>(obj_stmt, 1));
+  REQUIRE(obj_json.is<picojson::object>());
+  CHECK(obj_json.get<picojson::object>().size() == 3);
+
+  auto map_stmt = conn.execute_fetch("SELECT OBJECT_CONSTRUCT('x', 'foo', 'y', 'bar')::MAP(VARCHAR, VARCHAR)");
+  auto map_json = parse_json_text(get_data<SQL_C_CHAR>(map_stmt, 1));
+  REQUIRE(map_json.is<picojson::object>());
+  CHECK(map_json.get<picojson::object>().size() == 2);
 }
 
 static picojson::value parse_json_text(const std::string& json_text) {

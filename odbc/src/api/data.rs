@@ -2,8 +2,9 @@ use crate::api::CDataType;
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, FetchDataSnafu, FetchTypeOutOfRangeSnafu,
     InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
-    InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu,
-    OdbcError, StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
+    InvalidDescriptorIndexSnafu, InvalidDuringDaeSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu,
+    NullPointerSnafu, OdbcError, StatementErrorStateSnafu, StatementNotExecutedSnafu,
+    UnsupportedFeatureSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
@@ -72,7 +73,7 @@ enum RowStatus {
 fn next_non_empty_batch(
     mut reader: ArrowArrayStreamReader,
     rows_affected: Option<i64>,
-    prepared: bool,
+    origin: crate::api::ExecutionOrigin,
 ) -> Result<(StatementState, ()), (StatementState, crate::api::error::OdbcError)> {
     loop {
         match reader.next() {
@@ -89,7 +90,7 @@ fn next_non_empty_batch(
                         record_batch,
                         batch_idx: 0,
                         rows_affected,
-                        prepared,
+                        origin,
                     },
                     (),
                 ));
@@ -98,7 +99,7 @@ fn next_non_empty_batch(
                 let schema = reader.schema();
                 break NoMoreDataSnafu
                     .fail()
-                    .with_state(StatementState::Done { schema, prepared });
+                    .with_state(StatementState::Done { schema, origin });
             }
         }
     }
@@ -109,31 +110,31 @@ fn next_non_empty_batch(
 #[allow(clippy::result_large_err)]
 fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<()> {
     state.transition_or_err(|s| match s {
-        StatementState::DdlExecuted { schema, prepared } => InvalidCursorStateSnafu
+        StatementState::DdlExecuted { schema, origin } => InvalidCursorStateSnafu
             .fail()
-            .with_state(StatementState::DdlExecuted { schema, prepared }),
+            .with_state(StatementState::DdlExecuted { schema, origin }),
         StatementState::DmlExecuted {
             rows_affected,
             schema,
-            prepared,
+            origin,
         } => InvalidCursorStateSnafu
             .fail()
             .with_state(StatementState::DmlExecuted {
                 rows_affected,
                 schema,
-                prepared,
+                origin,
             }),
         StatementState::QueryExecuted {
             reader,
             rows_affected,
-            prepared,
-        } => next_non_empty_batch(reader, rows_affected, prepared),
+            origin,
+        } => next_non_empty_batch(reader, rows_affected, origin),
         StatementState::Fetching {
             reader,
             record_batch,
             batch_idx,
             rows_affected,
-            prepared,
+            origin,
         } => {
             let new_idx = batch_idx + 1;
             if new_idx < record_batch.num_rows() {
@@ -143,17 +144,23 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
                         record_batch,
                         batch_idx: new_idx,
                         rows_affected,
-                        prepared,
+                        origin,
                     },
                     (),
                 ))
             } else {
-                next_non_empty_batch(reader, rows_affected, prepared)
+                next_non_empty_batch(reader, rows_affected, origin)
             }
         }
         state @ StatementState::Error => StatementErrorStateSnafu.fail().with_state(state),
         state @ StatementState::Done { .. } => NoMoreDataSnafu.fail().with_state(state),
-        state @ StatementState::Created | state @ StatementState::Prepared { .. } => {
+        state @ StatementState::Created
+        | state @ StatementState::Prepared { .. }
+        // NeedData variants are unreachable (callers guard with is_need_data())
+        // but required for exhaustive match.
+        | state @ StatementState::AwaitingParamData { .. }
+        | state @ StatementState::AwaitingPutData { .. }
+        | state @ StatementState::PutDataCalled { .. } => {
             StatementNotExecutedSnafu.fail().with_state(state)
         }
     })
@@ -163,6 +170,10 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
 pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
     tracing::debug!("fetch called");
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
 
     if stmt.used_extended_fetch {
         return MixedCursorFunctionsSnafu.fail();
@@ -274,6 +285,11 @@ pub fn fetch_scroll(
     fetch_orientation: sql::SmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
+    let stmt = stmt_from_handle(statement_handle);
+    if stmt.state.as_ref().is_need_data() {
+        return InvalidDuringDaeSnafu.fail();
+    }
+
     let orientation = FetchOrientation::try_from(fetch_orientation)?;
     match orientation {
         FetchOrientation::Next => fetch(statement_handle, warnings),
@@ -297,6 +313,13 @@ pub fn extended_fetch(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("extended_fetch called");
+
+    {
+        let stmt = stmt_from_handle(statement_handle);
+        if stmt.state.as_ref().is_need_data() {
+            return InvalidDuringDaeSnafu.fail();
+        }
+    }
 
     let orientation = FetchOrientation::try_from(fetch_orientation)?;
     match orientation {
@@ -460,6 +483,13 @@ pub fn get_data(
 ) -> OdbcResult<()> {
     tracing::debug!("get_data: statement_handle={:?}", statement_handle);
 
+    {
+        let stmt = stmt_from_handle(statement_handle);
+        if stmt.state.as_ref().is_need_data() {
+            return InvalidDuringDaeSnafu.fail();
+        }
+    }
+
     if target_value_ptr.is_null() {
         return NullPointerSnafu.fail();
     }
@@ -586,17 +616,20 @@ pub fn get_data(
             tracing::debug!("get_data: statement execution is done");
             NoMoreDataSnafu.fail()
         }
-        StatementState::Created | StatementState::Prepared { .. } => {
+        StatementState::Created
+        | StatementState::Prepared { .. }
+        | StatementState::QueryExecuted { .. }
+        // NeedData variants are unreachable (guarded by is_need_data() above)
+        // but required for exhaustive match.
+        | StatementState::AwaitingParamData { .. }
+        | StatementState::AwaitingPutData { .. }
+        | StatementState::PutDataCalled { .. } => {
             tracing::error!("get_data: data not fetched yet");
             DataNotFetchedSnafu.fail()
         }
         StatementState::Error => {
             tracing::error!("get_data: statement error");
             StatementErrorStateSnafu.fail()
-        }
-        StatementState::QueryExecuted { .. } => {
-            tracing::error!("get_data: data not fetched yet");
-            DataNotFetchedSnafu.fail()
         }
     }
 }

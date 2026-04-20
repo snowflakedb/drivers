@@ -10,16 +10,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "conversion_checks.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should reject SQL_C_SLONG bound to SQL_TYPE_TIME", "[c_numeric][incompatible][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SLONG bound to SQL_TYPE_TIME",
+                 "[c_numeric][incompatible][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   SQLINTEGER val = 123045;
   SQLLEN ind = 0;
@@ -33,11 +32,10 @@ TEST_CASE("should reject SQL_C_SLONG bound to SQL_TYPE_TIME", "[c_numeric][incom
   check_incompatible_bindparam(stmt, SQL_C_SLONG, SQL_TYPE_TIME, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_DOUBLE bound to SQL_TYPE_TIME", "[c_numeric][incompatible][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_DOUBLE bound to SQL_TYPE_TIME",
+                 "[c_numeric][incompatible][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   SQLDOUBLE val = 123045.0;
   SQLLEN ind = 0;
@@ -51,11 +49,10 @@ TEST_CASE("should reject SQL_C_DOUBLE bound to SQL_TYPE_TIME", "[c_numeric][inco
   check_incompatible_bindparam(stmt, SQL_C_DOUBLE, SQL_TYPE_TIME, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_FLOAT bound to SQL_TYPE_TIME", "[c_numeric][incompatible][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_FLOAT bound to SQL_TYPE_TIME",
+                 "[c_numeric][incompatible][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   SQLREAL val = 123045.0f;
   SQLLEN ind = 0;
@@ -69,11 +66,10 @@ TEST_CASE("should reject SQL_C_FLOAT bound to SQL_TYPE_TIME", "[c_numeric][incom
   check_incompatible_bindparam(stmt, SQL_C_FLOAT, SQL_TYPE_TIME, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_BIT bound to SQL_TYPE_TIME", "[c_numeric][incompatible][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_BIT bound to SQL_TYPE_TIME",
+                 "[c_numeric][incompatible][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   SQLCHAR val = 1;
   SQLLEN ind = 0;
@@ -87,11 +83,10 @@ TEST_CASE("should reject SQL_C_BIT bound to SQL_TYPE_TIME", "[c_numeric][incompa
   check_incompatible_bindparam(stmt, SQL_C_BIT, SQL_TYPE_TIME, &val, 0, &ind);
 }
 
-TEST_CASE("should reject SQL_C_NUMERIC bound to SQL_TYPE_TIME", "[c_numeric][incompatible][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_NUMERIC bound to SQL_TYPE_TIME",
+                 "[c_numeric][incompatible][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   SQL_NUMERIC_STRUCT ns = {};
   ns.precision = 6;
@@ -109,11 +104,10 @@ TEST_CASE("should reject SQL_C_NUMERIC bound to SQL_TYPE_TIME", "[c_numeric][inc
   check_incompatible_bindparam(stmt, SQL_C_NUMERIC, SQL_TYPE_TIME, &ns, sizeof(ns), &ind);
 }
 
-TEST_CASE("should reject SQL_C_SBIGINT bound to SQL_TYPE_TIME", "[c_numeric][incompatible][sql_time]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should reject SQL_C_SBIGINT bound to SQL_TYPE_TIME",
+                 "[c_numeric][incompatible][sql_time]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col TIME)");
+  conn.execute("CREATE TEMPORARY TABLE t (col TIME)");
 
   SQLBIGINT val = 123045;
   SQLLEN ind = 0;

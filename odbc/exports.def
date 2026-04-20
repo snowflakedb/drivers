@@ -10,6 +10,7 @@ EXPORTS
     SQLBindCol
     SQLBindParameter
     SQLCancel
+    SQLCancelHandle
     SQLCloseCursor
     SQLColAttributeW
     SQLConnectW

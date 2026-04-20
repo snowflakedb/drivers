@@ -154,6 +154,58 @@ pub unsafe extern "C" fn SQLCancel(statement_handle: sql::Handle) -> sql::RetCod
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
+///
+/// `SQLCancelHandle` is the ODBC 3.8 generalization of `SQLCancel` that
+/// accepts both statement and connection handles.
+///
+/// For **SQL_HANDLE_STMT** the behavior is identical to `SQLCancel`:
+/// this calls `api::statement::cancel(handle)`, which follows the same
+/// handle-to-statement path as `SQLCancel` and therefore has the same
+/// aliasing caveat described there. Diagnostics are not touched
+/// (same reasoning as `SQLCancel`).
+///
+/// For **SQL_HANDLE_DBC** this is currently a no-op returning SUCCESS.
+/// Connection-level cancel (async connect, cross-thread
+/// `SQLDriverConnect`) will be implemented after the connection state
+/// machine is hardened (SNOW-3307201).
+///
+/// **SQL_HANDLE_ENV** and **SQL_HANDLE_DESC** return `SQL_ERROR` with
+/// SQLSTATE HY092 per the ODBC 3.8 spec. Any truly unknown handle
+/// type returns `SQL_INVALID_HANDLE`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLCancelHandle(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+) -> sql::RetCode {
+    if handle.is_null() {
+        return sql::SqlReturn::INVALID_HANDLE.0;
+    }
+    match handle_type {
+        sql::HandleType::Stmt => {
+            let result = api::statement::cancel(handle);
+            result.to_sql_code()
+        }
+        // TODO(SNOW-3307201): implement connection-level cancel after
+        // the connection state machine is hardened.
+        sql::HandleType::Dbc => {
+            api::diagnostic::clear_diag_info(handle_type, handle);
+            sql::SqlReturn::SUCCESS.0
+        }
+        sql::HandleType::Env | sql::HandleType::Desc => {
+            api::diagnostic::clear_diag_info(handle_type, handle);
+            let result: api::OdbcResult<()> = api::error::InvalidHandleTypeSnafu {
+                handle_type: handle_type as i16,
+            }
+            .fail();
+            api::diagnostic::set_diag_info_from_result(handle_type, handle, &result);
+            result.to_sql_code()
+        }
+        _ => sql::SqlReturn::INVALID_HANDLE.0,
+    }
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLConnect(
     connection_handle: sql::Handle,

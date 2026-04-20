@@ -20,7 +20,7 @@ TEST_CASE("TIMESTAMP_NTZ round-trip via SQL_C_TYPE_TIMESTAMP bind and fetch",
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("ALTER SESSION SET CLIENT_TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'");
-  auto schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_ntz_rt (id INT, ts TIMESTAMP_NTZ)");
   auto stmt = conn.createStatement();
 
@@ -65,7 +65,7 @@ TEST_CASE("TIMESTAMP_NTZ round-trip via SQL_C_CHAR string bind", "[timestamp_ntz
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("ALTER SESSION SET CLIENT_TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'");
-  auto schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_ntz_str (id INT, ts TIMESTAMP_NTZ)");
   auto stmt = conn.createStatement();
 
@@ -103,7 +103,7 @@ TEST_CASE("TIMESTAMP_NTZ round-trip NULL via bind parameter", "[timestamp_ntz][b
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("ALTER SESSION SET CLIENT_TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'");
-  auto schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_ntz_null (id INT, ts TIMESTAMP_NTZ)");
   auto stmt = conn.createStatement();
 
@@ -133,7 +133,7 @@ TEST_CASE("TIMESTAMP_NTZ round-trip multiple rows with re-execution", "[timestam
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
   conn.execute("ALTER SESSION SET CLIENT_TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_NTZ'");
-  auto schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_ntz_multi (id INT, ts TIMESTAMP_NTZ)");
   auto stmt = conn.createStatement();
 
@@ -201,7 +201,7 @@ TEST_CASE("TIMESTAMP_LTZ round-trip via SQL_C_TYPE_TIMESTAMP bind and fetch",
   // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_LTZ column exists
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
-  auto schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_ltz_rt (id INT, ts TIMESTAMP_LTZ)");
   auto stmt = conn.createStatement();
 
@@ -245,7 +245,7 @@ TEST_CASE("TIMESTAMP_TZ round-trip via SQL_C_TYPE_TIMESTAMP bind and fetch", "[t
   // Given Snowflake client is logged in and a temporary table with a TIMESTAMP_TZ column exists
   Connection conn;
   conn.execute("ALTER SESSION SET TIMEZONE = 'UTC'");
-  auto schema = Schema::use_random_schema(conn);
+  Schema::use_temp_session_schema(conn);
   conn.execute("CREATE TEMPORARY TABLE ts_tz_rt (id INT, ts TIMESTAMP_TZ)");
 
   // When A timestamp with an explicit timezone offset is inserted and then fetched back

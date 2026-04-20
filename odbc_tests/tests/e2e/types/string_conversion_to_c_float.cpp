@@ -17,7 +17,7 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "conversion_checks.hpp"
 #include "get_data.hpp"
@@ -29,10 +29,9 @@
 // SUCCESSFUL CONVERSIONS - String to Floating Point Types
 // ============================================================================
 
-TEST_CASE("should convert string literals to floating point types", "[datatype][string][conversion][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert string literals to floating point types",
+                 "[datatype][string][conversion][real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing floating point numbers is executed
   auto stmt = conn.execute_fetch(
@@ -65,11 +64,10 @@ TEST_CASE("should convert string literals to floating point types", "[datatype][
 // DATA OUT OF RANGE - String to Floating Point Types
 // ============================================================================
 
-TEST_CASE("should fail converting string literals to floating point types when data is out of range",
-          "[datatype][string][conversion][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture,
+                 "should fail converting string literals to floating point types when data is out of range",
+                 "[datatype][string][conversion][real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string literals representing floating point numbers is executed
   {
@@ -103,10 +101,9 @@ TEST_CASE("should fail converting string literals to floating point types when d
   }
 }
 
-TEST_CASE("should handle special floating point string conversions", "[datatype][string][conversion][real][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle special floating point string conversions",
+                 "[datatype][string][conversion][real][edge]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting special float strings is executed
   const auto query = "SELECT 'inf' AS pos_inf, '-inf' AS neg_inf, 'NaN' AS nan";
@@ -135,10 +132,9 @@ TEST_CASE("should handle special floating point string conversions", "[datatype]
 // EDGE CASES - Numeric strings with special formatting
 // ============================================================================
 
-TEST_CASE("should handle edge case floating point string formats", "[datatype][string][conversion][real][edge]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle edge case floating point string formats",
+                 "[datatype][string][conversion][real][edge]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting strings with special formatting is executed
   auto stmt = conn.execute_fetch(
@@ -161,11 +157,9 @@ TEST_CASE("should handle edge case floating point string formats", "[datatype][s
 // FAILING CONVERSIONS - Non-numeric strings to floating point types
 // ============================================================================
 
-TEST_CASE("should fail converting non-numeric strings to floating point types",
-          "[datatype][string][conversion][real][failure]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting non-numeric strings to floating point types",
+                 "[datatype][string][conversion][real][failure]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting various non-numeric strings is executed
   auto stmt = conn.execute_fetch("SELECT 'not a number' AS c1, 'abc123' AS c2");
@@ -180,11 +174,9 @@ TEST_CASE("should fail converting non-numeric strings to floating point types",
 // FAILING CONVERSIONS - Malformed numeric strings
 // ============================================================================
 
-TEST_CASE("should fail converting malformed numeric strings to floating point types",
-          "[datatype][string][conversion][real][failure]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should fail converting malformed numeric strings to floating point types",
+                 "[datatype][string][conversion][real][failure]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting various malformed numeric strings is executed
   auto stmt = conn.execute_fetch("SELECT '123.456.789' AS c1, '123,456' AS c2");
@@ -199,11 +191,9 @@ TEST_CASE("should fail converting malformed numeric strings to floating point ty
 // NULL VALUE HANDLING
 // ============================================================================
 
-TEST_CASE("should handle NULL string when converting to floating point types",
-          "[datatype][string][conversion][real][null]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should handle NULL string when converting to floating point types",
+                 "[datatype][string][conversion][real][null]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting NULL is executed
   auto stmt = conn.execute_fetch("SELECT NULL::STRING AS null_double");
@@ -222,10 +212,9 @@ TEST_CASE("should handle NULL string when converting to floating point types",
 // CONVERSION WITH SQLBindCol - Floating point types
 // ============================================================================
 
-TEST_CASE("should convert strings to floating point types using SQLBindCol", "[datatype][string][conversion][real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should convert strings to floating point types using SQLBindCol",
+                 "[datatype][string][conversion][real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
 
   // When Query selecting string numeric value is executed with SQLBindCol for SQL_C_DOUBLE
   {

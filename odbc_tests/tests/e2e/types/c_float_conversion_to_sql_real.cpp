@@ -12,17 +12,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
-#include "Schema.hpp"
+#include "SchemaFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_data.hpp"
 #include "odbc_cast.hpp"
 #include "odbc_matchers.hpp"
 
-TEST_CASE("should bind SQL_C_DOUBLE to SQL_DOUBLE and read back", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE to SQL_DOUBLE and read back",
+                 "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When A double value is bound with SQL_C_DOUBLE and SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -40,11 +39,10 @@ TEST_CASE("should bind SQL_C_DOUBLE to SQL_DOUBLE and read back", "[c_float][con
   CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(3.14));
 }
 
-TEST_CASE("should bind SQL_C_FLOAT to SQL_REAL and read back", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_FLOAT to SQL_REAL and read back",
+                 "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When A float value is bound with SQL_C_FLOAT and SQL_REAL and inserted
   auto stmt = conn.createStatement();
@@ -62,11 +60,9 @@ TEST_CASE("should bind SQL_C_FLOAT to SQL_REAL and read back", "[c_float][conver
   CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(1.5).epsilon(1e-6));
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE negative zero", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE negative zero", "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When Negative zero is bound as SQL_C_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -86,11 +82,9 @@ TEST_CASE("should bind SQL_C_DOUBLE negative zero", "[c_float][conversion][sql_r
   CHECK(std::fpclassify(read) == FP_ZERO);
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE large value", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE large value", "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When A large double near DBL_MAX is bound and inserted
   auto stmt = conn.createStatement();
@@ -108,11 +102,9 @@ TEST_CASE("should bind SQL_C_DOUBLE large value", "[c_float][conversion][sql_rea
   CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(1.7e308).epsilon(1e-12));
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE small value", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE small value", "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When A very small positive double is bound and inserted
   auto stmt = conn.createStatement();
@@ -131,11 +123,9 @@ TEST_CASE("should bind SQL_C_DOUBLE small value", "[c_float][conversion][sql_rea
   NEW_DRIVER_ONLY("BD#36") { CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(2.2e-308).epsilon(1e-12)); }
 }
 
-TEST_CASE("should bind SQL_C_FLOAT max value", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_FLOAT max value", "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When FLT_MAX is bound with SQL_C_FLOAT and SQL_REAL and inserted
   auto stmt = conn.createStatement();
@@ -153,11 +143,9 @@ TEST_CASE("should bind SQL_C_FLOAT max value", "[c_float][conversion][sql_real]"
   CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(static_cast<double>(FLT_MAX)).epsilon(1e-6));
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE with NULL indicator", "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When SQL_NULL_DATA is used for the SQL_C_DOUBLE parameter
   auto stmt = conn.createStatement();
@@ -174,11 +162,10 @@ TEST_CASE("should bind SQL_C_DOUBLE with NULL indicator", "[c_float][conversion]
   CHECK(get_data_optional<SQL_C_DOUBLE>(fetch_stmt, 1) == std::nullopt);
 }
 
-TEST_CASE("should bind SQL_C_DEFAULT to SQL_DOUBLE and read back", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DEFAULT to SQL_DOUBLE and read back",
+                 "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When A double value is bound with SQL_C_DEFAULT and SQL_DOUBLE and inserted
   auto stmt = conn.createStatement();
@@ -196,11 +183,9 @@ TEST_CASE("should bind SQL_C_DEFAULT to SQL_DOUBLE and read back", "[c_float][co
   CHECK(get_data<SQL_C_DOUBLE>(fetch_stmt, 1) == Catch::Approx(2.718));
 }
 
-TEST_CASE("should bind SQL_C_DOUBLE zero", "[c_float][conversion][sql_real]") {
+TEST_CASE_METHOD(ConnSchemaFixture, "should bind SQL_C_DOUBLE zero", "[c_float][conversion][sql_real]") {
   // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-  conn.execute("CREATE TABLE t (col FLOAT)");
+  conn.execute("CREATE TEMPORARY TABLE t (col FLOAT)");
 
   // When Zero is bound as SQL_C_DOUBLE and inserted
   auto stmt = conn.createStatement();

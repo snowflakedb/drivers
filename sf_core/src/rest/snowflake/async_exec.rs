@@ -1,5 +1,5 @@
+use super::{ClientInfo, QueryParameters};
 use crate::chunks::ChunkDownloadData;
-use crate::config::rest_parameters::{ClientInfo, QueryParameters};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::error::SfError;

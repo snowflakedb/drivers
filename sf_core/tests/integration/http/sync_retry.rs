@@ -6,7 +6,7 @@
 //! - Retry uses the same requestId for server-side idempotency
 //! - Sync mode is the default execution mode
 
-use sf_core::config::rest_parameters::{ClientInfo, QueryParameters};
+use sf_core::config::rest_parameters::{ClientInfo, DEFAULT_LOG_MAX_QUERY_LENGTH, QueryParameters};
 use sf_core::config::retry::RetryPolicy;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::{QueryExecutionMode, QueryInput, snowflake_query_with_client};
@@ -215,6 +215,7 @@ fn test_query_params(addr: &SocketAddr) -> QueryParameters {
             crl_config: CrlConfig::default(),
             tls_config: TlsConfig::insecure(),
         },
+        log_max_query_length: DEFAULT_LOG_MAX_QUERY_LENGTH,
     }
 }
 

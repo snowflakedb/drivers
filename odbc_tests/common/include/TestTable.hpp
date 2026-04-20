@@ -9,7 +9,7 @@ class TestTable {
  public:
   TestTable(Connection& conn, const std::string& name, const std::string& columns, const std::string& values)
       : conn_(conn), name_(name) {
-    conn_.execute("CREATE OR REPLACE TABLE " + name_ + " (" + columns + ")");
+    conn_.execute("CREATE TEMPORARY TABLE " + name_ + " (" + columns + ")");
     conn_.execute("INSERT INTO " + name_ + " VALUES " + values);
   }
 

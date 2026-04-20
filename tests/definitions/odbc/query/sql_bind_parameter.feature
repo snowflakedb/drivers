@@ -89,6 +89,14 @@ Feature: ODBC SQLBindParameter spec compliance
     Then re-executing should fail with SQLSTATE 07002
 
   @odbc_e2e
+  Scenario: should succeed after SQL_RESET_PARAMS clears a spurious extra binding.
+    Given Snowflake client is logged in
+    When a 1-parameter query is prepared but params 1 AND 2 are bound
+    And all parameter bindings are reset
+    And only the real parameter (param 1) is re-bound
+    Then executing should succeed (the spurious param 2 was trimmed by reset)
+
+  @odbc_e2e
   Scenario: should fail with 07002 when parameter bindings have a gap.
     Given Snowflake client is logged in
     When a query with 3 parameter markers is prepared
